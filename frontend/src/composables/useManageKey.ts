@@ -90,7 +90,10 @@ export function useManageKey() {
       config.value = { ...config.value, token: newToken };
       lookupToken.value = newToken;
       await copyToClipboard(newToken);
-      actionMsg.value = { type: 'success', text: '密钥已刷新并复制到剪贴板，请更新你的 AI 工具配置' };
+      actionMsg.value = {
+        type: 'success',
+        text: '密钥已刷新并复制到剪贴板，请更新你的 AI 工具配置',
+      };
     } catch {
       actionMsg.value = { type: 'error', text: '刷新失败，请稍后重试' };
     } finally {
@@ -117,9 +120,23 @@ export function useManageKey() {
   }
 
   return {
-    lookupToken, looking, lookupError, config,
-    editing, editForm, editError, saving,
-    regenerating, deleting, actionMsg,
-    lookup, startEdit, cancelEdit, onEditProviderChange, saveEdit, regenerate, remove,
+    lookupToken,
+    looking,
+    lookupError,
+    config,
+    editing,
+    editForm,
+    editError,
+    saving,
+    regenerating,
+    deleting,
+    actionMsg,
+    lookup,
+    startEdit,
+    cancelEdit,
+    onEditProviderChange,
+    saveEdit,
+    regenerate,
+    remove,
   };
 }

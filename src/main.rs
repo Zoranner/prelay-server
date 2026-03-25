@@ -40,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
 
     let state = AppState { db, client };
 
-    // Proxy routes: handle all HTTP methods on /v1/* and /v1
+    // Proxy routes: handle all HTTP methods on /proxy/* and /proxy
     let proxy_router = Router::new()
         .route("/", any(routes::proxy::handle))
         .route("/*path", any(routes::proxy::handle))
@@ -51,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .nest("/api", admin_router)
-        .nest("/v1", proxy_router)
+        .nest("/proxy", proxy_router)
         // Serve built Vue frontend from ./static/
         .fallback_service(ServeDir::new("static").append_index_html_on_directories(true))
         .layer(CorsLayer::permissive());
@@ -64,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Provider Relay listening on http://{}", addr);
     tracing::info!("Admin UI: http://{}", addr);
-    tracing::info!("Proxy endpoint: http://{}/v1", addr);
+    tracing::info!("Proxy endpoint: http://{}/proxy", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;

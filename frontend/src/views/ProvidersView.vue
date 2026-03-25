@@ -10,18 +10,22 @@
         <div class="flex border-b border-stone-100">
           <button
             class="flex-1 py-3.5 text-sm font-medium transition-colors border-b-2 -mb-px"
-            :class="activeTab === 'create'
-              ? 'border-[#1a5c5c] text-[#1a5c5c]'
-              : 'border-transparent text-stone-400 hover:text-stone-600'"
+            :class="
+              activeTab === 'create'
+                ? 'border-[#1a5c5c] text-[#1a5c5c]'
+                : 'border-transparent text-stone-400 hover:text-stone-600'
+            "
             @click="activeTab = 'create'"
           >
             新建密钥
           </button>
           <button
             class="flex-1 py-3.5 text-sm font-medium transition-colors border-b-2 -mb-px"
-            :class="activeTab === 'manage'
-              ? 'border-[#1a5c5c] text-[#1a5c5c]'
-              : 'border-transparent text-stone-400 hover:text-stone-600'"
+            :class="
+              activeTab === 'manage'
+                ? 'border-[#1a5c5c] text-[#1a5c5c]'
+                : 'border-transparent text-stone-400 hover:text-stone-600'
+            "
             @click="activeTab = 'manage'"
           >
             管理密钥

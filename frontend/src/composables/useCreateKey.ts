@@ -26,7 +26,7 @@ export function useCreateKey() {
       return;
     }
     if (!form.value.base_url.trim()) {
-      error.value = '请填写 Base URL';
+      error.value = '请填写上游 Base URL';
       return;
     }
 
@@ -39,7 +39,12 @@ export function useCreateKey() {
         api_key: form.value.api_key.trim(),
       });
       createdToken.value = res.data.token;
-      form.value = { provider_type: 'openai', name: '', base_url: DEFAULT_BASE_URLS.openai, api_key: '' };
+      form.value = {
+        provider_type: 'openai',
+        name: '',
+        base_url: DEFAULT_BASE_URLS.openai,
+        api_key: '',
+      };
     } catch {
       error.value = '创建失败，请检查服务是否正常运行';
     } finally {
@@ -51,7 +56,9 @@ export function useCreateKey() {
     const ok = await copyToClipboard(createdToken.value);
     if (ok) {
       copied.value = true;
-      setTimeout(() => { copied.value = false; }, 2000);
+      setTimeout(() => {
+        copied.value = false;
+      }, 2000);
     }
   }
 
