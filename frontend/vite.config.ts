@@ -1,8 +1,9 @@
-import { defineConfig } from 'vite'
-import vue from '@vitejs/plugin-vue'
+import { defineConfig } from 'vite';
+import vue from '@vitejs/plugin-vue';
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), tailwindcss()],
   build: {
     outDir: '../static',
     emptyOutDir: true,
@@ -13,4 +14,4 @@ export default defineConfig({
       '/v1': 'http://localhost:3000',
     },
   },
-})
+});

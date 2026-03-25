@@ -16,9 +16,20 @@ use crate::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/configs", get(list_configs).post(create_config))
+        .route("/configs/by-token/:token", get(get_config_by_token))
         .route("/configs/:id", put(update_config))
         .route("/configs/:id", axum::routing::delete(delete_config))
         .route("/configs/:id/regenerate-token", post(regenerate_token))
+}
+
+async fn get_config_by_token(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+) -> Result<impl IntoResponse, AppError> {
+    let config = db::get_config_by_token(&state.db, &token)
+        .await?
+        .ok_or_else(|| AppError::NotFound("密钥不存在".to_string()))?;
+    Ok(Json(ConfigResponse::from(config)))
 }
 
 async fn list_configs(State(state): State<AppState>) -> Result<impl IntoResponse, AppError> {

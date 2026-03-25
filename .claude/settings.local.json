@@ -1,7 +1,6 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cargo build:*)",
       "Bash(bun install:*)",
       "Bash(bun run:*)"
     ]
