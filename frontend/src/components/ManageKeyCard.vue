@@ -91,10 +91,20 @@
             class="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1a5c5c]/25 focus:border-[#1a5c5c] transition-colors"
             @change="onEditProviderChange"
           >
-            <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic Claude</option>
-            <option value="azure">Azure OpenAI</option>
-            <option value="custom">自定义兼容接口</option>
+            <optgroup label="订阅服务">
+              <option value="zhipu_coding">智谱 AI Coding Plan</option>
+              <option value="minimax_token">MiniMax Token Plan</option>
+            </optgroup>
+            <optgroup label="接口服务">
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic Claude</option>
+              <option value="zhipu">智谱 AI</option>
+              <option value="minimax">MiniMax</option>
+            </optgroup>
+            <optgroup label="其他服务">
+              <option value="openai_compatible">自定义 OpenAI 兼容</option>
+              <option value="anthropic_compatible">自定义 Anthropic 兼容</option>
+            </optgroup>
           </select>
         </div>
         <div>

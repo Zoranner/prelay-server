@@ -1,5 +1,5 @@
 <template>
-  <header class="bg-gradient-to-br from-[#0d1b2a] to-[#152638] text-white py-6">
+  <header class="bg-linear-to-br from-[#0d1b2a] to-[#152638] text-white py-6">
     <div class="max-w-lg mx-auto px-6 flex items-end justify-between">
       <div>
         <h1 class="text-xl font-semibold tracking-tight">Provider Relay</h1>

@@ -72,17 +72,12 @@ pub async fn handle(
     }
 
     // Set authentication header based on provider type
-    match config.provider_type.as_str() {
-        "anthropic" => {
-            upstream_req = upstream_req
-                .header("x-api-key", &config.api_key)
-                .header("anthropic-version", "2023-06-01");
-        }
-        _ => {
-            // OpenAI-compatible (openai, azure, custom)
-            upstream_req =
-                upstream_req.header("authorization", format!("Bearer {}", config.api_key));
-        }
+    if config.uses_anthropic_auth() {
+        upstream_req = upstream_req
+            .header("x-api-key", &config.api_key)
+            .header("anthropic-version", "2023-06-01");
+    } else {
+        upstream_req = upstream_req.header("authorization", format!("Bearer {}", config.api_key));
     }
 
     // Forward request body (up to 32 MB)

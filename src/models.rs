@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct ProviderConfig {
     pub id: String,
     pub name: String,
-    /// "openai" | "anthropic" | "azure" | "custom"
+    /// "openai" | "anthropic" | "minimax" | "minimax_token" | "zhipu" | "zhipu_coding" | "openai_compatible" | "anthropic_compatible"
     pub provider_type: String,
     /// API base URL, e.g. https://api.openai.com
     pub base_url: String,
@@ -40,6 +40,17 @@ pub struct ConfigResponse {
     pub api_key_masked: String,
     pub token: String,
     pub created_at: String,
+}
+
+impl ProviderConfig {
+    /// Returns true if this provider uses Anthropic-style auth
+    /// (x-api-key + anthropic-version header) instead of Bearer.
+    pub fn uses_anthropic_auth(&self) -> bool {
+        matches!(
+            self.provider_type.as_str(),
+            "anthropic" | "minimax_token" | "zhipu_coding" | "anthropic_compatible"
+        )
+    }
 }
 
 impl From<ProviderConfig> for ConfigResponse {

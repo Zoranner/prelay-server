@@ -17,8 +17,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/configs", get(list_configs).post(create_config))
         .route("/configs/by-token/:token", get(get_config_by_token))
-        .route("/configs/:id", put(update_config))
-        .route("/configs/:id", axum::routing::delete(delete_config))
+        .route("/configs/:id", put(update_config).delete(delete_config))
         .route("/configs/:id/regenerate-token", post(regenerate_token))
 }
 
