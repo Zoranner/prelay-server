@@ -23,6 +23,17 @@ export const PROVIDER_LABELS: Record<string, string> = {
   anthropic_compatible: '自定义 Anthropic 兼容',
 };
 
+export const PROVIDER_DOT_CLASSES: Record<string, string> = {
+  zhipu_coding: 'bg-[#4a7de8]',
+  minimax_token: 'bg-[#7c5cbf]',
+  openai: 'bg-[#4a9e5c]',
+  anthropic: 'bg-[#c47830]',
+  zhipu: 'bg-[#3d6fd4]',
+  minimax: 'bg-[#8b5fc4]',
+  openai_compatible: 'bg-stone-400',
+  anthropic_compatible: 'bg-stone-300',
+};
+
 export const PROVIDER_BADGE_CLASSES: Record<string, string> = {
   zhipu_coding: 'bg-[#ddeafc] text-[#133d9e]',
   minimax_token: 'bg-[#ede8f5] text-[#4a2d7a]',
@@ -38,6 +49,10 @@ export function providerLabel(type: string): string {
   return PROVIDER_LABELS[type] ?? type;
 }
 
+export function providerDotClass(type: string): string {
+  return PROVIDER_DOT_CLASSES[type] ?? 'bg-stone-300';
+}
+
 export function providerBadgeClass(type: string): string {
   return PROVIDER_BADGE_CLASSES[type] ?? 'bg-stone-100 text-stone-600';
 }
@@ -49,4 +64,36 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+const STORAGE_KEY = 'provider-relay-tokens';
+
+export interface StoredToken {
+  token: string;
+  name: string;
+  providerType: string;
+  createdAt: number;
+}
+
+export function getStoredTokens(): StoredToken[] {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+export function saveToken(token: StoredToken): void {
+  const tokens = getStoredTokens();
+  const existing = tokens.findIndex((t) => t.token === token.token);
+  if (existing >= 0) {
+    tokens.splice(existing, 1);
+  }
+  tokens.unshift(token);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(tokens.slice(0, 20)));
+}
+
+export function removeStoredToken(token: string): void {
+  const tokens = getStoredTokens().filter((t) => t.token !== token);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(tokens));
 }

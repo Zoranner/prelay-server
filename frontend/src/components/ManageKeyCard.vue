@@ -1,28 +1,41 @@
 <template>
   <!-- Lookup input -->
   <div class="px-6 py-5">
+    <div v-if="storedTokens.length > 0" class="mb-3">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-xs font-medium text-stone-400 uppercase tracking-wide">已存储的密钥</span>
+        <span class="text-xs text-stone-400">(点击选择)</span>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <Tag
+          v-for="item in storedTokens"
+          :key="item.token"
+          :label="item.name"
+          :dot="true"
+          :dot-class="providerDotClass(item.providerType)"
+          :variant="lookupToken === item.token ? 'primary' : 'default'"
+          closable
+          :title="item.token"
+          @click="selectStored(item)"
+          @close="onDeleteStoredToken(item)"
+        />
+      </div>
+    </div>
     <div class="flex gap-2">
-      <input
+      <Input
         v-model="lookupToken"
-        type="text"
         placeholder="输入你的代理密钥…"
-        class="flex-1 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#1a5c5c]/25 focus:border-[#1a5c5c] transition-colors"
+        mono
+        flex
         @keydown.enter="lookup"
       />
-      <button
-        :disabled="looking"
-        class="bg-[#1a5c5c] hover:bg-[#134848] disabled:opacity-50 text-white font-medium rounded-lg px-4 py-2 text-sm transition-colors whitespace-nowrap"
-        @click="lookup"
-      >
+      <Button :loading="looking" @click="lookup">
         {{ looking ? '查询中…' : '查询' }}
-      </button>
+      </Button>
     </div>
-    <p
-      v-if="lookupError"
-      class="mt-3 text-sm text-[#a83232] bg-[#fdf3f3] border border-[#ecc8c8] rounded-lg px-3 py-2"
-    >
+    <Alert v-if="lookupError" type="error" class="mt-3">
       {{ lookupError }}
-    </p>
+    </Alert>
   </div>
 
   <!-- Found config -->
@@ -30,141 +43,71 @@
     <!-- Detail view -->
     <div v-if="!editing" class="px-6 py-5 space-y-5">
       <dl class="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
-        <div>
-          <dt class="text-xs font-medium text-stone-400 uppercase tracking-wide">名称</dt>
-          <dd class="font-medium text-stone-800 mt-1">{{ config.name || '（未命名）' }}</dd>
-        </div>
-        <div>
-          <dt class="text-xs font-medium text-stone-400 uppercase tracking-wide">提供商</dt>
-          <dd class="mt-1">
-            <span
-              :class="providerBadgeClass(config.provider_type)"
-              class="px-2 py-0.5 rounded-full text-xs font-medium"
-            >
-              {{ providerLabel(config.provider_type) }}
-            </span>
-          </dd>
-        </div>
-        <div class="col-span-2">
-          <dt class="text-xs font-medium text-stone-400 uppercase tracking-wide">Base URL</dt>
-          <dd class="font-mono text-xs text-stone-600 mt-1 break-all">{{ config.base_url }}</dd>
-        </div>
-        <div class="col-span-2">
-          <dt class="text-xs font-medium text-stone-400 uppercase tracking-wide">上游 API Key</dt>
-          <dd class="font-mono text-xs text-stone-600 mt-1">{{ config.api_key_masked }}</dd>
-        </div>
+        <Field term="名称" :value="config!.name || '（未命名）'" />
+        <Field term="提供商">
+          <Badge :provider-type="config!.provider_type" />
+        </Field>
+        <Field term="上游 Base URL" :value="config!.base_url" />
+        <Field term="上游 API Key" :value="config!.api_key_masked" />
       </dl>
 
       <div class="flex gap-2">
-        <button
-          class="flex-1 border border-stone-200 hover:bg-stone-50 text-stone-600 font-medium rounded-lg px-3 py-2 text-sm transition-colors"
-          @click="startEdit"
-        >
-          编辑配置
-        </button>
-        <button
-          :disabled="regenerating"
-          class="flex-1 border border-[#93bfbf] hover:bg-[#f0f8f8] text-[#1a5c5c] font-medium rounded-lg px-3 py-2 text-sm transition-colors disabled:opacity-50"
-          @click="regenerate"
-        >
+        <Button variant="secondary" block @click="startEdit"> 编辑配置 </Button>
+        <Button variant="teal" block :loading="regenerating" @click="onRegenerate">
           {{ regenerating ? '刷新中…' : '刷新密钥' }}
-        </button>
-        <button
-          :disabled="deleting"
-          class="flex-1 border border-[#ecc8c8] hover:bg-[#fdf3f3] text-[#a83232] font-medium rounded-lg px-3 py-2 text-sm transition-colors disabled:opacity-50"
-          @click="remove"
-        >
+        </Button>
+        <Button variant="danger" block :loading="deleting" @click="onDelete">
           {{ deleting ? '删除中…' : '删除' }}
-        </button>
+        </Button>
       </div>
 
-      <p
-        v-if="actionMsg"
-        :class="
-          actionMsg.type === 'success'
-            ? 'text-[#256047] bg-[#f2f8f5] border-[#9fc9b2]'
-            : 'text-[#a83232] bg-[#fdf3f3] border-[#ecc8c8]'
-        "
-        class="text-sm border rounded-lg px-3 py-2"
-      >
+      <Alert v-if="actionMsg" :type="actionMsg.type === 'success' ? 'success' : 'error'">
         {{ actionMsg.text }}
-      </p>
+      </Alert>
     </div>
 
     <!-- Edit form -->
     <div v-else class="px-6 py-5 space-y-4">
       <div class="grid grid-cols-2 gap-4">
-        <div>
-          <label class="block text-xs font-medium text-stone-500 mb-1.5 uppercase tracking-wide"
-            >提供商</label
-          >
-          <ProviderSelect v-model="editForm.provider_type" @change="onEditProviderChange" />
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-stone-500 mb-1.5 uppercase tracking-wide"
-            >名称</label
-          >
-          <input
-            v-model="editForm.name"
-            type="text"
-            class="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a5c5c]/25 focus:border-[#1a5c5c] transition-colors"
-          />
-        </div>
+        <Select v-model="editForm.provider_type" label="提供商" @change="onEditProviderChange" />
+        <Input v-model="editForm.name" label="名称" />
       </div>
 
-      <div>
-        <label class="block text-xs font-medium text-stone-500 mb-1.5 uppercase tracking-wide"
-          >上游 Base URL</label
-        >
-        <input
-          v-model="editForm.base_url"
-          type="text"
-          class="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#1a5c5c]/25 focus:border-[#1a5c5c] transition-colors"
-        />
-      </div>
+      <Input v-model="editForm.base_url" label="上游 Base URL" mono />
 
-      <div>
-        <label class="block text-xs font-medium text-stone-500 mb-1.5 uppercase tracking-wide">
-          上游 API Key <span class="text-stone-400 normal-case font-normal">（留空则不修改）</span>
-        </label>
-        <input
-          v-model="editForm.api_key"
-          type="password"
-          placeholder="留空则保持原密钥不变"
-          class="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#1a5c5c]/25 focus:border-[#1a5c5c] transition-colors"
-        />
-      </div>
+      <Input
+        v-model="editForm.api_key"
+        label="上游 API Key"
+        type="password"
+        placeholder="留空则保持原密钥不变"
+        mono
+      />
 
-      <p
-        v-if="editError"
-        class="text-sm text-[#a83232] bg-[#fdf3f3] border border-[#ecc8c8] rounded-lg px-3 py-2"
-      >
+      <Alert v-if="editError" type="error">
         {{ editError }}
-      </p>
+      </Alert>
 
       <div class="flex gap-2">
-        <button
-          class="flex-1 border border-stone-200 hover:bg-stone-50 text-stone-600 font-medium rounded-lg px-3 py-2 text-sm transition-colors"
-          @click="cancelEdit"
-        >
-          取消
-        </button>
-        <button
-          :disabled="saving"
-          class="flex-1 bg-[#1a5c5c] hover:bg-[#134848] disabled:opacity-50 text-white font-medium rounded-lg px-3 py-2 text-sm transition-colors"
-          @click="saveEdit"
-        >
+        <Button variant="secondary" block @click="cancelEdit"> 取消 </Button>
+        <Button variant="primary" block :loading="saving" @click="saveEdit">
           {{ saving ? '保存中…' : '保存修改' }}
-        </button>
+        </Button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue';
 import { useManageKey } from '../composables/useManageKey';
-import { providerLabel, providerBadgeClass } from '../utils/providers';
-import ProviderSelect from './ProviderSelect.vue';
+import { useModal } from '../composables/useModal';
+import { Button, Input, Select, Tag, Alert, Field, Badge } from './base';
+import { getStoredTokens, removeStoredToken, providerDotClass, type StoredToken } from '../utils/providers';
+
+const props = defineProps<{
+  confirmModal: ReturnType<typeof useModal>;
+}>();
+const { confirmModal } = props;
 
 const {
   lookupToken,
@@ -186,4 +129,46 @@ const {
   regenerate,
   remove,
 } = useManageKey();
+
+const storedTokens = ref<StoredToken[]>(getStoredTokens());
+
+function onDelete() {
+  confirmModal.show({
+    title: '删除配置',
+    message: `确定要删除「${config.value?.name}」的配置吗？此操作不可撤销。`,
+    onConfirm: async () => {
+      await remove();
+      storedTokens.value = getStoredTokens();
+      confirmModal.hide();
+    },
+  });
+}
+
+function onRegenerate() {
+  confirmModal.show({
+    title: '刷新密钥',
+    message: '刷新后，使用旧密钥的连接将立即失效。确定要刷新吗？',
+    onConfirm: async () => {
+      await regenerate();
+      confirmModal.hide();
+    },
+  });
+}
+
+function onDeleteStoredToken(item: StoredToken) {
+  confirmModal.show({
+    title: '删除已存储密钥',
+    message: `确定要删除「${item.name}」吗？`,
+    onConfirm: () => {
+      removeStoredToken(item.token);
+      storedTokens.value = getStoredTokens();
+      confirmModal.hide();
+    },
+  });
+}
+
+function selectStored(item: StoredToken) {
+  lookupToken.value = item.token;
+  lookup();
+}
 </script>

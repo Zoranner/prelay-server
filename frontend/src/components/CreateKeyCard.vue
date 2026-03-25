@@ -1,63 +1,27 @@
 <template>
   <div class="px-6 py-5 space-y-4">
     <div class="grid grid-cols-2 gap-4">
-      <div>
-        <label class="block text-xs font-medium text-stone-500 mb-1.5 uppercase tracking-wide"
-          >提供商</label
-        >
-        <ProviderSelect v-model="form.provider_type" @change="onProviderChange" />
-      </div>
-      <div>
-        <label class="block text-xs font-medium text-stone-500 mb-1.5 uppercase tracking-wide">
-          名称 <span class="text-stone-400 normal-case font-normal">（可选）</span>
-        </label>
-        <input
-          v-model="form.name"
-          type="text"
-          placeholder="例如：公司 OpenAI Key"
-          class="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a5c5c]/25 focus:border-[#1a5c5c] transition-colors"
-        />
-      </div>
+      <Select v-model="form.provider_type" label="提供商" @change="onProviderChange" />
+      <Input v-model="form.name" label="名称" optional placeholder="例如：公司 OpenAI Key" />
     </div>
 
-    <div>
-      <label class="block text-xs font-medium text-stone-500 mb-1.5 uppercase tracking-wide"
-        >Base URL</label
-      >
-      <input
-        v-model="form.base_url"
-        type="text"
-        placeholder="https://api.openai.com"
-        class="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#1a5c5c]/25 focus:border-[#1a5c5c] transition-colors"
-      />
-    </div>
+    <Input v-model="form.base_url" label="上游 Base URL" placeholder="填写上游 Base URL" mono />
 
-    <div>
-      <label class="block text-xs font-medium text-stone-500 mb-1.5 uppercase tracking-wide"
-        >API Key</label
-      >
-      <input
-        v-model="form.api_key"
-        type="password"
-        placeholder="填写真实的 API Key"
-        class="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#1a5c5c]/25 focus:border-[#1a5c5c] transition-colors"
-      />
-    </div>
+    <Input
+      v-model="form.api_key"
+      label="上游 API Key"
+      type="password"
+      placeholder="填写上游 API Key"
+      mono
+    />
 
-    <p
-      v-if="error"
-      class="text-sm text-[#a83232] bg-[#fdf3f3] border border-[#ecc8c8] rounded-lg px-3 py-2"
-    >
+    <Alert v-if="error" type="error">
       {{ error }}
-    </p>
+    </Alert>
 
-    <button
-      :disabled="creating"
-      class="w-full bg-[#1a5c5c] hover:bg-[#134848] disabled:opacity-50 text-white font-medium rounded-lg px-4 py-2.5 text-sm transition-colors"
-      @click="submit"
-    >
+    <Button block :loading="creating" @click="submit">
       {{ creating ? '创建中…' : '生成代理密钥' }}
-    </button>
+    </Button>
   </div>
 
   <!-- Created token result -->
@@ -76,15 +40,12 @@
       <p class="text-xs text-[#3d7060] mb-3">请妥善保存此密钥，之后可通过它查询和管理配置：</p>
       <div class="flex items-center gap-2">
         <code
-          class="flex-1 bg-white border border-[#9fc9b2] rounded-lg px-3 py-2 text-xs font-mono text-stone-700 break-all select-all"
+          class="flex-1 flex items-center bg-white border border-[#9fc9b2] rounded-lg px-3 text-xs font-mono text-stone-700 break-all select-all self-stretch"
           >{{ createdToken }}</code
         >
-        <button
-          class="shrink-0 bg-[#256047] hover:bg-[#1c4c38] text-white text-xs rounded-lg px-3 py-2 transition-colors"
-          @click="copyToken"
-        >
+        <Button variant="primary" @click="copyToken">
           {{ copied ? '已复制' : '复制' }}
-        </button>
+        </Button>
       </div>
     </div>
   </div>
@@ -92,7 +53,7 @@
 
 <script setup lang="ts">
 import { useCreateKey } from '../composables/useCreateKey';
-import ProviderSelect from './ProviderSelect.vue';
+import { Button, Input, Select, Alert } from './base';
 
 const { form, creating, error, createdToken, copied, onProviderChange, submit, copyToken } =
   useCreateKey();

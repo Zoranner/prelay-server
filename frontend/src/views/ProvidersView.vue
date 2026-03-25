@@ -6,35 +6,25 @@
 
       <!-- Tab card -->
       <div class="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
-        <!-- Tab switcher -->
-        <div class="flex border-b border-stone-100">
-          <button
-            class="flex-1 py-3.5 text-sm font-medium transition-colors border-b-2 -mb-px"
-            :class="
-              activeTab === 'create'
-                ? 'border-[#1a5c5c] text-[#1a5c5c]'
-                : 'border-transparent text-stone-400 hover:text-stone-600'
-            "
-            @click="activeTab = 'create'"
-          >
-            新建密钥
-          </button>
-          <button
-            class="flex-1 py-3.5 text-sm font-medium transition-colors border-b-2 -mb-px"
-            :class="
-              activeTab === 'manage'
-                ? 'border-[#1a5c5c] text-[#1a5c5c]'
-                : 'border-transparent text-stone-400 hover:text-stone-600'
-            "
-            @click="activeTab = 'manage'"
-          >
-            管理密钥
-          </button>
-        </div>
+        <Tabs
+          v-model="activeTab"
+          :tabs="[
+            { label: '新建密钥', value: 'create' },
+            { label: '管理密钥', value: 'manage' },
+          ]"
+        />
 
         <!-- Tab content -->
         <CreateKeyCard v-if="activeTab === 'create'" />
-        <ManageKeyCard v-else />
+        <ManageKeyCard v-else :confirm-modal="confirmModal" />
+
+        <Modal
+          :open="confirmModal.open.value"
+          :title="confirmModal.title.value"
+          :message="confirmModal.message.value"
+          @confirm="confirmModal.onConfirm.value?.()"
+          @cancel="confirmModal.hide()"
+        />
       </div>
     </main>
   </div>
@@ -46,6 +36,9 @@ import AppHeader from '../components/AppHeader.vue';
 import ProxyInfoBanner from '../components/ProxyInfoBanner.vue';
 import CreateKeyCard from '../components/CreateKeyCard.vue';
 import ManageKeyCard from '../components/ManageKeyCard.vue';
+import { Tabs, Modal } from '../components/base';
+import { useModal } from '../composables/useModal';
 
 const activeTab = ref<'create' | 'manage'>('create');
+const confirmModal = useModal();
 </script>

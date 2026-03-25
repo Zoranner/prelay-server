@@ -1,6 +1,6 @@
 import { ref } from 'vue';
 import { configApi, type ProviderConfig } from '../api/index';
-import { DEFAULT_BASE_URLS, copyToClipboard } from '../utils/providers';
+import { DEFAULT_BASE_URLS, copyToClipboard, removeStoredToken } from '../utils/providers';
 
 export function useManageKey() {
   const lookupToken = ref('');
@@ -80,7 +80,6 @@ export function useManageKey() {
 
   async function regenerate() {
     if (!config.value) return;
-    if (!confirm('刷新后，使用旧密钥的连接将立即失效。确认刷新？')) return;
 
     regenerating.value = true;
     actionMsg.value = null;
@@ -103,12 +102,13 @@ export function useManageKey() {
 
   async function remove() {
     if (!config.value) return;
-    if (!confirm(`确定要删除「${config.value.name}」的配置吗？此操作不可撤销。`)) return;
 
     deleting.value = true;
     actionMsg.value = null;
     try {
+      const tokenToDelete = config.value.token;
       await configApi.delete(config.value.id);
+      removeStoredToken(tokenToDelete);
       config.value = null;
       lookupToken.value = '';
       actionMsg.value = { type: 'success', text: '配置已删除' };

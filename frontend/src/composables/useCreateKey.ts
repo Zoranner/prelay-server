@@ -1,6 +1,6 @@
 import { ref } from 'vue';
 import { configApi } from '../api/index';
-import { DEFAULT_BASE_URLS, copyToClipboard } from '../utils/providers';
+import { DEFAULT_BASE_URLS, PROVIDER_LABELS, copyToClipboard, saveToken } from '../utils/providers';
 
 export function useCreateKey() {
   const form = ref({
@@ -33,12 +33,22 @@ export function useCreateKey() {
     creating.value = true;
     try {
       const res = await configApi.create({
-        name: form.value.name.trim() || form.value.provider_type,
+        name:
+          form.value.name.trim() ||
+          (PROVIDER_LABELS[form.value.provider_type] ?? form.value.provider_type),
         provider_type: form.value.provider_type,
         base_url: form.value.base_url.trim(),
         api_key: form.value.api_key.trim(),
       });
       createdToken.value = res.data.token;
+      saveToken({
+        token: res.data.token,
+        name:
+          form.value.name.trim() ||
+          (PROVIDER_LABELS[form.value.provider_type] ?? form.value.provider_type),
+        providerType: form.value.provider_type,
+        createdAt: Date.now(),
+      });
       form.value = {
         provider_type: 'openai',
         name: '',
