@@ -6,10 +6,17 @@ IMAGE_TAG="${1:-latest}"
 
 echo "[docker-build] Building image: ${IMAGE_NAME}:${IMAGE_TAG}"
 
-docker buildx build \
-    -t "${IMAGE_NAME}:${IMAGE_TAG}" \
-    -f Dockerfile \
-    --load \
-    .
+if docker buildx version &>/dev/null; then
+    docker buildx build \
+        -t "${IMAGE_NAME}:${IMAGE_TAG}" \
+        -f Dockerfile \
+        --load \
+        .
+else
+    DOCKER_BUILDKIT=1 docker build \
+        -t "${IMAGE_NAME}:${IMAGE_TAG}" \
+        -f Dockerfile \
+        .
+fi
 
 echo "[docker-build] Done: ${IMAGE_NAME}:${IMAGE_TAG}"
