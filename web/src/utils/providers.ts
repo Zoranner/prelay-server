@@ -97,3 +97,21 @@ export function removeStoredToken(token: string): void {
   const tokens = getStoredTokens().filter((t) => t.token !== token);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(tokens));
 }
+
+export function updateStoredToken(
+  token: string,
+  updates: Partial<Pick<StoredToken, 'name' | 'providerType'>>,
+): void {
+  const tokens = getStoredTokens();
+  const idx = tokens.findIndex((t) => t.token === token);
+  if (idx >= 0) {
+    tokens[idx] = { ...tokens[idx], ...updates };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(tokens));
+  }
+}
+
+export function replaceStoredToken(oldToken: string, newEntry: StoredToken): void {
+  const tokens = getStoredTokens().filter((t) => t.token !== oldToken);
+  tokens.unshift(newEntry);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(tokens.slice(0, 20)));
+}

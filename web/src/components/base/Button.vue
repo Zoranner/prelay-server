@@ -46,7 +46,7 @@ const variantClass = computed(() => {
     case 'secondary':
       return 'border border-stone-200 hover:bg-stone-50 text-stone-600';
     case 'danger':
-      return 'border border-[#ecc8c8] hover:bg-[#fdf3f3] text-[#a83232]';
+      return 'bg-[#a83232] hover:bg-[#8c2828] text-white';
     case 'teal':
       return 'border border-[#93bfbf] hover:bg-[#f0f8f8] text-[#1a5c5c]';
     case 'ghost':

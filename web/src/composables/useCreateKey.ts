@@ -43,10 +43,8 @@ export function useCreateKey() {
       createdToken.value = res.data.token;
       saveToken({
         token: res.data.token,
-        name:
-          form.value.name.trim() ||
-          (PROVIDER_LABELS[form.value.provider_type] ?? form.value.provider_type),
-        providerType: form.value.provider_type,
+        name: res.data.name,
+        providerType: res.data.provider_type,
         createdAt: Date.now(),
       });
       form.value = {

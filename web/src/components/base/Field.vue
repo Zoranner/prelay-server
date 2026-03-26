@@ -1,7 +1,7 @@
 <template>
   <div :class="span ? 'col-span-2' : ''">
     <dt class="text-xs font-medium text-stone-400 uppercase tracking-wide">{{ term }}</dt>
-    <dd class="mt-1 font-medium text-stone-800">
+    <dd class="mt-1 font-medium text-stone-800 truncate" :title="value">
       <slot>{{ value || '—' }}</slot>
     </dd>
   </div>

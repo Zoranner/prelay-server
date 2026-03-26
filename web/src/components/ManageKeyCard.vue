@@ -3,7 +3,7 @@
   <div class="px-6 py-5">
     <div v-if="storedTokens.length > 0" class="mb-3">
       <div class="flex items-center gap-2 mb-2">
-        <span class="text-xs font-medium text-stone-400 uppercase tracking-wide">已存储的密钥</span>
+        <span class="text-xs font-medium text-stone-400 uppercase tracking-wide">本地存储的密钥</span>
         <span class="text-xs text-stone-400">(点击选择)</span>
       </div>
       <div class="flex flex-wrap gap-2">
@@ -14,10 +14,8 @@
           :dot="true"
           :dot-class="providerDotClass(item.providerType)"
           :variant="lookupToken === item.token ? 'primary' : 'default'"
-          closable
           :title="item.token"
           @click="selectStored(item)"
-          @close="onDeleteStoredToken(item)"
         />
       </div>
     </div>
@@ -89,7 +87,7 @@
 
       <div class="flex gap-2">
         <Button variant="secondary" block @click="cancelEdit"> 取消 </Button>
-        <Button variant="primary" block :loading="saving" @click="saveEdit">
+        <Button variant="primary" block :loading="saving" @click="onSaveEdit">
           {{ saving ? '保存中…' : '保存修改' }}
         </Button>
       </div>
@@ -104,7 +102,6 @@ import { useModal } from '../composables/useModal';
 import { Button, Input, Select, Tag, Alert, Field, Badge } from './base';
 import {
   getStoredTokens,
-  removeStoredToken,
   providerDotClass,
   type StoredToken,
 } from '../utils/providers';
@@ -149,23 +146,17 @@ function onDelete() {
   });
 }
 
+async function onSaveEdit() {
+  await saveEdit();
+  storedTokens.value = getStoredTokens();
+}
+
 function onRegenerate() {
   confirmModal.show({
     title: '刷新密钥',
     message: '刷新后，使用旧密钥的连接将立即失效。确定要刷新吗？',
     onConfirm: async () => {
       await regenerate();
-      confirmModal.hide();
-    },
-  });
-}
-
-function onDeleteStoredToken(item: StoredToken) {
-  confirmModal.show({
-    title: '删除已存储密钥',
-    message: `确定要删除「${item.name}」吗？`,
-    onConfirm: () => {
-      removeStoredToken(item.token);
       storedTokens.value = getStoredTokens();
       confirmModal.hide();
     },

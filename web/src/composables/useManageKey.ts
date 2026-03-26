@@ -1,6 +1,12 @@
 import { ref } from 'vue';
 import { configApi, type ProviderConfig } from '../api/index';
-import { DEFAULT_BASE_URLS, copyToClipboard, removeStoredToken } from '../utils/providers';
+import {
+  DEFAULT_BASE_URLS,
+  copyToClipboard,
+  removeStoredToken,
+  updateStoredToken,
+  replaceStoredToken,
+} from '../utils/providers';
 
 export function useManageKey() {
   const lookupToken = ref('');
@@ -69,10 +75,14 @@ export function useManageKey() {
       if (editForm.value.api_key.trim()) payload.api_key = editForm.value.api_key;
       const res = await configApi.update(config.value.id, payload);
       config.value = res.data;
+      updateStoredToken(lookupToken.value, {
+        name: res.data.name,
+        providerType: res.data.provider_type,
+      });
       editing.value = false;
-      actionMsg.value = { type: 'success', text: '配置已更新' };
+      actionMsg.value = { type: 'success', text: '密钥配置已更新' };
     } catch {
-      editError.value = '更新失败，请稍后重试';
+      editError.value = '密钥配置更新失败，请稍后重试';
     } finally {
       saving.value = false;
     }
@@ -85,16 +95,23 @@ export function useManageKey() {
     actionMsg.value = null;
     try {
       const res = await configApi.regenerateToken(config.value.id);
+      const oldToken = lookupToken.value;
       const newToken = res.data.token;
+      replaceStoredToken(oldToken, {
+        token: newToken,
+        name: config.value.name,
+        providerType: config.value.provider_type,
+        createdAt: Date.now(),
+      });
       config.value = { ...config.value, token: newToken };
       lookupToken.value = newToken;
       await copyToClipboard(newToken);
       actionMsg.value = {
         type: 'success',
-        text: '密钥已刷新并复制到剪贴板，请更新你的 AI 工具配置',
+        text: '密钥已刷新并复制到剪贴板',
       };
     } catch {
-      actionMsg.value = { type: 'error', text: '刷新失败，请稍后重试' };
+      actionMsg.value = { type: 'error', text: '密钥刷新失败，请稍后重试' };
     } finally {
       regenerating.value = false;
     }
@@ -111,9 +128,9 @@ export function useManageKey() {
       removeStoredToken(tokenToDelete);
       config.value = null;
       lookupToken.value = '';
-      actionMsg.value = { type: 'success', text: '配置已删除' };
+      actionMsg.value = { type: 'success', text: '密钥配置已删除' };
     } catch {
-      actionMsg.value = { type: 'error', text: '删除失败，请稍后重试' };
+      actionMsg.value = { type: 'error', text: '密钥配置删除失败，请稍后重试' };
     } finally {
       deleting.value = false;
     }

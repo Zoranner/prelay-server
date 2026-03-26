@@ -2,7 +2,7 @@
   <div class="relative inline-flex" @click="$emit('click')">
     <span
       class="inline-flex items-center gap-1.5 bg-stone-50 border border-stone-200 rounded-lg px-2.5 py-1.5 text-xs transition-colors"
-      :class="[variantClass, { 'max-w-[200px]': truncate }]"
+      :class="[variantClass, { 'max-w-50': truncate }]"
     >
       <span v-if="dot" class="shrink-0 w-1.5 h-1.5 rounded-full" :class="dotClass"></span>
       <span v-if="$slots.icon" class="shrink-0">
