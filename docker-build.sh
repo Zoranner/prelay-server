@@ -7,8 +7,8 @@ IMAGE_TAG="${1:-latest}"
 echo "[docker-build] Building image: ${IMAGE_NAME}:${IMAGE_TAG}"
 
 docker buildx build \
-    --tag "${IMAGE_NAME}:${IMAGE_TAG}" \
-    --file Dockerfile \
+    -t "${IMAGE_NAME}:${IMAGE_TAG}" \
+    -f Dockerfile \
     --load \
     .
 
