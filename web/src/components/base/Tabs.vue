@@ -4,7 +4,11 @@
       v-for="tab in tabs"
       :key="tab.value"
       class="flex-1 py-3.5 text-sm font-medium transition-colors border-b-2 -mb-px"
-      :class="modelValue === tab.value ? 'border-[#1a5c5c] text-[#1a5c5c]' : 'border-transparent text-stone-400 hover:text-stone-600'"
+      :class="
+        modelValue === tab.value
+          ? 'border-[#1a5c5c] text-[#1a5c5c]'
+          : 'border-transparent text-stone-400 hover:text-stone-600'
+      "
       @click="$emit('update:modelValue', tab.value)"
     >
       {{ tab.label }}

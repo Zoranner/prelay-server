@@ -8,9 +8,9 @@
 /static/*
 !/static/.gitkeep
 
-# Frontend dependencies
-/frontend/node_modules
-/frontend/dist
+# App dependencies
+/web/node_modules
+/web/dist
 
 # Environment
 .env

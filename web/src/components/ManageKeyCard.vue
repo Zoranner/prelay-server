@@ -102,7 +102,12 @@ import { ref } from 'vue';
 import { useManageKey } from '../composables/useManageKey';
 import { useModal } from '../composables/useModal';
 import { Button, Input, Select, Tag, Alert, Field, Badge } from './base';
-import { getStoredTokens, removeStoredToken, providerDotClass, type StoredToken } from '../utils/providers';
+import {
+  getStoredTokens,
+  removeStoredToken,
+  providerDotClass,
+  type StoredToken,
+} from '../utils/providers';
 
 const props = defineProps<{
   confirmModal: ReturnType<typeof useModal>;
