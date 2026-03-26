@@ -56,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
         .fallback_service(ServeDir::new("static").append_index_html_on_directories(true))
         .layer(CorsLayer::permissive());
 
-    let port: u16 = std::env::var("PORT")
+    let port: u16 = std::env::var("LISTEN_PORT")
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(3000);
