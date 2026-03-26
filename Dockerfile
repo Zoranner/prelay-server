@@ -8,7 +8,7 @@ RUN bun run build
 # vite outDir: '../static' → 输出到 /app/static
 
 # Stage 2: cargo-chef 生成依赖清单
-FROM rust:1.86-slim AS chef
+FROM rust:1-slim AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /app
 
