@@ -34,7 +34,7 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-RUN useradd --system --no-create-home relay
+RUN useradd --system --no-create-home --uid 1000 relay
 WORKDIR /app
 COPY --from=backend-builder /app/target/release/provider-relay .
 COPY --from=web-builder /app/static ./static
