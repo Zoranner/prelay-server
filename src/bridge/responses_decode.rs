@@ -30,6 +30,7 @@ pub fn decode_responses_request(value: Value) -> Result<InternalRequest, AppErro
         stream,
         max_tokens: None,
         previous_response_id,
+        tools: Vec::new(),
         messages: decode_input(input)?,
     })
 }

@@ -1,7 +1,9 @@
 use serde_json::Value;
 
 use crate::{
-    bridge::internal::{InternalContentPart, InternalMessage, InternalRequest, InternalRole},
+    bridge::internal::{
+        InternalContentPart, InternalMessage, InternalRequest, InternalRole, InternalTool,
+    },
     error::AppError,
 };
 
@@ -42,11 +44,50 @@ pub fn decode_anthropic_request(value: Value) -> Result<InternalRequest, AppErro
         stream,
         max_tokens,
         previous_response_id: None,
+        tools: decode_tools(value.get("tools"))?,
         messages: decoded,
     })
 }
 
+fn decode_tools(value: Option<&Value>) -> Result<Vec<InternalTool>, AppError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let tools = value
+        .as_array()
+        .ok_or_else(|| AppError::BadRequest("tools 必须是数组".to_string()))?;
+
+    tools
+        .iter()
+        .map(|tool| {
+            let name = tool
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.trim().is_empty())
+                .ok_or_else(|| AppError::BadRequest("tool.name 不能为空".to_string()))?
+                .to_string();
+            let input_schema = tool
+                .get("input_schema")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({ "type": "object" }));
+
+            Ok(InternalTool {
+                name,
+                description: tool
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                input_schema,
+            })
+        })
+        .collect()
+}
+
 fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
+    if let Some(tool_message) = decode_tool_result_message(value)? {
+        return Ok(tool_message);
+    }
+
     let role = value
         .get("role")
         .and_then(Value::as_str)
@@ -63,6 +104,42 @@ fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
         tool_call_id: None,
         tool_calls: Vec::new(),
     })
+}
+
+fn decode_tool_result_message(value: &Value) -> Result<Option<InternalMessage>, AppError> {
+    let Some(parts) = value.get("content").and_then(Value::as_array) else {
+        return Ok(None);
+    };
+    let Some(tool_result) = parts.iter().find(|part| {
+        part.get("type")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| kind == "tool_result")
+    }) else {
+        return Ok(None);
+    };
+    let tool_call_id = tool_result
+        .get("tool_use_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+        .ok_or_else(|| AppError::BadRequest("tool_result.tool_use_id 不能为空".to_string()))?
+        .to_string();
+
+    Ok(Some(InternalMessage {
+        role: InternalRole::Tool,
+        content: decode_tool_result_content(tool_result.get("content"))?,
+        tool_call_id: Some(tool_call_id),
+        tool_calls: Vec::new(),
+    }))
+}
+
+fn decode_tool_result_content(value: Option<&Value>) -> Result<Vec<InternalContentPart>, AppError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    if let Some(text) = value.as_str() {
+        return Ok(vec![InternalContentPart::Text(text.to_string())]);
+    }
+    decode_content(value)
 }
 
 fn decode_role(role: &str) -> Result<InternalRole, AppError> {
@@ -163,5 +240,68 @@ mod tests {
             vec![InternalContentPart::Text("Be concise.".to_string())]
         );
         assert_eq!(request.messages[1].role, InternalRole::User);
+    }
+
+    #[test]
+    fn decodes_anthropic_tools_to_internal_tools() {
+        let request = decode_anthropic_request(json!({
+            "model": "deepseek-chat",
+            "max_tokens": 1024,
+            "tools": [
+                {
+                    "name": "read_file",
+                    "description": "Read a file",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "path": { "type": "string" }
+                        },
+                        "required": ["path"]
+                    }
+                }
+            ],
+            "messages": [
+                { "role": "user", "content": "read Cargo.toml" }
+            ]
+        }))
+        .expect("decode anthropic request");
+
+        assert_eq!(request.tools.len(), 1);
+        assert_eq!(request.tools[0].name, "read_file");
+        assert_eq!(request.tools[0].description.as_deref(), Some("Read a file"));
+        assert_eq!(request.tools[0].input_schema["type"], "object");
+        assert_eq!(
+            request.tools[0].input_schema["properties"]["path"]["type"],
+            "string"
+        );
+    }
+
+    #[test]
+    fn decodes_tool_result_block_to_internal_tool_message() {
+        let request = decode_anthropic_request(json!({
+            "model": "deepseek-chat",
+            "max_tokens": 1024,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_1",
+                            "content": "file text"
+                        }
+                    ]
+                }
+            ]
+        }))
+        .expect("decode anthropic request");
+
+        assert_eq!(request.messages.len(), 1);
+        assert_eq!(request.messages[0].role, InternalRole::Tool);
+        assert_eq!(request.messages[0].tool_call_id.as_deref(), Some("call_1"));
+        assert_eq!(
+            request.messages[0].content,
+            vec![InternalContentPart::Text("file text".to_string())]
+        );
     }
 }

@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use crate::{
     bridge::internal::{
         InternalContentPart, InternalMessage, InternalOutputItem, InternalRequest,
-        InternalResponse, InternalRole, InternalToolCall, InternalUsage,
+        InternalResponse, InternalRole, InternalTool, InternalToolCall, InternalUsage,
     },
     error::AppError,
 };
@@ -16,6 +16,9 @@ pub fn encode_chat_request(request: &InternalRequest) -> Value {
     });
     if let Some(max_tokens) = request.max_tokens {
         value["max_tokens"] = json!(max_tokens);
+    }
+    if !request.tools.is_empty() {
+        value["tools"] = json!(request.tools.iter().map(encode_tool).collect::<Vec<_>>());
     }
     value
 }
@@ -129,6 +132,20 @@ fn encode_tool_call(tool_call: &InternalToolCall) -> Value {
     })
 }
 
+fn encode_tool(tool: &InternalTool) -> Value {
+    let mut function = json!({
+        "name": tool.name,
+        "parameters": tool.input_schema,
+    });
+    if let Some(description) = &tool.description {
+        function["description"] = json!(description);
+    }
+    json!({
+        "type": "function",
+        "function": function,
+    })
+}
+
 fn encode_role(role: &InternalRole) -> &'static str {
     match role {
         InternalRole::User => "user",
@@ -166,7 +183,7 @@ mod tests {
 
     use super::{decode_chat_response, decode_chat_sse_text_deltas, encode_chat_request};
     use crate::bridge::internal::{
-        InternalContentPart, InternalMessage, InternalRequest, InternalRole,
+        InternalContentPart, InternalMessage, InternalRequest, InternalRole, InternalTool,
     };
 
     #[test]
@@ -176,6 +193,7 @@ mod tests {
             stream: false,
             max_tokens: None,
             previous_response_id: None,
+            tools: Vec::new(),
             messages: vec![
                 InternalMessage {
                     role: InternalRole::System,
@@ -210,6 +228,7 @@ mod tests {
             stream: false,
             max_tokens: None,
             previous_response_id: None,
+            tools: Vec::new(),
             messages: vec![InternalMessage {
                 role: InternalRole::Tool,
                 content: vec![InternalContentPart::Text("file text".to_string())],
@@ -221,6 +240,43 @@ mod tests {
         assert_eq!(encoded["messages"][0]["role"], "tool");
         assert_eq!(encoded["messages"][0]["tool_call_id"], "call_1");
         assert_eq!(encoded["messages"][0]["content"], "file text");
+    }
+
+    #[test]
+    fn encodes_internal_tools_to_chat_completions_functions() {
+        let encoded = encode_chat_request(&InternalRequest {
+            model: "deepseek-chat".to_string(),
+            stream: false,
+            max_tokens: None,
+            previous_response_id: None,
+            tools: vec![InternalTool {
+                name: "read_file".to_string(),
+                description: Some("Read a file".to_string()),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" }
+                    }
+                }),
+            }],
+            messages: vec![InternalMessage {
+                role: InternalRole::User,
+                content: vec![InternalContentPart::Text("read".to_string())],
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+            }],
+        });
+
+        assert_eq!(encoded["tools"][0]["type"], "function");
+        assert_eq!(encoded["tools"][0]["function"]["name"], "read_file");
+        assert_eq!(
+            encoded["tools"][0]["function"]["description"],
+            "Read a file"
+        );
+        assert_eq!(
+            encoded["tools"][0]["function"]["parameters"]["properties"]["path"]["type"],
+            "string"
+        );
     }
 
     #[test]

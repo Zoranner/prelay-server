@@ -5,13 +5,17 @@ use crate::bridge::internal::{
 };
 
 pub fn encode_anthropic_response(response: InternalResponse) -> Value {
+    let has_tool_call = response
+        .output
+        .iter()
+        .any(|item| matches!(item, InternalOutputItem::FunctionToolCall { .. }));
     json!({
         "id": response.id,
         "type": "message",
         "role": "assistant",
         "model": response.model,
         "content": response.output.into_iter().flat_map(encode_output_item).collect::<Vec<_>>(),
-        "stop_reason": "end_turn",
+        "stop_reason": if has_tool_call { "tool_use" } else { "end_turn" },
         "stop_sequence": null,
         "usage": response.usage.map(encode_usage),
     })
@@ -22,7 +26,16 @@ fn encode_output_item(item: InternalOutputItem) -> Vec<Value> {
         InternalOutputItem::Message { content, .. } => {
             content.into_iter().map(encode_content_part).collect()
         }
-        InternalOutputItem::FunctionToolCall { .. } => Vec::new(),
+        InternalOutputItem::FunctionToolCall {
+            id,
+            name,
+            arguments,
+        } => vec![json!({
+            "type": "tool_use",
+            "id": id,
+            "name": name,
+            "input": serde_json::from_str::<Value>(&arguments).unwrap_or_else(|_| json!({})),
+        })],
     }
 }
 
@@ -75,5 +88,25 @@ mod tests {
         assert_eq!(encoded["stop_reason"], "end_turn");
         assert_eq!(encoded["usage"]["input_tokens"], 10);
         assert_eq!(encoded["usage"]["output_tokens"], 5);
+    }
+
+    #[test]
+    fn encodes_internal_tool_call_to_anthropic_tool_use() {
+        let encoded = encode_anthropic_response(InternalResponse {
+            id: "msg_123".to_string(),
+            model: "deepseek-chat".to_string(),
+            output: vec![InternalOutputItem::FunctionToolCall {
+                id: "call_1".to_string(),
+                name: "read_file".to_string(),
+                arguments: "{\"path\":\"Cargo.toml\"}".to_string(),
+            }],
+            usage: None,
+        });
+
+        assert_eq!(encoded["content"][0]["type"], "tool_use");
+        assert_eq!(encoded["content"][0]["id"], "call_1");
+        assert_eq!(encoded["content"][0]["name"], "read_file");
+        assert_eq!(encoded["content"][0]["input"]["path"], "Cargo.toml");
+        assert_eq!(encoded["stop_reason"], "tool_use");
     }
 }

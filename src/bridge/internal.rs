@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InternalRequest {
@@ -6,7 +7,15 @@ pub struct InternalRequest {
     pub stream: bool,
     pub max_tokens: Option<i64>,
     pub previous_response_id: Option<String>,
+    pub tools: Vec<InternalTool>,
     pub messages: Vec<InternalMessage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InternalTool {
+    pub name: String,
+    pub description: Option<String>,
+    pub input_schema: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
