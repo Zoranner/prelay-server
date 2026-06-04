@@ -28,6 +28,7 @@ pub fn decode_responses_request(value: Value) -> Result<InternalRequest, AppErro
     Ok(InternalRequest {
         model,
         stream,
+        max_tokens: None,
         previous_response_id,
         messages: decode_input(input)?,
     })

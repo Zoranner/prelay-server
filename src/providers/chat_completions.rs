@@ -9,11 +9,15 @@ use crate::{
 };
 
 pub fn encode_chat_request(request: &InternalRequest) -> Value {
-    json!({
+    let mut value = json!({
         "model": request.model,
         "stream": request.stream,
         "messages": request.messages.iter().map(encode_message).collect::<Vec<_>>(),
-    })
+    });
+    if let Some(max_tokens) = request.max_tokens {
+        value["max_tokens"] = json!(max_tokens);
+    }
+    value
 }
 
 pub fn decode_chat_response(value: Value) -> Result<InternalResponse, AppError> {
@@ -170,6 +174,7 @@ mod tests {
         let encoded = encode_chat_request(&InternalRequest {
             model: "deepseek-chat".to_string(),
             stream: false,
+            max_tokens: None,
             previous_response_id: None,
             messages: vec![
                 InternalMessage {
@@ -203,6 +208,7 @@ mod tests {
         let encoded = encode_chat_request(&InternalRequest {
             model: "deepseek-chat".to_string(),
             stream: false,
+            max_tokens: None,
             previous_response_id: None,
             messages: vec![InternalMessage {
                 role: InternalRole::Tool,

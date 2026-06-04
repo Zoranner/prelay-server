@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct InternalRequest {
     pub model: String,
     pub stream: bool,
+    pub max_tokens: Option<i64>,
     pub previous_response_id: Option<String>,
     pub messages: Vec<InternalMessage>,
 }

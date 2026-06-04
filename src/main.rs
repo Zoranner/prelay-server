@@ -57,6 +57,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .nest("/api", admin_router)
         .merge(routes::chat::router().with_state(state.clone()))
+        .merge(routes::messages::router().with_state(state.clone()))
         .merge(routes::models::router().with_state(state.clone()))
         .merge(routes::responses::router().with_state(state.clone()))
         .nest("/proxy", proxy_router)
