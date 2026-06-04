@@ -1,0 +1,237 @@
+use axum::{extract::State, routing::post, Json, Router};
+use serde_json::Value;
+
+use crate::{
+    db,
+    error::AppError,
+    stats::{insert_request_log, RequestLogInsert},
+    AppState,
+};
+
+pub fn router() -> Router<AppState> {
+    Router::new().route("/v1/chat/completions", post(create_chat_completion))
+}
+
+async fn create_chat_completion(
+    State(state): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, AppError> {
+    let started_at = std::time::Instant::now();
+    let model = payload
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::BadRequest("model 不能为空".to_string()))?
+        .to_string();
+    let is_streaming = payload
+        .get("stream")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let provider = db::list_configs(&state.db)
+        .await?
+        .into_iter()
+        .find(|provider| provider.name == model)
+        .ok_or_else(|| AppError::BadRequest(format!("模型 {model} 未配置")))?;
+    let upstream_url = format!(
+        "{}/chat/completions",
+        provider.base_url.trim_end_matches('/')
+    );
+    let upstream_response = state
+        .client
+        .post(upstream_url)
+        .bearer_auth(&provider.api_key)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|error| AppError::Internal(error.into()))?;
+
+    if !upstream_response.status().is_success() {
+        let status = upstream_response.status();
+        insert_request_log(
+            &state.db,
+            RequestLogInsert {
+                protocol_in: "chat_completions".to_string(),
+                protocol_out: "chat_completions".to_string(),
+                protocol_upstream: "chat_completions".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                model_requested: model.clone(),
+                model_upstream: model,
+                status: "failed".to_string(),
+                http_status: status.as_u16() as i64,
+                is_streaming,
+                input_tokens: None,
+                output_tokens: None,
+                latency_ms: started_at.elapsed().as_millis() as i64,
+            },
+        )
+        .await?;
+        return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
+    }
+
+    let response = upstream_response
+        .json::<Value>()
+        .await
+        .map_err(|error| AppError::Internal(error.into()))?;
+    insert_request_log(
+        &state.db,
+        RequestLogInsert {
+            protocol_in: "chat_completions".to_string(),
+            protocol_out: "chat_completions".to_string(),
+            protocol_upstream: "chat_completions".to_string(),
+            provider_id: provider.id,
+            provider_name: provider.name,
+            model_requested: model,
+            model_upstream: response
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string(),
+            status: "success".to_string(),
+            http_status: 200,
+            is_streaming,
+            input_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("prompt_tokens"))
+                .and_then(Value::as_i64),
+            output_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("completion_tokens"))
+                .and_then(Value::as_i64),
+            latency_ms: started_at.elapsed().as_millis() as i64,
+        },
+    )
+    .await?;
+
+    Ok(Json(response))
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{extract::State, routing::post, Json, Router};
+    use serde_json::json;
+    use sqlx::sqlite::SqlitePoolOptions;
+    use tokio::net::TcpListener;
+
+    use super::create_chat_completion;
+    use crate::{db, AppState};
+
+    #[tokio::test]
+    async fn forwards_chat_completion_request_to_configured_upstream() {
+        let upstream = spawn_chat_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(
+            &db,
+            "deepseek-chat",
+            "openai_compatible",
+            &upstream,
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+
+        let response = create_chat_completion(
+            State(state),
+            axum::Json(json!({
+                "model": "deepseek-chat",
+                "messages": [
+                    { "role": "user", "content": "hello" }
+                ]
+            })),
+        )
+        .await
+        .expect("create chat completion");
+
+        assert_eq!(response.0["id"], "chatcmpl_test");
+        assert_eq!(
+            response.0["choices"][0]["message"]["content"],
+            "chat upstream hello"
+        );
+    }
+
+    #[tokio::test]
+    async fn records_successful_chat_completion_request_log() {
+        let upstream = spawn_chat_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(
+            &db,
+            "deepseek-chat",
+            "openai_compatible",
+            &upstream,
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+
+        let _response = create_chat_completion(
+            State(state.clone()),
+            axum::Json(json!({
+                "model": "deepseek-chat",
+                "messages": [
+                    { "role": "user", "content": "hello" }
+                ]
+            })),
+        )
+        .await
+        .expect("create chat completion");
+        let overview = crate::stats::overview(&state.db)
+            .await
+            .expect("stats overview");
+
+        assert_eq!(overview.total_requests, 1);
+        assert_eq!(overview.successful_requests, 1);
+        assert_eq!(overview.input_tokens, 3);
+        assert_eq!(overview.output_tokens, 4);
+    }
+
+    async fn spawn_chat_upstream() -> String {
+        async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+            assert_eq!(payload["model"], "deepseek-chat");
+            assert_eq!(payload["messages"][0]["role"], "user");
+            assert_eq!(payload["messages"][0]["content"], "hello");
+            Json(json!({
+                "id": "chatcmpl_test",
+                "model": payload["model"],
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "chat upstream hello"
+                        }
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 3,
+                    "completion_tokens": 4
+                }
+            }))
+        }
+
+        let app = Router::new().route("/chat/completions", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+}
