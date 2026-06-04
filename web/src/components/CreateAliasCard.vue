@@ -62,6 +62,15 @@
           <div class="mt-1 text-xs text-stone-400 truncate">
             {{ providerLabel(alias.provider_id) }}
           </div>
+          <div class="mt-2 flex flex-wrap gap-1.5">
+            <span
+              v-for="protocol in alias.downstream_protocols"
+              :key="protocol"
+              class="font-mono text-[11px] px-1.5 py-0.5 rounded border border-stone-200 bg-white text-stone-500"
+            >
+              {{ protocol }}
+            </span>
+          </div>
         </div>
       </div>
     </div>

@@ -26,7 +26,7 @@ async fn create_chat_completion(
         .get("stream")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let resolved = db::get_provider_by_model(&state.db, &model)
+    let resolved = db::get_provider_by_model(&state.db, &model, "chat_completions")
         .await?
         .ok_or_else(|| AppError::BadRequest(format!("模型 {model} 未配置")))?;
     let provider = resolved.provider;
@@ -259,6 +259,46 @@ mod tests {
         .expect("create chat completion");
 
         assert_eq!(response.0["model"], "deepseek-chat");
+    }
+
+    #[tokio::test]
+    async fn rejects_model_alias_when_chat_protocol_is_not_allowed() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        let provider = db::create_config(
+            &db,
+            "DeepSeek Provider",
+            "openai_compatible",
+            "http://127.0.0.1:1",
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        db::create_model_alias(&db, "coder", &provider.id, "deepseek-chat", &["responses"])
+            .await
+            .expect("create alias");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+
+        let error = create_chat_completion(
+            State(state),
+            axum::Json(json!({
+                "model": "coder",
+                "messages": [
+                    { "role": "user", "content": "hello" }
+                ]
+            })),
+        )
+        .await
+        .expect_err("blocked alias should fail before upstream");
+
+        assert!(format!("{error:?}").contains("模型 coder 未配置"));
     }
 
     #[tokio::test]

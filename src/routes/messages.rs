@@ -34,7 +34,7 @@ async fn create_message(
     let request = decode_anthropic_request(payload)?;
     let model_requested = request.model.clone();
     let is_streaming = request.stream;
-    let resolved = db::get_provider_by_model(&state.db, &request.model)
+    let resolved = db::get_provider_by_model(&state.db, &request.model, "anthropic_messages")
         .await?
         .ok_or_else(|| AppError::BadRequest(format!("模型 {} 未配置", request.model)))?;
     let provider = resolved.provider;

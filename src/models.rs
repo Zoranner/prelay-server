@@ -19,6 +19,7 @@ pub struct ModelAlias {
     pub alias: String,
     pub provider_id: String,
     pub upstream_model: String,
+    pub downstream_protocols: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,6 +51,7 @@ pub struct ModelAliasResponse {
     pub alias: String,
     pub provider_id: String,
     pub upstream_model: String,
+    pub downstream_protocols: Vec<String>,
 }
 
 impl From<ModelAlias> for ModelAliasResponse {
@@ -58,6 +60,7 @@ impl From<ModelAlias> for ModelAliasResponse {
             alias: alias.alias,
             provider_id: alias.provider_id,
             upstream_model: alias.upstream_model,
+            downstream_protocols: alias.downstream_protocols,
         }
     }
 }

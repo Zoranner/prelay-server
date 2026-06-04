@@ -26,7 +26,7 @@ async fn create_ollama_chat(
         .get("stream")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let resolved = db::get_provider_by_model(&state.db, &model)
+    let resolved = db::get_provider_by_model(&state.db, &model, "ollama_native")
         .await?
         .ok_or_else(|| AppError::BadRequest(format!("Ollama 模型 {model} 未配置")))?;
     let provider = resolved.provider;

@@ -45,6 +45,7 @@ export interface ModelAliasResponse {
   alias: string;
   provider_id: string;
   upstream_model: string;
+  downstream_protocols: string[];
 }
 
 export interface StatsOverview {

@@ -117,7 +117,8 @@ pub async fn list_model_aliases(pool: &SqlitePool) -> Result<Vec<ModelAlias>> {
         SELECT
             alias,
             provider_id,
-            upstream_model
+            upstream_model,
+            downstream_protocols_json
         FROM model_aliases
         WHERE enabled = 1
         ORDER BY alias ASC
@@ -135,6 +136,9 @@ pub async fn list_model_aliases(pool: &SqlitePool) -> Result<Vec<ModelAlias>> {
                 alias: row.get("alias"),
                 provider_id: row.get("provider_id"),
                 upstream_model: row.get("upstream_model"),
+                downstream_protocols: decode_downstream_protocols(
+                    row.get::<String, _>("downstream_protocols_json").as_str(),
+                ),
             }
         })
         .collect())
@@ -165,8 +169,12 @@ pub async fn get_config_by_token(pool: &SqlitePool, token: &str) -> Result<Optio
 pub async fn get_provider_by_model(
     pool: &SqlitePool,
     model: &str,
+    downstream_protocol: &str,
 ) -> Result<Option<ResolvedProvider>> {
     if let Some(alias) = get_model_alias(pool, model).await? {
+        if !alias_allows_protocol(&alias, downstream_protocol) {
+            return Ok(None);
+        }
         let Some(provider) = get_config_by_id(pool, &alias.provider_id).await? else {
             return Ok(None);
         };
@@ -215,8 +223,22 @@ pub async fn get_model_alias(pool: &SqlitePool, alias: &str) -> Result<Option<Mo
             alias: row.get("alias"),
             provider_id: row.get("provider_id"),
             upstream_model: row.get("upstream_model"),
+            downstream_protocols: decode_downstream_protocols(
+                row.get::<String, _>("downstream_protocols_json").as_str(),
+            ),
         }
     }))
+}
+
+fn alias_allows_protocol(alias: &ModelAlias, downstream_protocol: &str) -> bool {
+    alias
+        .downstream_protocols
+        .iter()
+        .any(|protocol| protocol == downstream_protocol)
+}
+
+fn decode_downstream_protocols(value: &str) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(value).unwrap_or_default()
 }
 
 pub async fn create_config(
@@ -293,6 +315,10 @@ pub async fn create_model_alias(
         alias: alias.to_string(),
         provider_id: provider_id.to_string(),
         upstream_model: upstream_model.to_string(),
+        downstream_protocols: downstream_protocols
+            .iter()
+            .map(|protocol| (*protocol).to_string())
+            .collect(),
     })
 }
 
@@ -389,13 +415,18 @@ mod tests {
         .await
         .expect("create alias");
 
-        let resolved = get_provider_by_model(&db, "coder")
+        let resolved = get_provider_by_model(&db, "coder", "responses")
             .await
             .expect("resolve provider")
             .expect("provider found");
 
         assert_eq!(resolved.provider.id, provider.id);
         assert_eq!(resolved.model_upstream, "deepseek-chat");
+
+        let blocked = get_provider_by_model(&db, "coder", "anthropic_messages")
+            .await
+            .expect("resolve provider");
+        assert!(blocked.is_none());
     }
 
     #[tokio::test]
@@ -416,12 +447,40 @@ mod tests {
         .await
         .expect("create provider");
 
-        let resolved = get_provider_by_model(&db, "deepseek-chat")
+        let resolved = get_provider_by_model(&db, "deepseek-chat", "responses")
             .await
             .expect("resolve provider")
             .expect("provider found");
 
         assert_eq!(resolved.provider.id, provider.id);
         assert_eq!(resolved.model_upstream, "deepseek-chat");
+    }
+
+    #[tokio::test]
+    async fn does_not_fallback_to_provider_name_when_alias_protocol_is_blocked() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        super::init_schema(&db).await.expect("init schema");
+        let provider = create_config(
+            &db,
+            "coder",
+            "openai_compatible",
+            "https://api.deepseek.com",
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        create_model_alias(&db, "coder", &provider.id, "deepseek-chat", &["responses"])
+            .await
+            .expect("create alias");
+
+        let resolved = get_provider_by_model(&db, "coder", "chat_completions")
+            .await
+            .expect("resolve provider");
+
+        assert!(resolved.is_none());
     }
 }

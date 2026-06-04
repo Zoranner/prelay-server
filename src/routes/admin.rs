@@ -202,7 +202,7 @@ mod tests {
             .expect("send request");
         assert_eq!(response.status(), reqwest::StatusCode::CREATED);
 
-        let resolved = db::get_provider_by_model(&state.db, "coder")
+        let resolved = db::get_provider_by_model(&state.db, "coder", "responses")
             .await
             .expect("resolve alias")
             .expect("alias exists");
