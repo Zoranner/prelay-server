@@ -37,6 +37,8 @@ pub enum InternalOutputItem {
         id: String,
         name: String,
         arguments: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_content: Option<String>,
     },
 }
 
@@ -81,6 +83,16 @@ impl InternalOutputItem {
             InternalOutputItem::Message { .. } => None,
         }
     }
+
+    #[cfg(test)]
+    pub fn tool_call_reasoning_content(&self) -> Option<String> {
+        match self {
+            InternalOutputItem::FunctionToolCall {
+                reasoning_content, ..
+            } => reasoning_content.clone(),
+            InternalOutputItem::Message { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,6 +108,8 @@ pub struct InternalMessage {
     pub content: Vec<InternalContentPart>,
     pub tool_call_id: Option<String>,
     pub tool_calls: Vec<InternalToolCall>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

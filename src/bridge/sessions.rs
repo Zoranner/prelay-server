@@ -80,11 +80,13 @@ fn output_item_to_message(item: InternalOutputItem) -> InternalMessage {
             content,
             tool_call_id: None,
             tool_calls: Vec::new(),
+            reasoning_content: None,
         },
         InternalOutputItem::FunctionToolCall {
             id,
             name,
             arguments,
+            reasoning_content,
         } => InternalMessage {
             role: crate::bridge::internal::InternalRole::Assistant,
             content: Vec::new(),
@@ -94,6 +96,7 @@ fn output_item_to_message(item: InternalOutputItem) -> InternalMessage {
                 name,
                 arguments,
             }],
+            reasoning_content,
         },
     }
 }
@@ -131,6 +134,7 @@ mod tests {
                 content: vec![InternalContentPart::Text("first user".to_string())],
                 tool_call_id: None,
                 tool_calls: Vec::new(),
+                reasoning_content: None,
             }],
             &InternalResponse {
                 id: "resp_1".to_string(),
@@ -162,5 +166,104 @@ mod tests {
             messages[1].content,
             vec![InternalContentPart::Text("first assistant".to_string())]
         );
+    }
+
+    #[tokio::test]
+    async fn saves_and_loads_tool_call_reasoning_content() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+
+        save_response_session(
+            &db,
+            "resp_reasoning",
+            None,
+            "provider-1",
+            "deepseek-chat",
+            &[InternalMessage {
+                role: InternalRole::User,
+                content: vec![InternalContentPart::Text("read Cargo.toml".to_string())],
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+                reasoning_content: None,
+            }],
+            &InternalResponse {
+                id: "resp_reasoning".to_string(),
+                model: "deepseek-chat".to_string(),
+                output: vec![InternalOutputItem::FunctionToolCall {
+                    id: "call_1".to_string(),
+                    name: "read_file".to_string(),
+                    arguments: "{\"path\":\"Cargo.toml\"}".to_string(),
+                    reasoning_content: Some("Need to inspect the file first.".to_string()),
+                }],
+                usage: None,
+            },
+        )
+        .await
+        .expect("save session");
+
+        let messages = load_response_session_messages(&db, "resp_reasoning")
+            .await
+            .expect("load session")
+            .expect("session exists");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1].role, InternalRole::Assistant);
+        assert_eq!(
+            messages[1].reasoning_content.as_deref(),
+            Some("Need to inspect the file first.")
+        );
+        assert_eq!(messages[1].tool_calls[0].id, "call_1");
+    }
+
+    #[tokio::test]
+    async fn loads_old_session_json_without_reasoning_content() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+
+        sqlx::query(
+            r#"
+            INSERT INTO response_sessions (
+                response_id,
+                previous_response_id,
+                provider_id,
+                model,
+                input_messages_json,
+                output_items_json,
+                created_at
+            )
+            VALUES (?, NULL, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind("resp_old")
+        .bind("provider-1")
+        .bind("deepseek-chat")
+        .bind(
+            r#"[{"role":"User","content":[{"Text":"read Cargo.toml"}],"tool_call_id":null,"tool_calls":[]}]"#,
+        )
+        .bind(
+            r#"[{"FunctionToolCall":{"id":"call_1","name":"read_file","arguments":"{\"path\":\"Cargo.toml\"}"}}]"#,
+        )
+        .bind("2026-01-01T00:00:00Z")
+        .execute(&db)
+        .await
+        .expect("insert old session");
+
+        let messages = load_response_session_messages(&db, "resp_old")
+            .await
+            .expect("load session")
+            .expect("session exists");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].reasoning_content, None);
+        assert_eq!(messages[1].reasoning_content, None);
+        assert_eq!(messages[1].tool_calls[0].id, "call_1");
     }
 }

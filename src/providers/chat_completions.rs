@@ -40,10 +40,15 @@ pub fn decode_chat_response(value: Value) -> Result<InternalResponse, AppError> 
         .and_then(|choices| choices.first())
         .and_then(|choice| choice.get("message"))
         .ok_or_else(|| AppError::BadRequest("上游响应缺少 choices[0].message".to_string()))?;
+    let reasoning_content = message
+        .get("reasoning_content")
+        .and_then(Value::as_str)
+        .filter(|content| !content.trim().is_empty())
+        .map(str::to_string);
     let output = if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
         tool_calls
             .iter()
-            .filter_map(decode_tool_call)
+            .filter_map(|tool_call| decode_tool_call(tool_call, reasoning_content.clone()))
             .collect::<Vec<_>>()
     } else {
         let content = message
@@ -85,7 +90,10 @@ pub fn decode_chat_sse_text_deltas(body: &str) -> Vec<String> {
         .collect()
 }
 
-fn decode_tool_call(value: &Value) -> Option<InternalOutputItem> {
+fn decode_tool_call(
+    value: &Value,
+    reasoning_content: Option<String>,
+) -> Option<InternalOutputItem> {
     let id = value.get("id").and_then(Value::as_str)?.to_string();
     let function = value.get("function")?;
     let name = function.get("name").and_then(Value::as_str)?.to_string();
@@ -99,6 +107,7 @@ fn decode_tool_call(value: &Value) -> Option<InternalOutputItem> {
         id,
         name,
         arguments,
+        reasoning_content,
     })
 }
 
@@ -118,6 +127,11 @@ fn encode_message(message: &InternalMessage) -> Value {
             .iter()
             .map(encode_tool_call)
             .collect::<Vec<_>>());
+        if matches!(message.role, InternalRole::Assistant) {
+            if let Some(reasoning_content) = &message.reasoning_content {
+                value["reasoning_content"] = json!(reasoning_content);
+            }
+        }
     }
     value
 }
@@ -185,6 +199,7 @@ mod tests {
     use super::{decode_chat_response, decode_chat_sse_text_deltas, encode_chat_request};
     use crate::bridge::internal::{
         InternalContentPart, InternalMessage, InternalRequest, InternalRole, InternalTool,
+        InternalToolCall,
     };
 
     #[test]
@@ -201,6 +216,7 @@ mod tests {
                     content: vec![InternalContentPart::Text("Be concise.".to_string())],
                     tool_call_id: None,
                     tool_calls: Vec::new(),
+                    reasoning_content: None,
                 },
                 InternalMessage {
                     role: InternalRole::User,
@@ -210,6 +226,7 @@ mod tests {
                     ],
                     tool_call_id: None,
                     tool_calls: Vec::new(),
+                    reasoning_content: None,
                 },
             ],
         });
@@ -235,6 +252,7 @@ mod tests {
                 content: vec![InternalContentPart::Text("file text".to_string())],
                 tool_call_id: Some("call_1".to_string()),
                 tool_calls: Vec::new(),
+                reasoning_content: None,
             }],
         });
 
@@ -265,6 +283,7 @@ mod tests {
                 content: vec![InternalContentPart::Text("read".to_string())],
                 tool_call_id: None,
                 tool_calls: Vec::new(),
+                reasoning_content: None,
             }],
         });
 
@@ -347,6 +366,88 @@ mod tests {
             response.output[0].tool_call_arguments().as_deref(),
             Some("{\"path\":\"Cargo.toml\"}")
         );
+    }
+
+    #[test]
+    fn decodes_chat_tool_call_reasoning_content_to_internal_output_items() {
+        let response = decode_chat_response(json!({
+            "id": "chatcmpl_tools",
+            "model": "deepseek-chat",
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": null,
+                        "reasoning_content": "Need to inspect the file first.",
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": "{\"path\":\"Cargo.toml\"}"
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }))
+        .expect("decode chat response");
+
+        assert_eq!(
+            response.output[0].tool_call_reasoning_content().as_deref(),
+            Some("Need to inspect the file first.")
+        );
+    }
+
+    #[test]
+    fn encodes_assistant_tool_calls_with_reasoning_content() {
+        let encoded = encode_chat_request(&InternalRequest {
+            model: "deepseek-chat".to_string(),
+            stream: false,
+            max_tokens: None,
+            previous_response_id: None,
+            tools: Vec::new(),
+            messages: vec![InternalMessage {
+                role: InternalRole::Assistant,
+                content: Vec::new(),
+                tool_call_id: None,
+                tool_calls: vec![InternalToolCall {
+                    id: "call_1".to_string(),
+                    name: "read_file".to_string(),
+                    arguments: "{\"path\":\"Cargo.toml\"}".to_string(),
+                }],
+                reasoning_content: Some("Need to inspect the file first.".to_string()),
+            }],
+        });
+
+        assert_eq!(encoded["messages"][0]["role"], "assistant");
+        assert_eq!(
+            encoded["messages"][0]["reasoning_content"],
+            "Need to inspect the file first."
+        );
+        assert_eq!(encoded["messages"][0]["tool_calls"][0]["id"], "call_1");
+    }
+
+    #[test]
+    fn does_not_encode_reasoning_content_for_plain_assistant_text() {
+        let encoded = encode_chat_request(&InternalRequest {
+            model: "deepseek-chat".to_string(),
+            stream: false,
+            max_tokens: None,
+            previous_response_id: None,
+            tools: Vec::new(),
+            messages: vec![InternalMessage {
+                role: InternalRole::Assistant,
+                content: vec![InternalContentPart::Text("done".to_string())],
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+                reasoning_content: Some("hidden".to_string()),
+            }],
+        });
+
+        assert!(encoded["messages"][0].get("reasoning_content").is_none());
     }
 
     #[test]

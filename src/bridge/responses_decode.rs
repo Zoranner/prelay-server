@@ -42,6 +42,7 @@ fn decode_input(input: &Value) -> Result<Vec<InternalMessage>, AppError> {
             content: vec![InternalContentPart::Text(text.to_string())],
             tool_call_id: None,
             tool_calls: Vec::new(),
+            reasoning_content: None,
         }]);
     }
 
@@ -71,6 +72,7 @@ fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
                 .and_then(Value::as_str)
                 .map(str::to_string),
             tool_calls: Vec::new(),
+            reasoning_content: None,
         });
     }
 
@@ -92,6 +94,7 @@ fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
             .and_then(Value::as_str)
             .map(str::to_string),
         tool_calls: Vec::new(),
+        reasoning_content: None,
     })
 }
 

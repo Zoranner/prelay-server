@@ -29,6 +29,7 @@ fn encode_output_item(item: InternalOutputItem) -> Value {
             id,
             name,
             arguments,
+            ..
         } => json!({
             "type": "function_call",
             "id": id,
@@ -119,6 +120,7 @@ mod tests {
                 id: "call_1".to_string(),
                 name: "read_file".to_string(),
                 arguments: "{\"path\":\"Cargo.toml\"}".to_string(),
+                reasoning_content: None,
             }],
             usage: None,
         });

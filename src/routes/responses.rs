@@ -1293,6 +1293,7 @@ mod tests {
                             "message": {
                                 "role": "assistant",
                                 "content": null,
+                                "reasoning_content": "Need to inspect the file before answering.",
                                 "tool_calls": [
                                     {
                                         "id": "call_1",
@@ -1313,6 +1314,10 @@ mod tests {
             assert_eq!(messages[0]["role"], "user");
             assert_eq!(messages[0]["content"], "please read");
             assert_eq!(messages[1]["role"], "assistant");
+            assert_eq!(
+                messages[1]["reasoning_content"],
+                "Need to inspect the file before answering."
+            );
             assert_eq!(messages[1]["tool_calls"][0]["id"], "call_1");
             assert_eq!(messages[2]["role"], "tool");
             assert_eq!(messages[2]["tool_call_id"], "call_1");

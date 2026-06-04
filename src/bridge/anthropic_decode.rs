@@ -30,6 +30,7 @@ pub fn decode_anthropic_request(value: Value) -> Result<InternalRequest, AppErro
             content: decode_content(system)?,
             tool_call_id: None,
             tool_calls: Vec::new(),
+            reasoning_content: None,
         });
     }
     decoded.extend(
@@ -103,6 +104,7 @@ fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
         content: decode_content(content)?,
         tool_call_id: None,
         tool_calls: Vec::new(),
+        reasoning_content: None,
     })
 }
 
@@ -129,6 +131,7 @@ fn decode_tool_result_message(value: &Value) -> Result<Option<InternalMessage>, 
         content: decode_tool_result_content(tool_result.get("content"))?,
         tool_call_id: Some(tool_call_id),
         tool_calls: Vec::new(),
+        reasoning_content: None,
     }))
 }
 

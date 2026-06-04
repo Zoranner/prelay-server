@@ -93,6 +93,7 @@ mod tests {
                 content: vec![InternalContentPart::Text("hello".to_string())],
                 tool_call_id: None,
                 tool_calls: Vec::new(),
+                reasoning_content: None,
             }],
         });
 
