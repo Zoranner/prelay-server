@@ -107,14 +107,10 @@ pub async fn handle(
     }
 
     // Stream response body back to client (supports SSE streaming)
-    let stream = upstream_resp
-        .bytes_stream()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+    let stream = upstream_resp.bytes_stream().map_err(std::io::Error::other);
     let body = Body::from_stream(stream);
 
-    builder
-        .body(body)
-        .map_err(|e| AppError::Internal(e.into()))
+    builder.body(body).map_err(|e| AppError::Internal(e.into()))
 }
 
 fn extract_token(req: &Request<Body>) -> Option<String> {

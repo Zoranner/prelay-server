@@ -47,10 +47,11 @@ async fn main() -> anyhow::Result<()> {
         .with_state(state.clone());
 
     // Admin API routes
-    let admin_router = routes::admin::router().with_state(state);
+    let admin_router = routes::admin::router().with_state(state.clone());
 
     let app = Router::new()
         .nest("/api", admin_router)
+        .merge(routes::models::router().with_state(state.clone()))
         .nest("/proxy", proxy_router)
         // Serve built Vue frontend from ./static/
         .fallback_service(ServeDir::new("static").append_index_html_on_directories(true))
