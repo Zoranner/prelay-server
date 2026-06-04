@@ -21,6 +21,44 @@ pub async fn init_schema(pool: &SqlitePool) -> Result<()> {
     )
     .execute(pool)
     .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS request_logs (
+            id                  TEXT PRIMARY KEY,
+            created_at          TEXT NOT NULL,
+            protocol_in         TEXT,
+            protocol_out        TEXT,
+            protocol_upstream   TEXT,
+            provider_id         TEXT,
+            provider_name       TEXT,
+            model_requested     TEXT,
+            model_upstream      TEXT,
+            proxy_token_id      TEXT,
+            status              TEXT NOT NULL,
+            http_status         INTEGER,
+            error_code          TEXT,
+            error_message       TEXT,
+            is_streaming        INTEGER,
+            input_tokens        INTEGER,
+            output_tokens       INTEGER,
+            reasoning_tokens    INTEGER,
+            cache_read_tokens   INTEGER,
+            cache_write_tokens  INTEGER,
+            estimated_cost      REAL,
+            currency            TEXT,
+            latency_ms          INTEGER,
+            upstream_latency_ms INTEGER,
+            first_token_ms      INTEGER,
+            tool_call_count     INTEGER,
+            upstream_request_id TEXT,
+            metadata_json       TEXT
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
 

@@ -3,10 +3,12 @@ use sqlx::sqlite::SqlitePoolOptions;
 use std::net::SocketAddr;
 use tower_http::{cors::CorsLayer, services::ServeDir};
 
+mod bridge;
 mod db;
 mod error;
 mod models;
 mod routes;
+mod stats;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -47,11 +49,14 @@ async fn main() -> anyhow::Result<()> {
         .with_state(state.clone());
 
     // Admin API routes
-    let admin_router = routes::admin::router().with_state(state.clone());
+    let admin_router = routes::admin::router()
+        .merge(routes::stats::router())
+        .with_state(state.clone());
 
     let app = Router::new()
         .nest("/api", admin_router)
         .merge(routes::models::router().with_state(state.clone()))
+        .merge(routes::responses::router().with_state(state.clone()))
         .nest("/proxy", proxy_router)
         // Serve built Vue frontend from ./static/
         .fallback_service(ServeDir::new("static").append_index_html_on_directories(true))
