@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::{
     bridge::{
+        internal::InternalRequest,
         responses_decode::decode_responses_request,
         responses_encode::encode_responses_response,
         sessions::{load_response_session_messages, save_response_session},
@@ -21,6 +22,9 @@ use crate::{
     },
     db,
     error::AppError,
+    providers::anthropic_messages::{
+        decode_anthropic_messages_response, encode_anthropic_messages_request,
+    },
     providers::chat_completions::{decode_chat_response, encode_chat_request},
     providers::ollama::{decode_ollama_chat_response, encode_ollama_chat_request},
     stats::{insert_request_log, RequestLogInsert},
@@ -68,6 +72,17 @@ async fn create_response(
             provider,
             model_requested,
             is_streaming,
+            previous_response_id,
+            started_at,
+        )
+        .await;
+    }
+    if provider.uses_anthropic_auth() && !is_streaming {
+        return create_anthropic_messages_response(
+            &state,
+            request,
+            provider,
+            model_requested,
             previous_response_id,
             started_at,
         )
@@ -193,6 +208,105 @@ async fn create_response(
                 .as_ref()
                 .and_then(|usage| usage.output_tokens),
             reasoning_tokens,
+            latency_ms: started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: Some(tool_call_count),
+            upstream_request_id: None,
+        },
+    )
+    .await?;
+
+    Ok(Json(encode_responses_response(response)).into_response())
+}
+
+async fn create_anthropic_messages_response(
+    state: &AppState,
+    mut request: InternalRequest,
+    provider: crate::models::ProviderConfig,
+    model_requested: String,
+    previous_response_id: Option<String>,
+    started_at: std::time::Instant,
+) -> Result<Response, AppError> {
+    request = request_with_session_history(&state.db, request).await?;
+    let upstream_url = format!("{}/messages", provider.base_url.trim_end_matches('/'));
+    let upstream_started_at = std::time::Instant::now();
+    let upstream_response = state
+        .client
+        .post(upstream_url)
+        .header("x-api-key", &provider.api_key)
+        .header("anthropic-version", "2023-06-01")
+        .json(&encode_anthropic_messages_request(&request))
+        .send()
+        .await
+        .map_err(|error| AppError::Internal(error.into()))?;
+    let upstream_latency_ms = upstream_started_at.elapsed().as_millis() as i64;
+
+    if !upstream_response.status().is_success() {
+        let status = upstream_response.status();
+        insert_request_log(
+            &state.db,
+            RequestLogInsert {
+                protocol_in: "responses".to_string(),
+                protocol_out: "responses".to_string(),
+                protocol_upstream: "anthropic_messages".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                model_requested,
+                model_upstream: request.model,
+                status: "failed".to_string(),
+                http_status: status.as_u16() as i64,
+                is_streaming: false,
+                input_tokens: None,
+                output_tokens: None,
+                reasoning_tokens: None,
+                latency_ms: started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: None,
+                first_token_ms: None,
+                tool_call_count: None,
+                upstream_request_id: None,
+            },
+        )
+        .await?;
+        return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
+    }
+
+    let upstream_json = upstream_response
+        .json::<Value>()
+        .await
+        .map_err(|error| AppError::Internal(error.into()))?;
+    let mut response = decode_anthropic_messages_response(upstream_json)?;
+    response.id = format!("resp_{}", Uuid::new_v4().simple());
+    let tool_call_count = count_tool_calls(&response);
+    save_response_session(
+        &state.db,
+        &response.id,
+        previous_response_id.as_deref(),
+        &provider.id,
+        &response.model,
+        &request.messages,
+        &response,
+    )
+    .await?;
+    insert_request_log(
+        &state.db,
+        RequestLogInsert {
+            protocol_in: "responses".to_string(),
+            protocol_out: "responses".to_string(),
+            protocol_upstream: "anthropic_messages".to_string(),
+            provider_id: provider.id,
+            provider_name: provider.name,
+            model_requested,
+            model_upstream: response.model.clone(),
+            status: "success".to_string(),
+            http_status: 200,
+            is_streaming: false,
+            input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
+            output_tokens: response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.output_tokens),
+            reasoning_tokens: None,
             latency_ms: started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
             first_token_ms: None,
@@ -468,8 +582,8 @@ async fn create_native_response(
 
 async fn request_with_session_history(
     db: &sqlx::SqlitePool,
-    mut request: crate::bridge::internal::InternalRequest,
-) -> Result<crate::bridge::internal::InternalRequest, AppError> {
+    mut request: InternalRequest,
+) -> Result<InternalRequest, AppError> {
     let Some(previous_response_id) = request.previous_response_id.as_deref() else {
         return Ok(request);
     };
@@ -704,6 +818,51 @@ mod tests {
         assert_eq!(response["object"], "response");
         assert_eq!(response["model"], "llama3.2");
         assert_eq!(response["output"][0]["content"][0]["text"], "ollama hello");
+        assert_eq!(response["usage"]["input_tokens"], 3);
+        assert_eq!(response["usage"]["output_tokens"], 4);
+    }
+
+    #[tokio::test]
+    async fn forwards_non_streaming_responses_request_to_anthropic_messages_upstream() {
+        let upstream = spawn_native_anthropic_messages_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(
+            &db,
+            "claude-sonnet",
+            "anthropic_compatible",
+            &upstream,
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+            admin_token: None,
+        };
+
+        let response = create_response(
+            State(state),
+            axum::Json(json!({
+                "model": "claude-sonnet",
+                "input": "hello"
+            })),
+        )
+        .await
+        .expect("create response");
+        let response = response_json(response).await;
+
+        assert_eq!(response["object"], "response");
+        assert_eq!(response["model"], "claude-sonnet");
+        assert_eq!(
+            response["output"][0]["content"][0]["text"],
+            "anthropic hello"
+        );
         assert_eq!(response["usage"]["input_tokens"], 3);
         assert_eq!(response["usage"]["output_tokens"], 4);
     }
@@ -1430,6 +1589,38 @@ mod tests {
         }
 
         let app = Router::new().route("/chat", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_native_anthropic_messages_upstream() -> String {
+        async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+            assert_eq!(payload["model"], "claude-sonnet");
+            assert_eq!(payload["stream"], false);
+            assert_eq!(payload["messages"][0]["role"], "user");
+            assert_eq!(payload["messages"][0]["content"], "hello");
+            Json(json!({
+                "id": "msg_native",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet",
+                "content": [
+                    { "type": "text", "text": "anthropic hello" }
+                ],
+                "usage": {
+                    "input_tokens": 3,
+                    "output_tokens": 4
+                }
+            }))
+        }
+
+        let app = Router::new().route("/messages", post(handler));
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind upstream");
