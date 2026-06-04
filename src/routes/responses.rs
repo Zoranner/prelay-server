@@ -1,4 +1,5 @@
 use axum::{
+    body::Body,
     extract::State,
     http::header,
     response::{IntoResponse, Response},
@@ -13,12 +14,11 @@ use crate::{
         responses_decode::decode_responses_request,
         responses_encode::encode_responses_response,
         sessions::{load_response_session_messages, save_response_session},
+        stream::chat_sse_response_to_responses_sse,
     },
     db,
     error::AppError,
-    providers::chat_completions::{
-        decode_chat_response, decode_chat_sse_text_deltas, encode_chat_request,
-    },
+    providers::chat_completions::{decode_chat_response, encode_chat_request},
     providers::ollama::{decode_ollama_chat_response, encode_ollama_chat_request},
     stats::{insert_request_log, RequestLogInsert},
     AppState,
@@ -118,12 +118,6 @@ async fn create_response(
     }
 
     if is_streaming {
-        let upstream_body = upstream_response
-            .text()
-            .await
-            .map_err(|error| AppError::Internal(error.into()))?;
-        let chunks = decode_chat_sse_text_deltas(&upstream_body);
-        let chunk_refs = chunks.iter().map(String::as_str).collect::<Vec<_>>();
         insert_request_log(
             &state.db,
             RequestLogInsert {
@@ -148,9 +142,10 @@ async fn create_response(
             },
         )
         .await?;
+        let body = Body::from_stream(chat_sse_response_to_responses_sse(upstream_response));
         return Ok((
             [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
-            responses_sse_from_text_chunks(&chunk_refs),
+            body,
         )
             .into_response());
     }
@@ -451,25 +446,31 @@ fn count_tool_calls(response: &crate::bridge::internal::InternalResponse) -> i64
         .count() as i64
 }
 
+#[cfg(test)]
 fn responses_sse_from_text_chunks(chunks: &[&str]) -> String {
     let mut output = String::new();
     for chunk in chunks {
-        output.push_str("event: response.output_text.delta\n");
-        output.push_str("data: ");
-        output.push_str(chunk);
-        output.push_str("\n\n");
+        output.push_str(
+            std::str::from_utf8(&crate::bridge::stream::responses_text_delta_sse(chunk))
+                .expect("sse chunk is utf8"),
+        );
     }
-    output.push_str("event: response.completed\n");
-    output.push_str("data: {}\n\n");
-    output.push_str("data: [DONE]\n\n");
+    output.push_str(
+        std::str::from_utf8(&crate::bridge::stream::responses_completed_sse())
+            .expect("sse chunk is utf8"),
+    );
     output
 }
 
 #[cfg(test)]
 mod tests {
+    use axum::body::Body;
     use axum::{extract::State, middleware, response::IntoResponse, routing::post, Json, Router};
+    use bytes::Bytes;
+    use futures::StreamExt;
     use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
+    use std::{convert::Infallible, time::Duration};
     use tokio::net::TcpListener;
 
     use super::create_response;
@@ -833,6 +834,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn streams_responses_sse_delta_before_upstream_finishes() {
+        let upstream = spawn_delayed_streaming_chat_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(
+            &db,
+            "deepseek-chat",
+            "openai_compatible",
+            &upstream,
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+        let app = Router::new().merge(super::router().with_state(state));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("read test server address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let started = std::time::Instant::now();
+        let response = reqwest::Client::new()
+            .post(format!("http://{addr}/v1/responses"))
+            .json(&json!({
+                "model": "deepseek-chat",
+                "input": "hello",
+                "stream": true
+            }))
+            .send()
+            .await
+            .expect("send request");
+        let mut stream = response.bytes_stream();
+        let first = stream
+            .next()
+            .await
+            .expect("first response chunk")
+            .expect("first response chunk ok");
+        let elapsed = started.elapsed();
+        let first = String::from_utf8(first.to_vec()).expect("first chunk utf8");
+
+        assert!(
+            elapsed < Duration::from_millis(200),
+            "first relay chunk arrived after {elapsed:?}: {first}"
+        );
+        assert!(first.contains("event: response.output_text.delta"));
+        assert!(first.contains("data: hel"));
+
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn prepends_previous_response_messages_to_upstream_chat_request() {
         let upstream = spawn_history_asserting_chat_upstream().await;
         let db = SqlitePoolOptions::new()
@@ -1045,6 +1107,51 @@ mod tests {
                 "data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n\
                  data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n\
                  data: [DONE]\n\n",
+            )
+                .into_response()
+        }
+
+        let app = Router::new().route("/chat/completions", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_delayed_streaming_chat_upstream() -> String {
+        async fn handler(Json(payload): Json<serde_json::Value>) -> axum::response::Response {
+            use axum::response::IntoResponse;
+
+            assert_eq!(payload["model"], "deepseek-chat");
+            assert_eq!(payload["stream"], true);
+            let stream = futures::stream::unfold(0, |step| async move {
+                match step {
+                    0 => Some((
+                        Ok::<_, Infallible>(Bytes::from_static(
+                            b"data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n",
+                        )),
+                        1,
+                    )),
+                    1 => {
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                        Some((
+                            Ok::<_, Infallible>(Bytes::from_static(
+                                b"data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n\
+                                  data: [DONE]\n\n",
+                            )),
+                            2,
+                        ))
+                    }
+                    _ => None,
+                }
+            });
+            (
+                [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                Body::from_stream(stream),
             )
                 .into_response()
         }

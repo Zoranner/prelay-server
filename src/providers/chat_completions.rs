@@ -66,6 +66,7 @@ pub fn decode_chat_response(value: Value) -> Result<InternalResponse, AppError> 
     })
 }
 
+#[cfg(test)]
 pub fn decode_chat_sse_text_deltas(body: &str) -> Vec<String> {
     body.lines()
         .filter_map(|line| line.strip_prefix("data: "))
