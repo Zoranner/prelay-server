@@ -1,6 +1,7 @@
 use anyhow::Result;
 use serde::Serialize;
 use sqlx::SqlitePool;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct StatsOverview {
@@ -9,6 +10,67 @@ pub struct StatsOverview {
     pub failed_requests: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct RequestLogInsert {
+    pub protocol_in: String,
+    pub protocol_out: String,
+    pub protocol_upstream: String,
+    pub provider_id: String,
+    pub provider_name: String,
+    pub model_requested: String,
+    pub model_upstream: String,
+    pub status: String,
+    pub http_status: i64,
+    pub is_streaming: bool,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub latency_ms: i64,
+}
+
+pub async fn insert_request_log(pool: &SqlitePool, log: RequestLogInsert) -> Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO request_logs (
+            id,
+            created_at,
+            protocol_in,
+            protocol_out,
+            protocol_upstream,
+            provider_id,
+            provider_name,
+            model_requested,
+            model_upstream,
+            status,
+            http_status,
+            is_streaming,
+            input_tokens,
+            output_tokens,
+            latency_ms
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(chrono::Utc::now().to_rfc3339())
+    .bind(log.protocol_in)
+    .bind(log.protocol_out)
+    .bind(log.protocol_upstream)
+    .bind(log.provider_id)
+    .bind(log.provider_name)
+    .bind(log.model_requested)
+    .bind(log.model_upstream)
+    .bind(log.status)
+    .bind(log.http_status)
+    .bind(log.is_streaming)
+    .bind(log.input_tokens)
+    .bind(log.output_tokens)
+    .bind(log.latency_ms)
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }
 
 pub async fn overview(pool: &SqlitePool) -> Result<StatsOverview> {
