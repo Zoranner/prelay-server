@@ -1,4 +1,5 @@
 use anyhow::Result;
+use serde::Deserialize;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -70,7 +71,26 @@ pub struct RequestLogInsert {
     pub latency_ms: i64,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ModelPrice {
+    pub provider: String,
+    pub model: String,
+    pub input_price_per_1m: Option<f64>,
+    pub output_price_per_1m: Option<f64>,
+    pub currency: String,
+}
+
 pub async fn insert_request_log(pool: &SqlitePool, log: RequestLogInsert) -> Result<()> {
+    let prices = load_model_prices().unwrap_or_default();
+    insert_request_log_with_prices(pool, log, &prices).await
+}
+
+async fn insert_request_log_with_prices(
+    pool: &SqlitePool,
+    log: RequestLogInsert,
+    prices: &[ModelPrice],
+) -> Result<()> {
+    let cost = estimate_cost(&log, prices);
     sqlx::query(
         r#"
         INSERT INTO request_logs (
@@ -88,9 +108,11 @@ pub async fn insert_request_log(pool: &SqlitePool, log: RequestLogInsert) -> Res
             is_streaming,
             input_tokens,
             output_tokens,
+            estimated_cost,
+            currency,
             latency_ms
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(Uuid::new_v4().to_string())
@@ -107,11 +129,51 @@ pub async fn insert_request_log(pool: &SqlitePool, log: RequestLogInsert) -> Res
     .bind(log.is_streaming)
     .bind(log.input_tokens)
     .bind(log.output_tokens)
+    .bind(cost.as_ref().map(|cost| cost.estimated_cost))
+    .bind(cost.as_ref().map(|cost| cost.currency.as_str()))
     .bind(log.latency_ms)
     .execute(pool)
     .await?;
 
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct EstimatedCost {
+    estimated_cost: f64,
+    currency: String,
+}
+
+fn estimate_cost(log: &RequestLogInsert, prices: &[ModelPrice]) -> Option<EstimatedCost> {
+    let price = prices.iter().find(|price| {
+        price.provider == log.provider_name
+            && (price.model == log.model_upstream || price.model == log.model_requested)
+    })?;
+    let input_cost = price
+        .input_price_per_1m
+        .zip(log.input_tokens)
+        .map(|(price, tokens)| tokens as f64 / 1_000_000.0 * price)
+        .unwrap_or(0.0);
+    let output_cost = price
+        .output_price_per_1m
+        .zip(log.output_tokens)
+        .map(|(price, tokens)| tokens as f64 / 1_000_000.0 * price)
+        .unwrap_or(0.0);
+
+    Some(EstimatedCost {
+        estimated_cost: input_cost + output_cost,
+        currency: price.currency.clone(),
+    })
+}
+
+fn load_model_prices() -> Result<Vec<ModelPrice>> {
+    let path =
+        std::env::var("MODEL_PRICES_PATH").unwrap_or_else(|_| "data/model_prices.json".to_string());
+    if !std::path::Path::new(&path).exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(path)?;
+    Ok(serde_json::from_str(&content)?)
 }
 
 pub async fn overview(pool: &SqlitePool) -> Result<StatsOverview> {
@@ -211,7 +273,10 @@ pub async fn list_provider_stats(pool: &SqlitePool) -> Result<Vec<ProviderStatsS
 mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
-    use super::{list_model_stats, list_provider_stats, overview};
+    use super::{
+        estimate_cost, insert_request_log_with_prices, list_model_stats, list_provider_stats,
+        overview, ModelPrice, RequestLogInsert,
+    };
     use crate::db;
 
     #[tokio::test]
@@ -303,6 +368,109 @@ mod tests {
         assert_eq!(rows[0].estimated_cost, Some(0.000012));
         assert_eq!(rows[0].average_latency_ms, Some(150.0));
         assert_eq!(rows[1].model_requested.as_deref(), Some("kimi-k2"));
+    }
+
+    #[test]
+    fn estimates_cost_from_matching_model_price() {
+        let cost = estimate_cost(
+            &RequestLogInsert {
+                protocol_in: "responses".to_string(),
+                protocol_out: "responses".to_string(),
+                protocol_upstream: "chat_completions".to_string(),
+                provider_id: "provider-1".to_string(),
+                provider_name: "DeepSeek".to_string(),
+                model_requested: "deepseek-chat".to_string(),
+                model_upstream: "deepseek-chat".to_string(),
+                status: "success".to_string(),
+                http_status: 200,
+                is_streaming: false,
+                input_tokens: Some(1_000_000),
+                output_tokens: Some(500_000),
+                latency_ms: 120,
+            },
+            &[ModelPrice {
+                provider: "DeepSeek".to_string(),
+                model: "deepseek-chat".to_string(),
+                input_price_per_1m: Some(1.0),
+                output_price_per_1m: Some(2.0),
+                currency: "USD".to_string(),
+            }],
+        )
+        .expect("estimate cost");
+
+        assert_eq!(cost.estimated_cost, 2.0);
+        assert_eq!(cost.currency, "USD");
+    }
+
+    #[test]
+    fn leaves_cost_empty_when_price_is_unknown() {
+        let cost = estimate_cost(
+            &RequestLogInsert {
+                protocol_in: "responses".to_string(),
+                protocol_out: "responses".to_string(),
+                protocol_upstream: "chat_completions".to_string(),
+                provider_id: "provider-1".to_string(),
+                provider_name: "DeepSeek".to_string(),
+                model_requested: "deepseek-chat".to_string(),
+                model_upstream: "deepseek-chat".to_string(),
+                status: "success".to_string(),
+                http_status: 200,
+                is_streaming: false,
+                input_tokens: Some(1_000_000),
+                output_tokens: Some(500_000),
+                latency_ms: 120,
+            },
+            &[],
+        );
+
+        assert!(cost.is_none());
+    }
+
+    #[tokio::test]
+    async fn request_log_insert_writes_estimated_cost_when_price_matches() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+
+        insert_request_log_with_prices(
+            &db,
+            RequestLogInsert {
+                protocol_in: "responses".to_string(),
+                protocol_out: "responses".to_string(),
+                protocol_upstream: "chat_completions".to_string(),
+                provider_id: "provider-1".to_string(),
+                provider_name: "DeepSeek".to_string(),
+                model_requested: "deepseek-chat".to_string(),
+                model_upstream: "deepseek-chat".to_string(),
+                status: "success".to_string(),
+                http_status: 200,
+                is_streaming: false,
+                input_tokens: Some(1_000_000),
+                output_tokens: Some(500_000),
+                latency_ms: 120,
+            },
+            &[ModelPrice {
+                provider: "DeepSeek".to_string(),
+                model: "deepseek-chat".to_string(),
+                input_price_per_1m: Some(1.0),
+                output_price_per_1m: Some(2.0),
+                currency: "USD".to_string(),
+            }],
+        )
+        .await
+        .expect("insert log");
+
+        let row: (Option<f64>, Option<String>) =
+            sqlx::query_as("SELECT estimated_cost, currency FROM request_logs LIMIT 1")
+                .fetch_one(&db)
+                .await
+                .expect("load request log");
+
+        assert_eq!(row.0, Some(2.0));
+        assert_eq!(row.1.as_deref(), Some("USD"));
     }
 
     #[tokio::test]
