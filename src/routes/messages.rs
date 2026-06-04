@@ -10,8 +10,12 @@ use serde_json::Value;
 
 use crate::{
     bridge::{
-        anthropic_decode::decode_anthropic_request, anthropic_encode::encode_anthropic_response,
-        stream::chat_sse_response_to_anthropic_messages_sse,
+        anthropic_decode::decode_anthropic_request,
+        anthropic_encode::encode_anthropic_response,
+        stream::{
+            chat_sse_response_to_anthropic_messages_sse,
+            ollama_chat_ndjson_response_to_anthropic_messages_sse,
+        },
     },
     db,
     error::AppError,
@@ -194,37 +198,7 @@ async fn create_ollama_anthropic_message(
     model_requested: String,
     is_streaming: bool,
     started_at: std::time::Instant,
-) -> Result<Json<Value>, AppError> {
-    if is_streaming {
-        insert_request_log(
-            &state.db,
-            RequestLogInsert {
-                protocol_in: "anthropic_messages".to_string(),
-                protocol_out: "anthropic_messages".to_string(),
-                protocol_upstream: "ollama_native".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                model_requested,
-                model_upstream: request.model,
-                status: "failed".to_string(),
-                http_status: 400,
-                is_streaming,
-                input_tokens: None,
-                output_tokens: None,
-                reasoning_tokens: None,
-                latency_ms: started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: None,
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id: None,
-            },
-        )
-        .await?;
-        return Err(AppError::BadRequest(
-            "Ollama Anthropic Messages 流式桥接暂未支持".to_string(),
-        ));
-    }
-
+) -> Result<Response, AppError> {
     let upstream_url = format!("{}/chat", provider.base_url.trim_end_matches('/'));
     let upstream_started_at = std::time::Instant::now();
     let upstream_response = state
@@ -265,6 +239,38 @@ async fn create_ollama_anthropic_message(
         return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
     }
 
+    if is_streaming {
+        insert_request_log(
+            &state.db,
+            RequestLogInsert {
+                protocol_in: "anthropic_messages".to_string(),
+                protocol_out: "anthropic_messages".to_string(),
+                protocol_upstream: "ollama_native".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                model_requested,
+                model_upstream: request.model.clone(),
+                status: "success".to_string(),
+                http_status: 200,
+                is_streaming,
+                input_tokens: None,
+                output_tokens: None,
+                reasoning_tokens: None,
+                latency_ms: started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: Some(upstream_latency_ms),
+                first_token_ms: None,
+                tool_call_count: None,
+                upstream_request_id: None,
+            },
+        )
+        .await?;
+        let body = Body::from_stream(ollama_chat_ndjson_response_to_anthropic_messages_sse(
+            upstream_response,
+            request.model.clone(),
+        ));
+        return Ok(([(header::CONTENT_TYPE, "text/event-stream")], body).into_response());
+    }
+
     let upstream_json = upstream_response
         .json::<Value>()
         .await
@@ -299,7 +305,7 @@ async fn create_ollama_anthropic_message(
     )
     .await?;
 
-    Ok(Json(encode_anthropic_response(response)))
+    Ok(Json(encode_anthropic_response(response)).into_response())
 }
 
 async fn create_native_anthropic_message(
@@ -626,6 +632,56 @@ mod tests {
         assert_eq!(row.0, "ollama_native");
         assert_eq!(row.1, Some(3));
         assert_eq!(row.2, Some(4));
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn streams_ollama_native_chunks_as_anthropic_messages_sse() {
+        let upstream = spawn_streaming_ollama_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(&db, "llama3.2", "ollama_native", &upstream, "unused")
+            .await
+            .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+        let app = Router::new().merge(super::router().with_state(state));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("read test server address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{addr}/v1/messages"))
+            .json(&json!({
+                "model": "llama3.2",
+                "max_tokens": 1024,
+                "stream": true,
+                "messages": [
+                    { "role": "user", "content": "hello" }
+                ]
+            }))
+            .send()
+            .await
+            .expect("send request");
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+
+        let body = response.text().await.expect("read stream body");
+        assert!(body.contains("event: message_start"));
+        assert!(body.contains("event: content_block_delta"));
+        assert!(body.contains("\"text\":\"hel\""));
+        assert!(body.contains("\"text\":\"lo\""));
+        assert!(body.contains("event: message_stop"));
 
         server.abort();
     }
@@ -1126,6 +1182,48 @@ mod tests {
         }
 
         let app = Router::new().route("/chat/completions", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_streaming_ollama_upstream() -> String {
+        async fn handler(Json(payload): Json<serde_json::Value>) -> axum::response::Response {
+            assert_eq!(payload["model"], "llama3.2");
+            assert_eq!(payload["stream"], true);
+            assert_eq!(payload["messages"][0]["role"], "user");
+            assert_eq!(payload["messages"][0]["content"], "hello");
+
+            let stream = futures::stream::unfold(0, |state| async move {
+                match state {
+                    0 => Some((
+                        Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
+                            b"{\"message\":{\"role\":\"assistant\",\"content\":\"hel\"},\"done\":false}\n",
+                        )),
+                        1,
+                    )),
+                    1 => Some((
+                        Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
+                            b"{\"message\":{\"role\":\"assistant\",\"content\":\"lo\"},\"done\":true}\n",
+                        )),
+                        2,
+                    )),
+                    _ => None,
+                }
+            });
+
+            axum::response::Response::builder()
+                .header("content-type", "application/x-ndjson")
+                .body(axum::body::Body::from_stream(stream))
+                .expect("build streaming response")
+        }
+
+        let app = Router::new().route("/chat", post(handler));
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind upstream");

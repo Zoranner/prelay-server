@@ -77,6 +77,79 @@ pub fn chat_sse_response_to_anthropic_messages_sse(
     })
 }
 
+pub fn ollama_chat_ndjson_response_to_responses_sse(
+    response: reqwest::Response,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> {
+    let upstream = response.bytes_stream();
+    let state = OllamaChatNdjsonResponsesSseStreamState {
+        upstream: Box::pin(upstream),
+        decoder: OllamaChatNdjsonResponsesSseDecoder::default(),
+        pending: VecDeque::new(),
+        upstream_done: false,
+    };
+
+    futures::stream::unfold(state, |mut state| async move {
+        loop {
+            if let Some(chunk) = state.pending.pop_front() {
+                return Some((Ok(chunk), state));
+            }
+            if state.upstream_done {
+                return None;
+            }
+
+            match state.upstream.next().await {
+                Some(Ok(chunk)) => {
+                    state.pending.extend(state.decoder.push_chunk(&chunk));
+                }
+                Some(Err(error)) => {
+                    return Some((Err(std::io::Error::other(error)), state));
+                }
+                None => {
+                    state.upstream_done = true;
+                    state.pending.extend(state.decoder.finish());
+                }
+            }
+        }
+    })
+}
+
+pub fn ollama_chat_ndjson_response_to_anthropic_messages_sse(
+    response: reqwest::Response,
+    model: String,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> {
+    let upstream = response.bytes_stream();
+    let state = OllamaChatNdjsonAnthropicMessagesSseStreamState {
+        upstream: Box::pin(upstream),
+        decoder: OllamaChatNdjsonAnthropicMessagesSseDecoder::new(model),
+        pending: VecDeque::new(),
+        upstream_done: false,
+    };
+
+    futures::stream::unfold(state, |mut state| async move {
+        loop {
+            if let Some(chunk) = state.pending.pop_front() {
+                return Some((Ok(chunk), state));
+            }
+            if state.upstream_done {
+                return None;
+            }
+
+            match state.upstream.next().await {
+                Some(Ok(chunk)) => {
+                    state.pending.extend(state.decoder.push_chunk(&chunk));
+                }
+                Some(Err(error)) => {
+                    return Some((Err(std::io::Error::other(error)), state));
+                }
+                None => {
+                    state.upstream_done = true;
+                    state.pending.extend(state.decoder.finish());
+                }
+            }
+        }
+    })
+}
+
 struct ChatSseStreamState {
     upstream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
     decoder: ChatSseDecoder,
@@ -152,6 +225,72 @@ impl ChatSseDecoder {
         }
 
         decode_chat_sse_text_delta(&data).map(|delta| responses_text_delta_sse(&delta))
+    }
+}
+
+struct OllamaChatNdjsonResponsesSseStreamState {
+    upstream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
+    decoder: OllamaChatNdjsonResponsesSseDecoder,
+    pending: VecDeque<Bytes>,
+    upstream_done: bool,
+}
+
+#[derive(Default)]
+struct OllamaChatNdjsonResponsesSseDecoder {
+    line_buffer: Vec<u8>,
+    completed: bool,
+}
+
+impl OllamaChatNdjsonResponsesSseDecoder {
+    fn push_chunk(&mut self, chunk: &[u8]) -> Vec<Bytes> {
+        self.line_buffer.extend_from_slice(chunk);
+        let mut output = Vec::new();
+
+        while let Some(newline) = self.line_buffer.iter().position(|byte| *byte == b'\n') {
+            let mut line = self.line_buffer.drain(..=newline).collect::<Vec<_>>();
+            if line.last() == Some(&b'\n') {
+                line.pop();
+            }
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            output.extend(self.process_line(&line));
+        }
+
+        output
+    }
+
+    fn finish(&mut self) -> Vec<Bytes> {
+        let mut output = Vec::new();
+        if !self.line_buffer.is_empty() {
+            let line = std::mem::take(&mut self.line_buffer);
+            output.extend(self.process_line(&line));
+        }
+        if !self.completed {
+            self.completed = true;
+            output.push(responses_completed_sse());
+        }
+        output
+    }
+
+    fn process_line(&mut self, line: &[u8]) -> Vec<Bytes> {
+        if self.completed || line.is_empty() {
+            return Vec::new();
+        }
+
+        let Some(line) = decode_ollama_chat_ndjson_line(line) else {
+            return Vec::new();
+        };
+
+        let mut output = Vec::new();
+        if let Some(content) = line.content {
+            output.push(responses_text_delta_sse(&content));
+        }
+        if line.done {
+            self.completed = true;
+            output.push(responses_completed_sse());
+        }
+        output
     }
 }
 
@@ -277,6 +416,76 @@ impl AnthropicMessagesSseDecoder {
     }
 }
 
+struct OllamaChatNdjsonAnthropicMessagesSseStreamState {
+    upstream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
+    decoder: OllamaChatNdjsonAnthropicMessagesSseDecoder,
+    pending: VecDeque<Bytes>,
+    upstream_done: bool,
+}
+
+struct OllamaChatNdjsonAnthropicMessagesSseDecoder {
+    line_buffer: Vec<u8>,
+    anthropic: AnthropicMessagesSseDecoder,
+}
+
+impl OllamaChatNdjsonAnthropicMessagesSseDecoder {
+    fn new(model: String) -> Self {
+        Self {
+            line_buffer: Vec::new(),
+            anthropic: AnthropicMessagesSseDecoder::new(model),
+        }
+    }
+
+    fn push_chunk(&mut self, chunk: &[u8]) -> Vec<Bytes> {
+        self.line_buffer.extend_from_slice(chunk);
+        let mut output = Vec::new();
+
+        while let Some(newline) = self.line_buffer.iter().position(|byte| *byte == b'\n') {
+            let mut line = self.line_buffer.drain(..=newline).collect::<Vec<_>>();
+            if line.last() == Some(&b'\n') {
+                line.pop();
+            }
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            output.extend(self.process_line(&line));
+        }
+
+        output
+    }
+
+    fn finish(&mut self) -> Vec<Bytes> {
+        let mut output = Vec::new();
+        if !self.line_buffer.is_empty() {
+            let line = std::mem::take(&mut self.line_buffer);
+            output.extend(self.process_line(&line));
+        }
+        if !self.anthropic.completed {
+            output.push(self.anthropic.finish_message());
+        }
+        output
+    }
+
+    fn process_line(&mut self, line: &[u8]) -> Vec<Bytes> {
+        if self.anthropic.completed || line.is_empty() {
+            return Vec::new();
+        }
+
+        let Some(line) = decode_ollama_chat_ndjson_line(line) else {
+            return Vec::new();
+        };
+
+        let mut output = Vec::new();
+        if let Some(content) = line.content {
+            output.push(self.anthropic.text_delta(&content));
+        }
+        if line.done {
+            output.push(self.anthropic.finish_message());
+        }
+        output
+    }
+}
+
 pub fn responses_text_delta_sse(delta: &str) -> Bytes {
     Bytes::from(format!(
         "event: response.output_text.delta\ndata: {delta}\n\n"
@@ -388,11 +597,30 @@ fn decode_chat_sse_text_delta(data: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+struct OllamaChatNdjsonLine {
+    content: Option<String>,
+    done: bool,
+}
+
+fn decode_ollama_chat_ndjson_line(line: &[u8]) -> Option<OllamaChatNdjsonLine> {
+    let line = std::str::from_utf8(line).ok()?;
+    let value = serde_json::from_str::<Value>(line).ok()?;
+    let content = value
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let done = value.get("done").and_then(Value::as_bool).unwrap_or(false);
+
+    Some(OllamaChatNdjsonLine { content, done })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         responses_completed_sse, responses_text_delta_sse, AnthropicMessagesSseDecoder,
-        ChatSseDecoder,
+        ChatSseDecoder, OllamaChatNdjsonAnthropicMessagesSseDecoder,
+        OllamaChatNdjsonResponsesSseDecoder,
     };
 
     #[test]
@@ -434,6 +662,33 @@ mod tests {
         let chunk = std::str::from_utf8(&chunks[0]).expect("utf8 chunk");
         assert!(chunk.contains("event: message_start"));
         assert!(chunk.contains("event: content_block_start"));
+        assert!(chunk.contains("event: content_block_delta"));
+        assert!(chunk.contains("\"text\":\"hel\""));
+    }
+
+    #[test]
+    fn decodes_ollama_chat_ndjson_chunks_to_responses_sse() {
+        let mut decoder = OllamaChatNdjsonResponsesSseDecoder::default();
+
+        let first_chunks = decoder
+            .push_chunk(b"{\"message\":{\"content\":\"hel\"}}\n{\"message\":{\"content\":\"");
+        assert_eq!(first_chunks, vec![responses_text_delta_sse("hel")]);
+        let chunks = decoder.push_chunk(b"lo\"},\"done\":true}\n");
+
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0], responses_text_delta_sse("lo"));
+        assert_eq!(chunks[1], responses_completed_sse());
+    }
+
+    #[test]
+    fn decodes_first_ollama_chat_ndjson_delta_to_anthropic_messages_sse() {
+        let mut decoder = OllamaChatNdjsonAnthropicMessagesSseDecoder::new("llama3.2".to_string());
+
+        let chunks = decoder.push_chunk(b"{\"message\":{\"content\":\"hel\"}}\n");
+
+        assert_eq!(chunks.len(), 1);
+        let chunk = std::str::from_utf8(&chunks[0]).expect("utf8 chunk");
+        assert!(chunk.contains("event: message_start"));
         assert!(chunk.contains("event: content_block_delta"));
         assert!(chunk.contains("\"text\":\"hel\""));
     }

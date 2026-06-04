@@ -14,7 +14,9 @@ use crate::{
         responses_decode::decode_responses_request,
         responses_encode::encode_responses_response,
         sessions::{load_response_session_messages, save_response_session},
-        stream::chat_sse_response_to_responses_sse,
+        stream::{
+            chat_sse_response_to_responses_sse, ollama_chat_ndjson_response_to_responses_sse,
+        },
     },
     db,
     error::AppError,
@@ -211,36 +213,6 @@ async fn create_ollama_response(
     previous_response_id: Option<String>,
     started_at: std::time::Instant,
 ) -> Result<Response, AppError> {
-    if is_streaming {
-        insert_request_log(
-            &state.db,
-            RequestLogInsert {
-                protocol_in: "responses".to_string(),
-                protocol_out: "responses".to_string(),
-                protocol_upstream: "ollama_native".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                model_requested,
-                model_upstream: request.model,
-                status: "failed".to_string(),
-                http_status: 400,
-                is_streaming,
-                input_tokens: None,
-                output_tokens: None,
-                reasoning_tokens: None,
-                latency_ms: started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: None,
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id: None,
-            },
-        )
-        .await?;
-        return Err(AppError::BadRequest(
-            "Ollama Responses 流式桥接暂未支持".to_string(),
-        ));
-    }
-
     request = request_with_session_history(&state.db, request).await?;
     let upstream_url = format!("{}/chat", provider.base_url.trim_end_matches('/'));
     let upstream_started_at = std::time::Instant::now();
@@ -280,6 +252,41 @@ async fn create_ollama_response(
         )
         .await?;
         return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
+    }
+
+    if is_streaming {
+        insert_request_log(
+            &state.db,
+            RequestLogInsert {
+                protocol_in: "responses".to_string(),
+                protocol_out: "responses".to_string(),
+                protocol_upstream: "ollama_native".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                model_requested,
+                model_upstream: request.model,
+                status: "success".to_string(),
+                http_status: 200,
+                is_streaming,
+                input_tokens: None,
+                output_tokens: None,
+                reasoning_tokens: None,
+                latency_ms: started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: Some(upstream_latency_ms),
+                first_token_ms: None,
+                tool_call_count: None,
+                upstream_request_id: None,
+            },
+        )
+        .await?;
+        let body = Body::from_stream(ollama_chat_ndjson_response_to_responses_sse(
+            upstream_response,
+        ));
+        return Ok((
+            [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
+            body,
+        )
+            .into_response());
     }
 
     let upstream_json = upstream_response
@@ -656,6 +663,50 @@ mod tests {
         assert_eq!(response["output"][0]["content"][0]["text"], "ollama hello");
         assert_eq!(response["usage"]["input_tokens"], 3);
         assert_eq!(response["usage"]["output_tokens"], 4);
+    }
+
+    #[tokio::test]
+    async fn streams_ollama_native_chunks_as_responses_sse() {
+        let upstream = spawn_streaming_ollama_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(&db, "llama3.2", "ollama_native", &upstream, "unused")
+            .await
+            .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+
+        let response = create_response(
+            State(state),
+            axum::Json(json!({
+                "model": "llama3.2",
+                "input": "hello",
+                "stream": true
+            })),
+        )
+        .await
+        .expect("create response");
+        let content_type = response
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(content_type.starts_with("text/event-stream"));
+
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("read stream body");
+        let body = String::from_utf8(body.to_vec()).expect("utf8 body");
+        assert!(body.contains("event: response.output_text.delta\ndata: hel\n\n"));
+        assert!(body.contains("event: response.output_text.delta\ndata: lo\n\n"));
+        assert!(body.contains("event: response.completed"));
     }
 
     #[tokio::test]
@@ -1221,6 +1272,46 @@ mod tests {
                 "prompt_eval_count": 3,
                 "eval_count": 4
             }))
+        }
+
+        let app = Router::new().route("/chat", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_streaming_ollama_upstream() -> String {
+        async fn handler(Json(payload): Json<serde_json::Value>) -> axum::response::Response {
+            assert_eq!(payload["model"], "llama3.2");
+            assert_eq!(payload["stream"], true);
+            assert_eq!(payload["messages"][0]["role"], "user");
+            assert_eq!(payload["messages"][0]["content"], "hello");
+            let stream = futures::stream::unfold(0, |step| async move {
+                match step {
+                    0 => Some((
+                        Ok::<_, std::io::Error>(Bytes::from_static(
+                            b"{\"message\":{\"role\":\"assistant\",\"content\":\"hel\"},\"done\":false}\n",
+                        )),
+                        1,
+                    )),
+                    1 => Some((
+                        Ok::<_, std::io::Error>(Bytes::from_static(
+                            b"{\"message\":{\"role\":\"assistant\",\"content\":\"lo\"},\"done\":true}\n",
+                        )),
+                        2,
+                    )),
+                    _ => None,
+                }
+            });
+            axum::response::Response::builder()
+                .header("content-type", "application/x-ndjson")
+                .body(Body::from_stream(stream))
+                .expect("build streaming response")
         }
 
         let app = Router::new().route("/chat", post(handler));
