@@ -17,11 +17,15 @@ pub async fn require_protocol_auth(
     Ok(next.run(request).await)
 }
 
-pub async fn require_admin_auth(request: Request, next: Next) -> Result<Response, AppError> {
-    let Some(expected_token) = configured_admin_token() else {
+pub async fn require_admin_auth(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    let Some(expected_token) = state.admin_token.as_deref() else {
         return Ok(next.run(request).await);
     };
-    authenticate_admin_request(request.headers(), &expected_token)?;
+    authenticate_admin_request(request.headers(), expected_token)?;
     Ok(next.run(request).await)
 }
 
@@ -46,13 +50,6 @@ pub fn authenticate_admin_request(
     } else {
         Err(AppError::Unauthorized)
     }
-}
-
-fn configured_admin_token() -> Option<String> {
-    std::env::var("ADMIN_TOKEN")
-        .ok()
-        .map(|token| token.trim().to_string())
-        .filter(|token| !token.is_empty())
 }
 
 pub fn extract_token(headers: &HeaderMap) -> Option<String> {
@@ -157,7 +154,6 @@ mod tests {
 
     #[tokio::test]
     async fn protects_admin_router_when_admin_token_is_configured() {
-        std::env::set_var("ADMIN_TOKEN", "admin-secret");
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -167,11 +163,12 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: Some("admin-secret".to_string()),
         };
         let admin_router = crate::routes::admin::router()
             .merge(crate::routes::stats::router())
-            .with_state(state)
-            .layer(middleware::from_fn(require_admin_auth));
+            .with_state(state.clone())
+            .layer(middleware::from_fn_with_state(state, require_admin_auth));
         let app = Router::new().nest("/api", admin_router);
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -198,6 +195,5 @@ mod tests {
         assert_eq!(authorized.status(), reqwest::StatusCode::OK);
 
         server.abort();
-        std::env::remove_var("ADMIN_TOKEN");
     }
 }

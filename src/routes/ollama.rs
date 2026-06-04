@@ -175,6 +175,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().merge(super::router().with_state(state.clone()).layer(
             middleware::from_fn_with_state(state, crate::routes::auth::require_protocol_auth),
@@ -220,6 +221,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().merge(super::router().with_state(state));
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -267,6 +269,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().merge(super::router().with_state(state.clone()));
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -317,6 +320,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().merge(super::router().with_state(state));
         let listener = TcpListener::bind("127.0.0.1:0")

@@ -315,7 +315,7 @@ async fn create_native_anthropic_message(
     model_requested: String,
     is_streaming: bool,
     started_at: std::time::Instant,
-) -> Result<Json<Value>, AppError> {
+) -> Result<Response, AppError> {
     let upstream_url = format!("{}/messages", provider.base_url.trim_end_matches('/'));
     let upstream_started_at = std::time::Instant::now();
     let upstream_response = state
@@ -358,6 +358,43 @@ async fn create_native_anthropic_message(
         return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
     }
 
+    if is_streaming {
+        let model_upstream = payload
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        insert_request_log(
+            &state.db,
+            RequestLogInsert {
+                protocol_in: "anthropic_messages".to_string(),
+                protocol_out: "anthropic_messages".to_string(),
+                protocol_upstream: "anthropic_messages".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                model_requested,
+                model_upstream,
+                status: "success".to_string(),
+                http_status: 200,
+                is_streaming,
+                input_tokens: None,
+                output_tokens: None,
+                reasoning_tokens: None,
+                latency_ms: started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: Some(upstream_latency_ms),
+                first_token_ms: None,
+                tool_call_count: None,
+                upstream_request_id: None,
+            },
+        )
+        .await?;
+
+        return Response::builder()
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .body(Body::from_stream(upstream_response.bytes_stream()))
+            .map_err(|error| AppError::Internal(error.into()));
+    }
+
     let response = upstream_response
         .json::<Value>()
         .await
@@ -397,7 +434,7 @@ async fn create_native_anthropic_message(
     )
     .await?;
 
-    Ok(Json(response))
+    Ok(Json(response).into_response())
 }
 
 fn count_tool_calls(response: &crate::bridge::internal::InternalResponse) -> i64 {
@@ -429,6 +466,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().merge(super::router().with_state(state.clone()).layer(
             middleware::from_fn_with_state(state, crate::routes::auth::require_protocol_auth),
@@ -480,6 +518,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().merge(super::router().with_state(state));
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -543,6 +582,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().merge(super::router().with_state(state));
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -590,6 +630,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().merge(super::router().with_state(state.clone()));
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -651,6 +692,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().merge(super::router().with_state(state));
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -707,6 +749,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().merge(super::router().with_state(state.clone()));
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -763,6 +806,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().merge(super::router().with_state(state));
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -830,6 +874,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().merge(super::router().with_state(state));
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -891,6 +936,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().merge(super::router().with_state(state));
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -905,6 +951,73 @@ mod tests {
             .post(format!("http://{addr}/v1/messages"))
             .json(&json!({
                 "model": "deepseek-chat",
+                "max_tokens": 1024,
+                "stream": true,
+                "messages": [
+                    { "role": "user", "content": "hello" }
+                ]
+            }))
+            .send()
+            .await
+            .expect("send request");
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+
+        let started_at = std::time::Instant::now();
+        let mut stream = response.bytes_stream();
+        let first_chunk = stream
+            .next()
+            .await
+            .expect("receive first stream chunk")
+            .expect("first stream chunk ok");
+        let first_chunk_elapsed = started_at.elapsed();
+        let first_chunk = String::from_utf8(first_chunk.to_vec()).expect("utf8 stream chunk");
+
+        assert!(
+            first_chunk_elapsed < std::time::Duration::from_millis(200),
+            "first chunk took {first_chunk_elapsed:?}"
+        );
+        assert!(first_chunk.contains("event: content_block_delta"));
+        assert!(first_chunk.contains("hel"));
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn streams_native_anthropic_messages_sse_without_waiting_for_upstream_done() {
+        let upstream = spawn_streaming_native_anthropic_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(
+            &db,
+            "claude-sonnet",
+            "anthropic_compatible",
+            &upstream,
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+            admin_token: None,
+        };
+        let app = Router::new().merge(super::router().with_state(state));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("read test server address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{addr}/v1/messages"))
+            .json(&json!({
+                "model": "claude-sonnet",
                 "max_tokens": 1024,
                 "stream": true,
                 "messages": [
@@ -1182,6 +1295,52 @@ mod tests {
         }
 
         let app = Router::new().route("/chat/completions", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_streaming_native_anthropic_upstream() -> String {
+        async fn handler(Json(payload): Json<serde_json::Value>) -> axum::response::Response {
+            assert_eq!(payload["model"], "claude-sonnet");
+            assert_eq!(payload["stream"], true);
+            assert_eq!(payload["max_tokens"], 1024);
+            assert_eq!(payload["messages"][0]["role"], "user");
+            assert_eq!(payload["messages"][0]["content"], "hello");
+
+            let stream = futures::stream::unfold(0, |state| async move {
+                match state {
+                    0 => Some((
+                        Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
+                            b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_native_stream\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-sonnet\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hel\"}}\n\n",
+                        )),
+                        1,
+                    )),
+                    1 => {
+                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                        Some((
+                            Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
+                                b"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"lo\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+                            )),
+                            2,
+                        ))
+                    }
+                    _ => None,
+                }
+            });
+
+            axum::response::Response::builder()
+                .header("content-type", "text/event-stream")
+                .body(axum::body::Body::from_stream(stream))
+                .expect("build streaming response")
+        }
+
+        let app = Router::new().route("/messages", post(handler));
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind upstream");

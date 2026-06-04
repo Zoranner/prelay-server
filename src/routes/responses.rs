@@ -6,6 +6,7 @@ use axum::{
     routing::post,
     Json, Router,
 };
+use futures::TryStreamExt;
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -386,6 +387,43 @@ async fn create_native_response(
         return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
     }
 
+    if is_streaming {
+        insert_request_log(
+            &state.db,
+            RequestLogInsert {
+                protocol_in: "responses".to_string(),
+                protocol_out: "responses".to_string(),
+                protocol_upstream: "responses".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                model_requested,
+                model_upstream: "unknown".to_string(),
+                status: "success".to_string(),
+                http_status: 200,
+                is_streaming,
+                input_tokens: None,
+                output_tokens: None,
+                reasoning_tokens: None,
+                latency_ms: started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: Some(upstream_latency_ms),
+                first_token_ms: None,
+                tool_call_count: None,
+                upstream_request_id: None,
+            },
+        )
+        .await?;
+        let body = Body::from_stream(
+            upstream_response
+                .bytes_stream()
+                .map_err(std::io::Error::other),
+        );
+        return Ok((
+            [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
+            body,
+        )
+            .into_response());
+    }
+
     let response = upstream_response
         .json::<Value>()
         .await
@@ -495,6 +533,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().merge(super::router().with_state(state.clone()).layer(
             middleware::from_fn_with_state(state, crate::routes::auth::require_protocol_auth),
@@ -533,6 +572,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
 
         let error = create_response(
@@ -569,6 +609,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
 
         let response = create_response(
@@ -608,6 +649,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
 
         let response = create_response(
@@ -645,6 +687,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
 
         let response = create_response(
@@ -680,6 +723,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
 
         let response = create_response(
@@ -724,6 +768,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
 
         let _response = create_response(
@@ -769,6 +814,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
 
         let _response = create_response(
@@ -812,6 +858,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
 
         create_response(
@@ -853,6 +900,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
 
         let response = create_response(
@@ -905,6 +953,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().merge(super::router().with_state(state));
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -946,6 +995,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn streams_native_responses_sse_without_waiting_for_upstream_done() {
+        let upstream = spawn_streaming_native_responses_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(&db, "gpt-4.1", "openai", &upstream, "sk-upstream")
+            .await
+            .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+            admin_token: None,
+        };
+        let app = Router::new().merge(super::router().with_state(state));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("read test server address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{addr}/v1/responses"))
+            .json(&json!({
+                "model": "gpt-4.1",
+                "input": "hello",
+                "stream": true
+            }))
+            .send()
+            .await
+            .expect("send request");
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+
+        let started = std::time::Instant::now();
+        let mut stream = response.bytes_stream();
+        let first = stream
+            .next()
+            .await
+            .expect("first response chunk")
+            .expect("first response chunk ok");
+        let elapsed = started.elapsed();
+        let first = String::from_utf8(first.to_vec()).expect("first chunk utf8");
+
+        assert!(
+            elapsed < Duration::from_millis(200),
+            "first native response chunk arrived after {elapsed:?}: {first}"
+        );
+        assert!(first.contains("event: response.output_text.delta"));
+        assert!(first.contains("data: hel"));
+
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn prepends_previous_response_messages_to_upstream_chat_request() {
         let upstream = spawn_history_asserting_chat_upstream().await;
         let db = SqlitePoolOptions::new()
@@ -966,6 +1073,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
 
         let first = create_response(
@@ -1019,6 +1127,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
 
         let first = create_response(
@@ -1087,6 +1196,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
 
         let error = create_response(
@@ -1243,6 +1353,51 @@ mod tests {
                     "output_tokens": 4
                 }
             }))
+        }
+
+        let app = Router::new().route("/responses", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_streaming_native_responses_upstream() -> String {
+        async fn handler(Json(payload): Json<serde_json::Value>) -> axum::response::Response {
+            use axum::response::IntoResponse;
+
+            assert_eq!(payload["model"], "gpt-4.1");
+            assert_eq!(payload["stream"], true);
+            let stream = futures::stream::unfold(0, |step| async move {
+                match step {
+                    0 => Some((
+                        Ok::<_, Infallible>(Bytes::from_static(
+                            b"event: response.output_text.delta\ndata: hel\n\n",
+                        )),
+                        1,
+                    )),
+                    1 => {
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                        Some((
+                            Ok::<_, Infallible>(Bytes::from_static(
+                                b"event: response.output_text.delta\ndata: lo\n\n\
+                                  event: response.completed\ndata: {}\n\n",
+                            )),
+                            2,
+                        ))
+                    }
+                    _ => None,
+                }
+            });
+            (
+                [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                Body::from_stream(stream),
+            )
+                .into_response()
         }
 
         let app = Router::new().route("/responses", post(handler));

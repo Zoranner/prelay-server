@@ -102,6 +102,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
 
         let response = list_models(State(state)).await.expect("list models");
@@ -139,6 +140,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
 
         let response = list_models(State(state)).await.expect("list models");
@@ -160,6 +162,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().merge(super::router().with_state(state.clone()).layer(
             middleware::from_fn_with_state(state, crate::routes::auth::require_protocol_auth),

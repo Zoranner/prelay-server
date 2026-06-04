@@ -90,6 +90,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
 
         let response = overview(State(state)).await.expect("load overview");
@@ -139,6 +140,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().nest("/api", super::router().with_state(state));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -204,6 +206,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().nest("/api", super::router().with_state(state));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -257,6 +260,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().nest("/api", super::router().with_state(state));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -293,6 +297,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().nest("/api", super::router().with_state(state));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -333,6 +338,7 @@ mod tests {
         let state = AppState {
             db,
             client: reqwest::Client::new(),
+            admin_token: None,
         };
         let app = Router::new().nest("/api", super::router().with_state(state));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
