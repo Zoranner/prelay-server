@@ -48,6 +48,30 @@ export interface RequestLogSummary {
   latency_ms: number | null;
 }
 
+export interface ModelStatsSummary {
+  model_requested: string | null;
+  total_requests: number;
+  successful_requests: number;
+  failed_requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost: number | null;
+  average_latency_ms: number | null;
+}
+
+export interface ProviderStatsSummary {
+  provider_id: string | null;
+  provider_name: string | null;
+  total_requests: number;
+  successful_requests: number;
+  failed_requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost: number | null;
+  average_latency_ms: number | null;
+  average_first_token_ms: number | null;
+}
+
 export const configApi = {
   getByToken: (token: string) => api.get<ProviderConfig>(`/configs/by-token/${token}`),
   create: (data: CreateConfigRequest) => api.post<ProviderConfig>('/configs', data),
@@ -61,4 +85,6 @@ export const statsApi = {
   getOverview: () => api.get<StatsOverview>('/stats/overview'),
   listRequests: (limit = 50) =>
     api.get<RequestLogSummary[]>('/stats/requests', { params: { limit } }),
+  listModels: () => api.get<ModelStatsSummary[]>('/stats/models'),
+  listProviders: () => api.get<ProviderStatsSummary[]>('/stats/providers'),
 };

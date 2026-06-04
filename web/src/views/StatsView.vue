@@ -100,6 +100,106 @@
               </table>
             </div>
           </div>
+
+          <div class="grid gap-4 lg:grid-cols-2">
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <h3 class="text-sm font-semibold text-stone-700">模型统计</h3>
+                <span class="text-xs text-stone-400">按请求模型聚合</span>
+              </div>
+
+              <div class="overflow-x-auto rounded-xl border border-stone-100">
+                <table class="min-w-full divide-y divide-stone-100 text-sm">
+                  <thead class="bg-stone-50 text-xs font-medium text-stone-400">
+                    <tr>
+                      <th class="px-4 py-3 text-left whitespace-nowrap">模型</th>
+                      <th class="px-4 py-3 text-right whitespace-nowrap">请求</th>
+                      <th class="px-4 py-3 text-right whitespace-nowrap">失败</th>
+                      <th class="px-4 py-3 text-right whitespace-nowrap">Token</th>
+                      <th class="px-4 py-3 text-right whitespace-nowrap">均耗时</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-stone-100 bg-white">
+                    <tr v-if="!loading && modelStats.length === 0">
+                      <td colspan="5" class="px-4 py-8 text-center text-stone-400">
+                        暂无模型统计
+                      </td>
+                    </tr>
+                    <tr
+                      v-for="model in modelStats"
+                      :key="model.model_requested || 'unknown-model'"
+                      class="text-stone-600 hover:bg-stone-50/60"
+                    >
+                      <td class="px-4 py-3 whitespace-nowrap font-mono text-xs">
+                        {{ model.model_requested || '—' }}
+                      </td>
+                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                        {{ formatNumber(model.total_requests) }}
+                      </td>
+                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                        {{ formatNumber(model.failed_requests) }}
+                      </td>
+                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                        {{ formatTokenPair(model.input_tokens, model.output_tokens) }}
+                      </td>
+                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                        {{ formatLatency(model.average_latency_ms) }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <h3 class="text-sm font-semibold text-stone-700">Provider 统计</h3>
+                <span class="text-xs text-stone-400">按上游聚合</span>
+              </div>
+
+              <div class="overflow-x-auto rounded-xl border border-stone-100">
+                <table class="min-w-full divide-y divide-stone-100 text-sm">
+                  <thead class="bg-stone-50 text-xs font-medium text-stone-400">
+                    <tr>
+                      <th class="px-4 py-3 text-left whitespace-nowrap">Provider</th>
+                      <th class="px-4 py-3 text-right whitespace-nowrap">请求</th>
+                      <th class="px-4 py-3 text-right whitespace-nowrap">失败</th>
+                      <th class="px-4 py-3 text-right whitespace-nowrap">均耗时</th>
+                      <th class="px-4 py-3 text-right whitespace-nowrap">首 Token</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-stone-100 bg-white">
+                    <tr v-if="!loading && providerStats.length === 0">
+                      <td colspan="5" class="px-4 py-8 text-center text-stone-400">
+                        暂无 Provider 统计
+                      </td>
+                    </tr>
+                    <tr
+                      v-for="provider in providerStats"
+                      :key="provider.provider_id || provider.provider_name || 'unknown-provider'"
+                      class="text-stone-600 hover:bg-stone-50/60"
+                    >
+                      <td class="px-4 py-3 whitespace-nowrap">
+                        {{ provider.provider_name || provider.provider_id || '—' }}
+                      </td>
+                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                        {{ formatNumber(provider.total_requests) }}
+                      </td>
+                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                        {{ formatNumber(provider.failed_requests) }}
+                      </td>
+                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                        {{ formatLatency(provider.average_latency_ms) }}
+                      </td>
+                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                        {{ formatLatency(provider.average_first_token_ms) }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
     </main>
@@ -110,7 +210,13 @@
 import { computed, onMounted, ref } from 'vue';
 import AppHeader from '../components/AppHeader.vue';
 import { Alert } from '../components/base';
-import { statsApi, type RequestLogSummary, type StatsOverview } from '../api';
+import {
+  statsApi,
+  type ModelStatsSummary,
+  type ProviderStatsSummary,
+  type RequestLogSummary,
+  type StatsOverview,
+} from '../api';
 
 const emptyOverview: StatsOverview = {
   total_requests: 0,
@@ -122,6 +228,8 @@ const emptyOverview: StatsOverview = {
 
 const overview = ref<StatsOverview>(emptyOverview);
 const requestLogs = ref<RequestLogSummary[]>([]);
+const modelStats = ref<ModelStatsSummary[]>([]);
+const providerStats = ref<ProviderStatsSummary[]>([]);
 const loading = ref(false);
 const error = ref('');
 
@@ -144,13 +252,18 @@ async function loadStats() {
   error.value = '';
 
   try {
-    const [overviewResponse, requestsResponse] = await Promise.all([
+    const [overviewResponse, requestsResponse, modelsResponse, providersResponse] =
+      await Promise.all([
       statsApi.getOverview(),
       statsApi.listRequests(),
+      statsApi.listModels(),
+      statsApi.listProviders(),
     ]);
 
     overview.value = overviewResponse.data;
     requestLogs.value = requestsResponse.data;
+    modelStats.value = modelsResponse.data;
+    providerStats.value = providersResponse.data;
   } catch {
     error.value = '统计数据加载失败，请稍后重试。';
   } finally {
@@ -193,9 +306,10 @@ function protocolLabel(request: RequestLogSummary) {
 }
 
 function formatTokens(request: RequestLogSummary) {
-  const inputTokens = request.input_tokens ?? 0;
-  const outputTokens = request.output_tokens ?? 0;
+  return formatTokenPair(request.input_tokens ?? 0, request.output_tokens ?? 0);
+}
 
+function formatTokenPair(inputTokens: number, outputTokens: number) {
   return `${formatNumber(inputTokens)} / ${formatNumber(outputTokens)}`;
 }
 
