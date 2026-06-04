@@ -12,6 +12,21 @@ pub struct StatsOverview {
     pub output_tokens: i64,
 }
 
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct RequestLogSummary {
+    pub id: String,
+    pub created_at: String,
+    pub protocol_in: Option<String>,
+    pub protocol_upstream: Option<String>,
+    pub provider_name: Option<String>,
+    pub model_requested: Option<String>,
+    pub status: String,
+    pub http_status: Option<i64>,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub latency_ms: Option<i64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RequestLogInsert {
     pub protocol_in: String,
@@ -89,6 +104,33 @@ pub async fn overview(pool: &SqlitePool) -> Result<StatsOverview> {
     .await?;
 
     Ok(overview)
+}
+
+pub async fn list_requests(pool: &SqlitePool, limit: usize) -> Result<Vec<RequestLogSummary>> {
+    let rows = sqlx::query_as::<_, RequestLogSummary>(
+        r#"
+        SELECT
+            id,
+            created_at,
+            protocol_in,
+            protocol_upstream,
+            provider_name,
+            model_requested,
+            status,
+            http_status,
+            input_tokens,
+            output_tokens,
+            latency_ms
+        FROM request_logs
+        ORDER BY created_at DESC
+        LIMIT ?
+        "#,
+    )
+    .bind(limit as i64)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
 }
 
 #[cfg(test)]
