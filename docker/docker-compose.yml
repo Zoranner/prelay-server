@@ -8,6 +8,7 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - LISTEN_PORT=3000
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-}
     volumes:
       - ./data:/app/data
 networks:

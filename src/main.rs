@@ -41,6 +41,14 @@ async fn main() -> anyhow::Result<()> {
         .timeout(std::time::Duration::from_secs(300)) // 5 min for long-running LLM calls
         .build()?;
 
+    if std::env::var("ADMIN_TOKEN")
+        .ok()
+        .map(|token| token.trim().is_empty())
+        .unwrap_or(true)
+    {
+        tracing::warn!("ADMIN_TOKEN 未配置，/api 管理接口将以兼容模式开放");
+    }
+
     let state = AppState { db, client };
 
     // Proxy routes: handle all HTTP methods on /proxy/* and /proxy
@@ -52,7 +60,8 @@ async fn main() -> anyhow::Result<()> {
     // Admin API routes
     let admin_router = routes::admin::router()
         .merge(routes::stats::router())
-        .with_state(state.clone());
+        .with_state(state.clone())
+        .layer(middleware::from_fn(routes::auth::require_admin_auth));
     let protocol_router = routes::chat::router()
         .merge(routes::messages::router())
         .merge(routes::models::router())

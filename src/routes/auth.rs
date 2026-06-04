@@ -17,6 +17,14 @@ pub async fn require_protocol_auth(
     Ok(next.run(request).await)
 }
 
+pub async fn require_admin_auth(request: Request, next: Next) -> Result<Response, AppError> {
+    let Some(expected_token) = configured_admin_token() else {
+        return Ok(next.run(request).await);
+    };
+    authenticate_admin_request(request.headers(), &expected_token)?;
+    Ok(next.run(request).await)
+}
+
 pub async fn authenticate_protocol_request(
     db: &SqlitePool,
     headers: &HeaderMap,
@@ -26,6 +34,25 @@ pub async fn authenticate_protocol_request(
         .await?
         .ok_or(AppError::Unauthorized)?;
     Ok(())
+}
+
+pub fn authenticate_admin_request(
+    headers: &HeaderMap,
+    expected_token: &str,
+) -> Result<(), AppError> {
+    let token = extract_token(headers).ok_or(AppError::Unauthorized)?;
+    if token == expected_token {
+        Ok(())
+    } else {
+        Err(AppError::Unauthorized)
+    }
+}
+
+fn configured_admin_token() -> Option<String> {
+    std::env::var("ADMIN_TOKEN")
+        .ok()
+        .map(|token| token.trim().to_string())
+        .filter(|token| !token.is_empty())
 }
 
 pub fn extract_token(headers: &HeaderMap) -> Option<String> {
@@ -50,11 +77,18 @@ use crate::db;
 
 #[cfg(test)]
 mod tests {
-    use axum::http::{HeaderMap, HeaderValue};
+    use axum::{
+        http::{HeaderMap, HeaderValue},
+        middleware, Router,
+    };
     use sqlx::sqlite::SqlitePoolOptions;
+    use tokio::net::TcpListener;
 
-    use super::{authenticate_protocol_request, extract_token};
-    use crate::db;
+    use super::{
+        authenticate_admin_request, authenticate_protocol_request, extract_token,
+        require_admin_auth,
+    };
+    use crate::{db, AppState};
 
     #[test]
     fn extracts_bearer_token_from_authorization_header() {
@@ -101,5 +135,69 @@ mod tests {
         authenticate_protocol_request(&db, &headers)
             .await
             .expect("authenticate request");
+    }
+
+    #[test]
+    fn authenticates_matching_admin_token() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", HeaderValue::from_static("admin-secret"));
+
+        authenticate_admin_request(&headers, "admin-secret").expect("authenticate admin request");
+    }
+
+    #[test]
+    fn rejects_missing_or_wrong_admin_token() {
+        let headers = HeaderMap::new();
+        assert!(authenticate_admin_request(&headers, "admin-secret").is_err());
+
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", HeaderValue::from_static("Bearer wrong"));
+        assert!(authenticate_admin_request(&headers, "admin-secret").is_err());
+    }
+
+    #[tokio::test]
+    async fn protects_admin_router_when_admin_token_is_configured() {
+        std::env::set_var("ADMIN_TOKEN", "admin-secret");
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+        let admin_router = crate::routes::admin::router()
+            .merge(crate::routes::stats::router())
+            .with_state(state)
+            .layer(middleware::from_fn(require_admin_auth));
+        let app = Router::new().nest("/api", admin_router);
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("read test server address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let client = reqwest::Client::new();
+        let unauthorized = client
+            .get(format!("http://{addr}/api/configs"))
+            .send()
+            .await
+            .expect("send unauthorized request");
+        assert_eq!(unauthorized.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+        let authorized = client
+            .get(format!("http://{addr}/api/configs"))
+            .bearer_auth("admin-secret")
+            .send()
+            .await
+            .expect("send authorized request");
+        assert_eq!(authorized.status(), reqwest::StatusCode::OK);
+
+        server.abort();
+        std::env::remove_var("ADMIN_TOKEN");
     }
 }
