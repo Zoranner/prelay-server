@@ -1,4 +1,12 @@
-use axum::{extract::State, routing::post, Json, Router};
+use axum::{
+    body::Body,
+    extract::State,
+    http::header,
+    response::{IntoResponse, Response},
+    routing::post,
+    Json, Router,
+};
+use futures::TryStreamExt;
 use serde_json::Value;
 
 use crate::{
@@ -15,7 +23,7 @@ pub fn router() -> Router<AppState> {
 async fn create_ollama_chat(
     State(state): State<AppState>,
     Json(mut payload): Json<Value>,
-) -> Result<Json<Value>, AppError> {
+) -> Result<Response, AppError> {
     let started_at = std::time::Instant::now();
     let model = payload
         .get("model")
@@ -77,6 +85,39 @@ async fn create_ollama_chat(
         return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
     }
 
+    if is_streaming {
+        insert_request_log(
+            &state.db,
+            RequestLogInsert {
+                protocol_in: "ollama_native".to_string(),
+                protocol_out: "ollama_native".to_string(),
+                protocol_upstream: "ollama_native".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                model_requested: model,
+                model_upstream,
+                status: "success".to_string(),
+                http_status: 200,
+                is_streaming,
+                input_tokens: None,
+                output_tokens: None,
+                reasoning_tokens: None,
+                latency_ms: started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: Some(upstream_latency_ms),
+                first_token_ms: None,
+                tool_call_count: None,
+                upstream_request_id: None,
+            },
+        )
+        .await?;
+        let body = Body::from_stream(
+            upstream_response
+                .bytes_stream()
+                .map_err(std::io::Error::other),
+        );
+        return Ok(([(header::CONTENT_TYPE, "application/x-ndjson")], body).into_response());
+    }
+
     let response = upstream_response
         .json::<Value>()
         .await
@@ -110,12 +151,13 @@ async fn create_ollama_chat(
     )
     .await?;
 
-    Ok(Json(response))
+    Ok(Json(response).into_response())
 }
 
 #[cfg(test)]
 mod tests {
-    use axum::{middleware, routing::post, Json, Router};
+    use axum::{body::Bytes, middleware, routing::post, Json, Router};
+    use futures::StreamExt;
     use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
     use tokio::net::TcpListener;
@@ -260,6 +302,64 @@ mod tests {
         server.abort();
     }
 
+    #[tokio::test]
+    async fn streams_ollama_native_chat_without_waiting_for_upstream_done() {
+        let upstream = spawn_streaming_ollama_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(&db, "llama3.2", "ollama_native", &upstream, "unused")
+            .await
+            .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+        let app = Router::new().merge(super::router().with_state(state));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("read test server address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{addr}/api/chat"))
+            .json(&json!({
+                "model": "llama3.2",
+                "stream": true,
+                "messages": [
+                    { "role": "user", "content": "hello" }
+                ]
+            }))
+            .send()
+            .await
+            .expect("send request");
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+
+        let started_at = std::time::Instant::now();
+        let mut stream = response.bytes_stream();
+        let first_chunk = stream
+            .next()
+            .await
+            .expect("receive first stream chunk")
+            .expect("first stream chunk ok");
+        let first_chunk_elapsed = started_at.elapsed();
+        let first_chunk = String::from_utf8(first_chunk.to_vec()).expect("utf8 stream chunk");
+
+        assert!(
+            first_chunk_elapsed < std::time::Duration::from_millis(200),
+            "first chunk took {first_chunk_elapsed:?}"
+        );
+        assert!(first_chunk.contains("\"content\":\"hel\""));
+
+        server.abort();
+    }
+
     async fn spawn_ollama_upstream() -> String {
         async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
             assert_eq!(payload["model"], "llama3.2");
@@ -276,6 +376,51 @@ mod tests {
                 "prompt_eval_count": 3,
                 "eval_count": 4
             }))
+        }
+
+        let app = Router::new().route("/chat", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_streaming_ollama_upstream() -> String {
+        async fn handler(Json(payload): Json<serde_json::Value>) -> axum::response::Response {
+            assert_eq!(payload["model"], "llama3.2");
+            assert_eq!(payload["stream"], true);
+            assert_eq!(payload["messages"][0]["role"], "user");
+            assert_eq!(payload["messages"][0]["content"], "hello");
+
+            let stream = futures::stream::unfold(0, |state| async move {
+                match state {
+                    0 => Some((
+                        Ok::<_, std::io::Error>(Bytes::from_static(
+                            b"{\"model\":\"llama3.2\",\"message\":{\"role\":\"assistant\",\"content\":\"hel\"},\"done\":false}\n",
+                        )),
+                        1,
+                    )),
+                    1 => {
+                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                        Some((
+                            Ok::<_, std::io::Error>(Bytes::from_static(
+                                b"{\"model\":\"llama3.2\",\"message\":{\"role\":\"assistant\",\"content\":\"lo\"},\"done\":true}\n",
+                            )),
+                            2,
+                        ))
+                    }
+                    _ => None,
+                }
+            });
+
+            axum::response::Response::builder()
+                .header("content-type", "application/x-ndjson")
+                .body(axum::body::Body::from_stream(stream))
+                .expect("build streaming response")
         }
 
         let app = Router::new().route("/chat", post(handler));
