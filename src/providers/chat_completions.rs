@@ -59,6 +59,24 @@ pub fn decode_chat_response(value: Value) -> Result<InternalResponse, AppError> 
     })
 }
 
+pub fn decode_chat_sse_text_deltas(body: &str) -> Vec<String> {
+    body.lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter(|data| *data != "[DONE]")
+        .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+        .filter_map(|value| {
+            value
+                .get("choices")
+                .and_then(Value::as_array)
+                .and_then(|choices| choices.first())
+                .and_then(|choice| choice.get("delta"))
+                .and_then(|delta| delta.get("content"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect()
+}
+
 fn decode_tool_call(value: &Value) -> Option<InternalOutputItem> {
     let id = value.get("id").and_then(Value::as_str)?.to_string();
     let function = value.get("function")?;
@@ -142,7 +160,7 @@ fn decode_usage(usage: Option<&Value>) -> Option<InternalUsage> {
 mod tests {
     use serde_json::json;
 
-    use super::{decode_chat_response, encode_chat_request};
+    use super::{decode_chat_response, decode_chat_sse_text_deltas, encode_chat_request};
     use crate::bridge::internal::{
         InternalContentPart, InternalMessage, InternalRequest, InternalRole,
     };
@@ -266,5 +284,16 @@ mod tests {
             response.output[0].tool_call_arguments().as_deref(),
             Some("{\"path\":\"Cargo.toml\"}")
         );
+    }
+
+    #[test]
+    fn decodes_chat_sse_text_deltas() {
+        let deltas = decode_chat_sse_text_deltas(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n\
+             data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n\
+             data: [DONE]\n\n",
+        );
+
+        assert_eq!(deltas, vec!["hel".to_string(), "lo".to_string()]);
     }
 }

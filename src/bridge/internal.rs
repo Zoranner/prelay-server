@@ -31,6 +31,7 @@ pub enum InternalOutputItem {
 }
 
 impl InternalOutputItem {
+    #[cfg(test)]
     pub fn text_content(&self) -> Option<String> {
         match self {
             InternalOutputItem::Message { content, .. } => {

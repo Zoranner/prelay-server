@@ -16,7 +16,9 @@ use crate::{
     },
     db,
     error::AppError,
-    providers::chat_completions::{decode_chat_response, encode_chat_request},
+    providers::chat_completions::{
+        decode_chat_response, decode_chat_sse_text_deltas, encode_chat_request,
+    },
     stats::{insert_request_log, RequestLogInsert},
     AppState,
 };
@@ -78,6 +80,39 @@ async fn create_response(
         return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
     }
 
+    if is_streaming {
+        let upstream_body = upstream_response
+            .text()
+            .await
+            .map_err(|error| AppError::Internal(error.into()))?;
+        let chunks = decode_chat_sse_text_deltas(&upstream_body);
+        let chunk_refs = chunks.iter().map(String::as_str).collect::<Vec<_>>();
+        insert_request_log(
+            &state.db,
+            RequestLogInsert {
+                protocol_in: "responses".to_string(),
+                protocol_out: "responses".to_string(),
+                protocol_upstream: "chat_completions".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                model_requested,
+                model_upstream: request.model,
+                status: "success".to_string(),
+                http_status: 200,
+                is_streaming,
+                input_tokens: None,
+                output_tokens: None,
+                latency_ms: started_at.elapsed().as_millis() as i64,
+            },
+        )
+        .await?;
+        return Ok((
+            [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
+            responses_sse_from_text_chunks(&chunk_refs),
+        )
+            .into_response());
+    }
+
     let upstream_json = upstream_response
         .json::<Value>()
         .await
@@ -116,19 +151,6 @@ async fn create_response(
         },
     )
     .await?;
-
-    if is_streaming {
-        let text = response
-            .output
-            .first()
-            .and_then(|item| item.text_content())
-            .unwrap_or_default();
-        return Ok((
-            [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
-            responses_sse_from_text_chunks(&[text.as_str()]),
-        )
-            .into_response());
-    }
 
     Ok(Json(encode_responses_response(response)).into_response())
 }
@@ -332,7 +354,7 @@ mod tests {
 
     #[tokio::test]
     async fn returns_responses_sse_when_stream_is_true() {
-        let upstream = spawn_chat_upstream().await;
+        let upstream = spawn_streaming_chat_upstream().await;
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -377,7 +399,8 @@ mod tests {
 
         assert!(content_type.starts_with("text/event-stream"));
         assert!(body.contains("event: response.output_text.delta"));
-        assert!(body.contains("data: upstream hello"));
+        assert!(body.contains("data: hel"));
+        assert!(body.contains("data: lo"));
         assert!(body.ends_with("data: [DONE]\n\n"));
     }
 
@@ -561,6 +584,32 @@ mod tests {
                     "completion_tokens": 4
                 }
             }))
+        }
+
+        let app = Router::new().route("/chat/completions", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_streaming_chat_upstream() -> String {
+        async fn handler(Json(payload): Json<serde_json::Value>) -> axum::response::Response {
+            use axum::response::IntoResponse;
+
+            assert_eq!(payload["model"], "deepseek-chat");
+            assert_eq!(payload["stream"], true);
+            (
+                [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                "data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n\
+                 data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n\
+                 data: [DONE]\n\n",
+            )
+                .into_response()
         }
 
         let app = Router::new().route("/chat/completions", post(handler));
