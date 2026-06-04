@@ -38,6 +38,8 @@ fn decode_input(input: &Value) -> Result<Vec<InternalMessage>, AppError> {
         return Ok(vec![InternalMessage {
             role: InternalRole::User,
             content: vec![InternalContentPart::Text(text.to_string())],
+            tool_call_id: None,
+            tool_calls: Vec::new(),
         }]);
     }
 
@@ -48,6 +50,28 @@ fn decode_input(input: &Value) -> Result<Vec<InternalMessage>, AppError> {
 }
 
 fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
+    if value
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind == "function_call_output")
+    {
+        return Ok(InternalMessage {
+            role: InternalRole::Tool,
+            content: vec![InternalContentPart::Text(
+                value
+                    .get("output")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            )],
+            tool_call_id: value
+                .get("call_id")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            tool_calls: Vec::new(),
+        });
+    }
+
     let role = value
         .get("role")
         .and_then(Value::as_str)
@@ -61,6 +85,11 @@ fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
     Ok(InternalMessage {
         role,
         content: decode_content(content)?,
+        tool_call_id: value
+            .get("call_id")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        tool_calls: Vec::new(),
     })
 }
 
@@ -165,6 +194,31 @@ mod tests {
                 InternalContentPart::Text("hello".to_string()),
                 InternalContentPart::Text("world".to_string())
             ]
+        );
+    }
+
+    #[test]
+    fn decodes_function_call_output_into_tool_message() {
+        let request = decode_responses_request(json!({
+            "model": "deepseek-chat",
+            "input": [
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "{\"content\":\"file text\"}"
+                }
+            ]
+        }))
+        .expect("decode responses request");
+
+        assert_eq!(request.messages.len(), 1);
+        assert_eq!(request.messages[0].role, InternalRole::Tool);
+        assert_eq!(request.messages[0].tool_call_id.as_deref(), Some("call_1"));
+        assert_eq!(
+            request.messages[0].content,
+            vec![InternalContentPart::Text(
+                "{\"content\":\"file text\"}".to_string()
+            )]
         );
     }
 }

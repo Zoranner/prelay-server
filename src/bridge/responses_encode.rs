@@ -25,6 +25,18 @@ fn encode_output_item(item: InternalOutputItem) -> Value {
             "role": encode_role(role),
             "content": content.into_iter().map(encode_content_part).collect::<Vec<_>>(),
         }),
+        InternalOutputItem::FunctionToolCall {
+            id,
+            name,
+            arguments,
+        } => json!({
+            "type": "function_call",
+            "id": id,
+            "call_id": id,
+            "name": name,
+            "arguments": arguments,
+            "status": "completed",
+        }),
     }
 }
 
@@ -95,6 +107,28 @@ mod tests {
         assert_eq!(
             encoded["usage"]["output_tokens_details"]["reasoning_tokens"],
             2
+        );
+    }
+
+    #[test]
+    fn encodes_internal_tool_call_to_openai_responses_shape() {
+        let encoded = encode_responses_response(InternalResponse {
+            id: "resp_123".to_string(),
+            model: "deepseek-chat".to_string(),
+            output: vec![InternalOutputItem::FunctionToolCall {
+                id: "call_1".to_string(),
+                name: "read_file".to_string(),
+                arguments: "{\"path\":\"Cargo.toml\"}".to_string(),
+            }],
+            usage: None,
+        });
+
+        assert_eq!(encoded["output"][0]["type"], "function_call");
+        assert_eq!(encoded["output"][0]["call_id"], "call_1");
+        assert_eq!(encoded["output"][0]["name"], "read_file");
+        assert_eq!(
+            encoded["output"][0]["arguments"],
+            "{\"path\":\"Cargo.toml\"}"
         );
     }
 }

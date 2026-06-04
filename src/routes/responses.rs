@@ -435,6 +435,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bridges_function_tool_call_roundtrip() {
+        let upstream = spawn_tool_roundtrip_chat_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(
+            &db,
+            "deepseek-chat",
+            "openai_compatible",
+            &upstream,
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+
+        let first = create_response(
+            State(state.clone()),
+            axum::Json(json!({
+                "model": "deepseek-chat",
+                "input": "please read"
+            })),
+        )
+        .await
+        .expect("create first response");
+        let first = response_json(first).await;
+        let first_id = first["id"].as_str().expect("first id");
+        assert_eq!(first["output"][0]["type"], "function_call");
+        assert_eq!(first["output"][0]["call_id"], "call_1");
+        assert_eq!(first["output"][0]["name"], "read_file");
+
+        let second = create_response(
+            State(state),
+            axum::Json(json!({
+                "model": "deepseek-chat",
+                "previous_response_id": first_id,
+                "input": [
+                    {
+                        "type": "function_call_output",
+                        "call_id": "call_1",
+                        "output": "file text"
+                    }
+                ]
+            })),
+        )
+        .await
+        .expect("create second response");
+        let second = response_json(second).await;
+
+        assert_eq!(second["output"][0]["content"][0]["text"], "tool accepted");
+    }
+
+    #[tokio::test]
     async fn rejects_unknown_previous_response_id() {
         let upstream = spawn_chat_upstream().await;
         let db = SqlitePoolOptions::new()
@@ -547,6 +606,69 @@ mod tests {
                     "prompt_tokens": 3,
                     "completion_tokens": 4
                 }
+            }))
+        }
+
+        let app = Router::new().route("/chat/completions", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_tool_roundtrip_chat_upstream() -> String {
+        async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+            let messages = payload["messages"].as_array().expect("messages");
+            if messages.len() == 1 {
+                assert_eq!(messages[0]["role"], "user");
+                return Json(json!({
+                    "id": "chatcmpl_tool",
+                    "model": payload["model"],
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": null,
+                                "tool_calls": [
+                                    {
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "read_file",
+                                            "arguments": "{\"path\":\"Cargo.toml\"}"
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }));
+            }
+
+            assert_eq!(messages.len(), 3);
+            assert_eq!(messages[0]["role"], "user");
+            assert_eq!(messages[0]["content"], "please read");
+            assert_eq!(messages[1]["role"], "assistant");
+            assert_eq!(messages[1]["tool_calls"][0]["id"], "call_1");
+            assert_eq!(messages[2]["role"], "tool");
+            assert_eq!(messages[2]["tool_call_id"], "call_1");
+            assert_eq!(messages[2]["content"], "file text");
+
+            Json(json!({
+                "id": "chatcmpl_tool_done",
+                "model": payload["model"],
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "tool accepted"
+                        }
+                    }
+                ]
             }))
         }
 

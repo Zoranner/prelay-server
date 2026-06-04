@@ -2,7 +2,9 @@ use anyhow::Result;
 use chrono::Utc;
 use sqlx::SqlitePool;
 
-use crate::bridge::internal::{InternalMessage, InternalOutputItem, InternalResponse};
+use crate::bridge::internal::{
+    InternalMessage, InternalOutputItem, InternalResponse, InternalToolCall,
+};
 
 pub async fn save_response_session(
     pool: &SqlitePool,
@@ -73,7 +75,26 @@ struct ResponseSessionRow {
 
 fn output_item_to_message(item: InternalOutputItem) -> InternalMessage {
     match item {
-        InternalOutputItem::Message { role, content, .. } => InternalMessage { role, content },
+        InternalOutputItem::Message { role, content, .. } => InternalMessage {
+            role,
+            content,
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+        },
+        InternalOutputItem::FunctionToolCall {
+            id,
+            name,
+            arguments,
+        } => InternalMessage {
+            role: crate::bridge::internal::InternalRole::Assistant,
+            content: Vec::new(),
+            tool_call_id: None,
+            tool_calls: vec![InternalToolCall {
+                id,
+                name,
+                arguments,
+            }],
+        },
     }
 }
 
@@ -108,6 +129,8 @@ mod tests {
             &[InternalMessage {
                 role: InternalRole::User,
                 content: vec![InternalContentPart::Text("first user".to_string())],
+                tool_call_id: None,
+                tool_calls: Vec::new(),
             }],
             &InternalResponse {
                 id: "resp_1".to_string(),

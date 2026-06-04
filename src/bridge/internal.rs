@@ -23,6 +23,11 @@ pub enum InternalOutputItem {
         role: InternalRole,
         content: Vec<InternalContentPart>,
     },
+    FunctionToolCall {
+        id: String,
+        name: String,
+        arguments: String,
+    },
 }
 
 impl InternalOutputItem {
@@ -42,6 +47,23 @@ impl InternalOutputItem {
                     Some(text)
                 }
             }
+            InternalOutputItem::FunctionToolCall { .. } => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn tool_call_name(&self) -> Option<String> {
+        match self {
+            InternalOutputItem::FunctionToolCall { name, .. } => Some(name.clone()),
+            InternalOutputItem::Message { .. } => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn tool_call_arguments(&self) -> Option<String> {
+        match self {
+            InternalOutputItem::FunctionToolCall { arguments, .. } => Some(arguments.clone()),
+            InternalOutputItem::Message { .. } => None,
         }
     }
 }
@@ -57,6 +79,15 @@ pub struct InternalUsage {
 pub struct InternalMessage {
     pub role: InternalRole,
     pub content: Vec<InternalContentPart>,
+    pub tool_call_id: Option<String>,
+    pub tool_calls: Vec<InternalToolCall>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InternalToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
