@@ -21,6 +21,7 @@ async fn create_message(
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
     let started_at = std::time::Instant::now();
+    let original_payload = payload.clone();
     let request = decode_anthropic_request(payload)?;
     let model_requested = request.model.clone();
     let is_streaming = request.stream;
@@ -29,6 +30,18 @@ async fn create_message(
         .into_iter()
         .find(|provider| provider.name == request.model)
         .ok_or_else(|| AppError::BadRequest(format!("模型 {} 未配置", request.model)))?;
+    if provider.uses_anthropic_auth() {
+        return create_native_anthropic_message(
+            &state,
+            original_payload,
+            provider,
+            model_requested,
+            is_streaming,
+            started_at,
+        )
+        .await;
+    }
+
     let upstream_url = format!(
         "{}/chat/completions",
         provider.base_url.trim_end_matches('/')
@@ -95,6 +108,86 @@ async fn create_message(
     .await?;
 
     Ok(Json(encode_anthropic_response(response)))
+}
+
+async fn create_native_anthropic_message(
+    state: &AppState,
+    payload: Value,
+    provider: crate::models::ProviderConfig,
+    model_requested: String,
+    is_streaming: bool,
+    started_at: std::time::Instant,
+) -> Result<Json<Value>, AppError> {
+    let upstream_url = format!("{}/messages", provider.base_url.trim_end_matches('/'));
+    let upstream_response = state
+        .client
+        .post(upstream_url)
+        .header("x-api-key", &provider.api_key)
+        .header("anthropic-version", "2023-06-01")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|error| AppError::Internal(error.into()))?;
+
+    if !upstream_response.status().is_success() {
+        let status = upstream_response.status();
+        insert_request_log(
+            &state.db,
+            RequestLogInsert {
+                protocol_in: "anthropic_messages".to_string(),
+                protocol_out: "anthropic_messages".to_string(),
+                protocol_upstream: "anthropic_messages".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                model_requested,
+                model_upstream: "unknown".to_string(),
+                status: "failed".to_string(),
+                http_status: status.as_u16() as i64,
+                is_streaming,
+                input_tokens: None,
+                output_tokens: None,
+                latency_ms: started_at.elapsed().as_millis() as i64,
+            },
+        )
+        .await?;
+        return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
+    }
+
+    let response = upstream_response
+        .json::<Value>()
+        .await
+        .map_err(|error| AppError::Internal(error.into()))?;
+    insert_request_log(
+        &state.db,
+        RequestLogInsert {
+            protocol_in: "anthropic_messages".to_string(),
+            protocol_out: "anthropic_messages".to_string(),
+            protocol_upstream: "anthropic_messages".to_string(),
+            provider_id: provider.id,
+            provider_name: provider.name,
+            model_requested,
+            model_upstream: response
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string(),
+            status: "success".to_string(),
+            http_status: 200,
+            is_streaming,
+            input_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("input_tokens"))
+                .and_then(Value::as_i64),
+            output_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("output_tokens"))
+                .and_then(Value::as_i64),
+            latency_ms: started_at.elapsed().as_millis() as i64,
+        },
+    )
+    .await?;
+
+    Ok(Json(response))
 }
 
 #[cfg(test)]
@@ -206,6 +299,59 @@ mod tests {
         assert_eq!(body["content"][0]["text"], "anthropic hello");
         assert_eq!(body["usage"]["input_tokens"], 3);
         assert_eq!(body["usage"]["output_tokens"], 4);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn forwards_anthropic_messages_request_to_native_upstream() {
+        let upstream = spawn_native_anthropic_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(
+            &db,
+            "claude-sonnet",
+            "anthropic_compatible",
+            &upstream,
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+        let app = Router::new().merge(super::router().with_state(state));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("read test server address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{addr}/v1/messages"))
+            .json(&json!({
+                "model": "claude-sonnet",
+                "max_tokens": 1024,
+                "messages": [
+                    { "role": "user", "content": "hello" }
+                ]
+            }))
+            .send()
+            .await
+            .expect("send request");
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+
+        let body: serde_json::Value = response.json().await.expect("parse response json");
+        assert_eq!(body["id"], "msg_native");
+        assert_eq!(body["model"], "claude-sonnet");
+        assert_eq!(body["content"][0]["text"], "native hello");
 
         server.abort();
     }
@@ -458,6 +604,39 @@ mod tests {
         }
 
         let app = Router::new().route("/chat/completions", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_native_anthropic_upstream() -> String {
+        async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+            assert_eq!(payload["model"], "claude-sonnet");
+            assert_eq!(payload["max_tokens"], 1024);
+            assert_eq!(payload["messages"][0]["role"], "user");
+            assert_eq!(payload["messages"][0]["content"], "hello");
+            Json(json!({
+                "id": "msg_native",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet",
+                "content": [
+                    { "type": "text", "text": "native hello" }
+                ],
+                "stop_reason": "end_turn",
+                "usage": {
+                    "input_tokens": 3,
+                    "output_tokens": 4
+                }
+            }))
+        }
+
+        let app = Router::new().route("/messages", post(handler));
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind upstream");
