@@ -26,12 +26,16 @@ async fn create_ollama_chat(
         .get("stream")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let provider = db::list_configs(&state.db)
+    let resolved = db::get_provider_by_model(&state.db, &model)
         .await?
-        .into_iter()
-        .find(|provider| provider.name == model && provider.provider_type == "ollama_native")
         .ok_or_else(|| AppError::BadRequest(format!("Ollama 模型 {model} 未配置")))?;
+    let provider = resolved.provider;
+    if provider.provider_type != "ollama_native" {
+        return Err(AppError::BadRequest(format!("Ollama 模型 {model} 未配置")));
+    }
+    let model_upstream = resolved.model_upstream;
     let upstream_url = format!("{}/chat", provider.base_url.trim_end_matches('/'));
+    payload["model"] = Value::String(model_upstream.clone());
     payload["stream"] = Value::Bool(is_streaming);
 
     let upstream_response = state
@@ -53,7 +57,7 @@ async fn create_ollama_chat(
                 provider_id: provider.id,
                 provider_name: provider.name,
                 model_requested: model.clone(),
-                model_upstream: model,
+                model_upstream,
                 status: "failed".to_string(),
                 http_status: status.as_u16() as i64,
                 is_streaming,

@@ -1,7 +1,12 @@
 use axum::{extract::State, routing::get, Json, Router};
 use serde::Serialize;
 
-use crate::{db, error::AppError, models::ProviderConfig, AppState};
+use crate::{
+    db,
+    error::AppError,
+    models::{ModelAlias, ProviderConfig},
+    AppState,
+};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -27,15 +32,28 @@ struct ModelEntry {
 
 async fn list_models(State(state): State<AppState>) -> Result<Json<ModelsResponse>, AppError> {
     let configs = db::list_configs(&state.db).await?;
-    let data = configs
+    let aliases = db::list_model_aliases(&state.db).await?;
+    let mut data = configs
         .into_iter()
         .filter_map(model_entry_for_provider)
-        .collect();
+        .collect::<Vec<_>>();
+    data.extend(aliases.into_iter().map(model_entry_for_alias));
 
     Ok(Json(ModelsResponse {
         object: "list",
         data,
     }))
+}
+
+fn model_entry_for_alias(alias: ModelAlias) -> ModelEntry {
+    ModelEntry {
+        id: alias.alias,
+        object: "model",
+        owned_by: "provider-relay",
+        provider_id: alias.provider_id,
+        provider_name: alias.upstream_model,
+        upstream_protocol: "alias",
+    }
 }
 
 fn model_entry_for_provider(provider: ProviderConfig) -> Option<ModelEntry> {
@@ -96,6 +114,39 @@ mod tests {
         assert_eq!(response.0.data[0].provider_id, provider.id);
         assert_eq!(response.0.data[0].provider_name, provider.name);
         assert_eq!(response.0.data[0].upstream_protocol, "chat_completions");
+    }
+
+    #[tokio::test]
+    async fn lists_model_aliases_as_openai_models() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        let provider = db::create_config(
+            &db,
+            "DeepSeek Provider",
+            "openai_compatible",
+            "https://api.deepseek.com",
+            "sk-test",
+        )
+        .await
+        .expect("create provider");
+        db::create_model_alias(&db, "coder", &provider.id, "deepseek-chat", &["responses"])
+            .await
+            .expect("create alias");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+
+        let response = list_models(State(state)).await.expect("list models");
+
+        assert!(response.0.data.iter().any(|model| model.id == "coder"
+            && model.provider_id == provider.id
+            && model.provider_name == "deepseek-chat"
+            && model.upstream_protocol == "alias"));
     }
 
     #[tokio::test]

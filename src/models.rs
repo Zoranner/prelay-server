@@ -14,6 +14,13 @@ pub struct ProviderConfig {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ModelAlias {
+    pub alias: String,
+    pub provider_id: String,
+    pub upstream_model: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateConfigRequest {
     pub name: String,
@@ -28,6 +35,31 @@ pub struct UpdateConfigRequest {
     pub provider_type: Option<String>,
     pub base_url: Option<String>,
     pub api_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateModelAliasRequest {
+    pub alias: String,
+    pub provider_id: String,
+    pub upstream_model: String,
+    pub downstream_protocols: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ModelAliasResponse {
+    pub alias: String,
+    pub provider_id: String,
+    pub upstream_model: String,
+}
+
+impl From<ModelAlias> for ModelAliasResponse {
+    fn from(alias: ModelAlias) -> Self {
+        ModelAliasResponse {
+            alias: alias.alias,
+            provider_id: alias.provider_id,
+            upstream_model: alias.upstream_model,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]

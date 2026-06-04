@@ -37,15 +37,19 @@ async fn create_response(
     let model_requested = request.model.clone();
     let is_streaming = request.stream;
     let previous_response_id = request.previous_response_id.clone();
-    let provider = db::list_configs(&state.db)
+    let resolved = db::get_provider_by_model(&state.db, &request.model)
         .await?
-        .into_iter()
-        .find(|provider| provider.name == request.model)
         .ok_or_else(|| AppError::BadRequest(format!("模型 {} 未配置", request.model)))?;
+    let provider = resolved.provider;
+    let model_upstream = resolved.model_upstream;
+    let mut upstream_payload = original_payload.clone();
+    upstream_payload["model"] = Value::String(model_upstream.clone());
+    let mut request = request;
+    request.model = model_upstream.clone();
     if provider.provider_type == "openai" {
         return create_native_response(
             &state,
-            original_payload,
+            upstream_payload,
             provider,
             model_requested,
             is_streaming,

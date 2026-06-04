@@ -14,7 +14,7 @@ pub fn router() -> Router<AppState> {
 
 async fn create_chat_completion(
     State(state): State<AppState>,
-    Json(payload): Json<Value>,
+    Json(mut payload): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
     let started_at = std::time::Instant::now();
     let model = payload
@@ -26,11 +26,12 @@ async fn create_chat_completion(
         .get("stream")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let provider = db::list_configs(&state.db)
+    let resolved = db::get_provider_by_model(&state.db, &model)
         .await?
-        .into_iter()
-        .find(|provider| provider.name == model)
         .ok_or_else(|| AppError::BadRequest(format!("模型 {model} 未配置")))?;
+    let provider = resolved.provider;
+    let model_upstream = resolved.model_upstream;
+    payload["model"] = Value::String(model_upstream.clone());
     let upstream_url = format!(
         "{}/chat/completions",
         provider.base_url.trim_end_matches('/')
@@ -55,7 +56,7 @@ async fn create_chat_completion(
                 provider_id: provider.id,
                 provider_name: provider.name,
                 model_requested: model.clone(),
-                model_upstream: model,
+                model_upstream,
                 status: "failed".to_string(),
                 http_status: status.as_u16() as i64,
                 is_streaming,
@@ -198,6 +199,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolves_chat_completion_model_alias_to_upstream_model() {
+        let upstream = spawn_alias_chat_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        let provider = db::create_config(
+            &db,
+            "DeepSeek Provider",
+            "openai_compatible",
+            &upstream,
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        db::create_model_alias(
+            &db,
+            "coder",
+            &provider.id,
+            "deepseek-chat",
+            &["chat_completions"],
+        )
+        .await
+        .expect("create alias");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+
+        let response = create_chat_completion(
+            State(state),
+            axum::Json(json!({
+                "model": "coder",
+                "messages": [
+                    { "role": "user", "content": "hello" }
+                ]
+            })),
+        )
+        .await
+        .expect("create chat completion");
+
+        assert_eq!(response.0["model"], "deepseek-chat");
+    }
+
+    #[tokio::test]
     async fn records_successful_chat_completion_request_log() {
         let upstream = spawn_chat_upstream().await;
         let db = SqlitePoolOptions::new()
@@ -261,6 +309,35 @@ mod tests {
                     "prompt_tokens": 3,
                     "completion_tokens": 4
                 }
+            }))
+        }
+
+        let app = Router::new().route("/chat/completions", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_alias_chat_upstream() -> String {
+        async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+            assert_eq!(payload["model"], "deepseek-chat");
+            assert_eq!(payload["messages"][0]["content"], "hello");
+            Json(json!({
+                "id": "chatcmpl_alias",
+                "model": payload["model"],
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "alias accepted"
+                        }
+                    }
+                ]
             }))
         }
 

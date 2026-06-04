@@ -3,7 +3,13 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use crate::models::ProviderConfig;
+use crate::models::{ModelAlias, ProviderConfig};
+
+#[derive(Debug, Clone)]
+pub struct ResolvedProvider {
+    pub provider: ProviderConfig,
+    pub model_upstream: String,
+}
 
 pub async fn init_schema(pool: &SqlitePool) -> Result<()> {
     sqlx::query(
@@ -75,6 +81,22 @@ pub async fn init_schema(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await?;
 
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS model_aliases (
+            id                          TEXT PRIMARY KEY,
+            alias                       TEXT NOT NULL UNIQUE,
+            provider_id                 TEXT NOT NULL,
+            upstream_model              TEXT NOT NULL,
+            downstream_protocols_json   TEXT NOT NULL,
+            enabled                     INTEGER NOT NULL DEFAULT 1,
+            created_at                  TEXT NOT NULL
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
 
@@ -87,6 +109,35 @@ pub async fn list_configs(pool: &SqlitePool) -> Result<Vec<ProviderConfig>> {
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+pub async fn list_model_aliases(pool: &SqlitePool) -> Result<Vec<ModelAlias>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            alias,
+            provider_id,
+            upstream_model
+        FROM model_aliases
+        WHERE enabled = 1
+        ORDER BY alias ASC
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            use sqlx::Row;
+
+            ModelAlias {
+                alias: row.get("alias"),
+                provider_id: row.get("provider_id"),
+                upstream_model: row.get("upstream_model"),
+            }
+        })
+        .collect())
 }
 
 pub async fn get_config_by_id(pool: &SqlitePool, id: &str) -> Result<Option<ProviderConfig>> {
@@ -109,6 +160,63 @@ pub async fn get_config_by_token(pool: &SqlitePool, token: &str) -> Result<Optio
     .fetch_optional(pool)
     .await?;
     Ok(row)
+}
+
+pub async fn get_provider_by_model(
+    pool: &SqlitePool,
+    model: &str,
+) -> Result<Option<ResolvedProvider>> {
+    if let Some(alias) = get_model_alias(pool, model).await? {
+        let Some(provider) = get_config_by_id(pool, &alias.provider_id).await? else {
+            return Ok(None);
+        };
+        return Ok(Some(ResolvedProvider {
+            provider,
+            model_upstream: alias.upstream_model,
+        }));
+    }
+
+    let provider = sqlx::query_as::<_, ProviderConfig>(
+        "SELECT id, name, provider_type, base_url, api_key, token, created_at
+         FROM provider_configs WHERE name = ?",
+    )
+    .bind(model)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(provider.map(|provider| ResolvedProvider {
+        model_upstream: model.to_string(),
+        provider,
+    }))
+}
+
+pub async fn get_model_alias(pool: &SqlitePool, alias: &str) -> Result<Option<ModelAlias>> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+            id,
+            alias,
+            provider_id,
+            upstream_model,
+            downstream_protocols_json,
+            enabled,
+            created_at
+        FROM model_aliases
+        WHERE alias = ? AND enabled = 1
+        "#,
+    )
+    .bind(alias)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|row| {
+        use sqlx::Row;
+
+        ModelAlias {
+            alias: row.get("alias"),
+            provider_id: row.get("provider_id"),
+            upstream_model: row.get("upstream_model"),
+        }
+    }))
 }
 
 pub async fn create_config(
@@ -144,6 +252,47 @@ pub async fn create_config(
         api_key: api_key.to_string(),
         token,
         created_at,
+    })
+}
+
+pub async fn create_model_alias(
+    pool: &SqlitePool,
+    alias: &str,
+    provider_id: &str,
+    upstream_model: &str,
+    downstream_protocols: &[&str],
+) -> Result<ModelAlias> {
+    let id = Uuid::new_v4().to_string();
+    let created_at = Utc::now().to_rfc3339();
+    let downstream_protocols_json = serde_json::to_string(downstream_protocols)?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO model_aliases (
+            id,
+            alias,
+            provider_id,
+            upstream_model,
+            downstream_protocols_json,
+            enabled,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?, 1, ?)
+        "#,
+    )
+    .bind(&id)
+    .bind(alias)
+    .bind(provider_id)
+    .bind(upstream_model)
+    .bind(&downstream_protocols_json)
+    .bind(&created_at)
+    .execute(pool)
+    .await?;
+
+    Ok(ModelAlias {
+        alias: alias.to_string(),
+        provider_id: provider_id.to_string(),
+        upstream_model: upstream_model.to_string(),
     })
 }
 
@@ -205,4 +354,74 @@ pub async fn regenerate_token(pool: &SqlitePool, id: &str) -> Result<Option<Stri
 fn generate_token() -> String {
     // Generate a 32-char hex token (128-bit randomness)
     Uuid::new_v4().to_string().replace('-', "")
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    use super::{create_config, create_model_alias, get_provider_by_model};
+
+    #[tokio::test]
+    async fn resolves_model_alias_to_provider_and_upstream_model() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        super::init_schema(&db).await.expect("init schema");
+        let provider = create_config(
+            &db,
+            "DeepSeek Provider",
+            "openai_compatible",
+            "https://api.deepseek.com",
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        create_model_alias(
+            &db,
+            "coder",
+            &provider.id,
+            "deepseek-chat",
+            &["responses", "chat_completions"],
+        )
+        .await
+        .expect("create alias");
+
+        let resolved = get_provider_by_model(&db, "coder")
+            .await
+            .expect("resolve provider")
+            .expect("provider found");
+
+        assert_eq!(resolved.provider.id, provider.id);
+        assert_eq!(resolved.model_upstream, "deepseek-chat");
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_provider_name_when_alias_is_missing() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        super::init_schema(&db).await.expect("init schema");
+        let provider = create_config(
+            &db,
+            "deepseek-chat",
+            "openai_compatible",
+            "https://api.deepseek.com",
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+
+        let resolved = get_provider_by_model(&db, "deepseek-chat")
+            .await
+            .expect("resolve provider")
+            .expect("provider found");
+
+        assert_eq!(resolved.provider.id, provider.id);
+        assert_eq!(resolved.model_upstream, "deepseek-chat");
+    }
 }

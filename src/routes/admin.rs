@@ -10,6 +10,7 @@ use crate::{
     db,
     error::AppError,
     models::{ConfigResponse, CreateConfigRequest, UpdateConfigRequest},
+    models::{CreateModelAliasRequest, ModelAliasResponse},
     AppState,
 };
 
@@ -19,6 +20,7 @@ pub fn router() -> Router<AppState> {
         .route("/configs/by-token/:token", get(get_config_by_token))
         .route("/configs/:id", put(update_config).delete(delete_config))
         .route("/configs/:id/regenerate-token", post(regenerate_token))
+        .route("/model-aliases", post(create_model_alias))
 }
 
 async fn get_config_by_token(
@@ -108,4 +110,95 @@ async fn regenerate_token(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("配置 {} 不存在", id)))?;
     Ok(Json(serde_json::json!({ "token": token })))
+}
+
+async fn create_model_alias(
+    State(state): State<AppState>,
+    Json(req): Json<CreateModelAliasRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    if req.alias.trim().is_empty() {
+        return Err(AppError::BadRequest("别名不能为空".to_string()));
+    }
+    if req.provider_id.trim().is_empty() {
+        return Err(AppError::BadRequest("Provider 不能为空".to_string()));
+    }
+    if req.upstream_model.trim().is_empty() {
+        return Err(AppError::BadRequest("上游模型不能为空".to_string()));
+    }
+    let protocols = req
+        .downstream_protocols
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let alias = db::create_model_alias(
+        &state.db,
+        &req.alias,
+        &req.provider_id,
+        &req.upstream_model,
+        &protocols,
+    )
+    .await?;
+
+    Ok((StatusCode::CREATED, Json(ModelAliasResponse::from(alias))))
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::Router;
+    use serde_json::json;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    use crate::{db, AppState};
+
+    #[tokio::test]
+    async fn creates_model_alias_from_admin_api() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        let provider = db::create_config(
+            &db,
+            "DeepSeek Provider",
+            "openai_compatible",
+            "https://api.deepseek.com",
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+        let app = Router::new().nest("/api", super::router().with_state(state.clone()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("read test server address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{addr}/api/model-aliases"))
+            .json(&json!({
+                "alias": "coder",
+                "provider_id": provider.id,
+                "upstream_model": "deepseek-chat",
+                "downstream_protocols": ["responses", "chat_completions"]
+            }))
+            .send()
+            .await
+            .expect("send request");
+        assert_eq!(response.status(), reqwest::StatusCode::CREATED);
+
+        let resolved = db::get_provider_by_model(&state.db, "coder")
+            .await
+            .expect("resolve alias")
+            .expect("alias exists");
+        assert_eq!(resolved.model_upstream, "deepseek-chat");
+
+        server.abort();
+    }
 }
