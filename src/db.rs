@@ -59,6 +59,22 @@ pub async fn init_schema(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await?;
 
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS response_sessions (
+            response_id          TEXT PRIMARY KEY,
+            previous_response_id TEXT,
+            provider_id          TEXT NOT NULL,
+            model                TEXT NOT NULL,
+            input_messages_json  TEXT NOT NULL,
+            output_items_json    TEXT NOT NULL,
+            created_at           TEXT NOT NULL
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
 

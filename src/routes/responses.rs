@@ -10,7 +10,9 @@ use uuid::Uuid;
 
 use crate::{
     bridge::{
-        responses_decode::decode_responses_request, responses_encode::encode_responses_response,
+        responses_decode::decode_responses_request,
+        responses_encode::encode_responses_response,
+        sessions::{load_response_session_messages, save_response_session},
     },
     db,
     error::AppError,
@@ -31,6 +33,7 @@ async fn create_response(
     let request = decode_responses_request(payload)?;
     let model_requested = request.model.clone();
     let is_streaming = request.stream;
+    let previous_response_id = request.previous_response_id.clone();
     let provider = db::list_configs(&state.db)
         .await?
         .into_iter()
@@ -44,7 +47,9 @@ async fn create_response(
         .client
         .post(upstream_url)
         .bearer_auth(&provider.api_key)
-        .json(&encode_chat_request(&request))
+        .json(&encode_chat_request(
+            &request_with_session_history(&state.db, request.clone()).await?,
+        ))
         .send()
         .await
         .map_err(|error| AppError::Internal(error.into()))?;
@@ -79,6 +84,16 @@ async fn create_response(
         .map_err(|error| AppError::Internal(error.into()))?;
     let mut response = decode_chat_response(upstream_json)?;
     response.id = format!("resp_{}", Uuid::new_v4().simple());
+    save_response_session(
+        &state.db,
+        &response.id,
+        previous_response_id.as_deref(),
+        &provider.id,
+        &response.model,
+        &request.messages,
+        &response,
+    )
+    .await?;
     insert_request_log(
         &state.db,
         RequestLogInsert {
@@ -116,6 +131,23 @@ async fn create_response(
     }
 
     Ok(Json(encode_responses_response(response)).into_response())
+}
+
+async fn request_with_session_history(
+    db: &sqlx::SqlitePool,
+    mut request: crate::bridge::internal::InternalRequest,
+) -> Result<crate::bridge::internal::InternalRequest, AppError> {
+    let Some(previous_response_id) = request.previous_response_id.as_deref() else {
+        return Ok(request);
+    };
+    let Some(mut history) = load_response_session_messages(db, previous_response_id).await? else {
+        return Err(AppError::BadRequest(format!(
+            "previous_response_id {previous_response_id} 不存在"
+        )));
+    };
+    history.extend(request.messages);
+    request.messages = history;
+    Ok(request)
 }
 
 fn responses_sse_from_text_chunks(chunks: &[&str]) -> String {
@@ -349,6 +381,96 @@ mod tests {
         assert!(body.ends_with("data: [DONE]\n\n"));
     }
 
+    #[tokio::test]
+    async fn prepends_previous_response_messages_to_upstream_chat_request() {
+        let upstream = spawn_history_asserting_chat_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(
+            &db,
+            "deepseek-chat",
+            "openai_compatible",
+            &upstream,
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+
+        let first = create_response(
+            State(state.clone()),
+            axum::Json(json!({
+                "model": "deepseek-chat",
+                "input": "first user"
+            })),
+        )
+        .await
+        .expect("create first response");
+        let first = response_json(first).await;
+        let first_id = first["id"].as_str().expect("first id");
+
+        let second = create_response(
+            State(state),
+            axum::Json(json!({
+                "model": "deepseek-chat",
+                "previous_response_id": first_id,
+                "input": "second user"
+            })),
+        )
+        .await
+        .expect("create second response");
+        let second = response_json(second).await;
+
+        assert_eq!(
+            second["output"][0]["content"][0]["text"],
+            "history accepted"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_unknown_previous_response_id() {
+        let upstream = spawn_chat_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(
+            &db,
+            "deepseek-chat",
+            "openai_compatible",
+            &upstream,
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+
+        let error = create_response(
+            State(state),
+            axum::Json(json!({
+                "model": "deepseek-chat",
+                "previous_response_id": "resp_missing",
+                "input": "second user"
+            })),
+        )
+        .await
+        .expect_err("unknown previous response id should fail");
+
+        assert!(format!("{error:?}").contains("previous_response_id resp_missing 不存在"));
+    }
+
     #[test]
     fn encodes_upstream_text_chunks_as_responses_sse_events() {
         let encoded = responses_sse_from_text_chunks(&["hel", "lo"]);
@@ -372,6 +494,52 @@ mod tests {
                         "message": {
                             "role": "assistant",
                             "content": "upstream hello"
+                        }
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 3,
+                    "completion_tokens": 4
+                }
+            }))
+        }
+
+        let app = Router::new().route("/chat/completions", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_history_asserting_chat_upstream() -> String {
+        async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+            let messages = payload["messages"].as_array().expect("messages");
+            let content = if messages.len() == 1 {
+                assert_eq!(messages[0]["content"], "first user");
+                "first assistant"
+            } else {
+                assert_eq!(messages.len(), 3);
+                assert_eq!(messages[0]["role"], "user");
+                assert_eq!(messages[0]["content"], "first user");
+                assert_eq!(messages[1]["role"], "assistant");
+                assert_eq!(messages[1]["content"], "first assistant");
+                assert_eq!(messages[2]["role"], "user");
+                assert_eq!(messages[2]["content"], "second user");
+                "history accepted"
+            };
+
+            Json(json!({
+                "id": "chatcmpl_history",
+                "model": payload["model"],
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": content
                         }
                     }
                 ],

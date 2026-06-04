@@ -1,4 +1,6 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InternalRequest {
     pub model: String,
     pub stream: bool,
@@ -6,7 +8,7 @@ pub struct InternalRequest {
     pub messages: Vec<InternalMessage>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InternalResponse {
     pub id: String,
     pub model: String,
@@ -14,7 +16,7 @@ pub struct InternalResponse {
     pub usage: Option<InternalUsage>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InternalOutputItem {
     Message {
         id: String,
@@ -44,20 +46,20 @@ impl InternalOutputItem {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InternalUsage {
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
     pub reasoning_tokens: Option<i64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InternalMessage {
     pub role: InternalRole,
     pub content: Vec<InternalContentPart>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InternalRole {
     User,
     Assistant,
@@ -65,7 +67,7 @@ pub enum InternalRole {
     Tool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InternalContentPart {
     Text(String),
 }
