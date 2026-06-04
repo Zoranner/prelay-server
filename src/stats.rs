@@ -27,6 +27,32 @@ pub struct RequestLogSummary {
     pub latency_ms: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct ModelStatsSummary {
+    pub model_requested: Option<String>,
+    pub total_requests: i64,
+    pub successful_requests: i64,
+    pub failed_requests: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub estimated_cost: Option<f64>,
+    pub average_latency_ms: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct ProviderStatsSummary {
+    pub provider_id: Option<String>,
+    pub provider_name: Option<String>,
+    pub total_requests: i64,
+    pub successful_requests: i64,
+    pub failed_requests: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub estimated_cost: Option<f64>,
+    pub average_latency_ms: Option<f64>,
+    pub average_first_token_ms: Option<f64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RequestLogInsert {
     pub protocol_in: String,
@@ -133,11 +159,59 @@ pub async fn list_requests(pool: &SqlitePool, limit: usize) -> Result<Vec<Reques
     Ok(rows)
 }
 
+pub async fn list_model_stats(pool: &SqlitePool) -> Result<Vec<ModelStatsSummary>> {
+    let rows = sqlx::query_as::<_, ModelStatsSummary>(
+        r#"
+        SELECT
+            model_requested,
+            COUNT(*) AS total_requests,
+            COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) AS successful_requests,
+            COALESCE(SUM(CASE WHEN status <> 'success' THEN 1 ELSE 0 END), 0) AS failed_requests,
+            COALESCE(SUM(input_tokens), 0) AS input_tokens,
+            COALESCE(SUM(output_tokens), 0) AS output_tokens,
+            SUM(estimated_cost) AS estimated_cost,
+            AVG(latency_ms) AS average_latency_ms
+        FROM request_logs
+        GROUP BY model_requested
+        ORDER BY total_requests DESC, model_requested ASC
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
+}
+
+pub async fn list_provider_stats(pool: &SqlitePool) -> Result<Vec<ProviderStatsSummary>> {
+    let rows = sqlx::query_as::<_, ProviderStatsSummary>(
+        r#"
+        SELECT
+            provider_id,
+            provider_name,
+            COUNT(*) AS total_requests,
+            COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) AS successful_requests,
+            COALESCE(SUM(CASE WHEN status <> 'success' THEN 1 ELSE 0 END), 0) AS failed_requests,
+            COALESCE(SUM(input_tokens), 0) AS input_tokens,
+            COALESCE(SUM(output_tokens), 0) AS output_tokens,
+            SUM(estimated_cost) AS estimated_cost,
+            AVG(latency_ms) AS average_latency_ms,
+            AVG(first_token_ms) AS average_first_token_ms
+        FROM request_logs
+        GROUP BY provider_id, provider_name
+        ORDER BY total_requests DESC, provider_name ASC
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
-    use super::overview;
+    use super::{list_model_stats, list_provider_stats, overview};
     use crate::db;
 
     #[tokio::test]
@@ -204,5 +278,87 @@ mod tests {
         assert_eq!(overview.failed_requests, 1);
         assert_eq!(overview.input_tokens, 17);
         assert_eq!(overview.output_tokens, 34);
+    }
+
+    #[tokio::test]
+    async fn model_stats_groups_request_logs_by_requested_model() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+
+        insert_aggregate_request_logs(&db).await;
+
+        let rows = list_model_stats(&db).await.expect("load model stats");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].model_requested.as_deref(), Some("deepseek-chat"));
+        assert_eq!(rows[0].total_requests, 2);
+        assert_eq!(rows[0].successful_requests, 1);
+        assert_eq!(rows[0].failed_requests, 1);
+        assert_eq!(rows[0].input_tokens, 17);
+        assert_eq!(rows[0].output_tokens, 5);
+        assert_eq!(rows[0].estimated_cost, Some(0.000012));
+        assert_eq!(rows[0].average_latency_ms, Some(150.0));
+        assert_eq!(rows[1].model_requested.as_deref(), Some("kimi-k2"));
+    }
+
+    #[tokio::test]
+    async fn provider_stats_groups_request_logs_by_provider() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+
+        insert_aggregate_request_logs(&db).await;
+
+        let rows = list_provider_stats(&db).await.expect("load provider stats");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].provider_id.as_deref(), Some("provider-1"));
+        assert_eq!(rows[0].provider_name.as_deref(), Some("Provider One"));
+        assert_eq!(rows[0].total_requests, 2);
+        assert_eq!(rows[0].successful_requests, 1);
+        assert_eq!(rows[0].failed_requests, 1);
+        assert_eq!(rows[0].input_tokens, 17);
+        assert_eq!(rows[0].output_tokens, 5);
+        assert_eq!(rows[0].estimated_cost, Some(0.000012));
+        assert_eq!(rows[0].average_latency_ms, Some(150.0));
+        assert_eq!(rows[0].average_first_token_ms, Some(50.0));
+        assert_eq!(rows[1].provider_id.as_deref(), Some("provider-2"));
+    }
+
+    async fn insert_aggregate_request_logs(db: &sqlx::SqlitePool) {
+        sqlx::query(
+            r#"
+            INSERT INTO request_logs (
+                id,
+                created_at,
+                provider_id,
+                provider_name,
+                model_requested,
+                status,
+                input_tokens,
+                output_tokens,
+                estimated_cost,
+                latency_ms,
+                first_token_ms
+            )
+            VALUES
+                ('log-1', '2026-06-05T00:00:00Z', 'provider-1', 'Provider One',
+                 'deepseek-chat', 'success', 12, 5, 0.000012, 100, 50),
+                ('log-2', '2026-06-05T00:01:00Z', 'provider-1', 'Provider One',
+                 'deepseek-chat', 'failed', 5, 0, NULL, 200, NULL),
+                ('log-3', '2026-06-05T00:02:00Z', 'provider-2', 'Provider Two',
+                 'kimi-k2', 'success', 7, 9, 0.000034, 300, 120)
+            "#,
+        )
+        .execute(db)
+        .await
+        .expect("insert aggregate request logs");
     }
 }

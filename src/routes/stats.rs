@@ -19,6 +19,8 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/stats/overview", get(overview))
         .route("/stats/requests", get(requests))
+        .route("/stats/models", get(models))
+        .route("/stats/providers", get(providers))
 }
 
 async fn overview(State(state): State<AppState>) -> Result<Json<stats::StatsOverview>, AppError> {
@@ -35,6 +37,18 @@ async fn requests(
         .min(MAX_REQUESTS_LIMIT);
 
     Ok(Json(stats::list_requests(&state.db, limit).await?))
+}
+
+async fn models(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<stats::ModelStatsSummary>>, AppError> {
+    Ok(Json(stats::list_model_stats(&state.db).await?))
+}
+
+async fn providers(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<stats::ProviderStatsSummary>>, AppError> {
+    Ok(Json(stats::list_provider_stats(&state.db).await?))
 }
 
 #[cfg(test)]
@@ -264,5 +278,115 @@ mod tests {
         assert_eq!(rows.len(), 50);
 
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn models_api_returns_model_aggregates() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        insert_aggregate_request_logs(&db).await;
+
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+        let app = Router::new().nest("/api", super::router().with_state(state));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("read test server address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let response = reqwest::get(format!("http://{addr}/api/stats/models"))
+            .await
+            .expect("send request");
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+
+        let body: serde_json::Value = response.json().await.expect("parse response json");
+        let rows = body.as_array().expect("response is an array");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["model_requested"], "deepseek-chat");
+        assert_eq!(rows[0]["total_requests"], 2);
+        assert_eq!(rows[0]["failed_requests"], 1);
+        assert_eq!(rows[0]["average_latency_ms"], 150.0);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn providers_api_returns_provider_aggregates() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        insert_aggregate_request_logs(&db).await;
+
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+        let app = Router::new().nest("/api", super::router().with_state(state));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("read test server address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let response = reqwest::get(format!("http://{addr}/api/stats/providers"))
+            .await
+            .expect("send request");
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+
+        let body: serde_json::Value = response.json().await.expect("parse response json");
+        let rows = body.as_array().expect("response is an array");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["provider_id"], "provider-1");
+        assert_eq!(rows[0]["provider_name"], "Provider One");
+        assert_eq!(rows[0]["total_requests"], 2);
+        assert_eq!(rows[0]["average_first_token_ms"], 50.0);
+
+        server.abort();
+    }
+
+    async fn insert_aggregate_request_logs(db: &sqlx::SqlitePool) {
+        sqlx::query(
+            r#"
+            INSERT INTO request_logs (
+                id,
+                created_at,
+                provider_id,
+                provider_name,
+                model_requested,
+                status,
+                input_tokens,
+                output_tokens,
+                estimated_cost,
+                latency_ms,
+                first_token_ms
+            )
+            VALUES
+                ('log-1', '2026-06-05T00:00:00Z', 'provider-1', 'Provider One',
+                 'deepseek-chat', 'success', 12, 5, 0.000012, 100, 50),
+                ('log-2', '2026-06-05T00:01:00Z', 'provider-1', 'Provider One',
+                 'deepseek-chat', 'failed', 5, 0, NULL, 200, NULL),
+                ('log-3', '2026-06-05T00:02:00Z', 'provider-2', 'Provider Two',
+                 'kimi-k2', 'success', 7, 9, 0.000034, 300, 120)
+            "#,
+        )
+        .execute(db)
+        .await
+        .expect("insert aggregate request logs");
     }
 }
