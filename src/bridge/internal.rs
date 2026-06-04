@@ -23,6 +23,28 @@ pub enum InternalOutputItem {
     },
 }
 
+#[cfg(test)]
+impl InternalOutputItem {
+    pub fn text_content(&self) -> Option<String> {
+        match self {
+            InternalOutputItem::Message { content, .. } => {
+                let text = content
+                    .iter()
+                    .map(|part| match part {
+                        InternalContentPart::Text(text) => text.as_str(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if text.is_empty() {
+                    None
+                } else {
+                    Some(text)
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InternalUsage {
     pub input_tokens: Option<i64>,

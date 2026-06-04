@@ -7,6 +7,7 @@ mod bridge;
 mod db;
 mod error;
 mod models;
+mod providers;
 mod routes;
 mod stats;
 
