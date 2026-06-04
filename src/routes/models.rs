@@ -4,7 +4,9 @@ use serde::Serialize;
 use crate::{db, error::AppError, models::ProviderConfig, AppState};
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/models", get(list_models))
+    Router::new()
+        .route("/models", get(list_models))
+        .route("/v1/models", get(list_models))
 }
 
 #[derive(Debug, Serialize)]
@@ -56,7 +58,7 @@ fn model_entry_for_provider(provider: ProviderConfig) -> Option<ModelEntry> {
 
 #[cfg(test)]
 mod tests {
-    use axum::extract::State;
+    use axum::{extract::State, middleware, Router};
     use sqlx::sqlite::SqlitePoolOptions;
 
     use super::list_models;
@@ -94,5 +96,37 @@ mod tests {
         assert_eq!(response.0.data[0].provider_id, provider.id);
         assert_eq!(response.0.data[0].provider_name, provider.name);
         assert_eq!(response.0.data[0].upstream_protocol, "chat_completions");
+    }
+
+    #[tokio::test]
+    async fn rejects_unauthenticated_models_request() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+        let app = Router::new().merge(super::router().with_state(state.clone()).layer(
+            middleware::from_fn_with_state(state, crate::routes::auth::require_protocol_auth),
+        ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("read test server address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let response = reqwest::get(format!("http://{addr}/v1/models"))
+            .await
+            .expect("send request");
+
+        assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+        server.abort();
     }
 }

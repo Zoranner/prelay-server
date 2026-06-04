@@ -24,7 +24,7 @@ pub async fn handle(
     req: Request<Body>,
 ) -> Result<Response<Body>, AppError> {
     // Extract internal token from Authorization or x-api-key header
-    let token = extract_token(&req).ok_or(AppError::Unauthorized)?;
+    let token = crate::routes::auth::extract_token(req.headers()).ok_or(AppError::Unauthorized)?;
 
     // Look up provider config by token
     let config = db::get_config_by_token(&state.db, &token)
@@ -111,28 +111,4 @@ pub async fn handle(
     let body = Body::from_stream(stream);
 
     builder.body(body).map_err(|e| AppError::Internal(e.into()))
-}
-
-fn extract_token(req: &Request<Body>) -> Option<String> {
-    // Try Authorization: Bearer <token>
-    if let Some(auth) = req.headers().get("authorization") {
-        if let Ok(s) = auth.to_str() {
-            if let Some(token) = s.strip_prefix("Bearer ") {
-                let t = token.trim().to_string();
-                if !t.is_empty() {
-                    return Some(t);
-                }
-            }
-        }
-    }
-    // Try x-api-key: <token>
-    if let Some(key) = req.headers().get("x-api-key") {
-        if let Ok(s) = key.to_str() {
-            let t = s.trim().to_string();
-            if !t.is_empty() {
-                return Some(t);
-            }
-        }
-    }
-    None
 }

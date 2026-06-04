@@ -1,4 +1,4 @@
-use axum::{routing::any, Router};
+use axum::{middleware, routing::any, Router};
 use sqlx::sqlite::SqlitePoolOptions;
 use std::net::SocketAddr;
 use tower_http::{cors::CorsLayer, services::ServeDir};
@@ -53,13 +53,19 @@ async fn main() -> anyhow::Result<()> {
     let admin_router = routes::admin::router()
         .merge(routes::stats::router())
         .with_state(state.clone());
+    let protocol_router = routes::chat::router()
+        .merge(routes::messages::router())
+        .merge(routes::models::router())
+        .merge(routes::responses::router())
+        .with_state(state.clone())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            routes::auth::require_protocol_auth,
+        ));
 
     let app = Router::new()
         .nest("/api", admin_router)
-        .merge(routes::chat::router().with_state(state.clone()))
-        .merge(routes::messages::router().with_state(state.clone()))
-        .merge(routes::models::router().with_state(state.clone()))
-        .merge(routes::responses::router().with_state(state.clone()))
+        .merge(protocol_router)
         .nest("/proxy", proxy_router)
         // Serve built Vue frontend from ./static/
         .fallback_service(ServeDir::new("static").append_index_html_on_directories(true))

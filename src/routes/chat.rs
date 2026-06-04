@@ -107,13 +107,53 @@ async fn create_chat_completion(
 
 #[cfg(test)]
 mod tests {
-    use axum::{extract::State, routing::post, Json, Router};
+    use axum::{extract::State, middleware, routing::post, Json, Router};
     use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
     use tokio::net::TcpListener;
 
     use super::create_chat_completion;
     use crate::{db, AppState};
+
+    #[tokio::test]
+    async fn rejects_unauthenticated_chat_completion_request() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+        let app = Router::new().merge(super::router().with_state(state.clone()).layer(
+            middleware::from_fn_with_state(state, crate::routes::auth::require_protocol_auth),
+        ));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("read test server address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{addr}/v1/chat/completions"))
+            .json(&json!({
+                "model": "deepseek-chat",
+                "messages": [
+                    { "role": "user", "content": "hello" }
+                ]
+            }))
+            .send()
+            .await
+            .expect("send request");
+
+        assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+        server.abort();
+    }
 
     #[tokio::test]
     async fn forwards_chat_completion_request_to_configured_upstream() {
