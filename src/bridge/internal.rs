@@ -23,7 +23,6 @@ pub enum InternalOutputItem {
     },
 }
 
-#[cfg(test)]
 impl InternalOutputItem {
     pub fn text_content(&self) -> Option<String> {
         match self {

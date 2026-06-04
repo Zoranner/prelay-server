@@ -1,4 +1,10 @@
-use axum::{extract::State, routing::post, Json, Router};
+use axum::{
+    extract::State,
+    http::header,
+    response::{IntoResponse, Response},
+    routing::post,
+    Json, Router,
+};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -20,7 +26,7 @@ pub fn router() -> Router<AppState> {
 async fn create_response(
     State(state): State<AppState>,
     Json(payload): Json<Value>,
-) -> Result<Json<Value>, AppError> {
+) -> Result<Response, AppError> {
     let started_at = std::time::Instant::now();
     let request = decode_responses_request(payload)?;
     let model_requested = request.model.clone();
@@ -96,17 +102,45 @@ async fn create_response(
     )
     .await?;
 
-    Ok(Json(encode_responses_response(response)))
+    if is_streaming {
+        let text = response
+            .output
+            .first()
+            .and_then(|item| item.text_content())
+            .unwrap_or_default();
+        return Ok((
+            [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
+            responses_sse_from_text_chunks(&[text.as_str()]),
+        )
+            .into_response());
+    }
+
+    Ok(Json(encode_responses_response(response)).into_response())
+}
+
+fn responses_sse_from_text_chunks(chunks: &[&str]) -> String {
+    let mut output = String::new();
+    for chunk in chunks {
+        output.push_str("event: response.output_text.delta\n");
+        output.push_str("data: ");
+        output.push_str(chunk);
+        output.push_str("\n\n");
+    }
+    output.push_str("event: response.completed\n");
+    output.push_str("data: {}\n\n");
+    output.push_str("data: [DONE]\n\n");
+    output
 }
 
 #[cfg(test)]
 mod tests {
-    use axum::{extract::State, routing::post, Json, Router};
+    use axum::{extract::State, response::IntoResponse, routing::post, Json, Router};
     use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
     use tokio::net::TcpListener;
 
     use super::create_response;
+    use super::responses_sse_from_text_chunks;
     use crate::{db, AppState};
 
     #[tokio::test]
@@ -168,14 +202,16 @@ mod tests {
         .await
         .expect("create response");
 
-        assert_eq!(response.0["object"], "response");
-        assert_eq!(response.0["model"], "deepseek-chat");
+        let response = response_json(response).await;
+
+        assert_eq!(response["object"], "response");
+        assert_eq!(response["model"], "deepseek-chat");
         assert_eq!(
-            response.0["output"][0]["content"][0]["text"],
+            response["output"][0]["content"][0]["text"],
             "upstream hello"
         );
-        assert_eq!(response.0["usage"]["input_tokens"], 3);
-        assert_eq!(response.0["usage"]["output_tokens"], 4);
+        assert_eq!(response["usage"]["input_tokens"], 3);
+        assert_eq!(response["usage"]["output_tokens"], 4);
     }
 
     #[tokio::test]
@@ -262,6 +298,67 @@ mod tests {
         assert_eq!(overview.failed_requests, 1);
     }
 
+    #[tokio::test]
+    async fn returns_responses_sse_when_stream_is_true() {
+        let upstream = spawn_chat_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(
+            &db,
+            "deepseek-chat",
+            "openai_compatible",
+            &upstream,
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+
+        let response = create_response(
+            State(state),
+            axum::Json(json!({
+                "model": "deepseek-chat",
+                "input": "hello",
+                "stream": true
+            })),
+        )
+        .await
+        .expect("create response")
+        .into_response();
+        let content_type = response
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("read body");
+        let body = String::from_utf8(body.to_vec()).expect("utf8 body");
+
+        assert!(content_type.starts_with("text/event-stream"));
+        assert!(body.contains("event: response.output_text.delta"));
+        assert!(body.contains("data: upstream hello"));
+        assert!(body.ends_with("data: [DONE]\n\n"));
+    }
+
+    #[test]
+    fn encodes_upstream_text_chunks_as_responses_sse_events() {
+        let encoded = responses_sse_from_text_chunks(&["hel", "lo"]);
+
+        assert!(encoded.contains("event: response.output_text.delta\ndata: hel\n\n"));
+        assert!(encoded.contains("event: response.output_text.delta\ndata: lo\n\n"));
+        assert!(encoded.contains("event: response.completed\ndata: {}\n\n"));
+        assert!(encoded.ends_with("data: [DONE]\n\n"));
+    }
+
     async fn spawn_chat_upstream() -> String {
         async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
             assert_eq!(payload["model"], "deepseek-chat");
@@ -294,6 +391,13 @@ mod tests {
             axum::serve(listener, app).await.expect("serve upstream");
         });
         format!("http://{addr}")
+    }
+
+    async fn response_json(response: axum::response::Response) -> serde_json::Value {
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("read body");
+        serde_json::from_slice(&body).expect("json body")
     }
 
     async fn spawn_failing_chat_upstream() -> String {
