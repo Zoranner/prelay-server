@@ -17,17 +17,17 @@ fn main() {
 
     if !Path::new("web/node_modules").exists() {
         progress("Installing dependencies...");
-        run("bun", &["install"], "frontend");
+        run("bun", &["install"], "web");
     }
 
     progress("Formatting (prettier)...");
-    run("bun", &["run", "format"], "frontend");
+    run("bun", &["run", "format"], "web");
 
     progress("Linting (eslint --fix)...");
-    run("bun", &["run", "lint:fix"], "frontend");
+    run("bun", &["run", "lint:fix"], "web");
 
     progress("Building (vite)...");
-    run("bun", &["run", "build"], "frontend");
+    run("bun", &["run", "build"], "web");
 
     progress("Done.");
 }
