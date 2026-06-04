@@ -57,9 +57,7 @@
                 </thead>
                 <tbody class="divide-y divide-stone-100 bg-white">
                   <tr v-if="!loading && requestLogs.length === 0">
-                    <td colspan="8" class="px-4 py-8 text-center text-stone-400">
-                      暂无请求记录
-                    </td>
+                    <td colspan="8" class="px-4 py-8 text-center text-stone-400">暂无请求记录</td>
                   </tr>
                   <tr
                     v-for="request in requestLogs"
@@ -121,9 +119,7 @@
                   </thead>
                   <tbody class="divide-y divide-stone-100 bg-white">
                     <tr v-if="!loading && modelStats.length === 0">
-                      <td colspan="5" class="px-4 py-8 text-center text-stone-400">
-                        暂无模型统计
-                      </td>
+                      <td colspan="5" class="px-4 py-8 text-center text-stone-400">暂无模型统计</td>
                     </tr>
                     <tr
                       v-for="model in modelStats"
@@ -254,11 +250,11 @@ async function loadStats() {
   try {
     const [overviewResponse, requestsResponse, modelsResponse, providersResponse] =
       await Promise.all([
-      statsApi.getOverview(),
-      statsApi.listRequests(),
-      statsApi.listModels(),
-      statsApi.listProviders(),
-    ]);
+        statsApi.getOverview(),
+        statsApi.listRequests(),
+        statsApi.listModels(),
+        statsApi.listProviders(),
+      ]);
 
     overview.value = overviewResponse.data;
     requestLogs.value = requestsResponse.data;

@@ -3,7 +3,9 @@
   <div class="px-6 py-5">
     <div v-if="storedTokens.length > 0" class="mb-3">
       <div class="flex items-center gap-2 mb-2">
-        <span class="text-xs font-medium text-stone-400 uppercase tracking-wide">本地存储的密钥</span>
+        <span class="text-xs font-medium text-stone-400 uppercase tracking-wide"
+          >本地存储的密钥</span
+        >
         <span class="text-xs text-stone-400">(点击选择)</span>
       </div>
       <div class="flex flex-wrap gap-2">
@@ -100,11 +102,7 @@ import { ref } from 'vue';
 import { useManageKey } from '../composables/useManageKey';
 import { useModal } from '../composables/useModal';
 import { Button, Input, Select, Tag, Alert, Field, Badge } from './base';
-import {
-  getStoredTokens,
-  providerDotClass,
-  type StoredToken,
-} from '../utils/providers';
+import { getStoredTokens, providerDotClass, type StoredToken } from '../utils/providers';
 
 const props = defineProps<{
   confirmModal: ReturnType<typeof useModal>;

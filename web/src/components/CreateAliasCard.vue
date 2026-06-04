@@ -2,7 +2,12 @@
   <div class="px-6 py-5 space-y-4">
     <div class="grid grid-cols-2 gap-4">
       <Input v-model="form.alias" label="下游模型别名" placeholder="例如：coder" mono />
-      <Input v-model="form.upstream_model" label="上游模型" placeholder="例如：deepseek-chat" mono />
+      <Input
+        v-model="form.upstream_model"
+        label="上游模型"
+        placeholder="例如：deepseek-chat"
+        mono
+      />
     </div>
 
     <div>
@@ -57,7 +62,9 @@
         >
           <div class="flex items-center justify-between gap-3">
             <span class="font-mono text-sm text-stone-800 truncate">{{ alias.alias }}</span>
-            <span class="font-mono text-xs text-stone-500 truncate">{{ alias.upstream_model }}</span>
+            <span class="font-mono text-xs text-stone-500 truncate">{{
+              alias.upstream_model
+            }}</span>
           </div>
           <div class="mt-1 text-xs text-stone-400 truncate">
             {{ providerLabel(alias.provider_id) }}
@@ -123,7 +130,11 @@ async function loadAliases() {
 async function submit() {
   message.value = null;
 
-  if (!form.value.alias.trim() || !form.value.provider_id.trim() || !form.value.upstream_model.trim()) {
+  if (
+    !form.value.alias.trim() ||
+    !form.value.provider_id.trim() ||
+    !form.value.upstream_model.trim()
+  ) {
     message.value = { type: 'error', text: '请填写别名、Provider ID 和上游模型。' };
     return;
   }
@@ -145,7 +156,10 @@ async function submit() {
     form.value.upstream_model = '';
     await loadAliases();
   } catch {
-    message.value = { type: 'error', text: '模型别名创建失败，请检查 Provider ID 和别名是否重复。' };
+    message.value = {
+      type: 'error',
+      text: '模型别名创建失败，请检查 Provider ID 和别名是否重复。',
+    };
   } finally {
     creating.value = false;
   }
