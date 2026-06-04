@@ -26,6 +26,19 @@ export interface UpdateConfigRequest {
   api_key?: string;
 }
 
+export interface CreateModelAliasRequest {
+  alias: string;
+  provider_id: string;
+  upstream_model: string;
+  downstream_protocols: string[];
+}
+
+export interface ModelAliasResponse {
+  alias: string;
+  provider_id: string;
+  upstream_model: string;
+}
+
 export interface StatsOverview {
   total_requests: number;
   successful_requests: number;
@@ -79,6 +92,8 @@ export const configApi = {
     api.put<ProviderConfig>(`/configs/${id}`, data),
   delete: (id: string) => api.delete(`/configs/${id}`),
   regenerateToken: (id: string) => api.post<{ token: string }>(`/configs/${id}/regenerate-token`),
+  createModelAlias: (data: CreateModelAliasRequest) =>
+    api.post<ModelAliasResponse>('/model-aliases', data),
 };
 
 export const statsApi = {

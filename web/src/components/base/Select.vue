@@ -126,6 +126,7 @@ const GROUPS = [
     options: [
       { value: 'openai_compatible', label: PROVIDER_LABELS['openai_compatible'] },
       { value: 'anthropic_compatible', label: PROVIDER_LABELS['anthropic_compatible'] },
+      { value: 'ollama_native', label: PROVIDER_LABELS['ollama_native'] },
     ],
   },
 ];

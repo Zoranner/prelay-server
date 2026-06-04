@@ -11,12 +11,14 @@
           :tabs="[
             { label: '新建密钥', value: 'create' },
             { label: '管理密钥', value: 'manage' },
+            { label: '模型别名', value: 'alias' },
           ]"
         />
 
         <!-- Tab content -->
         <CreateKeyCard v-if="activeTab === 'create'" />
-        <ManageKeyCard v-else :confirm-modal="confirmModal" />
+        <ManageKeyCard v-else-if="activeTab === 'manage'" :confirm-modal="confirmModal" />
+        <CreateAliasCard v-else />
 
         <Modal
           :open="confirmModal.open.value"
@@ -35,10 +37,11 @@ import { ref } from 'vue';
 import AppHeader from '../components/AppHeader.vue';
 import ProxyInfoBanner from '../components/ProxyInfoBanner.vue';
 import CreateKeyCard from '../components/CreateKeyCard.vue';
+import CreateAliasCard from '../components/CreateAliasCard.vue';
 import ManageKeyCard from '../components/ManageKeyCard.vue';
 import { Tabs, Modal } from '../components/base';
 import { useModal } from '../composables/useModal';
 
-const activeTab = ref<'create' | 'manage'>('create');
+const activeTab = ref<'create' | 'manage' | 'alias'>('create');
 const confirmModal = useModal();
 </script>
