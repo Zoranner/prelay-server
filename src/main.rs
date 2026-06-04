@@ -56,6 +56,7 @@ async fn main() -> anyhow::Result<()> {
     let protocol_router = routes::chat::router()
         .merge(routes::messages::router())
         .merge(routes::models::router())
+        .merge(routes::ollama::router())
         .merge(routes::responses::router())
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(
