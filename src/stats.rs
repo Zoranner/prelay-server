@@ -68,7 +68,12 @@ pub struct RequestLogInsert {
     pub is_streaming: bool,
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
+    pub reasoning_tokens: Option<i64>,
     pub latency_ms: i64,
+    pub upstream_latency_ms: Option<i64>,
+    pub first_token_ms: Option<i64>,
+    pub tool_call_count: Option<i64>,
+    pub upstream_request_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -108,11 +113,16 @@ async fn insert_request_log_with_prices(
             is_streaming,
             input_tokens,
             output_tokens,
+            reasoning_tokens,
             estimated_cost,
             currency,
-            latency_ms
+            latency_ms,
+            upstream_latency_ms,
+            first_token_ms,
+            tool_call_count,
+            upstream_request_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(Uuid::new_v4().to_string())
@@ -129,9 +139,14 @@ async fn insert_request_log_with_prices(
     .bind(log.is_streaming)
     .bind(log.input_tokens)
     .bind(log.output_tokens)
+    .bind(log.reasoning_tokens)
     .bind(cost.as_ref().map(|cost| cost.estimated_cost))
     .bind(cost.as_ref().map(|cost| cost.currency.as_str()))
     .bind(log.latency_ms)
+    .bind(log.upstream_latency_ms)
+    .bind(log.first_token_ms)
+    .bind(log.tool_call_count)
+    .bind(log.upstream_request_id)
     .execute(pool)
     .await?;
 
@@ -386,7 +401,12 @@ mod tests {
                 is_streaming: false,
                 input_tokens: Some(1_000_000),
                 output_tokens: Some(500_000),
+                reasoning_tokens: None,
                 latency_ms: 120,
+                upstream_latency_ms: None,
+                first_token_ms: None,
+                tool_call_count: None,
+                upstream_request_id: None,
             },
             &[ModelPrice {
                 provider: "DeepSeek".to_string(),
@@ -418,7 +438,12 @@ mod tests {
                 is_streaming: false,
                 input_tokens: Some(1_000_000),
                 output_tokens: Some(500_000),
+                reasoning_tokens: None,
                 latency_ms: 120,
+                upstream_latency_ms: None,
+                first_token_ms: None,
+                tool_call_count: None,
+                upstream_request_id: None,
             },
             &[],
         );
@@ -450,7 +475,12 @@ mod tests {
                 is_streaming: false,
                 input_tokens: Some(1_000_000),
                 output_tokens: Some(500_000),
+                reasoning_tokens: None,
                 latency_ms: 120,
+                upstream_latency_ms: None,
+                first_token_ms: None,
+                tool_call_count: None,
+                upstream_request_id: None,
             },
             &[ModelPrice {
                 provider: "DeepSeek".to_string(),
@@ -471,6 +501,74 @@ mod tests {
 
         assert_eq!(row.0, Some(2.0));
         assert_eq!(row.1.as_deref(), Some("USD"));
+    }
+
+    #[tokio::test]
+    async fn request_log_insert_writes_observability_fields() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+
+        insert_request_log_with_prices(
+            &db,
+            RequestLogInsert {
+                protocol_in: "responses".to_string(),
+                protocol_out: "responses".to_string(),
+                protocol_upstream: "chat_completions".to_string(),
+                provider_id: "provider-1".to_string(),
+                provider_name: "DeepSeek".to_string(),
+                model_requested: "deepseek-chat".to_string(),
+                model_upstream: "deepseek-chat".to_string(),
+                status: "success".to_string(),
+                http_status: 200,
+                is_streaming: false,
+                input_tokens: Some(10),
+                output_tokens: Some(5),
+                reasoning_tokens: Some(2),
+                latency_ms: 120,
+                upstream_latency_ms: Some(90),
+                first_token_ms: Some(30),
+                tool_call_count: Some(1),
+                upstream_request_id: Some("req_upstream".to_string()),
+            },
+            &[],
+        )
+        .await
+        .expect("insert log");
+
+        #[derive(sqlx::FromRow)]
+        struct ObservabilityRow {
+            reasoning_tokens: Option<i64>,
+            upstream_latency_ms: Option<i64>,
+            first_token_ms: Option<i64>,
+            tool_call_count: Option<i64>,
+            upstream_request_id: Option<String>,
+        }
+
+        let row: ObservabilityRow = sqlx::query_as(
+            r#"
+                SELECT
+                    reasoning_tokens,
+                    upstream_latency_ms,
+                    first_token_ms,
+                    tool_call_count,
+                    upstream_request_id
+                FROM request_logs
+                LIMIT 1
+                "#,
+        )
+        .fetch_one(&db)
+        .await
+        .expect("load request log");
+
+        assert_eq!(row.reasoning_tokens, Some(2));
+        assert_eq!(row.upstream_latency_ms, Some(90));
+        assert_eq!(row.first_token_ms, Some(30));
+        assert_eq!(row.tool_call_count, Some(1));
+        assert_eq!(row.upstream_request_id.as_deref(), Some("req_upstream"));
     }
 
     #[tokio::test]

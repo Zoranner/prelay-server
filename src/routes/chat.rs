@@ -36,6 +36,7 @@ async fn create_chat_completion(
         "{}/chat/completions",
         provider.base_url.trim_end_matches('/')
     );
+    let upstream_started_at = std::time::Instant::now();
     let upstream_response = state
         .client
         .post(upstream_url)
@@ -44,6 +45,7 @@ async fn create_chat_completion(
         .send()
         .await
         .map_err(|error| AppError::Internal(error.into()))?;
+    let upstream_latency_ms = upstream_started_at.elapsed().as_millis() as i64;
 
     if !upstream_response.status().is_success() {
         let status = upstream_response.status();
@@ -62,7 +64,12 @@ async fn create_chat_completion(
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
+                reasoning_tokens: None,
                 latency_ms: started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: None,
+                first_token_ms: None,
+                tool_call_count: None,
+                upstream_request_id: None,
             },
         )
         .await?;
@@ -98,7 +105,16 @@ async fn create_chat_completion(
                 .get("usage")
                 .and_then(|usage| usage.get("completion_tokens"))
                 .and_then(Value::as_i64),
+            reasoning_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("completion_tokens_details"))
+                .and_then(|details| details.get("reasoning_tokens"))
+                .and_then(Value::as_i64),
             latency_ms: started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: None,
+            upstream_request_id: None,
         },
     )
     .await?;

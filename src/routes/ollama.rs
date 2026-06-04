@@ -38,6 +38,7 @@ async fn create_ollama_chat(
     payload["model"] = Value::String(model_upstream.clone());
     payload["stream"] = Value::Bool(is_streaming);
 
+    let upstream_started_at = std::time::Instant::now();
     let upstream_response = state
         .client
         .post(upstream_url)
@@ -45,6 +46,7 @@ async fn create_ollama_chat(
         .send()
         .await
         .map_err(|error| AppError::Internal(error.into()))?;
+    let upstream_latency_ms = upstream_started_at.elapsed().as_millis() as i64;
 
     if !upstream_response.status().is_success() {
         let status = upstream_response.status();
@@ -63,7 +65,12 @@ async fn create_ollama_chat(
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
+                reasoning_tokens: None,
                 latency_ms: started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: None,
+                first_token_ms: None,
+                tool_call_count: None,
+                upstream_request_id: None,
             },
         )
         .await?;
@@ -93,7 +100,12 @@ async fn create_ollama_chat(
             is_streaming,
             input_tokens: response.get("prompt_eval_count").and_then(Value::as_i64),
             output_tokens: response.get("eval_count").and_then(Value::as_i64),
+            reasoning_tokens: None,
             latency_ms: started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: None,
+            upstream_request_id: None,
         },
     )
     .await?;

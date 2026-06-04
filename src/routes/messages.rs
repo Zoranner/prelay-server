@@ -50,6 +50,7 @@ async fn create_message(
         "{}/chat/completions",
         provider.base_url.trim_end_matches('/')
     );
+    let upstream_started_at = std::time::Instant::now();
     let upstream_response = state
         .client
         .post(upstream_url)
@@ -58,6 +59,7 @@ async fn create_message(
         .send()
         .await
         .map_err(|error| AppError::Internal(error.into()))?;
+    let upstream_latency_ms = upstream_started_at.elapsed().as_millis() as i64;
 
     if !upstream_response.status().is_success() {
         let status = upstream_response.status();
@@ -76,7 +78,12 @@ async fn create_message(
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
+                reasoning_tokens: None,
                 latency_ms: started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: None,
+                first_token_ms: None,
+                tool_call_count: None,
+                upstream_request_id: None,
             },
         )
         .await?;
@@ -88,6 +95,11 @@ async fn create_message(
         .await
         .map_err(|error| AppError::Internal(error.into()))?;
     let response = decode_chat_response(upstream_json)?;
+    let reasoning_tokens = response
+        .usage
+        .as_ref()
+        .and_then(|usage| usage.reasoning_tokens);
+    let tool_call_count = count_tool_calls(&response);
     insert_request_log(
         &state.db,
         RequestLogInsert {
@@ -106,7 +118,12 @@ async fn create_message(
                 .usage
                 .as_ref()
                 .and_then(|usage| usage.output_tokens),
+            reasoning_tokens,
             latency_ms: started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: Some(tool_call_count),
+            upstream_request_id: None,
         },
     )
     .await?;
@@ -123,6 +140,7 @@ async fn create_native_anthropic_message(
     started_at: std::time::Instant,
 ) -> Result<Json<Value>, AppError> {
     let upstream_url = format!("{}/messages", provider.base_url.trim_end_matches('/'));
+    let upstream_started_at = std::time::Instant::now();
     let upstream_response = state
         .client
         .post(upstream_url)
@@ -132,6 +150,7 @@ async fn create_native_anthropic_message(
         .send()
         .await
         .map_err(|error| AppError::Internal(error.into()))?;
+    let upstream_latency_ms = upstream_started_at.elapsed().as_millis() as i64;
 
     if !upstream_response.status().is_success() {
         let status = upstream_response.status();
@@ -150,7 +169,12 @@ async fn create_native_anthropic_message(
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
+                reasoning_tokens: None,
                 latency_ms: started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: None,
+                first_token_ms: None,
+                tool_call_count: None,
+                upstream_request_id: None,
             },
         )
         .await?;
@@ -186,12 +210,25 @@ async fn create_native_anthropic_message(
                 .get("usage")
                 .and_then(|usage| usage.get("output_tokens"))
                 .and_then(Value::as_i64),
+            reasoning_tokens: None,
             latency_ms: started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: None,
+            upstream_request_id: None,
         },
     )
     .await?;
 
     Ok(Json(response))
+}
+
+fn count_tool_calls(response: &crate::bridge::internal::InternalResponse) -> i64 {
+    response
+        .output
+        .iter()
+        .filter(|item| item.is_tool_call())
+        .count() as i64
 }
 
 #[cfg(test)]

@@ -41,6 +41,10 @@ pub enum InternalOutputItem {
 }
 
 impl InternalOutputItem {
+    pub fn is_tool_call(&self) -> bool {
+        matches!(self, InternalOutputItem::FunctionToolCall { .. })
+    }
+
     #[cfg(test)]
     pub fn text_content(&self) -> Option<String> {
         match self {
