@@ -65,8 +65,8 @@ async fn main() -> anyhow::Result<()> {
         ));
 
     let app = Router::new()
-        .nest("/api", admin_router)
         .merge(protocol_router)
+        .nest("/api", admin_router)
         .nest("/proxy", proxy_router)
         // Serve built Vue frontend from ./static/
         .fallback_service(ServeDir::new("static").append_index_html_on_directories(true))

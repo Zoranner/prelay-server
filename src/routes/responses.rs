@@ -32,6 +32,7 @@ async fn create_response(
     Json(payload): Json<Value>,
 ) -> Result<Response, AppError> {
     let started_at = std::time::Instant::now();
+    let original_payload = payload.clone();
     let request = decode_responses_request(payload)?;
     let model_requested = request.model.clone();
     let is_streaming = request.stream;
@@ -41,6 +42,18 @@ async fn create_response(
         .into_iter()
         .find(|provider| provider.name == request.model)
         .ok_or_else(|| AppError::BadRequest(format!("模型 {} 未配置", request.model)))?;
+    if provider.provider_type == "openai" {
+        return create_native_response(
+            &state,
+            original_payload,
+            provider,
+            model_requested,
+            is_streaming,
+            started_at,
+        )
+        .await;
+    }
+
     let upstream_url = format!(
         "{}/chat/completions",
         provider.base_url.trim_end_matches('/')
@@ -153,6 +166,85 @@ async fn create_response(
     .await?;
 
     Ok(Json(encode_responses_response(response)).into_response())
+}
+
+async fn create_native_response(
+    state: &AppState,
+    payload: Value,
+    provider: crate::models::ProviderConfig,
+    model_requested: String,
+    is_streaming: bool,
+    started_at: std::time::Instant,
+) -> Result<Response, AppError> {
+    let upstream_url = format!("{}/responses", provider.base_url.trim_end_matches('/'));
+    let upstream_response = state
+        .client
+        .post(upstream_url)
+        .bearer_auth(&provider.api_key)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|error| AppError::Internal(error.into()))?;
+
+    if !upstream_response.status().is_success() {
+        let status = upstream_response.status();
+        insert_request_log(
+            &state.db,
+            RequestLogInsert {
+                protocol_in: "responses".to_string(),
+                protocol_out: "responses".to_string(),
+                protocol_upstream: "responses".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                model_requested,
+                model_upstream: "unknown".to_string(),
+                status: "failed".to_string(),
+                http_status: status.as_u16() as i64,
+                is_streaming,
+                input_tokens: None,
+                output_tokens: None,
+                latency_ms: started_at.elapsed().as_millis() as i64,
+            },
+        )
+        .await?;
+        return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
+    }
+
+    let response = upstream_response
+        .json::<Value>()
+        .await
+        .map_err(|error| AppError::Internal(error.into()))?;
+    insert_request_log(
+        &state.db,
+        RequestLogInsert {
+            protocol_in: "responses".to_string(),
+            protocol_out: "responses".to_string(),
+            protocol_upstream: "responses".to_string(),
+            provider_id: provider.id,
+            provider_name: provider.name,
+            model_requested,
+            model_upstream: response
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string(),
+            status: "success".to_string(),
+            http_status: 200,
+            is_streaming,
+            input_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("input_tokens"))
+                .and_then(Value::as_i64),
+            output_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("output_tokens"))
+                .and_then(Value::as_i64),
+            latency_ms: started_at.elapsed().as_millis() as i64,
+        },
+    )
+    .await?;
+
+    Ok(Json(response).into_response())
 }
 
 async fn request_with_session_history(
@@ -304,6 +396,43 @@ mod tests {
         );
         assert_eq!(response["usage"]["input_tokens"], 3);
         assert_eq!(response["usage"]["output_tokens"], 4);
+    }
+
+    #[tokio::test]
+    async fn forwards_responses_request_to_native_upstream() {
+        let upstream = spawn_native_responses_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(&db, "gpt-4.1", "openai", &upstream, "sk-upstream")
+            .await
+            .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+        };
+
+        let response = create_response(
+            State(state),
+            axum::Json(json!({
+                "model": "gpt-4.1",
+                "input": "hello"
+            })),
+        )
+        .await
+        .expect("create response");
+        let response = response_json(response).await;
+
+        assert_eq!(response["id"], "resp_native");
+        assert_eq!(response["object"], "response");
+        assert_eq!(response["model"], "gpt-4.1");
+        assert_eq!(
+            response["output"][0]["content"][0]["text"],
+            "native response"
+        );
     }
 
     #[tokio::test]
@@ -651,6 +780,44 @@ mod tests {
         }
 
         let app = Router::new().route("/chat/completions", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_native_responses_upstream() -> String {
+        async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+            assert_eq!(payload["model"], "gpt-4.1");
+            assert_eq!(payload["input"], "hello");
+            Json(json!({
+                "id": "resp_native",
+                "object": "response",
+                "model": "gpt-4.1",
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": "native response"
+                            }
+                        ]
+                    }
+                ],
+                "usage": {
+                    "input_tokens": 3,
+                    "output_tokens": 4
+                }
+            }))
+        }
+
+        let app = Router::new().route("/responses", post(handler));
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind upstream");
