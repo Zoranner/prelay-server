@@ -21,6 +21,7 @@ pub fn decode_responses_request(value: Value) -> Result<InternalRequest, AppErro
         .and_then(Value::as_str)
         .filter(|id| !id.trim().is_empty())
         .map(str::to_string);
+    let max_tokens = value.get("max_output_tokens").and_then(Value::as_i64);
     let input = value
         .get("input")
         .ok_or_else(|| AppError::BadRequest("input 不能为空".to_string()))?;
@@ -28,7 +29,7 @@ pub fn decode_responses_request(value: Value) -> Result<InternalRequest, AppErro
     Ok(InternalRequest {
         model,
         stream,
-        max_tokens: None,
+        max_tokens,
         previous_response_id,
         tools: decode_tools(value.get("tools"))?,
         messages: decode_input(input)?,
@@ -208,6 +209,18 @@ mod tests {
             request.messages[0].content,
             vec![InternalContentPart::Text("hello".to_string())]
         );
+    }
+
+    #[test]
+    fn decodes_max_output_tokens_to_internal_max_tokens() {
+        let request = decode_responses_request(json!({
+            "model": "deepseek-chat",
+            "input": "hello",
+            "max_output_tokens": 1024
+        }))
+        .expect("decode responses request");
+
+        assert_eq!(request.max_tokens, Some(1024));
     }
 
     #[test]
