@@ -1,6 +1,8 @@
 use serde_json::json;
 
-use crate::{bridge::internal::InternalRequest, models::ProviderConfig};
+use crate::{
+    bridge::internal::InternalRequest, models::ProviderConfig, providers::spec::ProviderSpec,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompatibilityRejection {
@@ -27,7 +29,8 @@ pub fn first_rejection(
     provider: &ProviderConfig,
     request: &InternalRequest,
 ) -> Option<CompatibilityRejection> {
-    if !request.tools.is_empty() && !supports_tool_calls(&provider.provider_type) {
+    let spec = ProviderSpec::from_provider_config(provider);
+    if !request.tools.is_empty() && !spec.capabilities.tool_calls {
         return Some(CompatibilityRejection {
             field: "tools",
             reason: "provider does not advertise tool call support",
@@ -35,13 +38,6 @@ pub fn first_rejection(
     }
 
     None
-}
-
-fn supports_tool_calls(provider_type: &str) -> bool {
-    matches!(
-        provider_type,
-        "openai" | "openai_compatible" | "anthropic" | "anthropic_compatible"
-    )
 }
 
 #[cfg(test)]

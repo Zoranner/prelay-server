@@ -28,6 +28,7 @@ use crate::{
     },
     providers::chat_completions::{decode_chat_response, encode_chat_request},
     providers::ollama::{decode_ollama_chat_response, encode_ollama_chat_request},
+    providers::spec::{ProviderSpec, UpstreamProtocol},
     stats::{insert_request_log, RequestLogInsert},
     AppState,
 };
@@ -50,12 +51,13 @@ async fn create_response(
         .await?
         .ok_or_else(|| AppError::BadRequest(format!("模型 {} 未配置", request.model)))?;
     let provider = resolved.provider;
+    let provider_spec = ProviderSpec::from_provider_config(&provider);
     let model_upstream = resolved.model_upstream;
     let mut upstream_payload = original_payload.clone();
     upstream_payload["model"] = Value::String(model_upstream.clone());
     let mut request = request;
     request.model = model_upstream.clone();
-    if provider.provider_type == "openai" {
+    if provider_spec.protocol == UpstreamProtocol::Responses {
         return create_native_response(
             &state,
             upstream_payload,
@@ -66,7 +68,7 @@ async fn create_response(
         )
         .await;
     }
-    if provider.provider_type == "ollama_native" {
+    if provider_spec.protocol == UpstreamProtocol::OllamaNative {
         return create_ollama_response(
             &state,
             request,
@@ -78,7 +80,7 @@ async fn create_response(
         )
         .await;
     }
-    if provider.uses_anthropic_auth() && is_streaming {
+    if provider_spec.protocol == UpstreamProtocol::AnthropicMessages && is_streaming {
         let error_message =
             "streaming bridge from responses to anthropic_messages is not supported".to_string();
         insert_request_log(
@@ -117,7 +119,7 @@ async fn create_response(
         .await?;
         return Err(AppError::BadRequest(error_message));
     }
-    if provider.uses_anthropic_auth() && !is_streaming {
+    if provider_spec.protocol == UpstreamProtocol::AnthropicMessages && !is_streaming {
         return create_anthropic_messages_response(
             &state,
             request,
