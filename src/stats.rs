@@ -28,6 +28,7 @@ pub struct RequestLogSummary {
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
     pub latency_ms: Option<i64>,
+    pub upstream_request_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -236,7 +237,8 @@ pub async fn list_requests(pool: &SqlitePool, limit: usize) -> Result<Vec<Reques
             error_message,
             input_tokens,
             output_tokens,
-            latency_ms
+            latency_ms,
+            upstream_request_id
         FROM request_logs
         ORDER BY created_at DESC
         LIMIT ?

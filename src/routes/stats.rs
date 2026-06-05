@@ -126,14 +126,16 @@ mod tests {
                 error_message,
                 input_tokens,
                 output_tokens,
-                latency_ms
+                latency_ms,
+                upstream_request_id
             )
             VALUES
                 ('older-log', '2026-06-05T00:00:00Z', 'openai', 'anthropic',
-                 'Provider One', 'gpt-4o-mini', 'success', 200, NULL, NULL, 7, 11, 120),
+                 'Provider One', 'gpt-4o-mini', 'success', 200, NULL, NULL, 7, 11, 120,
+                 'req_older'),
                 ('newer-log', '2026-06-05T00:01:00Z', 'responses', 'openai',
                  'Provider Two', 'gpt-4.1-mini', 'failed', 502, 'upstream_error',
-                 'upstream failed', 13, 0, 300)
+                 'upstream failed', 13, 0, 300, 'req_newer')
             "#,
         )
         .execute(&db)
@@ -176,6 +178,7 @@ mod tests {
         assert_eq!(rows[0]["input_tokens"], 13);
         assert_eq!(rows[0]["output_tokens"], 0);
         assert_eq!(rows[0]["latency_ms"], 300);
+        assert_eq!(rows[0]["upstream_request_id"], "req_newer");
         assert_eq!(rows[1]["id"], "older-log");
 
         server.abort();

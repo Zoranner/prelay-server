@@ -70,6 +70,7 @@ export interface RequestLogSummary {
   input_tokens: number | null;
   output_tokens: number | null;
   latency_ms: number | null;
+  upstream_request_id: string | null;
 }
 
 export interface ModelStatsSummary {

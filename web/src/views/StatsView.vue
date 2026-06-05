@@ -51,6 +51,7 @@
                     <th class="px-4 py-3 text-left whitespace-nowrap">模型</th>
                     <th class="px-4 py-3 text-left whitespace-nowrap">协议</th>
                     <th class="px-4 py-3 text-right whitespace-nowrap">HTTP</th>
+                    <th class="px-4 py-3 text-left whitespace-nowrap">上游 ID</th>
                     <th class="px-4 py-3 text-left whitespace-nowrap">错误</th>
                     <th class="px-4 py-3 text-right whitespace-nowrap">Token</th>
                     <th class="px-4 py-3 text-right whitespace-nowrap">耗时</th>
@@ -58,7 +59,7 @@
                 </thead>
                 <tbody class="divide-y divide-stone-100 bg-white">
                   <tr v-if="!loading && requestLogs.length === 0">
-                    <td colspan="9" class="px-4 py-8 text-center text-stone-400">暂无请求记录</td>
+                    <td colspan="10" class="px-4 py-8 text-center text-stone-400">暂无请求记录</td>
                   </tr>
                   <tr
                     v-for="request in requestLogs"
@@ -87,6 +88,14 @@
                     </td>
                     <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
                       {{ request.http_status ?? '—' }}
+                    </td>
+                    <td class="px-4 py-3 max-w-[180px]">
+                      <span
+                        class="block truncate font-mono text-xs"
+                        :title="upstreamRequestId(request)"
+                      >
+                        {{ upstreamRequestId(request) }}
+                      </span>
                     </td>
                     <td class="px-4 py-3 max-w-[220px]">
                       <span class="block truncate text-xs" :title="errorTitle(request)">
@@ -317,6 +326,10 @@ function errorLabel(request: RequestLogSummary) {
 
 function errorTitle(request: RequestLogSummary) {
   return [request.error_code, request.error_message].filter(Boolean).join('：') || '无错误';
+}
+
+function upstreamRequestId(request: RequestLogSummary) {
+  return request.upstream_request_id || '—';
 }
 
 function formatTokenPair(inputTokens: number, outputTokens: number) {
