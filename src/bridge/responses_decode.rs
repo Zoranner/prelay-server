@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::bridge::internal::{
-    InternalContentPart, InternalMessage, InternalRequest, InternalRole,
+    InternalContentPart, InternalMessage, InternalRequest, InternalRole, InternalTool,
 };
 use crate::error::AppError;
 
@@ -30,9 +30,54 @@ pub fn decode_responses_request(value: Value) -> Result<InternalRequest, AppErro
         stream,
         max_tokens: None,
         previous_response_id,
-        tools: Vec::new(),
+        tools: decode_tools(value.get("tools"))?,
         messages: decode_input(input)?,
     })
+}
+
+fn decode_tools(value: Option<&Value>) -> Result<Vec<InternalTool>, AppError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let tools = value
+        .as_array()
+        .ok_or_else(|| AppError::BadRequest("tools 必须是数组".to_string()))?;
+
+    tools
+        .iter()
+        .map(|tool| {
+            let tool_type = tool
+                .get("type")
+                .and_then(Value::as_str)
+                .ok_or_else(|| AppError::BadRequest("tool.type 不能为空".to_string()))?;
+            if tool_type != "function" {
+                return Err(AppError::BadRequest(format!(
+                    "不支持的 Responses tool 类型: {tool_type}"
+                )));
+            }
+
+            let name = tool
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.trim().is_empty())
+                .ok_or_else(|| AppError::BadRequest("tool.name 不能为空".to_string()))?
+                .to_string();
+            let description = tool
+                .get("description")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let input_schema = tool
+                .get("parameters")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({ "type": "object" }));
+
+            Ok(InternalTool {
+                name,
+                description,
+                input_schema,
+            })
+        })
+        .collect()
 }
 
 fn decode_input(input: &Value) -> Result<Vec<InternalMessage>, AppError> {
@@ -199,6 +244,38 @@ mod tests {
                 InternalContentPart::Text("hello".to_string()),
                 InternalContentPart::Text("world".to_string())
             ]
+        );
+    }
+
+    #[test]
+    fn decodes_function_tools_to_internal_tools() {
+        let request = decode_responses_request(json!({
+            "model": "deepseek-chat",
+            "input": "hello",
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "read_file",
+                    "description": "Read a file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": { "type": "string" }
+                        },
+                        "required": ["path"]
+                    }
+                }
+            ]
+        }))
+        .expect("decode responses request");
+
+        assert_eq!(request.tools.len(), 1);
+        assert_eq!(request.tools[0].name, "read_file");
+        assert_eq!(request.tools[0].description.as_deref(), Some("Read a file"));
+        assert_eq!(request.tools[0].input_schema["type"], "object");
+        assert_eq!(
+            request.tools[0].input_schema["properties"]["path"]["type"],
+            "string"
         );
     }
 
