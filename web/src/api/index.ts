@@ -65,6 +65,8 @@ export interface RequestLogSummary {
   model_requested: string | null;
   status: string;
   http_status: number | null;
+  error_code: string | null;
+  error_message: string | null;
   input_tokens: number | null;
   output_tokens: number | null;
   latency_ms: number | null;

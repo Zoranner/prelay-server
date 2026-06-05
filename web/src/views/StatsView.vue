@@ -51,13 +51,14 @@
                     <th class="px-4 py-3 text-left whitespace-nowrap">模型</th>
                     <th class="px-4 py-3 text-left whitespace-nowrap">协议</th>
                     <th class="px-4 py-3 text-right whitespace-nowrap">HTTP</th>
+                    <th class="px-4 py-3 text-left whitespace-nowrap">错误</th>
                     <th class="px-4 py-3 text-right whitespace-nowrap">Token</th>
                     <th class="px-4 py-3 text-right whitespace-nowrap">耗时</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-stone-100 bg-white">
                   <tr v-if="!loading && requestLogs.length === 0">
-                    <td colspan="8" class="px-4 py-8 text-center text-stone-400">暂无请求记录</td>
+                    <td colspan="9" class="px-4 py-8 text-center text-stone-400">暂无请求记录</td>
                   </tr>
                   <tr
                     v-for="request in requestLogs"
@@ -86,6 +87,11 @@
                     </td>
                     <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
                       {{ request.http_status ?? '—' }}
+                    </td>
+                    <td class="px-4 py-3 max-w-[220px]">
+                      <span class="block truncate text-xs" :title="errorTitle(request)">
+                        {{ errorLabel(request) }}
+                      </span>
                     </td>
                     <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
                       {{ formatTokens(request) }}
@@ -303,6 +309,14 @@ function protocolLabel(request: RequestLogSummary) {
 
 function formatTokens(request: RequestLogSummary) {
   return formatTokenPair(request.input_tokens ?? 0, request.output_tokens ?? 0);
+}
+
+function errorLabel(request: RequestLogSummary) {
+  return request.error_code || request.error_message || '—';
+}
+
+function errorTitle(request: RequestLogSummary) {
+  return [request.error_code, request.error_message].filter(Boolean).join('：') || '无错误';
 }
 
 function formatTokenPair(inputTokens: number, outputTokens: number) {

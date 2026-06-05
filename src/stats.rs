@@ -23,6 +23,8 @@ pub struct RequestLogSummary {
     pub model_requested: Option<String>,
     pub status: String,
     pub http_status: Option<i64>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
     pub latency_ms: Option<i64>,
@@ -230,6 +232,8 @@ pub async fn list_requests(pool: &SqlitePool, limit: usize) -> Result<Vec<Reques
             model_requested,
             status,
             http_status,
+            error_code,
+            error_message,
             input_tokens,
             output_tokens,
             latency_ms
