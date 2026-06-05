@@ -49,6 +49,45 @@ async fn create_message(
     upstream_payload["model"] = Value::String(model_upstream.clone());
     let mut request = request;
     request.model = model_upstream.clone();
+    if provider.provider_type == "openai" && is_streaming {
+        let error_message =
+            "streaming bridge from anthropic_messages to responses is not supported".to_string();
+        insert_request_log(
+            &state.db,
+            RequestLogInsert {
+                protocol_in: "anthropic_messages".to_string(),
+                protocol_out: "anthropic_messages".to_string(),
+                protocol_upstream: "responses".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                model_requested,
+                model_upstream: request.model,
+                status: "failed".to_string(),
+                http_status: 400,
+                error_code: Some("unsupported_stream_bridge".to_string()),
+                error_message: Some(error_message.clone()),
+                is_streaming,
+                input_tokens: None,
+                output_tokens: None,
+                reasoning_tokens: None,
+                latency_ms: started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: None,
+                first_token_ms: None,
+                tool_call_count: None,
+                upstream_request_id: None,
+                metadata_json: Some(
+                    serde_json::json!({
+                        "decision": "rejected",
+                        "bridge": "anthropic_messages_to_responses",
+                        "reason": error_message
+                    })
+                    .to_string(),
+                ),
+            },
+        )
+        .await?;
+        return Err(AppError::BadRequest(error_message));
+    }
     if provider.uses_anthropic_auth() {
         return create_native_anthropic_message(
             &state,
@@ -791,6 +830,58 @@ mod tests {
         assert_eq!(row.2, Some(4));
 
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn rejects_streaming_anthropic_messages_to_responses_upstream() {
+        let upstream = spawn_responses_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(&db, "gpt-4.1", "openai", &upstream, "sk-upstream")
+            .await
+            .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+            admin_token: None,
+        };
+
+        let error = create_message(
+            State(state.clone()),
+            axum::Json(json!({
+                "model": "gpt-4.1",
+                "max_tokens": 1024,
+                "stream": true,
+                "messages": [
+                    { "role": "user", "content": "hello" }
+                ]
+            })),
+        )
+        .await
+        .expect_err("streaming messages to responses bridge should be rejected");
+
+        assert!(format!("{error:?}")
+            .contains("streaming bridge from anthropic_messages to responses is not supported"));
+
+        let row: (String, String, i64, Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT protocol_upstream, status, http_status, error_code, error_message FROM request_logs LIMIT 1",
+        )
+        .fetch_one(&state.db)
+        .await
+        .expect("load request log");
+
+        assert_eq!(row.0, "responses");
+        assert_eq!(row.1, "failed");
+        assert_eq!(row.2, 400);
+        assert_eq!(row.3.as_deref(), Some("unsupported_stream_bridge"));
+        assert_eq!(
+            row.4.as_deref(),
+            Some("streaming bridge from anthropic_messages to responses is not supported")
+        );
     }
 
     #[tokio::test]
