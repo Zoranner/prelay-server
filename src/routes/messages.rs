@@ -12,6 +12,7 @@ use crate::{
     bridge::{
         anthropic_decode::decode_anthropic_request,
         anthropic_encode::encode_anthropic_response,
+        compatibility::first_rejection,
         stream::{
             chat_sse_response_to_anthropic_messages_sse,
             ollama_chat_ndjson_response_to_anthropic_messages_sse,
@@ -317,6 +318,38 @@ async fn create_ollama_anthropic_message(
     is_streaming: bool,
     started_at: std::time::Instant,
 ) -> Result<Response, AppError> {
+    if let Some(rejection) = first_rejection(&provider, &request) {
+        let error_message = rejection.reason.to_string();
+        insert_request_log(
+            &state.db,
+            RequestLogInsert {
+                protocol_in: "anthropic_messages".to_string(),
+                protocol_out: "anthropic_messages".to_string(),
+                protocol_upstream: "ollama_native".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                model_requested,
+                model_upstream: request.model,
+                status: "failed".to_string(),
+                http_status: 400,
+                error_code: Some(rejection.error_code().to_string()),
+                error_message: Some(error_message.clone()),
+                is_streaming,
+                input_tokens: None,
+                output_tokens: None,
+                reasoning_tokens: None,
+                latency_ms: started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: None,
+                first_token_ms: None,
+                tool_call_count: None,
+                upstream_request_id: None,
+                metadata_json: Some(rejection.metadata_json()),
+            },
+        )
+        .await?;
+        return Err(AppError::BadRequest(error_message));
+    }
+
     let upstream_url = format!("{}/chat", provider.base_url.trim_end_matches('/'));
     let upstream_started_at = std::time::Instant::now();
     let upstream_response = state
@@ -583,12 +616,13 @@ fn count_tool_calls(response: &crate::bridge::internal::InternalResponse) -> i64
 
 #[cfg(test)]
 mod tests {
-    use axum::{middleware, routing::post, Json, Router};
+    use axum::{extract::State, middleware, routing::post, Json, Router};
     use futures::StreamExt;
     use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
     use tokio::net::TcpListener;
 
+    use super::create_message;
     use crate::{db, AppState};
 
     #[tokio::test]
@@ -873,6 +907,66 @@ mod tests {
         assert_eq!(row.2, Some(4));
 
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn rejects_anthropic_tools_for_ollama_native_upstream() {
+        let upstream = spawn_ollama_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(&db, "llama3.2", "ollama_native", &upstream, "unused")
+            .await
+            .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+            admin_token: None,
+        };
+
+        let error = create_message(
+            State(state.clone()),
+            axum::Json(json!({
+                "model": "llama3.2",
+                "max_tokens": 1024,
+                "messages": [
+                    { "role": "user", "content": "hello" }
+                ],
+                "tools": [
+                    {
+                        "name": "read_file",
+                        "description": "Read a file",
+                        "input_schema": { "type": "object" }
+                    }
+                ]
+            })),
+        )
+        .await
+        .expect_err("ollama tools should be rejected");
+
+        assert!(format!("{error:?}").contains("provider does not advertise tool call support"));
+
+        let row: (String, i64, Option<String>, Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT status, http_status, error_code, error_message, metadata_json FROM request_logs LIMIT 1",
+        )
+        .fetch_one(&state.db)
+        .await
+        .expect("load request log");
+        let metadata: serde_json::Value =
+            serde_json::from_str(row.4.as_deref().expect("metadata json")).expect("metadata json");
+
+        assert_eq!(row.0, "failed");
+        assert_eq!(row.1, 400);
+        assert_eq!(row.2.as_deref(), Some("compatibility_rejected"));
+        assert_eq!(
+            row.3.as_deref(),
+            Some("provider does not advertise tool call support")
+        );
+        assert_eq!(metadata["decision"], "rejected");
+        assert_eq!(metadata["field"], "tools");
     }
 
     #[tokio::test]

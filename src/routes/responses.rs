@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::{
     bridge::{
+        compatibility::first_rejection,
         internal::InternalRequest,
         responses_decode::decode_responses_request,
         responses_encode::encode_responses_response,
@@ -343,6 +344,38 @@ async fn create_ollama_response(
     previous_response_id: Option<String>,
     started_at: std::time::Instant,
 ) -> Result<Response, AppError> {
+    if let Some(rejection) = first_rejection(&provider, &request) {
+        let error_message = rejection.reason.to_string();
+        insert_request_log(
+            &state.db,
+            RequestLogInsert {
+                protocol_in: "responses".to_string(),
+                protocol_out: "responses".to_string(),
+                protocol_upstream: "ollama_native".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                model_requested,
+                model_upstream: request.model,
+                status: "failed".to_string(),
+                http_status: 400,
+                error_code: Some(rejection.error_code().to_string()),
+                error_message: Some(error_message.clone()),
+                is_streaming,
+                input_tokens: None,
+                output_tokens: None,
+                reasoning_tokens: None,
+                latency_ms: started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: None,
+                first_token_ms: None,
+                tool_call_count: None,
+                upstream_request_id: None,
+                metadata_json: Some(rejection.metadata_json()),
+            },
+        )
+        .await?;
+        return Err(AppError::BadRequest(error_message));
+    }
+
     request = request_with_session_history(&state.db, request).await?;
     let upstream_url = format!("{}/chat", provider.base_url.trim_end_matches('/'));
     let upstream_started_at = std::time::Instant::now();
@@ -853,6 +886,63 @@ mod tests {
         assert_eq!(response["output"][0]["content"][0]["text"], "ollama hello");
         assert_eq!(response["usage"]["input_tokens"], 3);
         assert_eq!(response["usage"]["output_tokens"], 4);
+    }
+
+    #[tokio::test]
+    async fn rejects_responses_tools_for_ollama_native_upstream() {
+        let upstream = spawn_ollama_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(&db, "llama3.2", "ollama_native", &upstream, "unused")
+            .await
+            .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+            admin_token: None,
+        };
+
+        let error = create_response(
+            State(state.clone()),
+            axum::Json(json!({
+                "model": "llama3.2",
+                "input": "hello",
+                "tools": [
+                    {
+                        "type": "function",
+                        "name": "read_file",
+                        "parameters": { "type": "object" }
+                    }
+                ]
+            })),
+        )
+        .await
+        .expect_err("ollama tools should be rejected");
+
+        assert!(format!("{error:?}").contains("provider does not advertise tool call support"));
+
+        let row: (String, i64, Option<String>, Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT status, http_status, error_code, error_message, metadata_json FROM request_logs LIMIT 1",
+        )
+        .fetch_one(&state.db)
+        .await
+        .expect("load request log");
+        let metadata: serde_json::Value =
+            serde_json::from_str(row.4.as_deref().expect("metadata json")).expect("metadata json");
+
+        assert_eq!(row.0, "failed");
+        assert_eq!(row.1, 400);
+        assert_eq!(row.2.as_deref(), Some("compatibility_rejected"));
+        assert_eq!(
+            row.3.as_deref(),
+            Some("provider does not advertise tool call support")
+        );
+        assert_eq!(metadata["decision"], "rejected");
+        assert_eq!(metadata["field"], "tools");
     }
 
     #[tokio::test]
