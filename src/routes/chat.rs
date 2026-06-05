@@ -61,6 +61,8 @@ async fn create_chat_completion(
                 model_upstream,
                 status: "failed".to_string(),
                 http_status: status.as_u16() as i64,
+                error_code: None,
+                error_message: None,
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
@@ -70,6 +72,7 @@ async fn create_chat_completion(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
         )
         .await?;
@@ -96,6 +99,8 @@ async fn create_chat_completion(
                 .to_string(),
             status: "success".to_string(),
             http_status: 200,
+            error_code: None,
+            error_message: None,
             is_streaming,
             input_tokens: response
                 .get("usage")
@@ -115,6 +120,7 @@ async fn create_chat_completion(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
+            metadata_json: None,
         },
     )
     .await?;

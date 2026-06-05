@@ -114,6 +114,8 @@ async fn create_message(
                 model_upstream: request.model,
                 status: "failed".to_string(),
                 http_status: status.as_u16() as i64,
+                error_code: None,
+                error_message: None,
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
@@ -123,6 +125,7 @@ async fn create_message(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
         )
         .await?;
@@ -142,6 +145,8 @@ async fn create_message(
                 model_upstream: request.model.clone(),
                 status: "success".to_string(),
                 http_status: 200,
+                error_code: None,
+                error_message: None,
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
@@ -151,6 +156,7 @@ async fn create_message(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
         )
         .await?;
@@ -185,6 +191,8 @@ async fn create_message(
             model_upstream: response.model.clone(),
             status: "success".to_string(),
             http_status: 200,
+            error_code: None,
+            error_message: None,
             is_streaming,
             input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
             output_tokens: response
@@ -197,6 +205,7 @@ async fn create_message(
             first_token_ms: None,
             tool_call_count: Some(tool_call_count),
             upstream_request_id: None,
+            metadata_json: None,
         },
     )
     .await?;
@@ -238,6 +247,8 @@ async fn create_responses_anthropic_message(
                 model_upstream: request.model,
                 status: "failed".to_string(),
                 http_status: status.as_u16() as i64,
+                error_code: None,
+                error_message: None,
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
@@ -247,6 +258,7 @@ async fn create_responses_anthropic_message(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
         )
         .await?;
@@ -275,6 +287,8 @@ async fn create_responses_anthropic_message(
             model_upstream: response.model.clone(),
             status: "success".to_string(),
             http_status: 200,
+            error_code: None,
+            error_message: None,
             is_streaming,
             input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
             output_tokens: response
@@ -287,6 +301,7 @@ async fn create_responses_anthropic_message(
             first_token_ms: None,
             tool_call_count: Some(tool_call_count),
             upstream_request_id: None,
+            metadata_json: None,
         },
     )
     .await?;
@@ -327,6 +342,8 @@ async fn create_ollama_anthropic_message(
                 model_upstream: request.model,
                 status: "failed".to_string(),
                 http_status: status.as_u16() as i64,
+                error_code: None,
+                error_message: None,
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
@@ -336,6 +353,7 @@ async fn create_ollama_anthropic_message(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
         )
         .await?;
@@ -355,6 +373,8 @@ async fn create_ollama_anthropic_message(
                 model_upstream: request.model.clone(),
                 status: "success".to_string(),
                 http_status: 200,
+                error_code: None,
+                error_message: None,
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
@@ -364,6 +384,7 @@ async fn create_ollama_anthropic_message(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
         )
         .await?;
@@ -392,6 +413,8 @@ async fn create_ollama_anthropic_message(
             model_upstream: response.model.clone(),
             status: "success".to_string(),
             http_status: 200,
+            error_code: None,
+            error_message: None,
             is_streaming,
             input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
             output_tokens: response
@@ -404,6 +427,7 @@ async fn create_ollama_anthropic_message(
             first_token_ms: None,
             tool_call_count: Some(tool_call_count),
             upstream_request_id: None,
+            metadata_json: None,
         },
     )
     .await?;
@@ -446,6 +470,8 @@ async fn create_native_anthropic_message(
                 model_upstream: "unknown".to_string(),
                 status: "failed".to_string(),
                 http_status: status.as_u16() as i64,
+                error_code: None,
+                error_message: None,
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
@@ -455,6 +481,7 @@ async fn create_native_anthropic_message(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
         )
         .await?;
@@ -479,6 +506,8 @@ async fn create_native_anthropic_message(
                 model_upstream,
                 status: "success".to_string(),
                 http_status: 200,
+                error_code: None,
+                error_message: None,
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
@@ -488,6 +517,7 @@ async fn create_native_anthropic_message(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
         )
         .await?;
@@ -518,6 +548,8 @@ async fn create_native_anthropic_message(
                 .to_string(),
             status: "success".to_string(),
             http_status: 200,
+            error_code: None,
+            error_message: None,
             is_streaming,
             input_tokens: response
                 .get("usage")
@@ -533,6 +565,7 @@ async fn create_native_anthropic_message(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
+            metadata_json: None,
         },
     )
     .await?;

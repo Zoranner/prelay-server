@@ -65,6 +65,8 @@ pub struct RequestLogInsert {
     pub model_upstream: String,
     pub status: String,
     pub http_status: i64,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
     pub is_streaming: bool,
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
@@ -74,6 +76,7 @@ pub struct RequestLogInsert {
     pub first_token_ms: Option<i64>,
     pub tool_call_count: Option<i64>,
     pub upstream_request_id: Option<String>,
+    pub metadata_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -110,6 +113,8 @@ async fn insert_request_log_with_prices(
             model_upstream,
             status,
             http_status,
+            error_code,
+            error_message,
             is_streaming,
             input_tokens,
             output_tokens,
@@ -120,9 +125,10 @@ async fn insert_request_log_with_prices(
             upstream_latency_ms,
             first_token_ms,
             tool_call_count,
-            upstream_request_id
+            upstream_request_id,
+            metadata_json
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(Uuid::new_v4().to_string())
@@ -136,6 +142,8 @@ async fn insert_request_log_with_prices(
     .bind(log.model_upstream)
     .bind(log.status)
     .bind(log.http_status)
+    .bind(log.error_code)
+    .bind(log.error_message)
     .bind(log.is_streaming)
     .bind(log.input_tokens)
     .bind(log.output_tokens)
@@ -147,6 +155,7 @@ async fn insert_request_log_with_prices(
     .bind(log.first_token_ms)
     .bind(log.tool_call_count)
     .bind(log.upstream_request_id)
+    .bind(log.metadata_json)
     .execute(pool)
     .await?;
 
@@ -398,6 +407,8 @@ mod tests {
                 model_upstream: "deepseek-chat".to_string(),
                 status: "success".to_string(),
                 http_status: 200,
+                error_code: None,
+                error_message: None,
                 is_streaming: false,
                 input_tokens: Some(1_000_000),
                 output_tokens: Some(500_000),
@@ -407,6 +418,7 @@ mod tests {
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
             &[ModelPrice {
                 provider: "DeepSeek".to_string(),
@@ -435,6 +447,8 @@ mod tests {
                 model_upstream: "deepseek-chat".to_string(),
                 status: "success".to_string(),
                 http_status: 200,
+                error_code: None,
+                error_message: None,
                 is_streaming: false,
                 input_tokens: Some(1_000_000),
                 output_tokens: Some(500_000),
@@ -444,6 +458,7 @@ mod tests {
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
             &[],
         );
@@ -472,6 +487,8 @@ mod tests {
                 model_upstream: "deepseek-chat".to_string(),
                 status: "success".to_string(),
                 http_status: 200,
+                error_code: None,
+                error_message: None,
                 is_streaming: false,
                 input_tokens: Some(1_000_000),
                 output_tokens: Some(500_000),
@@ -481,6 +498,7 @@ mod tests {
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
             &[ModelPrice {
                 provider: "DeepSeek".to_string(),
@@ -524,6 +542,8 @@ mod tests {
                 model_upstream: "deepseek-chat".to_string(),
                 status: "success".to_string(),
                 http_status: 200,
+                error_code: None,
+                error_message: None,
                 is_streaming: false,
                 input_tokens: Some(10),
                 output_tokens: Some(5),
@@ -533,6 +553,7 @@ mod tests {
                 first_token_ms: Some(30),
                 tool_call_count: Some(1),
                 upstream_request_id: Some("req_upstream".to_string()),
+                metadata_json: None,
             },
             &[],
         )
@@ -569,6 +590,60 @@ mod tests {
         assert_eq!(row.first_token_ms, Some(30));
         assert_eq!(row.tool_call_count, Some(1));
         assert_eq!(row.upstream_request_id.as_deref(), Some("req_upstream"));
+    }
+
+    #[tokio::test]
+    async fn request_log_insert_writes_error_details() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+
+        insert_request_log_with_prices(
+            &db,
+            RequestLogInsert {
+                protocol_in: "responses".to_string(),
+                protocol_out: "responses".to_string(),
+                protocol_upstream: "ollama_native".to_string(),
+                provider_id: "provider-1".to_string(),
+                provider_name: "Ollama".to_string(),
+                model_requested: "llama3.2".to_string(),
+                model_upstream: "llama3.2".to_string(),
+                status: "failed".to_string(),
+                http_status: 400,
+                error_code: Some("compatibility_rejected".to_string()),
+                error_message: Some("provider does not advertise tool call support".to_string()),
+                is_streaming: false,
+                input_tokens: None,
+                output_tokens: None,
+                reasoning_tokens: None,
+                latency_ms: 12,
+                upstream_latency_ms: None,
+                first_token_ms: None,
+                tool_call_count: None,
+                upstream_request_id: None,
+                metadata_json: Some(r#"{"decision":"rejected"}"#.to_string()),
+            },
+            &[],
+        )
+        .await
+        .expect("insert log");
+
+        let row: (Option<String>, Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT error_code, error_message, metadata_json FROM request_logs LIMIT 1",
+        )
+        .fetch_one(&db)
+        .await
+        .expect("load request log");
+
+        assert_eq!(row.0.as_deref(), Some("compatibility_rejected"));
+        assert_eq!(
+            row.1.as_deref(),
+            Some("provider does not advertise tool call support")
+        );
+        assert_eq!(row.2.as_deref(), Some(r#"{"decision":"rejected"}"#));
     }
 
     #[tokio::test]

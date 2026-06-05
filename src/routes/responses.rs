@@ -120,6 +120,8 @@ async fn create_response(
                 model_upstream: request.model,
                 status: "failed".to_string(),
                 http_status: status.as_u16() as i64,
+                error_code: None,
+                error_message: None,
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
@@ -129,6 +131,7 @@ async fn create_response(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
         )
         .await?;
@@ -148,6 +151,8 @@ async fn create_response(
                 model_upstream: request.model,
                 status: "success".to_string(),
                 http_status: 200,
+                error_code: None,
+                error_message: None,
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
@@ -157,6 +162,7 @@ async fn create_response(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
         )
         .await?;
@@ -201,6 +207,8 @@ async fn create_response(
             model_upstream: response.model.clone(),
             status: "success".to_string(),
             http_status: 200,
+            error_code: None,
+            error_message: None,
             is_streaming,
             input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
             output_tokens: response
@@ -213,6 +221,7 @@ async fn create_response(
             first_token_ms: None,
             tool_call_count: Some(tool_call_count),
             upstream_request_id: None,
+            metadata_json: None,
         },
     )
     .await?;
@@ -256,6 +265,8 @@ async fn create_anthropic_messages_response(
                 model_upstream: request.model,
                 status: "failed".to_string(),
                 http_status: status.as_u16() as i64,
+                error_code: None,
+                error_message: None,
                 is_streaming: false,
                 input_tokens: None,
                 output_tokens: None,
@@ -265,6 +276,7 @@ async fn create_anthropic_messages_response(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
         )
         .await?;
@@ -300,6 +312,8 @@ async fn create_anthropic_messages_response(
             model_upstream: response.model.clone(),
             status: "success".to_string(),
             http_status: 200,
+            error_code: None,
+            error_message: None,
             is_streaming: false,
             input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
             output_tokens: response
@@ -312,6 +326,7 @@ async fn create_anthropic_messages_response(
             first_token_ms: None,
             tool_call_count: Some(tool_call_count),
             upstream_request_id: None,
+            metadata_json: None,
         },
     )
     .await?;
@@ -354,6 +369,8 @@ async fn create_ollama_response(
                 model_upstream: request.model,
                 status: "failed".to_string(),
                 http_status: status.as_u16() as i64,
+                error_code: None,
+                error_message: None,
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
@@ -363,6 +380,7 @@ async fn create_ollama_response(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
         )
         .await?;
@@ -382,6 +400,8 @@ async fn create_ollama_response(
                 model_upstream: request.model,
                 status: "success".to_string(),
                 http_status: 200,
+                error_code: None,
+                error_message: None,
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
@@ -391,6 +411,7 @@ async fn create_ollama_response(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
         )
         .await?;
@@ -433,6 +454,8 @@ async fn create_ollama_response(
             model_upstream: response.model.clone(),
             status: "success".to_string(),
             http_status: 200,
+            error_code: None,
+            error_message: None,
             is_streaming,
             input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
             output_tokens: response
@@ -445,6 +468,7 @@ async fn create_ollama_response(
             first_token_ms: None,
             tool_call_count: Some(tool_call_count),
             upstream_request_id: None,
+            metadata_json: None,
         },
     )
     .await?;
@@ -486,6 +510,8 @@ async fn create_native_response(
                 model_upstream: "unknown".to_string(),
                 status: "failed".to_string(),
                 http_status: status.as_u16() as i64,
+                error_code: None,
+                error_message: None,
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
@@ -495,6 +521,7 @@ async fn create_native_response(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
         )
         .await?;
@@ -514,6 +541,8 @@ async fn create_native_response(
                 model_upstream: "unknown".to_string(),
                 status: "success".to_string(),
                 http_status: 200,
+                error_code: None,
+                error_message: None,
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
@@ -523,6 +552,7 @@ async fn create_native_response(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
         )
         .await?;
@@ -558,6 +588,8 @@ async fn create_native_response(
                 .to_string(),
             status: "success".to_string(),
             http_status: 200,
+            error_code: None,
+            error_message: None,
             is_streaming,
             input_tokens: response
                 .get("usage")
@@ -573,6 +605,7 @@ async fn create_native_response(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
+            metadata_json: None,
         },
     )
     .await?;

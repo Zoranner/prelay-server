@@ -70,6 +70,8 @@ async fn create_ollama_chat(
                 model_upstream,
                 status: "failed".to_string(),
                 http_status: status.as_u16() as i64,
+                error_code: None,
+                error_message: None,
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
@@ -79,6 +81,7 @@ async fn create_ollama_chat(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
         )
         .await?;
@@ -98,6 +101,8 @@ async fn create_ollama_chat(
                 model_upstream,
                 status: "success".to_string(),
                 http_status: 200,
+                error_code: None,
+                error_message: None,
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
@@ -107,6 +112,7 @@ async fn create_ollama_chat(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
+                metadata_json: None,
             },
         )
         .await?;
@@ -138,6 +144,8 @@ async fn create_ollama_chat(
                 .to_string(),
             status: "success".to_string(),
             http_status: 200,
+            error_code: None,
+            error_message: None,
             is_streaming,
             input_tokens: response.get("prompt_eval_count").and_then(Value::as_i64),
             output_tokens: response.get("eval_count").and_then(Value::as_i64),
@@ -147,6 +155,7 @@ async fn create_ollama_chat(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
+            metadata_json: None,
         },
     )
     .await?;
