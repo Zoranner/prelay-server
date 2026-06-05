@@ -129,6 +129,7 @@ async fn create_response(
         .await;
     }
 
+    let request = request_with_session_history(&state.db, request).await?;
     let upstream_url = format!(
         "{}/chat/completions",
         provider.base_url.trim_end_matches('/')
@@ -138,9 +139,7 @@ async fn create_response(
         .client
         .post(upstream_url)
         .bearer_auth(&provider.api_key)
-        .json(&encode_chat_request(
-            &request_with_session_history(&state.db, request.clone()).await?,
-        ))
+        .json(&encode_chat_request(&request))
         .send()
         .await
         .map_err(|error| AppError::Internal(error.into()))?;
@@ -1480,6 +1479,24 @@ mod tests {
             second["output"][0]["content"][0]["text"],
             "history accepted"
         );
+        let second_id = second["id"].as_str().expect("second id");
+
+        let third = create_response(
+            State(state.clone()),
+            axum::Json(json!({
+                "model": "deepseek-chat",
+                "previous_response_id": second_id,
+                "input": "third user"
+            })),
+        )
+        .await
+        .expect("create third response");
+        let third = response_json(third).await;
+
+        assert_eq!(
+            third["output"][0]["content"][0]["text"],
+            "full history accepted"
+        );
     }
 
     #[tokio::test]
@@ -1891,18 +1908,34 @@ mod tests {
     async fn spawn_history_asserting_chat_upstream() -> String {
         async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
             let messages = payload["messages"].as_array().expect("messages");
-            let content = if messages.len() == 1 {
-                assert_eq!(messages[0]["content"], "first user");
-                "first assistant"
-            } else {
-                assert_eq!(messages.len(), 3);
-                assert_eq!(messages[0]["role"], "user");
-                assert_eq!(messages[0]["content"], "first user");
-                assert_eq!(messages[1]["role"], "assistant");
-                assert_eq!(messages[1]["content"], "first assistant");
-                assert_eq!(messages[2]["role"], "user");
-                assert_eq!(messages[2]["content"], "second user");
-                "history accepted"
+            let content = match messages.len() {
+                1 => {
+                    assert_eq!(messages[0]["content"], "first user");
+                    "first assistant"
+                }
+                3 => {
+                    assert_eq!(messages[0]["role"], "user");
+                    assert_eq!(messages[0]["content"], "first user");
+                    assert_eq!(messages[1]["role"], "assistant");
+                    assert_eq!(messages[1]["content"], "first assistant");
+                    assert_eq!(messages[2]["role"], "user");
+                    assert_eq!(messages[2]["content"], "second user");
+                    "history accepted"
+                }
+                5 => {
+                    assert_eq!(messages[0]["role"], "user");
+                    assert_eq!(messages[0]["content"], "first user");
+                    assert_eq!(messages[1]["role"], "assistant");
+                    assert_eq!(messages[1]["content"], "first assistant");
+                    assert_eq!(messages[2]["role"], "user");
+                    assert_eq!(messages[2]["content"], "second user");
+                    assert_eq!(messages[3]["role"], "assistant");
+                    assert_eq!(messages[3]["content"], "history accepted");
+                    assert_eq!(messages[4]["role"], "user");
+                    assert_eq!(messages[4]["content"], "third user");
+                    "full history accepted"
+                }
+                len => panic!("unexpected history length: {len}"),
             };
 
             Json(json!({
