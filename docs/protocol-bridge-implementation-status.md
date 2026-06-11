@@ -22,7 +22,7 @@
 - `/v1/responses`：OpenAI Responses 入口，面向 Codex 类客户端。
 - `/v1/messages`：Anthropic Messages 入口，面向 Claude Code / Anthropic-compatible 客户端。
 - `/api/chat`：Ollama Native 入口，主要用于本地模型原生接入。
-- `/v1/models` 和 `/models`：模型目录入口，返回 provider、上游协议、上游模型、可用下游协议和工具能力。
+- `/v1/models` 和 `/models`：模型目录入口，返回 provider、上游协议、上游模型、可用下游协议和能力声明。
 
 ### 供给侧协议模型
 
@@ -39,7 +39,9 @@
 - `openai_compatible` 映射为 Chat Completions 上游。
 - `anthropic` 和 `anthropic_compatible` 映射为 Anthropic Messages 上游。
 - `ollama_native` 映射为 Ollama Native 上游。
-- 未识别 provider 默认按 Chat Completions 处理，但工具能力默认关闭。
+- 未识别 provider 默认按 Chat Completions 处理，但高级能力默认关闭。
+- provider 能力模型已覆盖工具调用、reasoning、tool choice、并行工具调用、system message、结构化输出、流式 usage，以及上下文和输出 token 上限。
+- provider 配置支持通过 `capabilities` 覆盖默认能力声明，旧配置没有覆盖字段时继续按 provider 类型推导默认能力。
 
 ### 已实现的协议方向
 
@@ -53,10 +55,11 @@
 - `anthropic_messages -> anthropic_messages`
 - `anthropic_messages -> responses`，仅非流式。
 - `ollama_native -> ollama_native`
+- `ollama_native -> chat_completions`
 - `ollama_native -> responses`
 - `ollama_native -> anthropic_messages`
 
-设计文档中曾列出的 `ollama_native -> chat_completions` 目前没有作为 OpenAI Chat Completions 入口的上游路径实现。`/v1/chat/completions` 当前只按 Chat Completions 上游转发。
+`ollama_native -> chat_completions` 已作为 OpenAI Chat Completions 入口的上游路径实现，普通 OpenAI-compatible 客户端可以通过 `/v1/chat/completions` 调用 Ollama Native 上游。
 
 ### 流式桥接
 
@@ -68,6 +71,7 @@
 - 原生 Responses 上游流式直通到 Responses 入口。
 - 原生 Anthropic Messages 上游流式直通到 Messages 入口。
 - Ollama Native 流式转换为 Responses SSE。
+- Ollama Native 流式转换为 Chat Completions SSE。
 - Ollama Native 流式转换为 Anthropic Messages SSE。
 - Ollama Native 流式原生透传到 `/api/chat`。
 
@@ -172,6 +176,7 @@
 - Anthropic Messages 到 Responses 上游的非流式桥接。
 - Anthropic Messages 到 Ollama Native 上游。
 - Ollama Native 原生 `/api/chat`。
+- Chat Completions 到 Ollama Native 上游。
 - `previous_response_id` 多跳历史。
 - function tool call 回合。
 - 统计 API 聚合。
@@ -228,17 +233,18 @@
 
 ### Provider 归一化差距
 
-当前 provider 能力模型只有协议、鉴权和 `tool_calls`。后续还需要更细能力：
+当前 provider 能力模型已经从 `tool_calls` 扩展为能力画像：
 
-- 是否支持流式 usage。
+- 是否支持工具调用。
 - 是否支持 reasoning / thinking。
 - 是否支持 tool choice。
 - 是否支持 parallel tool calls。
 - 是否支持 system message。
 - 是否支持 JSON schema / structured output。
-- 最大上下文、最大输出和默认参数限制。
+- 是否支持流式 usage。
+- 最大上下文和最大输出 token。
 
-没有这些能力时，网关只能粗粒度拒绝或放行，无法给出稳定降级策略。
+仍需继续细化的是能力使用策略：哪些字段可以安全忽略、哪些需要降级、哪些必须拒绝，以及不同 provider 的真实能力默认值是否准确。
 
 ### 错误和审计差距
 
