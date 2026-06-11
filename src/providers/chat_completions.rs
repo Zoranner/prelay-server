@@ -8,6 +8,36 @@ use crate::{
     error::AppError,
 };
 
+pub fn decode_chat_request(value: Value) -> Result<InternalRequest, AppError> {
+    let model = value
+        .get("model")
+        .and_then(Value::as_str)
+        .filter(|model| !model.trim().is_empty())
+        .ok_or_else(|| AppError::BadRequest("model 不能为空".to_string()))?
+        .to_string();
+    let stream = value
+        .get("stream")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let max_tokens = value.get("max_tokens").and_then(Value::as_i64);
+    let messages = value
+        .get("messages")
+        .and_then(Value::as_array)
+        .ok_or_else(|| AppError::BadRequest("messages 必须是数组".to_string()))?
+        .iter()
+        .map(decode_message)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(InternalRequest {
+        model,
+        stream,
+        max_tokens,
+        previous_response_id: None,
+        tools: decode_tools(value.get("tools"))?,
+        messages,
+    })
+}
+
 pub fn encode_chat_request(request: &InternalRequest) -> Value {
     let mut value = json!({
         "model": request.model,
@@ -19,6 +49,41 @@ pub fn encode_chat_request(request: &InternalRequest) -> Value {
     }
     if !request.tools.is_empty() {
         value["tools"] = json!(request.tools.iter().map(encode_tool).collect::<Vec<_>>());
+    }
+    value
+}
+
+pub fn encode_chat_response(response: InternalResponse) -> Value {
+    let message = response
+        .output
+        .first()
+        .map(encode_output_item)
+        .unwrap_or_else(|| json!({ "role": "assistant", "content": "" }));
+    let mut value = json!({
+        "id": response.id,
+        "object": "chat.completion",
+        "created": chrono::Utc::now().timestamp(),
+        "model": response.model,
+        "choices": [
+            {
+                "index": 0,
+                "message": message,
+                "finish_reason": "stop",
+            }
+        ],
+    });
+    if let Some(usage) = response.usage {
+        let mut usage_value = json!({
+            "prompt_tokens": usage.input_tokens.unwrap_or(0),
+            "completion_tokens": usage.output_tokens.unwrap_or(0),
+            "total_tokens": usage.input_tokens.unwrap_or(0) + usage.output_tokens.unwrap_or(0),
+        });
+        if let Some(reasoning_tokens) = usage.reasoning_tokens {
+            usage_value["completion_tokens_details"] = json!({
+                "reasoning_tokens": reasoning_tokens,
+            });
+        }
+        value["usage"] = usage_value;
     }
     value
 }
@@ -90,6 +155,122 @@ pub fn decode_chat_sse_text_deltas(body: &str) -> Vec<String> {
         .collect()
 }
 
+fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
+    let role = value
+        .get("role")
+        .and_then(Value::as_str)
+        .map(decode_role)
+        .transpose()?
+        .ok_or_else(|| AppError::BadRequest("message.role 不能为空".to_string()))?;
+    let content = value
+        .get("content")
+        .map(decode_content)
+        .transpose()?
+        .unwrap_or_default();
+    let tool_calls = value
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .map(|tool_calls| {
+            tool_calls
+                .iter()
+                .filter_map(decode_internal_tool_call)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Ok(InternalMessage {
+        role,
+        content,
+        tool_call_id: value
+            .get("tool_call_id")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        tool_calls,
+        reasoning_content: value
+            .get("reasoning_content")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    })
+}
+
+fn decode_content(value: &Value) -> Result<Vec<InternalContentPart>, AppError> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+    if let Some(text) = value.as_str() {
+        return Ok(vec![InternalContentPart::Text(text.to_string())]);
+    }
+    let parts = value
+        .as_array()
+        .ok_or_else(|| AppError::BadRequest("message.content 必须是字符串或数组".to_string()))?;
+    Ok(parts
+        .iter()
+        .filter_map(|part| {
+            part.get("text")
+                .and_then(Value::as_str)
+                .or_else(|| {
+                    part.get("type")
+                        .and_then(Value::as_str)
+                        .filter(|kind| *kind == "text")
+                        .and_then(|_| part.get("content").and_then(Value::as_str))
+                })
+                .map(|text| InternalContentPart::Text(text.to_string()))
+        })
+        .collect())
+}
+
+fn decode_tools(value: Option<&Value>) -> Result<Vec<InternalTool>, AppError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let tools = value
+        .as_array()
+        .ok_or_else(|| AppError::BadRequest("tools 必须是数组".to_string()))?;
+    tools
+        .iter()
+        .map(|tool| {
+            let function = tool.get("function").unwrap_or(tool);
+            let name = function
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.trim().is_empty())
+                .ok_or_else(|| AppError::BadRequest("tool.function.name 不能为空".to_string()))?
+                .to_string();
+            let description = function
+                .get("description")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let input_schema = function
+                .get("parameters")
+                .cloned()
+                .unwrap_or_else(|| json!({ "type": "object" }));
+
+            Ok(InternalTool {
+                name,
+                description,
+                input_schema,
+            })
+        })
+        .collect()
+}
+
+fn decode_internal_tool_call(value: &Value) -> Option<InternalToolCall> {
+    let id = value.get("id").and_then(Value::as_str)?.to_string();
+    let function = value.get("function")?;
+    let name = function.get("name").and_then(Value::as_str)?.to_string();
+    let arguments = function
+        .get("arguments")
+        .and_then(Value::as_str)
+        .unwrap_or("{}")
+        .to_string();
+
+    Some(InternalToolCall {
+        id,
+        name,
+        arguments,
+    })
+}
+
 fn decode_tool_call(
     value: &Value,
     reasoning_content: Option<String>,
@@ -109,6 +290,40 @@ fn decode_tool_call(
         arguments,
         reasoning_content,
     })
+}
+
+fn encode_output_item(item: &InternalOutputItem) -> Value {
+    match item {
+        InternalOutputItem::Message { role, content, .. } => json!({
+            "role": encode_role(role),
+            "content": join_text_content(content),
+        }),
+        InternalOutputItem::FunctionToolCall {
+            id,
+            name,
+            arguments,
+            reasoning_content,
+        } => {
+            let mut message = json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [
+                    {
+                        "id": id,
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": arguments,
+                        }
+                    }
+                ],
+            });
+            if let Some(reasoning_content) = reasoning_content {
+                message["reasoning_content"] = json!(reasoning_content);
+            }
+            message
+        }
+    }
 }
 
 fn encode_message(message: &InternalMessage) -> Value {
@@ -167,6 +382,16 @@ fn encode_role(role: &InternalRole) -> &'static str {
         InternalRole::Assistant => "assistant",
         InternalRole::System => "system",
         InternalRole::Tool => "tool",
+    }
+}
+
+fn decode_role(role: &str) -> Result<InternalRole, AppError> {
+    match role {
+        "user" => Ok(InternalRole::User),
+        "assistant" => Ok(InternalRole::Assistant),
+        "system" | "developer" => Ok(InternalRole::System),
+        "tool" => Ok(InternalRole::Tool),
+        _ => Err(AppError::BadRequest(format!("不支持的消息角色: {role}"))),
     }
 }
 

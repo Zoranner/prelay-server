@@ -26,6 +26,7 @@ struct ModelsResponse {
 struct ModelEntry {
     id: String,
     object: &'static str,
+    entry_type: &'static str,
     owned_by: &'static str,
     provider_id: String,
     provider_name: String,
@@ -88,6 +89,7 @@ fn model_entry_for_alias(
     ModelEntry {
         id: alias.alias,
         object: "model",
+        entry_type: "alias",
         owned_by: "provider-relay",
         provider_id: alias.provider_id,
         provider_name: provider
@@ -112,6 +114,7 @@ fn model_entry_for_provider(provider: ProviderConfig) -> ModelEntry {
     ModelEntry {
         id: provider.name.clone(),
         object: "model",
+        entry_type: "provider",
         owned_by: "provider-relay",
         provider_id: provider.id,
         provider_name: provider.name.clone(),
@@ -138,7 +141,12 @@ fn downstream_protocols_for_upstream(protocol: UpstreamProtocol) -> Vec<String> 
             &["responses", "chat_completions", "anthropic_messages"][..]
         }
         UpstreamProtocol::AnthropicMessages => &["responses", "anthropic_messages"][..],
-        UpstreamProtocol::OllamaNative => &["responses", "anthropic_messages", "ollama_native"][..],
+        UpstreamProtocol::OllamaNative => &[
+            "responses",
+            "chat_completions",
+            "anthropic_messages",
+            "ollama_native",
+        ][..],
     }
     .iter()
     .map(|protocol| (*protocol).to_string())
@@ -182,6 +190,7 @@ mod tests {
         assert_eq!(response.0.data.len(), 1);
         assert_eq!(response.0.data[0].id, provider.name);
         assert_eq!(response.0.data[0].object, "model");
+        assert_eq!(response.0.data[0].entry_type, "provider");
         assert_eq!(response.0.data[0].owned_by, "provider-relay");
         assert_eq!(response.0.data[0].provider_id, provider.id);
         assert_eq!(response.0.data[0].provider_name, provider.name);
@@ -224,6 +233,7 @@ mod tests {
 
         assert!(response.0.data.iter().any(|model| model.id == "coder"
             && model.provider_id == provider.id
+            && model.entry_type == "alias"
             && model.provider_name == provider.name
             && model.upstream_protocol == "chat_completions"
             && model.upstream_model == "deepseek-chat"
@@ -340,7 +350,12 @@ mod tests {
         assert_eq!(model.upstream_protocol, "ollama_native");
         assert_eq!(
             model.downstream_protocols,
-            ["responses", "anthropic_messages", "ollama_native"]
+            [
+                "responses",
+                "chat_completions",
+                "anthropic_messages",
+                "ollama_native"
+            ]
         );
         assert!(!model.capabilities.tool_calls);
     }

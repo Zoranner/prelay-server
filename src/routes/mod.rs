@@ -8,3 +8,4 @@ pub mod proxy;
 pub mod responses;
 pub mod stats;
 mod stream_stats;
+mod upstream_observability;
