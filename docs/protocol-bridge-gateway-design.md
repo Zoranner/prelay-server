@@ -198,11 +198,14 @@ src/providers/ollama.rs
 - 默认 base URL。
 - auth scheme。
 - 支持模型。
-- 支持参数。
-- 支持工具类型。
-- tool choice 能力。
+- 工具调用能力。
 - reasoning / thinking 能力。
+- tool choice 能力。
+- parallel tool calls 能力。
+- system message 能力。
+- JSON schema / structured output 能力。
 - stream usage 能力。
+- 最大上下文和最大输出 token。
 - usage 字段映射。
 
 ### Downstream Encoders
@@ -416,6 +419,9 @@ provider_models
   model
   display_name
   enabled
+  capabilities_json
+
+provider_configs
   capabilities_json
 
 model_aliases

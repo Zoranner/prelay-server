@@ -211,7 +211,6 @@
 
 设计要求的多数方向已实现，但仍有缺口：
 
-- `ollama_native -> chat_completions` 未在 `/v1/chat/completions` 路径落地。
 - `responses -> anthropic_messages` 仅非流式可用。
 - `anthropic_messages -> responses` 仅非流式可用。
 
@@ -244,7 +243,7 @@
 - 是否支持流式 usage。
 - 最大上下文和最大输出 token。
 
-仍需继续细化的是能力使用策略：哪些字段可以安全忽略、哪些需要降级、哪些必须拒绝，以及不同 provider 的真实能力默认值是否准确。
+当前已经参与强制拒绝判断的字段包括工具调用、reasoning、tool choice、并行工具调用、system message、结构化输出、流式 usage 和最大输出 token。仍需继续细化的是能力使用策略：哪些字段可以安全忽略、哪些需要降级、哪些必须拒绝，以及不同 provider 的真实能力默认值是否准确。
 
 ### 错误和审计差距
 

@@ -51,6 +51,58 @@
         <Field term="上游 API Key" :value="config!.api_key_masked" />
       </dl>
 
+      <section class="rounded-xl border border-stone-100 bg-stone-50/60 px-3 py-3 space-y-3">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <h3 class="text-sm font-semibold text-stone-700">能力覆盖</h3>
+            <p class="mt-0.5 text-xs text-stone-400">未覆盖表示沿用 Provider 默认能力</p>
+          </div>
+          <span
+            class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium"
+            :class="
+              hasCapabilityOverrides ? 'bg-[#f2f8f5] text-[#256047]' : 'bg-stone-100 text-stone-400'
+            "
+          >
+            {{ hasCapabilityOverrides ? '已设置覆盖' : '未设置覆盖' }}
+          </span>
+        </div>
+
+        <div class="grid gap-2 sm:grid-cols-2">
+          <div
+            v-for="capability in booleanCapabilityOverrides"
+            :key="capability.key"
+            class="flex items-center justify-between gap-2 rounded-lg border border-stone-100 bg-white px-2.5 py-2"
+          >
+            <span class="text-xs font-medium text-stone-600">{{ capability.label }}</span>
+            <span
+              class="rounded-full px-2 py-0.5 text-xs font-medium"
+              :class="booleanOverrideClass(capability.value)"
+            >
+              {{ booleanOverrideLabel(capability.value) }}
+            </span>
+          </div>
+        </div>
+
+        <div class="grid gap-2 sm:grid-cols-2">
+          <div class="rounded-lg border border-stone-100 bg-white px-2.5 py-2">
+            <div class="text-xs font-medium text-stone-400 uppercase tracking-wide">
+              Context Tokens
+            </div>
+            <div class="mt-1 font-mono text-sm font-medium text-stone-700">
+              {{ tokenOverrideLabel(config!.capabilities?.max_context_tokens) }}
+            </div>
+          </div>
+          <div class="rounded-lg border border-stone-100 bg-white px-2.5 py-2">
+            <div class="text-xs font-medium text-stone-400 uppercase tracking-wide">
+              Output Tokens
+            </div>
+            <div class="mt-1 font-mono text-sm font-medium text-stone-700">
+              {{ tokenOverrideLabel(config!.capabilities?.max_output_tokens) }}
+            </div>
+          </div>
+        </div>
+      </section>
+
       <div class="flex gap-2">
         <Button variant="secondary" block @click="startEdit"> 编辑配置 </Button>
         <Button variant="teal" block :loading="regenerating" @click="onRegenerate">
@@ -100,11 +152,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
+import type { ModelCatalogCapabilities } from '../api';
 import { useManageKey } from '../composables/useManageKey';
 import { useModal } from '../composables/useModal';
 import { Button, Input, Select, Tag, Alert, Field, Badge } from './base';
 import { getStoredTokens, providerDotClass, type StoredToken } from '../utils/providers';
+import { BOOLEAN_CAPABILITIES, formatTokenLimit } from '../utils/modelCapabilities';
 import CapabilityOverridesForm from './CapabilityOverridesForm.vue';
 
 const props = defineProps<{
@@ -135,6 +189,25 @@ const {
 } = useManageKey();
 
 const storedTokens = ref<StoredToken[]>(getStoredTokens());
+const booleanCapabilityOverrides = computed(() =>
+  BOOLEAN_CAPABILITIES.map((capability) => ({
+    ...capability,
+    value: config.value?.capabilities?.[capability.key],
+  })),
+);
+const hasCapabilityOverrides = computed(() => {
+  const capabilities = config.value?.capabilities;
+
+  if (!capabilities) {
+    return false;
+  }
+
+  return (
+    BOOLEAN_CAPABILITIES.some((capability) => typeof capabilities[capability.key] === 'boolean') ||
+    hasTokenOverride(capabilities.max_context_tokens) ||
+    hasTokenOverride(capabilities.max_output_tokens)
+  );
+});
 
 function onDelete() {
   confirmModal.show({
@@ -168,5 +241,37 @@ function onRegenerate() {
 function selectStored(item: StoredToken) {
   lookupToken.value = item.token;
   lookup();
+}
+
+function booleanOverrideLabel(value: boolean | undefined) {
+  if (value === true) {
+    return '启用覆盖';
+  }
+
+  if (value === false) {
+    return '禁用覆盖';
+  }
+
+  return '未覆盖';
+}
+
+function booleanOverrideClass(value: boolean | undefined) {
+  if (value === true) {
+    return 'bg-[#f2f8f5] text-[#256047]';
+  }
+
+  if (value === false) {
+    return 'bg-red-50 text-red-600';
+  }
+
+  return 'bg-stone-100 text-stone-400';
+}
+
+function tokenOverrideLabel(value: ModelCatalogCapabilities['max_context_tokens']) {
+  return hasTokenOverride(value) ? formatTokenLimit(value) : '未覆盖';
+}
+
+function hasTokenOverride(value: ModelCatalogCapabilities['max_context_tokens']) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 </script>
