@@ -60,6 +60,7 @@ export interface ModelAliasResponse {
 export interface ModelCatalogEntry {
   id: string;
   object: 'model';
+  entry_type: 'provider' | 'alias';
   owned_by: string;
   provider_id: string;
   provider_name: string;
