@@ -1342,9 +1342,9 @@ fn decode_ollama_chat_ndjson_line(line: &[u8]) -> Option<OllamaChatNdjsonLine> {
 mod tests {
     use super::{
         responses_completed_sse, responses_text_delta_sse, AnthropicMessagesSseDecoder,
-        ChatSseDecoder, OllamaChatNdjsonAnthropicMessagesSseDecoder,
-        OllamaChatNdjsonChatSseDecoder, OllamaChatNdjsonResponsesSseDecoder,
-        ResponsesSseAnthropicMessagesSseDecoder,
+        AnthropicMessagesToResponsesSseDecoder, ChatSseDecoder,
+        OllamaChatNdjsonAnthropicMessagesSseDecoder, OllamaChatNdjsonChatSseDecoder,
+        OllamaChatNdjsonResponsesSseDecoder, ResponsesSseAnthropicMessagesSseDecoder,
     };
 
     #[test]
@@ -1480,6 +1480,32 @@ data: [DONE]
         assert!(output.contains("event: content_block_stop"));
         assert!(output.contains("event: message_delta"));
         assert!(output.contains("event: message_stop"));
+    }
+
+    #[test]
+    fn decodes_anthropic_messages_sse_text_delta_to_responses_sse() {
+        let mut decoder = AnthropicMessagesToResponsesSseDecoder::default();
+
+        let chunks = decoder.push_chunk(
+            b"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hel\"}}\n\n",
+        );
+
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], responses_text_delta_sse("hel"));
+    }
+
+    #[test]
+    fn decodes_anthropic_messages_sse_stop_to_responses_completed() {
+        let mut decoder = AnthropicMessagesToResponsesSseDecoder::default();
+
+        let chunks = decoder.push_chunk(
+            b"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hel\"}}\n\n\
+              event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        );
+
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0], responses_text_delta_sse("hel"));
+        assert_eq!(chunks[1], responses_completed_sse());
     }
 
     #[test]

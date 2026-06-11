@@ -206,10 +206,7 @@
 
 ### 协议方向差距
 
-设计要求的多数方向已实现，但仍有缺口：
-
-- `responses -> anthropic_messages` 仅非流式可用。
-- `anthropic_messages -> responses` 仅非流式可用。
+设计要求的主要协议方向已实现。`responses <-> anthropic_messages` 已支持非流式和文本流式互转，但工具调用增量和 usage 聚合仍属于增强项。
 
 设计中禁止的方向仍保持关闭：
 
@@ -286,7 +283,7 @@
 
 如果按对外产品口径，仍不应宣称完整支持：
 
-- 不应宣称完整支持 Responses 与 Anthropic Messages 流式互转。
+- 不应宣称完整支持 Responses 与 Anthropic Messages 工具流式互转。
 - 不应宣称已完成 Codex / Claude Code 真实兼容性认证。
 - 不应宣称统计 token、成本、首 token、上游 request id 在所有协议上都准确。
 - 不应宣称支持限额、预算、计费或企业审计。
