@@ -32,6 +32,36 @@
       mono
     />
 
+    <div
+      v-if="selectedProviderModel"
+      class="rounded-lg border border-stone-100 bg-stone-50/70 px-3 py-2 text-xs text-stone-500"
+    >
+      <div class="flex items-center justify-between gap-3">
+        <span>当前 Provider 上游协议</span>
+        <span class="font-mono text-stone-700">{{ selectedProviderModel.upstream_protocol }}</span>
+      </div>
+      <div class="mt-2 flex flex-wrap items-center gap-1.5">
+        <span class="mr-1 text-stone-400">可服务</span>
+        <span
+          v-for="protocol in selectedProviderModel.downstream_protocols"
+          :key="protocol"
+          class="font-mono text-[11px] px-1.5 py-0.5 rounded border border-stone-200 bg-white text-stone-500"
+        >
+          {{ protocol }}
+        </span>
+        <span
+          class="text-[11px] px-1.5 py-0.5 rounded border"
+          :class="
+            selectedProviderModel.capabilities.tool_calls
+              ? 'border-[#9fc9b2] bg-[#f2f8f5] text-[#256047]'
+              : 'border-stone-200 bg-white text-stone-400'
+          "
+        >
+          {{ selectedProviderModel.capabilities.tool_calls ? '支持工具调用' : '不声明工具调用' }}
+        </span>
+      </div>
+    </div>
+
     <Alert v-if="message" :type="message.type">
       {{ message.text }}
     </Alert>
@@ -69,6 +99,26 @@
           <div class="mt-1 text-xs text-stone-400 truncate">
             {{ providerLabel(alias.provider_id) }}
           </div>
+          <div
+            v-if="catalogEntryForAlias(alias)"
+            class="mt-2 flex flex-wrap items-center gap-1.5 text-xs"
+          >
+            <span class="font-mono text-[11px] px-1.5 py-0.5 rounded bg-stone-100 text-stone-500">
+              {{ catalogEntryForAlias(alias)?.upstream_protocol }}
+            </span>
+            <span
+              class="text-[11px] px-1.5 py-0.5 rounded border"
+              :class="
+                catalogEntryForAlias(alias)?.capabilities.tool_calls
+                  ? 'border-[#9fc9b2] bg-[#f2f8f5] text-[#256047]'
+                  : 'border-stone-200 bg-white text-stone-400'
+              "
+            >
+              {{
+                catalogEntryForAlias(alias)?.capabilities.tool_calls ? '工具调用' : '无工具调用声明'
+              }}
+            </span>
+          </div>
           <div class="mt-2 flex flex-wrap gap-1.5">
             <span
               v-for="protocol in alias.downstream_protocols"
@@ -85,8 +135,14 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
-import { configApi, type ModelAliasResponse, type ProviderConfig } from '../api';
+import { computed, onMounted, ref } from 'vue';
+import {
+  configApi,
+  modelsApi,
+  type ModelAliasResponse,
+  type ModelCatalogEntry,
+  type ProviderConfig,
+} from '../api';
 import { Alert, Button, Input } from './base';
 
 const form = ref({
@@ -99,10 +155,11 @@ const creating = ref(false);
 const message = ref<{ type: 'success' | 'error'; text: string } | null>(null);
 const providers = ref<ProviderConfig[]>([]);
 const aliases = ref<ModelAliasResponse[]>([]);
+const modelCatalog = ref<ModelCatalogEntry[]>([]);
 const loadingAliases = ref(false);
 
 onMounted(() => {
-  loadProviders();
+  loadProviders().then(loadModelCatalog);
   loadAliases();
 });
 
@@ -112,6 +169,21 @@ async function loadProviders() {
     providers.value = response.data;
   } catch {
     message.value = { type: 'error', text: 'Provider 列表加载失败。' };
+  }
+}
+
+async function loadModelCatalog() {
+  const token = providers.value.find((provider) => provider.token)?.token;
+  if (!token) {
+    modelCatalog.value = [];
+    return;
+  }
+
+  try {
+    const response = await modelsApi.list(token);
+    modelCatalog.value = response.data.data;
+  } catch {
+    modelCatalog.value = [];
   }
 }
 
@@ -126,6 +198,17 @@ async function loadAliases() {
     loadingAliases.value = false;
   }
 }
+
+const selectedProviderModel = computed(() => {
+  if (!form.value.provider_id) {
+    return null;
+  }
+  return (
+    modelCatalog.value.find(
+      (model) => model.provider_id === form.value.provider_id && model.id === model.provider_name,
+    ) ?? null
+  );
+});
 
 async function submit() {
   message.value = null;
@@ -154,6 +237,7 @@ async function submit() {
     message.value = { type: 'success', text: `模型别名 ${response.data.alias} 已创建。` };
     form.value.alias = '';
     form.value.upstream_model = '';
+    await loadModelCatalog();
     await loadAliases();
   } catch {
     message.value = {
@@ -171,5 +255,13 @@ function providerLabel(providerId: string) {
     return providerId;
   }
   return `${provider.name} · ${provider.provider_type}`;
+}
+
+function catalogEntryForAlias(alias: ModelAliasResponse) {
+  return (
+    modelCatalog.value.find(
+      (model) => model.provider_id === alias.provider_id && model.id === alias.alias,
+    ) ?? null
+  );
 }
 </script>

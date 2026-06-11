@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({ baseURL: '/api' });
+const protocolApi = axios.create();
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('provider-relay-admin-token')?.trim();
@@ -9,6 +10,14 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
+
+export function withProtocolToken(token: string) {
+  return {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  };
+}
 
 export interface ProviderConfig {
   id: string;
@@ -46,6 +55,25 @@ export interface ModelAliasResponse {
   provider_id: string;
   upstream_model: string;
   downstream_protocols: string[];
+}
+
+export interface ModelCatalogEntry {
+  id: string;
+  object: 'model';
+  owned_by: string;
+  provider_id: string;
+  provider_name: string;
+  upstream_protocol: string;
+  upstream_model: string;
+  downstream_protocols: string[];
+  capabilities: {
+    tool_calls: boolean;
+  };
+}
+
+export interface ModelCatalogResponse {
+  object: 'list';
+  data: ModelCatalogEntry[];
 }
 
 export interface StatsOverview {
@@ -108,6 +136,11 @@ export const configApi = {
   listModelAliases: () => api.get<ModelAliasResponse[]>('/model-aliases'),
   createModelAlias: (data: CreateModelAliasRequest) =>
     api.post<ModelAliasResponse>('/model-aliases', data),
+};
+
+export const modelsApi = {
+  list: (token: string) =>
+    protocolApi.get<ModelCatalogResponse>('/v1/models', withProtocolToken(token)),
 };
 
 export const statsApi = {
