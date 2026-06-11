@@ -6,6 +6,7 @@ use axum::{
     routing::post,
     Json, Router,
 };
+use futures::TryStreamExt;
 use serde_json::Value;
 
 use crate::{
@@ -24,6 +25,7 @@ use crate::{
     providers::ollama::{decode_ollama_chat_response, encode_ollama_chat_request},
     providers::responses::{decode_responses_response, encode_responses_request},
     providers::spec::{ProviderSpec, UpstreamProtocol},
+    routes::stream_stats::record_first_chunk,
     stats::{insert_request_log, RequestLogInsert},
     AppState,
 };
@@ -175,39 +177,39 @@ async fn create_message(
     }
 
     if is_streaming {
-        insert_request_log(
-            &state.db,
-            RequestLogInsert {
-                protocol_in: "anthropic_messages".to_string(),
-                protocol_out: "anthropic_messages".to_string(),
-                protocol_upstream: "chat_completions".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                model_requested,
-                model_upstream: request.model.clone(),
-                status: "success".to_string(),
-                http_status: 200,
-                error_code: None,
-                error_message: None,
-                is_streaming,
-                input_tokens: None,
-                output_tokens: None,
-                reasoning_tokens: None,
-                latency_ms: started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: Some(upstream_latency_ms),
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id: None,
-                metadata_json: None,
-            },
-        )
-        .await?;
-
+        let log = RequestLogInsert {
+            protocol_in: "anthropic_messages".to_string(),
+            protocol_out: "anthropic_messages".to_string(),
+            protocol_upstream: "chat_completions".to_string(),
+            provider_id: provider.id,
+            provider_name: provider.name,
+            model_requested,
+            model_upstream: request.model.clone(),
+            status: "success".to_string(),
+            http_status: 200,
+            error_code: None,
+            error_message: None,
+            is_streaming,
+            input_tokens: None,
+            output_tokens: None,
+            reasoning_tokens: None,
+            latency_ms: started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: None,
+            upstream_request_id: None,
+            metadata_json: None,
+        };
         let stream =
             chat_sse_response_to_anthropic_messages_sse(upstream_response, request.model.clone());
         return Response::builder()
             .header(header::CONTENT_TYPE, "text/event-stream")
-            .body(Body::from_stream(stream))
+            .body(Body::from_stream(record_first_chunk(
+                state.db.clone(),
+                stream,
+                log,
+                started_at,
+            )))
             .map_err(|error| AppError::Internal(error.into()));
     }
 
@@ -435,36 +437,37 @@ async fn create_ollama_anthropic_message(
     }
 
     if is_streaming {
-        insert_request_log(
-            &state.db,
-            RequestLogInsert {
-                protocol_in: "anthropic_messages".to_string(),
-                protocol_out: "anthropic_messages".to_string(),
-                protocol_upstream: "ollama_native".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                model_requested,
-                model_upstream: request.model.clone(),
-                status: "success".to_string(),
-                http_status: 200,
-                error_code: None,
-                error_message: None,
-                is_streaming,
-                input_tokens: None,
-                output_tokens: None,
-                reasoning_tokens: None,
-                latency_ms: started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: Some(upstream_latency_ms),
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id: None,
-                metadata_json: None,
-            },
-        )
-        .await?;
-        let body = Body::from_stream(ollama_chat_ndjson_response_to_anthropic_messages_sse(
-            upstream_response,
-            request.model.clone(),
+        let log = RequestLogInsert {
+            protocol_in: "anthropic_messages".to_string(),
+            protocol_out: "anthropic_messages".to_string(),
+            protocol_upstream: "ollama_native".to_string(),
+            provider_id: provider.id,
+            provider_name: provider.name,
+            model_requested,
+            model_upstream: request.model.clone(),
+            status: "success".to_string(),
+            http_status: 200,
+            error_code: None,
+            error_message: None,
+            is_streaming,
+            input_tokens: None,
+            output_tokens: None,
+            reasoning_tokens: None,
+            latency_ms: started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: None,
+            upstream_request_id: None,
+            metadata_json: None,
+        };
+        let body = Body::from_stream(record_first_chunk(
+            state.db.clone(),
+            ollama_chat_ndjson_response_to_anthropic_messages_sse(
+                upstream_response,
+                request.model.clone(),
+            ),
+            log,
+            started_at,
         ));
         return Ok(([(header::CONTENT_TYPE, "text/event-stream")], body).into_response());
     }
@@ -568,37 +571,40 @@ async fn create_native_anthropic_message(
             .and_then(Value::as_str)
             .unwrap_or("unknown")
             .to_string();
-        insert_request_log(
-            &state.db,
-            RequestLogInsert {
-                protocol_in: "anthropic_messages".to_string(),
-                protocol_out: "anthropic_messages".to_string(),
-                protocol_upstream: "anthropic_messages".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                model_requested,
-                model_upstream,
-                status: "success".to_string(),
-                http_status: 200,
-                error_code: None,
-                error_message: None,
-                is_streaming,
-                input_tokens: None,
-                output_tokens: None,
-                reasoning_tokens: None,
-                latency_ms: started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: Some(upstream_latency_ms),
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id: None,
-                metadata_json: None,
-            },
-        )
-        .await?;
+        let log = RequestLogInsert {
+            protocol_in: "anthropic_messages".to_string(),
+            protocol_out: "anthropic_messages".to_string(),
+            protocol_upstream: "anthropic_messages".to_string(),
+            provider_id: provider.id,
+            provider_name: provider.name,
+            model_requested,
+            model_upstream,
+            status: "success".to_string(),
+            http_status: 200,
+            error_code: None,
+            error_message: None,
+            is_streaming,
+            input_tokens: None,
+            output_tokens: None,
+            reasoning_tokens: None,
+            latency_ms: started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: None,
+            upstream_request_id: None,
+            metadata_json: None,
+        };
 
         return Response::builder()
             .header(header::CONTENT_TYPE, "text/event-stream")
-            .body(Body::from_stream(upstream_response.bytes_stream()))
+            .body(Body::from_stream(record_first_chunk(
+                state.db.clone(),
+                upstream_response
+                    .bytes_stream()
+                    .map_err(std::io::Error::other),
+                log,
+                started_at,
+            )))
             .map_err(|error| AppError::Internal(error.into()));
     }
 

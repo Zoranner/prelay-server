@@ -7,3 +7,4 @@ pub mod ollama;
 pub mod proxy;
 pub mod responses;
 pub mod stats;
+mod stream_stats;

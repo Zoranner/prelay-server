@@ -12,6 +12,7 @@ use serde_json::Value;
 use crate::{
     db,
     error::AppError,
+    routes::stream_stats::record_first_chunk,
     stats::{insert_request_log, RequestLogInsert},
     AppState,
 };
@@ -89,38 +90,37 @@ async fn create_ollama_chat(
     }
 
     if is_streaming {
-        insert_request_log(
-            &state.db,
-            RequestLogInsert {
-                protocol_in: "ollama_native".to_string(),
-                protocol_out: "ollama_native".to_string(),
-                protocol_upstream: "ollama_native".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                model_requested: model,
-                model_upstream,
-                status: "success".to_string(),
-                http_status: 200,
-                error_code: None,
-                error_message: None,
-                is_streaming,
-                input_tokens: None,
-                output_tokens: None,
-                reasoning_tokens: None,
-                latency_ms: started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: Some(upstream_latency_ms),
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id: None,
-                metadata_json: None,
-            },
-        )
-        .await?;
-        let body = Body::from_stream(
+        let log = RequestLogInsert {
+            protocol_in: "ollama_native".to_string(),
+            protocol_out: "ollama_native".to_string(),
+            protocol_upstream: "ollama_native".to_string(),
+            provider_id: provider.id,
+            provider_name: provider.name,
+            model_requested: model,
+            model_upstream,
+            status: "success".to_string(),
+            http_status: 200,
+            error_code: None,
+            error_message: None,
+            is_streaming,
+            input_tokens: None,
+            output_tokens: None,
+            reasoning_tokens: None,
+            latency_ms: started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: None,
+            upstream_request_id: None,
+            metadata_json: None,
+        };
+        let body = Body::from_stream(record_first_chunk(
+            state.db.clone(),
             upstream_response
                 .bytes_stream()
                 .map_err(std::io::Error::other),
-        );
+            log,
+            started_at,
+        ));
         return Ok(([(header::CONTENT_TYPE, "application/x-ndjson")], body).into_response());
     }
 
@@ -228,7 +228,7 @@ mod tests {
             .await
             .expect("create provider");
         let state = AppState {
-            db,
+            db: db.clone(),
             client: reqwest::Client::new(),
             admin_token: None,
         };
@@ -276,7 +276,7 @@ mod tests {
             .await
             .expect("create provider");
         let state = AppState {
-            db,
+            db: db.clone(),
             client: reqwest::Client::new(),
             admin_token: None,
         };
@@ -327,7 +327,7 @@ mod tests {
             .await
             .expect("create provider");
         let state = AppState {
-            db,
+            db: db.clone(),
             client: reqwest::Client::new(),
             admin_token: None,
         };
@@ -369,6 +369,15 @@ mod tests {
             "first chunk took {first_chunk_elapsed:?}"
         );
         assert!(first_chunk.contains("\"content\":\"hel\""));
+        let first_token_ms: Option<i64> =
+            sqlx::query_scalar("SELECT first_token_ms FROM request_logs LIMIT 1")
+                .fetch_one(&db)
+                .await
+                .expect("load first token metric");
+        assert!(
+            first_token_ms.is_some(),
+            "first_token_ms should be recorded after the first stream chunk"
+        );
 
         server.abort();
     }

@@ -29,6 +29,7 @@ use crate::{
     providers::chat_completions::{decode_chat_response, encode_chat_request},
     providers::ollama::{decode_ollama_chat_response, encode_ollama_chat_request},
     providers::spec::{ProviderSpec, UpstreamProtocol},
+    routes::stream_stats::record_first_chunk,
     stats::{insert_request_log, RequestLogInsert},
     AppState,
 };
@@ -180,34 +181,35 @@ async fn create_response(
     }
 
     if is_streaming {
-        insert_request_log(
-            &state.db,
-            RequestLogInsert {
-                protocol_in: "responses".to_string(),
-                protocol_out: "responses".to_string(),
-                protocol_upstream: "chat_completions".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                model_requested,
-                model_upstream: request.model,
-                status: "success".to_string(),
-                http_status: 200,
-                error_code: None,
-                error_message: None,
-                is_streaming,
-                input_tokens: None,
-                output_tokens: None,
-                reasoning_tokens: None,
-                latency_ms: started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: None,
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id: None,
-                metadata_json: None,
-            },
-        )
-        .await?;
-        let body = Body::from_stream(chat_sse_response_to_responses_sse(upstream_response));
+        let log = RequestLogInsert {
+            protocol_in: "responses".to_string(),
+            protocol_out: "responses".to_string(),
+            protocol_upstream: "chat_completions".to_string(),
+            provider_id: provider.id,
+            provider_name: provider.name,
+            model_requested,
+            model_upstream: request.model,
+            status: "success".to_string(),
+            http_status: 200,
+            error_code: None,
+            error_message: None,
+            is_streaming,
+            input_tokens: None,
+            output_tokens: None,
+            reasoning_tokens: None,
+            latency_ms: started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: None,
+            upstream_request_id: None,
+            metadata_json: None,
+        };
+        let body = Body::from_stream(record_first_chunk(
+            state.db.clone(),
+            chat_sse_response_to_responses_sse(upstream_response),
+            log,
+            started_at,
+        ));
         return Ok((
             [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
             body,
@@ -461,35 +463,34 @@ async fn create_ollama_response(
     }
 
     if is_streaming {
-        insert_request_log(
-            &state.db,
-            RequestLogInsert {
-                protocol_in: "responses".to_string(),
-                protocol_out: "responses".to_string(),
-                protocol_upstream: "ollama_native".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                model_requested,
-                model_upstream: request.model,
-                status: "success".to_string(),
-                http_status: 200,
-                error_code: None,
-                error_message: None,
-                is_streaming,
-                input_tokens: None,
-                output_tokens: None,
-                reasoning_tokens: None,
-                latency_ms: started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: Some(upstream_latency_ms),
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id: None,
-                metadata_json: None,
-            },
-        )
-        .await?;
-        let body = Body::from_stream(ollama_chat_ndjson_response_to_responses_sse(
-            upstream_response,
+        let log = RequestLogInsert {
+            protocol_in: "responses".to_string(),
+            protocol_out: "responses".to_string(),
+            protocol_upstream: "ollama_native".to_string(),
+            provider_id: provider.id,
+            provider_name: provider.name,
+            model_requested,
+            model_upstream: request.model,
+            status: "success".to_string(),
+            http_status: 200,
+            error_code: None,
+            error_message: None,
+            is_streaming,
+            input_tokens: None,
+            output_tokens: None,
+            reasoning_tokens: None,
+            latency_ms: started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: None,
+            upstream_request_id: None,
+            metadata_json: None,
+        };
+        let body = Body::from_stream(record_first_chunk(
+            state.db.clone(),
+            ollama_chat_ndjson_response_to_responses_sse(upstream_response),
+            log,
+            started_at,
         ));
         return Ok((
             [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
@@ -602,38 +603,41 @@ async fn create_native_response(
     }
 
     if is_streaming {
-        insert_request_log(
-            &state.db,
-            RequestLogInsert {
-                protocol_in: "responses".to_string(),
-                protocol_out: "responses".to_string(),
-                protocol_upstream: "responses".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                model_requested,
-                model_upstream: "unknown".to_string(),
-                status: "success".to_string(),
-                http_status: 200,
-                error_code: None,
-                error_message: None,
-                is_streaming,
-                input_tokens: None,
-                output_tokens: None,
-                reasoning_tokens: None,
-                latency_ms: started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: Some(upstream_latency_ms),
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id: None,
-                metadata_json: None,
-            },
-        )
-        .await?;
-        let body = Body::from_stream(
+        let log = RequestLogInsert {
+            protocol_in: "responses".to_string(),
+            protocol_out: "responses".to_string(),
+            protocol_upstream: "responses".to_string(),
+            provider_id: provider.id,
+            provider_name: provider.name,
+            model_requested,
+            model_upstream: payload
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string(),
+            status: "success".to_string(),
+            http_status: 200,
+            error_code: None,
+            error_message: None,
+            is_streaming,
+            input_tokens: None,
+            output_tokens: None,
+            reasoning_tokens: None,
+            latency_ms: started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: None,
+            upstream_request_id: None,
+            metadata_json: None,
+        };
+        let body = Body::from_stream(record_first_chunk(
+            state.db.clone(),
             upstream_response
                 .bytes_stream()
                 .map_err(std::io::Error::other),
-        );
+            log,
+            started_at,
+        ));
         return Ok((
             [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
             body,
