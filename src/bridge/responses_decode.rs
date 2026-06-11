@@ -25,6 +25,14 @@ pub fn decode_responses_request(value: Value) -> Result<InternalRequest, AppErro
     let reasoning_requested = value.get("reasoning").is_some();
     let tool_choice_requested = value.get("tool_choice").is_some();
     let structured_output_requested = responses_structured_output_requested(&value);
+    let parallel_tool_calls_requested = value
+        .get("parallel_tool_calls")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let streaming_usage_requested = value
+        .pointer("/stream_options/include_usage")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let input = value
         .get("input")
         .ok_or_else(|| AppError::BadRequest("input 不能为空".to_string()))?;
@@ -37,6 +45,8 @@ pub fn decode_responses_request(value: Value) -> Result<InternalRequest, AppErro
         reasoning_requested,
         tool_choice_requested,
         structured_output_requested,
+        parallel_tool_calls_requested,
+        streaming_usage_requested,
         tools: decode_tools(value.get("tools"))?,
         messages: decode_input(input)?,
     })
@@ -238,6 +248,23 @@ mod tests {
         .expect("decode responses request");
 
         assert_eq!(request.max_tokens, Some(1024));
+    }
+
+    #[test]
+    fn decodes_responses_capability_request_flags() {
+        let request = decode_responses_request(json!({
+            "model": "deepseek-chat",
+            "input": "hello",
+            "stream": true,
+            "parallel_tool_calls": true,
+            "stream_options": {
+                "include_usage": true
+            }
+        }))
+        .expect("decode responses request");
+
+        assert!(request.parallel_tool_calls_requested);
+        assert!(request.streaming_usage_requested);
     }
 
     #[test]

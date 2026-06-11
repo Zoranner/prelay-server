@@ -10,6 +10,8 @@ pub struct InternalRequest {
     pub reasoning_requested: bool,
     pub tool_choice_requested: bool,
     pub structured_output_requested: bool,
+    pub parallel_tool_calls_requested: bool,
+    pub streaming_usage_requested: bool,
     pub tools: Vec<InternalTool>,
     pub messages: Vec<InternalMessage>,
 }

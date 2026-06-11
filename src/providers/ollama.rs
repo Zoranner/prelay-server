@@ -90,6 +90,8 @@ mod tests {
             reasoning_requested: false,
             tool_choice_requested: false,
             structured_output_requested: false,
+            parallel_tool_calls_requested: false,
+            streaming_usage_requested: false,
             tools: Vec::new(),
             messages: vec![InternalMessage {
                 role: InternalRole::User,

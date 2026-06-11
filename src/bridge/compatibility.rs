@@ -56,6 +56,18 @@ pub fn first_rejection(
             reason: "provider does not advertise structured output support",
         });
     }
+    if request.parallel_tool_calls_requested && !spec.capabilities.parallel_tool_calls {
+        return Some(CompatibilityRejection {
+            field: "parallel_tool_calls",
+            reason: "provider does not advertise parallel tool call support",
+        });
+    }
+    if request.streaming_usage_requested && !spec.capabilities.streaming_usage {
+        return Some(CompatibilityRejection {
+            field: "streaming_usage",
+            reason: "provider does not advertise streaming usage support",
+        });
+    }
     if request
         .messages
         .iter()
@@ -143,6 +155,30 @@ mod tests {
         assert_eq!(rejection.field, "max_tokens");
     }
 
+    #[test]
+    fn rejects_parallel_tool_calls_when_provider_does_not_advertise_support() {
+        let provider = provider("ollama_native");
+        let mut request = request_with_tool();
+        request.tools = Vec::new();
+        request.parallel_tool_calls_requested = true;
+
+        let rejection = first_rejection(&provider, &request).expect("rejection");
+
+        assert_eq!(rejection.field, "parallel_tool_calls");
+    }
+
+    #[test]
+    fn rejects_streaming_usage_when_provider_does_not_advertise_support() {
+        let provider = provider("openai_compatible");
+        let mut request = request_with_tool();
+        request.tools = Vec::new();
+        request.streaming_usage_requested = true;
+
+        let rejection = first_rejection(&provider, &request).expect("rejection");
+
+        assert_eq!(rejection.field, "streaming_usage");
+    }
+
     fn provider(provider_type: &str) -> ProviderConfig {
         ProviderConfig {
             id: "provider-1".to_string(),
@@ -165,6 +201,8 @@ mod tests {
             reasoning_requested: false,
             tool_choice_requested: false,
             structured_output_requested: false,
+            parallel_tool_calls_requested: false,
+            streaming_usage_requested: false,
             tools: vec![InternalTool {
                 name: "read_file".to_string(),
                 description: None,

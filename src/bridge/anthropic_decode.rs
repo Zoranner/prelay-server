@@ -50,6 +50,8 @@ pub fn decode_anthropic_request(value: Value) -> Result<InternalRequest, AppErro
         reasoning_requested,
         tool_choice_requested,
         structured_output_requested: false,
+        parallel_tool_calls_requested: false,
+        streaming_usage_requested: false,
         tools: decode_tools(value.get("tools"))?,
         messages: decoded,
     })

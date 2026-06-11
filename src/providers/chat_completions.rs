@@ -27,6 +27,14 @@ pub fn decode_chat_request(value: Value) -> Result<InternalRequest, AppError> {
         .pointer("/response_format/type")
         .and_then(Value::as_str)
         .is_some_and(|kind| kind != "text");
+    let parallel_tool_calls_requested = value
+        .get("parallel_tool_calls")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let streaming_usage_requested = value
+        .pointer("/stream_options/include_usage")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let messages = value
         .get("messages")
         .and_then(Value::as_array)
@@ -43,6 +51,8 @@ pub fn decode_chat_request(value: Value) -> Result<InternalRequest, AppError> {
         reasoning_requested,
         tool_choice_requested,
         structured_output_requested,
+        parallel_tool_calls_requested,
+        streaming_usage_requested,
         tools: decode_tools(value.get("tools"))?,
         messages,
     })
@@ -455,6 +465,8 @@ mod tests {
             reasoning_requested: false,
             tool_choice_requested: false,
             structured_output_requested: false,
+            parallel_tool_calls_requested: false,
+            streaming_usage_requested: false,
             tools: Vec::new(),
             messages: vec![
                 InternalMessage {
@@ -495,6 +507,8 @@ mod tests {
             reasoning_requested: false,
             tool_choice_requested: false,
             structured_output_requested: false,
+            parallel_tool_calls_requested: false,
+            streaming_usage_requested: false,
             tools: Vec::new(),
             messages: vec![InternalMessage {
                 role: InternalRole::Tool,
@@ -520,6 +534,8 @@ mod tests {
             reasoning_requested: false,
             tool_choice_requested: false,
             structured_output_requested: false,
+            parallel_tool_calls_requested: false,
+            streaming_usage_requested: false,
             tools: vec![InternalTool {
                 name: "read_file".to_string(),
                 description: Some("Read a file".to_string()),
@@ -575,6 +591,28 @@ mod tests {
                 InternalContentPart::Text("world".to_string())
             ]
         );
+    }
+
+    #[test]
+    fn decodes_chat_completions_capability_request_flags() {
+        let request = decode_chat_request(json!({
+            "model": "deepseek-chat",
+            "stream": true,
+            "parallel_tool_calls": true,
+            "stream_options": {
+                "include_usage": true
+            },
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "hello"
+                }
+            ]
+        }))
+        .expect("decode chat request");
+
+        assert!(request.parallel_tool_calls_requested);
+        assert!(request.streaming_usage_requested);
     }
 
     #[test]
@@ -710,6 +748,8 @@ mod tests {
             reasoning_requested: false,
             tool_choice_requested: false,
             structured_output_requested: false,
+            parallel_tool_calls_requested: false,
+            streaming_usage_requested: false,
             tools: Vec::new(),
             messages: vec![InternalMessage {
                 role: InternalRole::Assistant,
@@ -742,6 +782,8 @@ mod tests {
             reasoning_requested: false,
             tool_choice_requested: false,
             structured_output_requested: false,
+            parallel_tool_calls_requested: false,
+            streaming_usage_requested: false,
             tools: Vec::new(),
             messages: vec![InternalMessage {
                 role: InternalRole::Assistant,
