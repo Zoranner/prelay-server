@@ -7,6 +7,10 @@ import {
   updateStoredToken,
   replaceStoredToken,
 } from '../utils/providers';
+import {
+  capabilityOverridesFromForm,
+  createCapabilityOverrideForm,
+} from '../utils/capabilityOverrides';
 
 export function useManageKey() {
   const lookupToken = ref('');
@@ -16,6 +20,7 @@ export function useManageKey() {
 
   const editing = ref(false);
   const editForm = ref({ provider_type: '', name: '', base_url: '', api_key: '' });
+  const editCapabilityForm = ref(createCapabilityOverrideForm());
   const editError = ref('');
   const saving = ref(false);
 
@@ -50,6 +55,7 @@ export function useManageKey() {
       base_url: config.value.base_url,
       api_key: '',
     };
+    editCapabilityForm.value = createCapabilityOverrideForm(config.value.capabilities);
     editError.value = '';
     editing.value = true;
   }
@@ -67,10 +73,11 @@ export function useManageKey() {
     editError.value = '';
     saving.value = true;
     try {
-      const payload: Record<string, string> = {
+      const payload: Record<string, unknown> = {
         name: editForm.value.name,
         provider_type: editForm.value.provider_type,
         base_url: editForm.value.base_url,
+        capabilities: capabilityOverridesFromForm(editCapabilityForm.value),
       };
       if (editForm.value.api_key.trim()) payload.api_key = editForm.value.api_key;
       const res = await configApi.update(config.value.id, payload);
@@ -143,6 +150,7 @@ export function useManageKey() {
     config,
     editing,
     editForm,
+    editCapabilityForm,
     editError,
     saving,
     regenerating,

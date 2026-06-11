@@ -15,6 +15,8 @@
       mono
     />
 
+    <CapabilityOverridesForm v-model="capabilityForm" />
+
     <Alert v-if="error" type="error">
       {{ error }}
     </Alert>
@@ -54,7 +56,17 @@
 <script setup lang="ts">
 import { useCreateKey } from '../composables/useCreateKey';
 import { Button, Input, Select, Alert } from './base';
+import CapabilityOverridesForm from './CapabilityOverridesForm.vue';
 
-const { form, creating, error, createdToken, copied, onProviderChange, submit, copyToken } =
-  useCreateKey();
+const {
+  form,
+  capabilityForm,
+  creating,
+  error,
+  createdToken,
+  copied,
+  onProviderChange,
+  submit,
+  copyToken,
+} = useCreateKey();
 </script>

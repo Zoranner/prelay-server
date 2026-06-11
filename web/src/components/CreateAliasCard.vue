@@ -49,16 +49,36 @@
         >
           {{ protocol }}
         </span>
+      </div>
+      <div class="mt-2 flex flex-wrap items-center gap-1.5">
+        <span class="mr-1 text-stone-400">能力</span>
         <span
-          class="text-[11px] px-1.5 py-0.5 rounded border"
-          :class="
-            selectedProviderModel.capabilities.tool_calls
-              ? 'border-[#9fc9b2] bg-[#f2f8f5] text-[#256047]'
-              : 'border-stone-200 bg-white text-stone-400'
-          "
+          v-for="capability in enabledCapabilityChips(selectedProviderModel)"
+          :key="capability.key"
+          class="text-[11px] px-1.5 py-0.5 rounded border border-[#9fc9b2] bg-[#f2f8f5] text-[#256047]"
         >
-          {{ selectedProviderModel.capabilities.tool_calls ? '支持工具调用' : '不声明工具调用' }}
+          {{ capability.label }}
         </span>
+        <span
+          v-if="enabledCapabilityChips(selectedProviderModel).length === 0"
+          class="text-[11px] px-1.5 py-0.5 rounded border border-stone-200 bg-white text-stone-400"
+        >
+          无能力声明
+        </span>
+      </div>
+      <div class="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+        <div class="rounded border border-stone-100 bg-white px-2 py-1">
+          <span class="text-stone-400">Context</span>
+          <span class="ml-1 font-mono text-stone-700">
+            {{ formatTokenLimit(selectedProviderModel.capabilities?.max_context_tokens) }}
+          </span>
+        </div>
+        <div class="rounded border border-stone-100 bg-white px-2 py-1">
+          <span class="text-stone-400">Output</span>
+          <span class="ml-1 font-mono text-stone-700">
+            {{ formatTokenLimit(selectedProviderModel.capabilities?.max_output_tokens) }}
+          </span>
+        </div>
       </div>
     </div>
 
@@ -107,16 +127,15 @@
               {{ catalogEntryForAlias(alias)?.upstream_protocol }}
             </span>
             <span
-              class="text-[11px] px-1.5 py-0.5 rounded border"
-              :class="
-                catalogEntryForAlias(alias)?.capabilities.tool_calls
-                  ? 'border-[#9fc9b2] bg-[#f2f8f5] text-[#256047]'
-                  : 'border-stone-200 bg-white text-stone-400'
-              "
+              class="text-[11px] px-1.5 py-0.5 rounded border border-stone-200 bg-white text-stone-500"
             >
-              {{
-                catalogEntryForAlias(alias)?.capabilities.tool_calls ? '工具调用' : '无工具调用声明'
-              }}
+              {{ capabilitySummaryForAlias(alias) }}
+            </span>
+            <span class="font-mono text-[11px] px-1.5 py-0.5 rounded bg-white text-stone-400">
+              Context {{ contextLimitForAlias(alias) }}
+            </span>
+            <span class="font-mono text-[11px] px-1.5 py-0.5 rounded bg-white text-stone-400">
+              Output {{ outputLimitForAlias(alias) }}
             </span>
           </div>
           <div class="mt-2 flex flex-wrap gap-1.5">
@@ -143,6 +162,11 @@ import {
   type ModelCatalogEntry,
   type ProviderConfig,
 } from '../api';
+import {
+  enabledCapabilityChips,
+  enabledCapabilitySummary,
+  formatTokenLimit,
+} from '../utils/modelCapabilities';
 import { Alert, Button, Input } from './base';
 
 const form = ref({
@@ -205,7 +229,7 @@ const selectedProviderModel = computed(() => {
   }
   return (
     modelCatalog.value.find(
-      (model) => model.provider_id === form.value.provider_id && model.id === model.provider_name,
+      (model) => model.provider_id === form.value.provider_id && model.entry_type === 'provider',
     ) ?? null
   );
 });
@@ -263,5 +287,18 @@ function catalogEntryForAlias(alias: ModelAliasResponse) {
       (model) => model.provider_id === alias.provider_id && model.id === alias.alias,
     ) ?? null
   );
+}
+
+function capabilitySummaryForAlias(alias: ModelAliasResponse) {
+  const entry = catalogEntryForAlias(alias);
+  return entry ? enabledCapabilitySummary(entry) : '无能力声明';
+}
+
+function contextLimitForAlias(alias: ModelAliasResponse) {
+  return formatTokenLimit(catalogEntryForAlias(alias)?.capabilities?.max_context_tokens);
+}
+
+function outputLimitForAlias(alias: ModelAliasResponse) {
+  return formatTokenLimit(catalogEntryForAlias(alias)?.capabilities?.max_output_tokens);
 }
 </script>

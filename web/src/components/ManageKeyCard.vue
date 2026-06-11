@@ -83,6 +83,8 @@
         mono
       />
 
+      <CapabilityOverridesForm v-model="editCapabilityForm" />
+
       <Alert v-if="editError" type="error">
         {{ editError }}
       </Alert>
@@ -103,6 +105,7 @@ import { useManageKey } from '../composables/useManageKey';
 import { useModal } from '../composables/useModal';
 import { Button, Input, Select, Tag, Alert, Field, Badge } from './base';
 import { getStoredTokens, providerDotClass, type StoredToken } from '../utils/providers';
+import CapabilityOverridesForm from './CapabilityOverridesForm.vue';
 
 const props = defineProps<{
   confirmModal: ReturnType<typeof useModal>;
@@ -116,6 +119,7 @@ const {
   config,
   editing,
   editForm,
+  editCapabilityForm,
   editError,
   saving,
   regenerating,

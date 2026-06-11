@@ -1,5 +1,9 @@
 import { ref } from 'vue';
 import { configApi } from '../api/index';
+import {
+  capabilityOverridesFromForm,
+  createCapabilityOverrideForm,
+} from '../utils/capabilityOverrides';
 import { DEFAULT_BASE_URLS, PROVIDER_LABELS, copyToClipboard, saveToken } from '../utils/providers';
 
 export function useCreateKey() {
@@ -9,6 +13,7 @@ export function useCreateKey() {
     base_url: DEFAULT_BASE_URLS.openai,
     api_key: '',
   });
+  const capabilityForm = ref(createCapabilityOverrideForm());
 
   const creating = ref(false);
   const error = ref('');
@@ -39,6 +44,7 @@ export function useCreateKey() {
         provider_type: form.value.provider_type,
         base_url: form.value.base_url.trim(),
         api_key: form.value.api_key.trim(),
+        capabilities: capabilityOverridesFromForm(capabilityForm.value),
       });
       createdToken.value = res.data.token;
       saveToken({
@@ -53,6 +59,7 @@ export function useCreateKey() {
         base_url: DEFAULT_BASE_URLS.openai,
         api_key: '',
       };
+      capabilityForm.value = createCapabilityOverrideForm();
     } catch {
       error.value = '创建失败，请检查服务是否正常运行';
     } finally {
@@ -70,5 +77,15 @@ export function useCreateKey() {
     }
   }
 
-  return { form, creating, error, createdToken, copied, onProviderChange, submit, copyToken };
+  return {
+    form,
+    capabilityForm,
+    creating,
+    error,
+    createdToken,
+    copied,
+    onProviderChange,
+    submit,
+    copyToken,
+  };
 }

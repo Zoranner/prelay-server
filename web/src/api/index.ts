@@ -26,6 +26,7 @@ export interface ProviderConfig {
   base_url: string;
   api_key_masked: string;
   token: string;
+  capabilities: ModelCatalogCapabilities;
   created_at: string;
 }
 
@@ -34,6 +35,7 @@ export interface CreateConfigRequest {
   provider_type: string;
   base_url: string;
   api_key: string;
+  capabilities?: ModelCatalogCapabilities;
 }
 
 export interface UpdateConfigRequest {
@@ -41,6 +43,7 @@ export interface UpdateConfigRequest {
   provider_type?: string;
   base_url?: string;
   api_key?: string;
+  capabilities?: ModelCatalogCapabilities;
 }
 
 export interface CreateModelAliasRequest {
@@ -67,9 +70,19 @@ export interface ModelCatalogEntry {
   upstream_protocol: string;
   upstream_model: string;
   downstream_protocols: string[];
-  capabilities: {
-    tool_calls: boolean;
-  };
+  capabilities: ModelCatalogCapabilities;
+}
+
+export interface ModelCatalogCapabilities {
+  tool_calls?: boolean;
+  reasoning?: boolean;
+  tool_choice?: boolean;
+  parallel_tool_calls?: boolean;
+  system_messages?: boolean;
+  structured_outputs?: boolean;
+  streaming_usage?: boolean;
+  max_context_tokens?: number | null;
+  max_output_tokens?: number | null;
 }
 
 export interface ModelCatalogResponse {

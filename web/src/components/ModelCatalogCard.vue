@@ -29,7 +29,7 @@
       </Alert>
     </div>
 
-    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
       <div
         v-for="metric in metrics"
         :key="metric.label"
@@ -52,11 +52,12 @@
             <th class="px-4 py-3 text-left whitespace-nowrap">上游</th>
             <th class="px-4 py-3 text-left whitespace-nowrap">可服务协议</th>
             <th class="px-4 py-3 text-left whitespace-nowrap">能力</th>
+            <th class="px-4 py-3 text-left whitespace-nowrap">上下文</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-stone-100 bg-white">
           <tr v-if="!loading && catalog.length === 0">
-            <td colspan="6" class="px-4 py-8 text-center text-stone-400">暂无模型目录数据</td>
+            <td colspan="7" class="px-4 py-8 text-center text-stone-400">暂无模型目录数据</td>
           </tr>
           <tr v-for="model in catalog" :key="model.id" class="text-stone-600 hover:bg-stone-50/60">
             <td class="px-4 py-3 whitespace-nowrap">
@@ -96,17 +97,37 @@
                 </span>
               </div>
             </td>
+            <td class="px-4 py-3">
+              <div class="flex min-w-[300px] flex-wrap gap-1.5">
+                <span
+                  v-for="capability in capabilityChips(model)"
+                  :key="capability.key"
+                  class="text-[11px] px-1.5 py-0.5 rounded border"
+                  :class="
+                    capability.enabled
+                      ? 'border-[#9fc9b2] bg-[#f2f8f5] text-[#256047]'
+                      : 'border-stone-200 bg-stone-50 text-stone-400'
+                  "
+                >
+                  {{ capability.label }}
+                </span>
+              </div>
+            </td>
             <td class="px-4 py-3 whitespace-nowrap">
-              <span
-                class="text-[11px] px-1.5 py-0.5 rounded border"
-                :class="
-                  model.capabilities.tool_calls
-                    ? 'border-[#9fc9b2] bg-[#f2f8f5] text-[#256047]'
-                    : 'border-stone-200 bg-stone-50 text-stone-400'
-                "
-              >
-                {{ model.capabilities.tool_calls ? '工具调用' : '无工具调用声明' }}
-              </span>
+              <div class="space-y-1 text-xs">
+                <div class="flex items-center justify-between gap-3">
+                  <span class="text-stone-400">Context</span>
+                  <span class="font-mono text-stone-700">
+                    {{ formatTokenLimit(model.capabilities?.max_context_tokens) }}
+                  </span>
+                </div>
+                <div class="flex items-center justify-between gap-3">
+                  <span class="text-stone-400">Output</span>
+                  <span class="font-mono text-stone-700">
+                    {{ formatTokenLimit(model.capabilities?.max_output_tokens) }}
+                  </span>
+                </div>
+              </div>
             </td>
           </tr>
         </tbody>
@@ -118,6 +139,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { modelsApi, type ModelCatalogEntry } from '../api';
+import { capabilityChips, formatTokenLimit, supportsCapability } from '../utils/modelCapabilities';
 import { getStoredTokens, providerLabel, type StoredToken } from '../utils/providers';
 import { Alert, Button } from './base';
 
@@ -135,15 +157,19 @@ const protocolCount = computed(
   () => new Set(catalog.value.flatMap((model) => model.downstream_protocols)).size,
 );
 const toolCallEntries = computed(
-  () => catalog.value.filter((model) => model.capabilities.tool_calls).length,
+  () => catalog.value.filter((model) => supportsCapability(model, 'tool_calls')).length,
+);
+const reasoningEntries = computed(
+  () => catalog.value.filter((model) => supportsCapability(model, 'reasoning')).length,
 );
 
 const metrics = computed(() => [
   { label: '目录条目', value: catalog.value.length },
   { label: 'Provider', value: providerEntries.value.length },
   { label: '模型别名', value: aliasEntries.value },
-  { label: '服务协议', value: protocolCount.value },
   { label: '工具调用', value: toolCallEntries.value },
+  { label: 'Reasoning', value: reasoningEntries.value },
+  { label: '服务协议', value: protocolCount.value },
 ]);
 
 onMounted(() => {
