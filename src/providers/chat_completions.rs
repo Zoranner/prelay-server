@@ -203,20 +203,26 @@ fn decode_content(value: &Value) -> Result<Vec<InternalContentPart>, AppError> {
     let parts = value
         .as_array()
         .ok_or_else(|| AppError::BadRequest("message.content 必须是字符串或数组".to_string()))?;
-    Ok(parts
+    parts
         .iter()
-        .filter_map(|part| {
-            part.get("text")
-                .and_then(Value::as_str)
-                .or_else(|| {
-                    part.get("type")
-                        .and_then(Value::as_str)
-                        .filter(|kind| *kind == "text")
-                        .and_then(|_| part.get("content").and_then(Value::as_str))
-                })
-                .map(|text| InternalContentPart::Text(text.to_string()))
+        .map(|part| {
+            if let Some(text) = part.get("text").and_then(Value::as_str) {
+                return Ok(InternalContentPart::Text(text.to_string()));
+            }
+            if part.get("type").and_then(Value::as_str) == Some("text") {
+                return part
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .or_else(|| part.get("text").and_then(Value::as_str))
+                    .map(|text| InternalContentPart::Text(text.to_string()))
+                    .ok_or_else(|| AppError::BadRequest("文本内容块缺少 text".to_string()));
+            }
+
+            Err(AppError::BadRequest(
+                "message.content 只支持文本内容块".to_string(),
+            ))
         })
-        .collect())
+        .collect()
 }
 
 fn decode_tools(value: Option<&Value>) -> Result<Vec<InternalTool>, AppError> {
@@ -421,7 +427,9 @@ fn decode_usage(usage: Option<&Value>) -> Option<InternalUsage> {
 mod tests {
     use serde_json::json;
 
-    use super::{decode_chat_response, decode_chat_sse_text_deltas, encode_chat_request};
+    use super::{
+        decode_chat_request, decode_chat_response, decode_chat_sse_text_deltas, encode_chat_request,
+    };
     use crate::bridge::internal::{
         InternalContentPart, InternalMessage, InternalRequest, InternalRole, InternalTool,
         InternalToolCall,
@@ -522,6 +530,53 @@ mod tests {
             encoded["tools"][0]["function"]["parameters"]["properties"]["path"]["type"],
             "string"
         );
+    }
+
+    #[test]
+    fn decodes_chat_completions_text_content_parts_to_internal_request() {
+        let request = decode_chat_request(json!({
+            "model": "deepseek-chat",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "text", "text": "hello" },
+                        { "text": "world" }
+                    ]
+                }
+            ]
+        }))
+        .expect("decode chat request");
+
+        assert_eq!(request.messages[0].content.len(), 2);
+        assert_eq!(
+            request.messages[0].content,
+            vec![
+                InternalContentPart::Text("hello".to_string()),
+                InternalContentPart::Text("world".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_chat_completions_non_text_content_parts() {
+        let error = decode_chat_request(json!({
+            "model": "deepseek-chat",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": { "url": "https://example.com/image.png" }
+                        }
+                    ]
+                }
+            ]
+        }))
+        .expect_err("non-text content should fail");
+
+        assert!(format!("{error:?}").contains("只支持文本内容块"));
     }
 
     #[test]

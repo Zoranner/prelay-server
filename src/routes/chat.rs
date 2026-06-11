@@ -244,6 +244,9 @@ async fn create_ollama_chat_completion(
 
     if !upstream_response.status().is_success() {
         let status = upstream_response.status();
+        let observability_headers = upstream_response.headers().clone();
+        let error_body = upstream_response.text().await.ok();
+        let observability = upstream_observability(&observability_headers, error_body.as_deref());
         insert_request_log(
             &state.db,
             RequestLogInsert {
@@ -257,7 +260,7 @@ async fn create_ollama_chat_completion(
                 status: "failed".to_string(),
                 http_status: status.as_u16() as i64,
                 error_code: None,
-                error_message: None,
+                error_message: observability.error_message,
                 is_streaming,
                 input_tokens: None,
                 output_tokens: None,
@@ -266,7 +269,7 @@ async fn create_ollama_chat_completion(
                 upstream_latency_ms: None,
                 first_token_ms: None,
                 tool_call_count: None,
-                upstream_request_id: None,
+                upstream_request_id: observability.request_id,
                 metadata_json: None,
             },
         )
@@ -540,6 +543,47 @@ mod tests {
                 .await
                 .expect("load request log");
         assert_eq!(protocol_upstream, "ollama_native");
+    }
+
+    #[tokio::test]
+    async fn records_failed_ollama_native_upstream_request_id_and_error_message() {
+        let upstream = spawn_error_ollama_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(&db, "llama3.2", "ollama_native", &upstream, "unused")
+            .await
+            .expect("create provider");
+        let state = AppState {
+            db: db.clone(),
+            client: reqwest::Client::new(),
+            admin_token: None,
+        };
+
+        let error = create_chat_completion(
+            State(state),
+            axum::Json(json!({
+                "model": "llama3.2",
+                "messages": [
+                    { "role": "user", "content": "hello" }
+                ]
+            })),
+        )
+        .await
+        .expect_err("upstream error should fail");
+
+        assert!(format!("{error:?}").contains("上游请求失败"));
+        let row: (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT upstream_request_id, error_message FROM request_logs LIMIT 1")
+                .fetch_one(&db)
+                .await
+                .expect("load failed request log");
+
+        assert_eq!(row.0.as_deref(), Some("ollama-req-123"));
+        assert_eq!(row.1.as_deref(), Some("model not found"));
     }
 
     #[tokio::test]
@@ -1103,6 +1147,30 @@ mod tests {
             (
                 [(axum::http::header::CONTENT_TYPE, "application/x-ndjson")],
                 Body::from_stream(stream),
+            )
+                .into_response()
+        }
+
+        let app = Router::new().route("/chat", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_error_ollama_upstream() -> String {
+        async fn handler(Json(payload): Json<serde_json::Value>) -> axum::response::Response {
+            use axum::http::StatusCode;
+
+            assert_eq!(payload["model"], "llama3.2");
+            (
+                StatusCode::NOT_FOUND,
+                [("x-request-id", "ollama-req-123")],
+                Json(json!({ "error": "model not found" })),
             )
                 .into_response()
         }
