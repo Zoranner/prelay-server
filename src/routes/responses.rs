@@ -18,7 +18,8 @@ use crate::{
         responses_encode::encode_responses_response,
         sessions::{load_response_session_messages, save_response_session},
         stream::{
-            chat_sse_response_to_responses_sse, ollama_chat_ndjson_response_to_responses_sse,
+            anthropic_messages_sse_response_to_responses_sse, chat_sse_response_to_responses_sse,
+            ollama_chat_ndjson_response_to_responses_sse,
         },
     },
     db,
@@ -81,51 +82,13 @@ async fn create_response(
         )
         .await;
     }
-    if provider_spec.protocol == UpstreamProtocol::AnthropicMessages && is_streaming {
-        let error_message =
-            "streaming bridge from responses to anthropic_messages is not supported".to_string();
-        insert_request_log(
-            &state.db,
-            RequestLogInsert {
-                protocol_in: "responses".to_string(),
-                protocol_out: "responses".to_string(),
-                protocol_upstream: "anthropic_messages".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                model_requested,
-                model_upstream: request.model,
-                status: "failed".to_string(),
-                http_status: 400,
-                error_code: Some("unsupported_stream_bridge".to_string()),
-                error_message: Some(error_message.clone()),
-                is_streaming,
-                input_tokens: None,
-                output_tokens: None,
-                reasoning_tokens: None,
-                latency_ms: started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: None,
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id: None,
-                metadata_json: Some(
-                    serde_json::json!({
-                        "decision": "rejected",
-                        "bridge": "responses_to_anthropic_messages",
-                        "reason": error_message
-                    })
-                    .to_string(),
-                ),
-            },
-        )
-        .await?;
-        return Err(AppError::BadRequest(error_message));
-    }
-    if provider_spec.protocol == UpstreamProtocol::AnthropicMessages && !is_streaming {
+    if provider_spec.protocol == UpstreamProtocol::AnthropicMessages {
         return create_anthropic_messages_response(
             &state,
             request,
             provider,
             model_requested,
+            is_streaming,
             previous_response_id,
             started_at,
         )
@@ -277,6 +240,7 @@ async fn create_anthropic_messages_response(
     mut request: InternalRequest,
     provider: crate::models::ProviderConfig,
     model_requested: String,
+    is_streaming: bool,
     previous_response_id: Option<String>,
     started_at: std::time::Instant,
 ) -> Result<Response, AppError> {
@@ -310,7 +274,7 @@ async fn create_anthropic_messages_response(
                 http_status: status.as_u16() as i64,
                 error_code: None,
                 error_message: None,
-                is_streaming: false,
+                is_streaming,
                 input_tokens: None,
                 output_tokens: None,
                 reasoning_tokens: None,
@@ -324,6 +288,43 @@ async fn create_anthropic_messages_response(
         )
         .await?;
         return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
+    }
+
+    if is_streaming {
+        let log = RequestLogInsert {
+            protocol_in: "responses".to_string(),
+            protocol_out: "responses".to_string(),
+            protocol_upstream: "anthropic_messages".to_string(),
+            provider_id: provider.id,
+            provider_name: provider.name,
+            model_requested,
+            model_upstream: request.model,
+            status: "success".to_string(),
+            http_status: 200,
+            error_code: None,
+            error_message: None,
+            is_streaming,
+            input_tokens: None,
+            output_tokens: None,
+            reasoning_tokens: None,
+            latency_ms: started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: None,
+            upstream_request_id: None,
+            metadata_json: None,
+        };
+        let body = Body::from_stream(record_first_chunk(
+            state.db.clone(),
+            anthropic_messages_sse_response_to_responses_sse(upstream_response),
+            log,
+            started_at,
+        ));
+        return Ok((
+            [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
+            body,
+        )
+            .into_response());
     }
 
     let upstream_json = upstream_response
@@ -357,7 +358,7 @@ async fn create_anthropic_messages_response(
             http_status: 200,
             error_code: None,
             error_message: None,
-            is_streaming: false,
+            is_streaming,
             input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
             output_tokens: response
                 .usage
@@ -1035,8 +1036,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_streaming_responses_to_anthropic_messages_upstream() {
-        let upstream = spawn_native_anthropic_messages_upstream().await;
+    async fn streams_anthropic_messages_chunks_as_responses_sse() {
+        let upstream = spawn_streaming_native_anthropic_messages_upstream().await;
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -1058,7 +1059,7 @@ mod tests {
             admin_token: None,
         };
 
-        let error = create_response(
+        let response = create_response(
             State(state.clone()),
             axum::Json(json!({
                 "model": "claude-sonnet",
@@ -1067,10 +1068,22 @@ mod tests {
             })),
         )
         .await
-        .expect_err("streaming responses to messages bridge should be rejected");
+        .expect("create response");
+        let content_type = response
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(content_type.starts_with("text/event-stream"));
 
-        assert!(format!("{error:?}")
-            .contains("streaming bridge from responses to anthropic_messages is not supported"));
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("read stream body");
+        let body = String::from_utf8(body.to_vec()).expect("utf8 body");
+        assert!(body.contains("event: response.output_text.delta\ndata: hel\n\n"));
+        assert!(body.contains("event: response.output_text.delta\ndata: lo\n\n"));
+        assert!(body.contains("event: response.completed"));
 
         let row: (String, String, i64, Option<String>, Option<String>) = sqlx::query_as(
             "SELECT protocol_upstream, status, http_status, error_code, error_message FROM request_logs LIMIT 1",
@@ -1080,13 +1093,10 @@ mod tests {
         .expect("load request log");
 
         assert_eq!(row.0, "anthropic_messages");
-        assert_eq!(row.1, "failed");
-        assert_eq!(row.2, 400);
-        assert_eq!(row.3.as_deref(), Some("unsupported_stream_bridge"));
-        assert_eq!(
-            row.4.as_deref(),
-            Some("streaming bridge from responses to anthropic_messages is not supported")
-        );
+        assert_eq!(row.1, "success");
+        assert_eq!(row.2, 200);
+        assert_eq!(row.3, None);
+        assert_eq!(row.4, None);
     }
 
     #[tokio::test]
@@ -1858,6 +1868,52 @@ mod tests {
                     "output_tokens": 4
                 }
             }))
+        }
+
+        let app = Router::new().route("/messages", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_streaming_native_anthropic_messages_upstream() -> String {
+        async fn handler(Json(payload): Json<serde_json::Value>) -> axum::response::Response {
+            use axum::response::IntoResponse;
+
+            assert_eq!(payload["model"], "claude-sonnet");
+            assert_eq!(payload["stream"], true);
+            assert_eq!(payload["messages"][0]["role"], "user");
+            assert_eq!(payload["messages"][0]["content"], "hello");
+            let stream = futures::stream::unfold(0, |step| async move {
+                match step {
+                    0 => Some((
+                        Ok::<_, Infallible>(Bytes::from_static(
+                            b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_native_stream\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-sonnet\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hel\"}}\n\n",
+                        )),
+                        1,
+                    )),
+                    1 => {
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                        Some((
+                            Ok::<_, Infallible>(Bytes::from_static(
+                                b"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"lo\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+                            )),
+                            2,
+                        ))
+                    }
+                    _ => None,
+                }
+            });
+            (
+                [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                Body::from_stream(stream),
+            )
+                .into_response()
         }
 
         let app = Router::new().route("/messages", post(handler));

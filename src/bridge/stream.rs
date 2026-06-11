@@ -80,6 +80,43 @@ pub fn chat_sse_response_to_anthropic_messages_sse(
     })
 }
 
+pub fn responses_sse_response_to_anthropic_messages_sse(
+    response: reqwest::Response,
+    model: String,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> {
+    let upstream = response.bytes_stream();
+    let state = ResponsesSseAnthropicMessagesSseStreamState {
+        upstream: Box::pin(upstream),
+        decoder: ResponsesSseAnthropicMessagesSseDecoder::new(model),
+        pending: VecDeque::new(),
+        upstream_done: false,
+    };
+
+    futures::stream::unfold(state, |mut state| async move {
+        loop {
+            if let Some(chunk) = state.pending.pop_front() {
+                return Some((Ok(chunk), state));
+            }
+            if state.upstream_done {
+                return None;
+            }
+
+            match state.upstream.next().await {
+                Some(Ok(chunk)) => {
+                    state.pending.extend(state.decoder.push_chunk(&chunk));
+                }
+                Some(Err(error)) => {
+                    return Some((Err(std::io::Error::other(error)), state));
+                }
+                None => {
+                    state.upstream_done = true;
+                    state.pending.extend(state.decoder.finish());
+                }
+            }
+        }
+    })
+}
+
 pub fn ollama_chat_ndjson_response_to_responses_sse(
     response: reqwest::Response,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> {
@@ -160,6 +197,42 @@ pub fn ollama_chat_ndjson_response_to_anthropic_messages_sse(
     let state = OllamaChatNdjsonAnthropicMessagesSseStreamState {
         upstream: Box::pin(upstream),
         decoder: OllamaChatNdjsonAnthropicMessagesSseDecoder::new(model),
+        pending: VecDeque::new(),
+        upstream_done: false,
+    };
+
+    futures::stream::unfold(state, |mut state| async move {
+        loop {
+            if let Some(chunk) = state.pending.pop_front() {
+                return Some((Ok(chunk), state));
+            }
+            if state.upstream_done {
+                return None;
+            }
+
+            match state.upstream.next().await {
+                Some(Ok(chunk)) => {
+                    state.pending.extend(state.decoder.push_chunk(&chunk));
+                }
+                Some(Err(error)) => {
+                    return Some((Err(std::io::Error::other(error)), state));
+                }
+                None => {
+                    state.upstream_done = true;
+                    state.pending.extend(state.decoder.finish());
+                }
+            }
+        }
+    })
+}
+
+pub fn anthropic_messages_sse_response_to_responses_sse(
+    response: reqwest::Response,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> {
+    let upstream = response.bytes_stream();
+    let state = AnthropicMessagesToResponsesSseStreamState {
+        upstream: Box::pin(upstream),
+        decoder: AnthropicMessagesToResponsesSseDecoder::default(),
         pending: VecDeque::new(),
         upstream_done: false,
     };
@@ -468,6 +541,104 @@ struct AnthropicMessagesSseStreamState {
     upstream_done: bool,
 }
 
+struct ResponsesSseAnthropicMessagesSseStreamState {
+    upstream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
+    decoder: ResponsesSseAnthropicMessagesSseDecoder,
+    pending: VecDeque<Bytes>,
+    upstream_done: bool,
+}
+
+struct ResponsesSseAnthropicMessagesSseDecoder {
+    line_buffer: Vec<u8>,
+    event_name: Option<String>,
+    data_lines: Vec<String>,
+    anthropic: AnthropicMessagesSseDecoder,
+}
+
+impl ResponsesSseAnthropicMessagesSseDecoder {
+    fn new(model: String) -> Self {
+        Self {
+            line_buffer: Vec::new(),
+            event_name: None,
+            data_lines: Vec::new(),
+            anthropic: AnthropicMessagesSseDecoder::new(model),
+        }
+    }
+
+    fn push_chunk(&mut self, chunk: &[u8]) -> Vec<Bytes> {
+        self.line_buffer.extend_from_slice(chunk);
+        let mut output = Vec::new();
+
+        while let Some(newline) = self.line_buffer.iter().position(|byte| *byte == b'\n') {
+            let mut line = self.line_buffer.drain(..=newline).collect::<Vec<_>>();
+            if line.last() == Some(&b'\n') {
+                line.pop();
+            }
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            output.extend(self.process_line(&line));
+        }
+
+        output
+    }
+
+    fn finish(&mut self) -> Vec<Bytes> {
+        let mut output = Vec::new();
+        if !self.line_buffer.is_empty() {
+            let line = std::mem::take(&mut self.line_buffer);
+            output.extend(self.process_line(&line));
+            output.extend(self.flush_event());
+        }
+        if !self.anthropic.completed {
+            output.push(self.anthropic.finish_message());
+        }
+        output
+    }
+
+    fn process_line(&mut self, line: &[u8]) -> Vec<Bytes> {
+        if line.is_empty() {
+            return self.flush_event();
+        }
+
+        let Ok(line) = std::str::from_utf8(line) else {
+            return Vec::new();
+        };
+        if let Some(event) = line.strip_prefix("event:") {
+            let event = event.strip_prefix(' ').unwrap_or(event);
+            self.event_name = Some(event.to_string());
+            return Vec::new();
+        }
+        let Some(data) = line.strip_prefix("data:") else {
+            return Vec::new();
+        };
+        let data = data.strip_prefix(' ').unwrap_or(data);
+        self.data_lines.push(data.to_string());
+        Vec::new()
+    }
+
+    fn flush_event(&mut self) -> Vec<Bytes> {
+        let event_name = self.event_name.take();
+        let data = std::mem::take(&mut self.data_lines).join("\n");
+        if self.anthropic.completed {
+            return Vec::new();
+        }
+        if data.trim() == "[DONE]" {
+            return Vec::new();
+        }
+
+        match event_name.as_deref() {
+            Some("response.output_text.delta") => decode_responses_text_delta(&data)
+                .map(|delta| vec![self.anthropic.text_delta(&delta)])
+                .unwrap_or_default(),
+            Some("response.output_item.done") | Some("response.completed") => {
+                vec![self.anthropic.finish_message()]
+            }
+            _ => Vec::new(),
+        }
+    }
+}
+
 struct AnthropicMessagesSseDecoder {
     line_buffer: Vec<u8>,
     data_lines: Vec<String>,
@@ -711,6 +882,99 @@ impl OllamaChatNdjsonAnthropicMessagesSseDecoder {
         }
         if line.done {
             output.push(self.anthropic.finish_message());
+        }
+        output
+    }
+}
+
+struct AnthropicMessagesToResponsesSseStreamState {
+    upstream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
+    decoder: AnthropicMessagesToResponsesSseDecoder,
+    pending: VecDeque<Bytes>,
+    upstream_done: bool,
+}
+
+#[derive(Default)]
+struct AnthropicMessagesToResponsesSseDecoder {
+    line_buffer: Vec<u8>,
+    data_lines: Vec<String>,
+    completed: bool,
+}
+
+impl AnthropicMessagesToResponsesSseDecoder {
+    fn push_chunk(&mut self, chunk: &[u8]) -> Vec<Bytes> {
+        self.line_buffer.extend_from_slice(chunk);
+        let mut output = Vec::new();
+
+        while let Some(newline) = self.line_buffer.iter().position(|byte| *byte == b'\n') {
+            let mut line = self.line_buffer.drain(..=newline).collect::<Vec<_>>();
+            if line.last() == Some(&b'\n') {
+                line.pop();
+            }
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            output.extend(self.process_line(&line));
+        }
+
+        output
+    }
+
+    fn finish(&mut self) -> Vec<Bytes> {
+        let mut output = Vec::new();
+        if !self.line_buffer.is_empty() {
+            let line = std::mem::take(&mut self.line_buffer);
+            output.extend(self.process_line(&line));
+            output.extend(self.flush_event());
+        }
+        if !self.completed {
+            self.completed = true;
+            output.push(responses_completed_sse());
+        }
+        output
+    }
+
+    fn process_line(&mut self, line: &[u8]) -> Vec<Bytes> {
+        if line.is_empty() {
+            return self.flush_event();
+        }
+
+        let Ok(line) = std::str::from_utf8(line) else {
+            return Vec::new();
+        };
+        let Some(data) = line.strip_prefix("data:") else {
+            return Vec::new();
+        };
+        let data = data.strip_prefix(' ').unwrap_or(data);
+        self.data_lines.push(data.to_string());
+        Vec::new()
+    }
+
+    fn flush_event(&mut self) -> Vec<Bytes> {
+        if self.data_lines.is_empty() {
+            return Vec::new();
+        }
+
+        let data = std::mem::take(&mut self.data_lines).join("\n");
+        if self.completed {
+            return Vec::new();
+        }
+        if data.trim() == "[DONE]" {
+            self.completed = true;
+            return vec![responses_completed_sse()];
+        }
+
+        let Some(event) = decode_anthropic_messages_sse_event(&data) else {
+            return Vec::new();
+        };
+
+        let mut output = Vec::new();
+        if let Some(delta) = event.text_delta {
+            output.push(responses_text_delta_sse(&delta));
+        }
+        if event.finished {
+            self.completed = true;
+            output.push(responses_completed_sse());
         }
         output
     }
@@ -962,6 +1226,11 @@ struct ChatToolCallDelta {
     arguments: Option<String>,
 }
 
+struct AnthropicMessagesSseEvent {
+    text_delta: Option<String>,
+    finished: bool,
+}
+
 fn decode_chat_sse_event(data: &str) -> Option<ChatSseEvent> {
     let value = serde_json::from_str::<Value>(data).ok()?;
     let choice = value
@@ -1018,6 +1287,39 @@ fn decode_chat_tool_call_delta(value: &Value) -> Option<ChatToolCallDelta> {
     })
 }
 
+fn decode_anthropic_messages_sse_event(data: &str) -> Option<AnthropicMessagesSseEvent> {
+    let value = serde_json::from_str::<Value>(data).ok()?;
+    let event_type = value.get("type").and_then(Value::as_str);
+    let text_delta = value
+        .get("delta")
+        .filter(|_| event_type == Some("content_block_delta"))
+        .filter(|delta| delta.get("type").and_then(Value::as_str) == Some("text_delta"))
+        .and_then(|delta| delta.get("text"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let finished = event_type == Some("message_stop")
+        || (event_type == Some("message_delta")
+            && value
+                .pointer("/delta/stop_reason")
+                .is_some_and(|stop_reason| !stop_reason.is_null()));
+
+    Some(AnthropicMessagesSseEvent {
+        text_delta,
+        finished,
+    })
+}
+
+fn decode_responses_text_delta(data: &str) -> Option<String> {
+    let Ok(value) = serde_json::from_str::<Value>(data) else {
+        return Some(data.to_string());
+    };
+    value
+        .get("delta")
+        .and_then(Value::as_str)
+        .or_else(|| value.as_str())
+        .map(str::to_string)
+}
+
 struct OllamaChatNdjsonLine {
     content: Option<String>,
     done: bool,
@@ -1042,6 +1344,7 @@ mod tests {
         responses_completed_sse, responses_text_delta_sse, AnthropicMessagesSseDecoder,
         ChatSseDecoder, OllamaChatNdjsonAnthropicMessagesSseDecoder,
         OllamaChatNdjsonChatSseDecoder, OllamaChatNdjsonResponsesSseDecoder,
+        ResponsesSseAnthropicMessagesSseDecoder,
     };
 
     #[test]
@@ -1143,6 +1446,40 @@ data: [DONE]
         assert!(chunk.contains("event: content_block_start"));
         assert!(chunk.contains("event: content_block_delta"));
         assert!(chunk.contains("\"text\":\"hel\""));
+    }
+
+    #[test]
+    fn decodes_responses_sse_text_delta_to_anthropic_messages_sse() {
+        let mut decoder = ResponsesSseAnthropicMessagesSseDecoder::new("gpt-4.1".to_string());
+
+        let chunks =
+            decoder.push_chunk(b"event: response.output_text.delta\ndata: {\"delta\":\"hel\"}\n\n");
+
+        assert_eq!(chunks.len(), 1);
+        let chunk = std::str::from_utf8(&chunks[0]).expect("utf8 chunk");
+        assert!(chunk.contains("event: message_start"));
+        assert!(chunk.contains("event: content_block_start"));
+        assert!(chunk.contains("event: content_block_delta"));
+        assert!(chunk.contains("\"text\":\"hel\""));
+    }
+
+    #[test]
+    fn decodes_responses_sse_completion_to_anthropic_messages_stop() {
+        let mut decoder = ResponsesSseAnthropicMessagesSseDecoder::new("gpt-4.1".to_string());
+
+        let chunks = decoder.push_chunk(
+            b"event: response.output_text.delta\ndata: {\"delta\":\"hel\"}\n\n\
+              event: response.completed\ndata: {}\n\n",
+        );
+        let output = chunks
+            .iter()
+            .map(|chunk| std::str::from_utf8(chunk).expect("utf8 chunk"))
+            .collect::<String>();
+
+        assert!(output.contains("event: content_block_delta"));
+        assert!(output.contains("event: content_block_stop"));
+        assert!(output.contains("event: message_delta"));
+        assert!(output.contains("event: message_stop"));
     }
 
     #[test]

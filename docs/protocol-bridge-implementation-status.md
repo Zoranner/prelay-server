@@ -69,18 +69,15 @@
 - Chat Completions 上游流式转换为 Responses SSE。
 - Chat Completions 上游流式转换为 Anthropic Messages SSE。
 - 原生 Responses 上游流式直通到 Responses 入口。
+- Responses 上游文本流式转换为 Anthropic Messages SSE。
 - 原生 Anthropic Messages 上游流式直通到 Messages 入口。
+- Anthropic Messages 上游文本流式转换为 Responses SSE。
 - Ollama Native 流式转换为 Responses SSE。
 - Ollama Native 流式转换为 Chat Completions SSE。
 - Ollama Native 流式转换为 Anthropic Messages SSE。
 - Ollama Native 流式原生透传到 `/api/chat`。
 
-当前明确未实现的流式路径：
-
-- `responses -> anthropic_messages` 流式互转。
-- `anthropic_messages -> responses` 流式互转。
-
-这两类请求当前会返回失败，并写入 `request_logs`，错误码为 `unsupported_stream_bridge`。
+当前流式桥接仍未完整覆盖跨 agent 协议的工具增量和 usage 聚合。
 
 ### 会话和工具调用
 
@@ -221,10 +218,8 @@
 
 ### 流式状态机差距
 
-当前已有多条流式文本路径，但跨 agent 协议互转仍没有状态机：
+当前已有多条流式文本路径，跨 agent 协议互转已经具备文本增量状态机，但复杂事件仍需继续补齐：
 
-- Responses SSE 到 Anthropic Messages SSE 尚未实现。
-- Anthropic Messages SSE 到 Responses SSE 尚未实现。
 - 跨协议流式 tool-call 增量没有完整状态聚合。
 - 流式 usage 事件没有统一解析。
 
@@ -276,15 +271,9 @@
 - 流式中途失败时记录失败或部分完成状态。
 - 明确无法统计的字段为空，而不是估算成错误值。
 
-### 最后推进跨 agent 流式互转
+### 最后推进跨 agent 流式增强
 
-`responses <-> anthropic_messages` 流式互转应放在真实客户端验收和统计收口之后。它需要独立状态机，不适合用简单字节透传实现。
-
-首个可做方向建议是：
-
-- Anthropic Messages SSE 到 Responses SSE。
-
-原因是 Claude Code 侧工具调用语义较明确，落到 Responses 输出时更容易建立 `response.output_item.*` 和 `response.function_call_arguments.*` 的事件序列。
+`responses <-> anthropic_messages` 文本流式互转已经具备基础状态机。后续应补齐工具调用增量和 usage 事件聚合，并用真实 Codex / Claude Code 客户端做端到端验收。
 
 ## 当前可发布边界
 

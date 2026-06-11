@@ -17,6 +17,7 @@ use crate::{
         stream::{
             chat_sse_response_to_anthropic_messages_sse,
             ollama_chat_ndjson_response_to_anthropic_messages_sse,
+            responses_sse_response_to_anthropic_messages_sse,
         },
     },
     db,
@@ -53,45 +54,6 @@ async fn create_message(
     upstream_payload["model"] = Value::String(model_upstream.clone());
     let mut request = request;
     request.model = model_upstream.clone();
-    if provider_spec.protocol == UpstreamProtocol::Responses && is_streaming {
-        let error_message =
-            "streaming bridge from anthropic_messages to responses is not supported".to_string();
-        insert_request_log(
-            &state.db,
-            RequestLogInsert {
-                protocol_in: "anthropic_messages".to_string(),
-                protocol_out: "anthropic_messages".to_string(),
-                protocol_upstream: "responses".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                model_requested,
-                model_upstream: request.model,
-                status: "failed".to_string(),
-                http_status: 400,
-                error_code: Some("unsupported_stream_bridge".to_string()),
-                error_message: Some(error_message.clone()),
-                is_streaming,
-                input_tokens: None,
-                output_tokens: None,
-                reasoning_tokens: None,
-                latency_ms: started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: None,
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id: None,
-                metadata_json: Some(
-                    serde_json::json!({
-                        "decision": "rejected",
-                        "bridge": "anthropic_messages_to_responses",
-                        "reason": error_message
-                    })
-                    .to_string(),
-                ),
-            },
-        )
-        .await?;
-        return Err(AppError::BadRequest(error_message));
-    }
     if provider_spec.protocol == UpstreamProtocol::AnthropicMessages {
         return create_native_anthropic_message(
             &state,
@@ -104,7 +66,7 @@ async fn create_message(
         .await
         .map(IntoResponse::into_response);
     }
-    if provider_spec.protocol == UpstreamProtocol::Responses && !is_streaming {
+    if provider_spec.protocol == UpstreamProtocol::Responses {
         return create_responses_anthropic_message(
             &state,
             request,
@@ -307,6 +269,43 @@ async fn create_responses_anthropic_message(
         )
         .await?;
         return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
+    }
+
+    if is_streaming {
+        let log = RequestLogInsert {
+            protocol_in: "anthropic_messages".to_string(),
+            protocol_out: "anthropic_messages".to_string(),
+            protocol_upstream: "responses".to_string(),
+            provider_id: provider.id,
+            provider_name: provider.name,
+            model_requested,
+            model_upstream: request.model.clone(),
+            status: "success".to_string(),
+            http_status: 200,
+            error_code: None,
+            error_message: None,
+            is_streaming,
+            input_tokens: None,
+            output_tokens: None,
+            reasoning_tokens: None,
+            latency_ms: started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: None,
+            upstream_request_id: None,
+            metadata_json: None,
+        };
+        let stream =
+            responses_sse_response_to_anthropic_messages_sse(upstream_response, request.model);
+        return Response::builder()
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .body(Body::from_stream(record_first_chunk(
+                state.db.clone(),
+                stream,
+                log,
+                started_at,
+            )))
+            .map_err(|error| AppError::Internal(error.into()));
     }
 
     let upstream_json = upstream_response
@@ -664,7 +663,7 @@ fn count_tool_calls(response: &crate::bridge::internal::InternalResponse) -> i64
 #[cfg(test)]
 mod tests {
     use axum::{extract::State, middleware, routing::post, Json, Router};
-    use futures::StreamExt;
+    use futures::{StreamExt, TryStreamExt};
     use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
     use tokio::net::TcpListener;
@@ -841,8 +840,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_streaming_anthropic_messages_to_responses_upstream() {
-        let upstream = spawn_responses_upstream().await;
+    async fn streams_responses_sse_as_anthropic_messages_sse() {
+        let upstream = spawn_streaming_responses_upstream().await;
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -857,39 +856,72 @@ mod tests {
             client: reqwest::Client::new(),
             admin_token: None,
         };
+        let app = Router::new().merge(super::router().with_state(state.clone()));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("read test server address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
 
-        let error = create_message(
-            State(state.clone()),
-            axum::Json(json!({
+        let response = reqwest::Client::new()
+            .post(format!("http://{addr}/v1/messages"))
+            .json(&json!({
                 "model": "gpt-4.1",
                 "max_tokens": 1024,
                 "stream": true,
                 "messages": [
                     { "role": "user", "content": "hello" }
                 ]
-            })),
-        )
-        .await
-        .expect_err("streaming messages to responses bridge should be rejected");
+            }))
+            .send()
+            .await
+            .expect("send request");
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
 
-        assert!(format!("{error:?}")
-            .contains("streaming bridge from anthropic_messages to responses is not supported"));
+        let started_at = std::time::Instant::now();
+        let mut stream = response.bytes_stream();
+        let first_chunk = stream
+            .next()
+            .await
+            .expect("receive first stream chunk")
+            .expect("first stream chunk ok");
+        let first_chunk_elapsed = started_at.elapsed();
+        let first_chunk = String::from_utf8(first_chunk.to_vec()).expect("utf8 stream chunk");
 
-        let row: (String, String, i64, Option<String>, Option<String>) = sqlx::query_as(
-            "SELECT protocol_upstream, status, http_status, error_code, error_message FROM request_logs LIMIT 1",
+        assert!(
+            first_chunk_elapsed < std::time::Duration::from_millis(200),
+            "first chunk took {first_chunk_elapsed:?}"
+        );
+        assert!(first_chunk.contains("event: content_block_delta"));
+        assert!(first_chunk.contains("hel"));
+
+        let body = stream
+            .map(|chunk| {
+                chunk.map(|chunk| String::from_utf8(chunk.to_vec()).expect("utf8 stream chunk"))
+            })
+            .try_collect::<String>()
+            .await
+            .expect("read remaining stream");
+        let body = format!("{first_chunk}{body}");
+        assert!(body.contains("event: content_block_delta"));
+        assert!(body.contains("lo"));
+        assert!(body.contains("event: message_stop"));
+
+        let row: (String, String, i64, Option<i64>) = sqlx::query_as(
+            "SELECT protocol_upstream, status, http_status, first_token_ms FROM request_logs LIMIT 1",
         )
         .fetch_one(&state.db)
         .await
         .expect("load request log");
 
         assert_eq!(row.0, "responses");
-        assert_eq!(row.1, "failed");
-        assert_eq!(row.2, 400);
-        assert_eq!(row.3.as_deref(), Some("unsupported_stream_bridge"));
-        assert_eq!(
-            row.4.as_deref(),
-            Some("streaming bridge from anthropic_messages to responses is not supported")
-        );
+        assert_eq!(row.1, "success");
+        assert_eq!(row.2, 200);
+        assert!(row.3.is_some());
+
+        server.abort();
     }
 
     #[tokio::test]
@@ -1539,6 +1571,52 @@ mod tests {
                     "output_tokens": 4
                 }
             }))
+        }
+
+        let app = Router::new().route("/responses", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_streaming_responses_upstream() -> String {
+        async fn handler(Json(payload): Json<serde_json::Value>) -> axum::response::Response {
+            assert_eq!(payload["model"], "gpt-4.1");
+            assert_eq!(payload["stream"], true);
+            assert_eq!(payload["max_output_tokens"], 1024);
+            assert_eq!(payload["input"][0]["role"], "user");
+            assert_eq!(payload["input"][0]["content"], "hello");
+
+            let stream = futures::stream::unfold(0, |state| async move {
+                match state {
+                    0 => Some((
+                        Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
+                            b"event: response.output_text.delta\ndata: {\"delta\":\"hel\"}\n\n",
+                        )),
+                        1,
+                    )),
+                    1 => {
+                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                        Some((
+                            Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
+                                b"event: response.output_text.delta\ndata: {\"delta\":\"lo\"}\n\nevent: response.completed\ndata: {}\n\ndata: [DONE]\n\n",
+                            )),
+                            2,
+                        ))
+                    }
+                    _ => None,
+                }
+            });
+
+            axum::response::Response::builder()
+                .header("content-type", "text/event-stream")
+                .body(axum::body::Body::from_stream(stream))
+                .expect("build streaming response")
         }
 
         let app = Router::new().route("/responses", post(handler));
