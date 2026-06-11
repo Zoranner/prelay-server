@@ -87,6 +87,9 @@ mod tests {
             stream: false,
             max_tokens: None,
             previous_response_id: None,
+            reasoning_requested: false,
+            tool_choice_requested: false,
+            structured_output_requested: false,
             tools: Vec::new(),
             messages: vec![InternalMessage {
                 role: InternalRole::User,

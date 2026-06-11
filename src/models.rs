@@ -11,6 +11,7 @@ pub struct ProviderConfig {
     pub api_key: String,
     /// Internal token used by clients to authenticate with this proxy
     pub token: String,
+    pub capabilities_json: Option<String>,
     pub created_at: String,
 }
 
@@ -28,6 +29,7 @@ pub struct CreateConfigRequest {
     pub provider_type: String,
     pub base_url: String,
     pub api_key: String,
+    pub capabilities: Option<ProviderCapabilityOverrides>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -36,6 +38,20 @@ pub struct UpdateConfigRequest {
     pub provider_type: Option<String>,
     pub base_url: Option<String>,
     pub api_key: Option<String>,
+    pub capabilities: Option<ProviderCapabilityOverrides>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderCapabilityOverrides {
+    pub tool_calls: Option<bool>,
+    pub reasoning: Option<bool>,
+    pub tool_choice: Option<bool>,
+    pub parallel_tool_calls: Option<bool>,
+    pub system_messages: Option<bool>,
+    pub structured_outputs: Option<bool>,
+    pub streaming_usage: Option<bool>,
+    pub max_context_tokens: Option<i64>,
+    pub max_output_tokens: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,6 +90,7 @@ pub struct ConfigResponse {
     /// Masked API key, only first 4 and last 4 chars visible
     pub api_key_masked: String,
     pub token: String,
+    pub capabilities: ProviderCapabilityOverrides,
     pub created_at: String,
 }
 
@@ -91,6 +108,7 @@ impl ProviderConfig {
 impl From<ProviderConfig> for ConfigResponse {
     fn from(c: ProviderConfig) -> Self {
         let api_key_masked = mask_key(&c.api_key);
+        let capabilities = c.capability_overrides();
         ConfigResponse {
             id: c.id,
             name: c.name,
@@ -98,8 +116,18 @@ impl From<ProviderConfig> for ConfigResponse {
             base_url: c.base_url,
             api_key_masked,
             token: c.token,
+            capabilities,
             created_at: c.created_at,
         }
+    }
+}
+
+impl ProviderConfig {
+    pub fn capability_overrides(&self) -> ProviderCapabilityOverrides {
+        self.capabilities_json
+            .as_deref()
+            .and_then(|value| serde_json::from_str(value).ok())
+            .unwrap_or_default()
     }
 }
 

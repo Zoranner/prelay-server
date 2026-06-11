@@ -19,6 +19,8 @@ pub fn decode_anthropic_request(value: Value) -> Result<InternalRequest, AppErro
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let max_tokens = value.get("max_tokens").and_then(Value::as_i64);
+    let reasoning_requested = value.get("thinking").is_some() || value.get("reasoning").is_some();
+    let tool_choice_requested = value.get("tool_choice").is_some();
     let messages = value
         .get("messages")
         .and_then(Value::as_array)
@@ -45,6 +47,9 @@ pub fn decode_anthropic_request(value: Value) -> Result<InternalRequest, AppErro
         stream,
         max_tokens,
         previous_response_id: None,
+        reasoning_requested,
+        tool_choice_requested,
+        structured_output_requested: false,
         tools: decode_tools(value.get("tools"))?,
         messages: decoded,
     })

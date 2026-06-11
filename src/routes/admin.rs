@@ -62,12 +62,13 @@ async fn create_config(
         return Err(AppError::BadRequest("Base URL 不能为空".to_string()));
     }
 
-    let config = db::create_config(
+    let config = db::create_config_with_capabilities(
         &state.db,
         &req.name,
         &req.provider_type,
         &req.base_url,
         &req.api_key,
+        req.capabilities.as_ref(),
     )
     .await?;
 
@@ -80,13 +81,14 @@ async fn update_config(
     Path(id): Path<String>,
     Json(req): Json<UpdateConfigRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let updated = db::update_config(
+    let updated = db::update_config_with_capabilities(
         &state.db,
         &id,
         req.name.as_deref(),
         req.provider_type.as_deref(),
         req.base_url.as_deref(),
         req.api_key.as_deref(),
+        req.capabilities.as_ref(),
     )
     .await?;
 
@@ -158,6 +160,56 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     use crate::{db, AppState};
+
+    #[tokio::test]
+    async fn creates_config_with_capability_overrides() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+            admin_token: None,
+        };
+        let app = Router::new().nest("/api", super::router().with_state(state));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("read test server address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{addr}/api/configs"))
+            .json(&json!({
+                "name": "Local Llama",
+                "provider_type": "ollama_native",
+                "base_url": "http://127.0.0.1:11434/api",
+                "api_key": "unused",
+                "capabilities": {
+                    "tool_calls": true,
+                    "structured_outputs": true,
+                    "max_context_tokens": 8192,
+                    "max_output_tokens": 2048
+                }
+            }))
+            .send()
+            .await
+            .expect("send request");
+        assert_eq!(response.status(), reqwest::StatusCode::CREATED);
+
+        let body: serde_json::Value = response.json().await.expect("parse config json");
+        assert_eq!(body["capabilities"]["tool_calls"], true);
+        assert_eq!(body["capabilities"]["structured_outputs"], true);
+        assert_eq!(body["capabilities"]["max_context_tokens"], 8192);
+        assert_eq!(body["capabilities"]["max_output_tokens"], 2048);
+
+        server.abort();
+    }
 
     #[tokio::test]
     async fn creates_model_alias_from_admin_api() {

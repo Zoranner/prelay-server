@@ -20,6 +20,13 @@ pub fn decode_chat_request(value: Value) -> Result<InternalRequest, AppError> {
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let max_tokens = value.get("max_tokens").and_then(Value::as_i64);
+    let reasoning_requested =
+        value.get("reasoning").is_some() || value.get("reasoning_effort").is_some();
+    let tool_choice_requested = value.get("tool_choice").is_some();
+    let structured_output_requested = value
+        .pointer("/response_format/type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind != "text");
     let messages = value
         .get("messages")
         .and_then(Value::as_array)
@@ -33,6 +40,9 @@ pub fn decode_chat_request(value: Value) -> Result<InternalRequest, AppError> {
         stream,
         max_tokens,
         previous_response_id: None,
+        reasoning_requested,
+        tool_choice_requested,
+        structured_output_requested,
         tools: decode_tools(value.get("tools"))?,
         messages,
     })
@@ -442,6 +452,9 @@ mod tests {
             stream: false,
             max_tokens: None,
             previous_response_id: None,
+            reasoning_requested: false,
+            tool_choice_requested: false,
+            structured_output_requested: false,
             tools: Vec::new(),
             messages: vec![
                 InternalMessage {
@@ -479,6 +492,9 @@ mod tests {
             stream: false,
             max_tokens: None,
             previous_response_id: None,
+            reasoning_requested: false,
+            tool_choice_requested: false,
+            structured_output_requested: false,
             tools: Vec::new(),
             messages: vec![InternalMessage {
                 role: InternalRole::Tool,
@@ -501,6 +517,9 @@ mod tests {
             stream: false,
             max_tokens: None,
             previous_response_id: None,
+            reasoning_requested: false,
+            tool_choice_requested: false,
+            structured_output_requested: false,
             tools: vec![InternalTool {
                 name: "read_file".to_string(),
                 description: Some("Read a file".to_string()),
@@ -688,6 +707,9 @@ mod tests {
             stream: false,
             max_tokens: None,
             previous_response_id: None,
+            reasoning_requested: false,
+            tool_choice_requested: false,
+            structured_output_requested: false,
             tools: Vec::new(),
             messages: vec![InternalMessage {
                 role: InternalRole::Assistant,
@@ -717,6 +739,9 @@ mod tests {
             stream: false,
             max_tokens: None,
             previous_response_id: None,
+            reasoning_requested: false,
+            tool_choice_requested: false,
+            structured_output_requested: false,
             tools: Vec::new(),
             messages: vec![InternalMessage {
                 role: InternalRole::Assistant,

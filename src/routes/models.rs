@@ -39,12 +39,28 @@ struct ModelEntry {
 #[derive(Debug, Serialize)]
 struct ModelCapabilities {
     tool_calls: bool,
+    reasoning: bool,
+    tool_choice: bool,
+    parallel_tool_calls: bool,
+    system_messages: bool,
+    structured_outputs: bool,
+    streaming_usage: bool,
+    max_context_tokens: Option<i64>,
+    max_output_tokens: Option<i64>,
 }
 
 impl From<ProviderCapabilities> for ModelCapabilities {
     fn from(capabilities: ProviderCapabilities) -> Self {
         Self {
             tool_calls: capabilities.tool_calls,
+            reasoning: capabilities.reasoning,
+            tool_choice: capabilities.tool_choice,
+            parallel_tool_calls: capabilities.parallel_tool_calls,
+            system_messages: capabilities.system_messages,
+            structured_outputs: capabilities.structured_outputs,
+            streaming_usage: capabilities.streaming_usage,
+            max_context_tokens: capabilities.max_context_tokens,
+            max_output_tokens: capabilities.max_output_tokens,
         }
     }
 }
@@ -104,7 +120,7 @@ fn model_entry_for_alias(
         capabilities: provider
             .map(|(_, spec)| spec)
             .map(|spec| spec.capabilities.into())
-            .unwrap_or(ModelCapabilities { tool_calls: false }),
+            .unwrap_or_else(|| ProviderCapabilities::limited().into()),
     }
 }
 
@@ -201,6 +217,9 @@ mod tests {
         );
         assert!(response.0.data[0].capabilities.tool_calls);
         assert_eq!(response.0.data[0].upstream_model, response.0.data[0].id);
+        assert!(response.0.data[0].capabilities.tool_choice);
+        assert!(response.0.data[0].capabilities.system_messages);
+        assert!(!response.0.data[0].capabilities.structured_outputs);
     }
 
     #[tokio::test]
@@ -273,6 +292,8 @@ mod tests {
             ["responses", "anthropic_messages"]
         );
         assert!(model.capabilities.tool_calls);
+        assert!(model.capabilities.structured_outputs);
+        assert!(model.capabilities.streaming_usage);
     }
 
     #[tokio::test]
@@ -358,6 +379,8 @@ mod tests {
             ]
         );
         assert!(!model.capabilities.tool_calls);
+        assert!(model.capabilities.system_messages);
+        assert!(!model.capabilities.tool_choice);
     }
 
     #[tokio::test]

@@ -3,7 +3,7 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use crate::models::{ModelAlias, ProviderConfig};
+use crate::models::{ModelAlias, ProviderCapabilityOverrides, ProviderConfig};
 
 #[derive(Debug, Clone)]
 pub struct ResolvedProvider {
@@ -21,12 +21,14 @@ pub async fn init_schema(pool: &SqlitePool) -> Result<()> {
             base_url    TEXT NOT NULL,
             api_key     TEXT NOT NULL,
             token       TEXT NOT NULL UNIQUE,
+            capabilities_json TEXT,
             created_at  TEXT NOT NULL
         )
         "#,
     )
     .execute(pool)
     .await?;
+    ensure_provider_capabilities_column(pool).await?;
 
     sqlx::query(
         r#"
@@ -102,7 +104,7 @@ pub async fn init_schema(pool: &SqlitePool) -> Result<()> {
 
 pub async fn list_configs(pool: &SqlitePool) -> Result<Vec<ProviderConfig>> {
     let rows = sqlx::query_as::<_, ProviderConfig>(
-        "SELECT id, name, provider_type, base_url, api_key, token, created_at
+        "SELECT id, name, provider_type, base_url, api_key, token, capabilities_json, created_at
          FROM provider_configs
          ORDER BY created_at DESC",
     )
@@ -146,7 +148,7 @@ pub async fn list_model_aliases(pool: &SqlitePool) -> Result<Vec<ModelAlias>> {
 
 pub async fn get_config_by_id(pool: &SqlitePool, id: &str) -> Result<Option<ProviderConfig>> {
     let row = sqlx::query_as::<_, ProviderConfig>(
-        "SELECT id, name, provider_type, base_url, api_key, token, created_at
+        "SELECT id, name, provider_type, base_url, api_key, token, capabilities_json, created_at
          FROM provider_configs WHERE id = ?",
     )
     .bind(id)
@@ -157,7 +159,7 @@ pub async fn get_config_by_id(pool: &SqlitePool, id: &str) -> Result<Option<Prov
 
 pub async fn get_config_by_token(pool: &SqlitePool, token: &str) -> Result<Option<ProviderConfig>> {
     let row = sqlx::query_as::<_, ProviderConfig>(
-        "SELECT id, name, provider_type, base_url, api_key, token, created_at
+        "SELECT id, name, provider_type, base_url, api_key, token, capabilities_json, created_at
          FROM provider_configs WHERE token = ?",
     )
     .bind(token)
@@ -185,7 +187,7 @@ pub async fn get_provider_by_model(
     }
 
     let provider = sqlx::query_as::<_, ProviderConfig>(
-        "SELECT id, name, provider_type, base_url, api_key, token, created_at
+        "SELECT id, name, provider_type, base_url, api_key, token, capabilities_json, created_at
          FROM provider_configs WHERE name = ?",
     )
     .bind(model)
@@ -241,6 +243,7 @@ fn decode_downstream_protocols(value: &str) -> Vec<String> {
     serde_json::from_str::<Vec<String>>(value).unwrap_or_default()
 }
 
+#[cfg(test)]
 pub async fn create_config(
     pool: &SqlitePool,
     name: &str,
@@ -248,13 +251,25 @@ pub async fn create_config(
     base_url: &str,
     api_key: &str,
 ) -> Result<ProviderConfig> {
+    create_config_with_capabilities(pool, name, provider_type, base_url, api_key, None).await
+}
+
+pub async fn create_config_with_capabilities(
+    pool: &SqlitePool,
+    name: &str,
+    provider_type: &str,
+    base_url: &str,
+    api_key: &str,
+    capabilities: Option<&ProviderCapabilityOverrides>,
+) -> Result<ProviderConfig> {
     let id = Uuid::new_v4().to_string();
     let token = generate_token();
     let created_at = Utc::now().to_rfc3339();
+    let capabilities_json = encode_capabilities(capabilities)?;
 
     sqlx::query(
-        "INSERT INTO provider_configs (id, name, provider_type, base_url, api_key, token, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO provider_configs (id, name, provider_type, base_url, api_key, token, capabilities_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(name)
@@ -262,6 +277,7 @@ pub async fn create_config(
     .bind(base_url)
     .bind(api_key)
     .bind(&token)
+    .bind(&capabilities_json)
     .bind(&created_at)
     .execute(pool)
     .await?;
@@ -273,6 +289,7 @@ pub async fn create_config(
         base_url: base_url.to_string(),
         api_key: api_key.to_string(),
         token,
+        capabilities_json,
         created_at,
     })
 }
@@ -322,13 +339,14 @@ pub async fn create_model_alias(
     })
 }
 
-pub async fn update_config(
+pub async fn update_config_with_capabilities(
     pool: &SqlitePool,
     id: &str,
     name: Option<&str>,
     provider_type: Option<&str>,
     base_url: Option<&str>,
     api_key: Option<&str>,
+    capabilities: Option<&ProviderCapabilityOverrides>,
 ) -> Result<bool> {
     let current = match get_config_by_id(pool, id).await? {
         Some(c) => c,
@@ -339,14 +357,19 @@ pub async fn update_config(
     let provider_type = provider_type.unwrap_or(&current.provider_type);
     let base_url = base_url.unwrap_or(&current.base_url);
     let api_key = api_key.unwrap_or(&current.api_key);
+    let capabilities_json = match capabilities {
+        Some(capabilities) => encode_capabilities(Some(capabilities))?,
+        None => current.capabilities_json,
+    };
 
     let result = sqlx::query(
-        "UPDATE provider_configs SET name = ?, provider_type = ?, base_url = ?, api_key = ? WHERE id = ?",
+        "UPDATE provider_configs SET name = ?, provider_type = ?, base_url = ?, api_key = ?, capabilities_json = ? WHERE id = ?",
     )
     .bind(name)
     .bind(provider_type)
     .bind(base_url)
     .bind(api_key)
+    .bind(capabilities_json)
     .bind(id)
     .execute(pool)
     .await?;
@@ -375,6 +398,31 @@ pub async fn regenerate_token(pool: &SqlitePool, id: &str) -> Result<Option<Stri
     } else {
         Ok(None)
     }
+}
+
+async fn ensure_provider_capabilities_column(pool: &SqlitePool) -> Result<()> {
+    let columns = sqlx::query("PRAGMA table_info(provider_configs)")
+        .fetch_all(pool)
+        .await?;
+    let has_capabilities = columns.iter().any(|row| {
+        use sqlx::Row;
+        row.get::<String, _>("name") == "capabilities_json"
+    });
+    if !has_capabilities {
+        sqlx::query("ALTER TABLE provider_configs ADD COLUMN capabilities_json TEXT")
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+fn encode_capabilities(
+    capabilities: Option<&ProviderCapabilityOverrides>,
+) -> Result<Option<String>> {
+    let Some(capabilities) = capabilities else {
+        return Ok(None);
+    };
+    Ok(Some(serde_json::to_string(capabilities)?))
 }
 
 fn generate_token() -> String {

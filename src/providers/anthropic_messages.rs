@@ -175,6 +175,9 @@ mod tests {
             stream: false,
             max_tokens: Some(128),
             previous_response_id: None,
+            reasoning_requested: false,
+            tool_choice_requested: false,
+            structured_output_requested: false,
             tools: vec![InternalTool {
                 name: "read_file".to_string(),
                 description: Some("Read a file".to_string()),
@@ -223,6 +226,9 @@ mod tests {
             stream: false,
             max_tokens: None,
             previous_response_id: None,
+            reasoning_requested: false,
+            tool_choice_requested: false,
+            structured_output_requested: false,
             tools: Vec::new(),
             messages: vec![InternalMessage {
                 role: InternalRole::Tool,

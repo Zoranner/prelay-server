@@ -7,6 +7,9 @@ pub struct InternalRequest {
     pub stream: bool,
     pub max_tokens: Option<i64>,
     pub previous_response_id: Option<String>,
+    pub reasoning_requested: bool,
+    pub tool_choice_requested: bool,
+    pub structured_output_requested: bool,
     pub tools: Vec<InternalTool>,
     pub messages: Vec<InternalMessage>,
 }

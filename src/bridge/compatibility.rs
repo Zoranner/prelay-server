@@ -1,7 +1,9 @@
 use serde_json::json;
 
 use crate::{
-    bridge::internal::InternalRequest, models::ProviderConfig, providers::spec::ProviderSpec,
+    bridge::internal::{InternalRequest, InternalRole},
+    models::ProviderConfig,
+    providers::spec::ProviderSpec,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +37,45 @@ pub fn first_rejection(
             field: "tools",
             reason: "provider does not advertise tool call support",
         });
+    }
+    if request.tool_choice_requested && !spec.capabilities.tool_choice {
+        return Some(CompatibilityRejection {
+            field: "tool_choice",
+            reason: "provider does not advertise tool choice support",
+        });
+    }
+    if request.reasoning_requested && !spec.capabilities.reasoning {
+        return Some(CompatibilityRejection {
+            field: "reasoning",
+            reason: "provider does not advertise reasoning support",
+        });
+    }
+    if request.structured_output_requested && !spec.capabilities.structured_outputs {
+        return Some(CompatibilityRejection {
+            field: "structured_outputs",
+            reason: "provider does not advertise structured output support",
+        });
+    }
+    if request
+        .messages
+        .iter()
+        .any(|message| matches!(message.role, InternalRole::System))
+        && !spec.capabilities.system_messages
+    {
+        return Some(CompatibilityRejection {
+            field: "system_messages",
+            reason: "provider does not advertise system message support",
+        });
+    }
+    if let (Some(max_tokens), Some(limit)) =
+        (request.max_tokens, spec.capabilities.max_output_tokens)
+    {
+        if max_tokens > limit {
+            return Some(CompatibilityRejection {
+                field: "max_tokens",
+                reason: "request exceeds provider max output tokens",
+            });
+        }
     }
 
     None
@@ -72,6 +113,36 @@ mod tests {
         assert!(first_rejection(&provider, &request).is_none());
     }
 
+    #[test]
+    fn rejects_reasoning_when_provider_does_not_advertise_support() {
+        let provider = provider("openai_compatible");
+        let mut request = request_with_tool();
+        request.tools = Vec::new();
+        request.reasoning_requested = true;
+
+        let rejection = first_rejection(&provider, &request).expect("rejection");
+
+        assert_eq!(rejection.field, "reasoning");
+    }
+
+    #[test]
+    fn rejects_max_tokens_above_provider_limit() {
+        let mut provider = provider("openai_compatible");
+        provider.capabilities_json = Some(
+            serde_json::json!({
+                "max_output_tokens": 128
+            })
+            .to_string(),
+        );
+        let mut request = request_with_tool();
+        request.tools = Vec::new();
+        request.max_tokens = Some(256);
+
+        let rejection = first_rejection(&provider, &request).expect("rejection");
+
+        assert_eq!(rejection.field, "max_tokens");
+    }
+
     fn provider(provider_type: &str) -> ProviderConfig {
         ProviderConfig {
             id: "provider-1".to_string(),
@@ -80,6 +151,7 @@ mod tests {
             base_url: "http://127.0.0.1:11434/api".to_string(),
             api_key: "sk-test".to_string(),
             token: "token".to_string(),
+            capabilities_json: None,
             created_at: "2026-06-05T00:00:00Z".to_string(),
         }
     }
@@ -90,6 +162,9 @@ mod tests {
             stream: false,
             max_tokens: None,
             previous_response_id: None,
+            reasoning_requested: false,
+            tool_choice_requested: false,
+            structured_output_requested: false,
             tools: vec![InternalTool {
                 name: "read_file".to_string(),
                 description: None,

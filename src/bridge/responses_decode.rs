@@ -22,6 +22,9 @@ pub fn decode_responses_request(value: Value) -> Result<InternalRequest, AppErro
         .filter(|id| !id.trim().is_empty())
         .map(str::to_string);
     let max_tokens = value.get("max_output_tokens").and_then(Value::as_i64);
+    let reasoning_requested = value.get("reasoning").is_some();
+    let tool_choice_requested = value.get("tool_choice").is_some();
+    let structured_output_requested = responses_structured_output_requested(&value);
     let input = value
         .get("input")
         .ok_or_else(|| AppError::BadRequest("input 不能为空".to_string()))?;
@@ -31,9 +34,23 @@ pub fn decode_responses_request(value: Value) -> Result<InternalRequest, AppErro
         stream,
         max_tokens,
         previous_response_id,
+        reasoning_requested,
+        tool_choice_requested,
+        structured_output_requested,
         tools: decode_tools(value.get("tools"))?,
         messages: decode_input(input)?,
     })
+}
+
+fn responses_structured_output_requested(value: &Value) -> bool {
+    value
+        .pointer("/text/format/type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind != "text")
+        || value
+            .pointer("/response_format/type")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| kind != "text")
 }
 
 fn decode_tools(value: Option<&Value>) -> Result<Vec<InternalTool>, AppError> {
