@@ -8,7 +8,7 @@
 
 当前可认为后端主链路已完成第一版骨架，但还没有达到完整产品验收。主要缺口集中在三类：
 
-- `responses <-> anthropic_messages` 只支持非流式互转，流式互转明确拒绝。
+- `responses <-> anthropic_messages` 已支持非流式和文本流式互转，但工具调用增量、usage 聚合和真实客户端复杂会话仍未完整验收。
 - 现有验证以 mock upstream 和单元测试为主，缺少 Codex、Claude Code、DeepSeek、OpenAI、Anthropic、Ollama 的真实客户端联调记录。
 - 统计已经能记录请求、token、成本估算、延迟、错误和聚合数据，但流式请求统计仍偏粗，`first_token_ms`、流式 token、流式 tool-call 数量和上游 request id 多数没有准确回填。
 
@@ -51,9 +51,9 @@
 - `chat_completions -> responses`
 - `chat_completions -> anthropic_messages`
 - `responses -> responses`
-- `responses -> anthropic_messages`，仅非流式。
+- `responses -> anthropic_messages`，支持非流式和文本流式。
 - `anthropic_messages -> anthropic_messages`
-- `anthropic_messages -> responses`，仅非流式。
+- `anthropic_messages -> responses`，支持非流式和文本流式。
 - `ollama_native -> ollama_native`
 - `ollama_native -> chat_completions`
 - `ollama_native -> responses`

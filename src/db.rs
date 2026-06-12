@@ -4,6 +4,7 @@ use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::models::{ModelAlias, ProviderCapabilityOverrides, ProviderConfig};
+use crate::providers::spec::ProviderSpec;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedProvider {
@@ -194,9 +195,14 @@ pub async fn get_provider_by_model(
     .fetch_optional(pool)
     .await?;
 
-    Ok(provider.map(|provider| ResolvedProvider {
-        model_upstream: model.to_string(),
-        provider,
+    Ok(provider.and_then(|provider| {
+        let spec = ProviderSpec::from_provider_config(&provider);
+        spec.protocol
+            .supports_downstream(downstream_protocol)
+            .then_some(ResolvedProvider {
+                model_upstream: model.to_string(),
+                provider,
+            })
     }))
 }
 
@@ -502,6 +508,31 @@ mod tests {
 
         assert_eq!(resolved.provider.id, provider.id);
         assert_eq!(resolved.model_upstream, "deepseek-chat");
+    }
+
+    #[tokio::test]
+    async fn does_not_fallback_to_provider_name_when_provider_protocol_is_not_allowed() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        super::init_schema(&db).await.expect("init schema");
+        create_config(
+            &db,
+            "OpenAI Responses",
+            "openai",
+            "https://api.openai.com",
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+
+        let resolved = get_provider_by_model(&db, "OpenAI Responses", "chat_completions")
+            .await
+            .expect("resolve provider");
+
+        assert!(resolved.is_none());
     }
 
     #[tokio::test]

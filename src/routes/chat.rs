@@ -687,6 +687,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejects_responses_provider_name_on_chat_completion_route() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(
+            &db,
+            "OpenAI Responses",
+            "openai",
+            "http://127.0.0.1:1",
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+            admin_token: None,
+        };
+
+        let error = create_chat_completion(
+            State(state),
+            axum::Json(json!({
+                "model": "OpenAI Responses",
+                "messages": [
+                    { "role": "user", "content": "hello" }
+                ]
+            })),
+        )
+        .await
+        .expect_err("responses provider should not be exposed as chat completions");
+
+        assert!(format!("{error:?}").contains("模型 OpenAI Responses 未配置"));
+    }
+
+    #[tokio::test]
+    async fn rejects_anthropic_provider_name_on_chat_completion_route() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(
+            &db,
+            "Claude",
+            "anthropic_compatible",
+            "http://127.0.0.1:1",
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+            admin_token: None,
+        };
+
+        let error = create_chat_completion(
+            State(state),
+            axum::Json(json!({
+                "model": "Claude",
+                "messages": [
+                    { "role": "user", "content": "hello" }
+                ]
+            })),
+        )
+        .await
+        .expect_err("anthropic provider should not be exposed as chat completions");
+
+        assert!(format!("{error:?}").contains("模型 Claude 未配置"));
+    }
+
+    #[tokio::test]
     async fn records_successful_chat_completion_request_log() {
         let upstream = spawn_chat_upstream().await;
         let db = SqlitePoolOptions::new()

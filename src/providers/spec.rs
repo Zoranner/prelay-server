@@ -8,6 +8,28 @@ pub enum UpstreamProtocol {
     OllamaNative,
 }
 
+impl UpstreamProtocol {
+    pub fn downstream_protocols(self) -> &'static [&'static str] {
+        match self {
+            UpstreamProtocol::Responses => &["responses", "anthropic_messages"],
+            UpstreamProtocol::ChatCompletions => {
+                &["responses", "chat_completions", "anthropic_messages"]
+            }
+            UpstreamProtocol::AnthropicMessages => &["responses", "anthropic_messages"],
+            UpstreamProtocol::OllamaNative => &[
+                "responses",
+                "chat_completions",
+                "anthropic_messages",
+                "ollama_native",
+            ],
+        }
+    }
+
+    pub fn supports_downstream(self, downstream_protocol: &str) -> bool {
+        self.downstream_protocols().contains(&downstream_protocol)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthScheme {
     Bearer,
@@ -238,6 +260,25 @@ mod tests {
         assert!(spec.capabilities.structured_outputs);
         assert_eq!(spec.capabilities.max_context_tokens, Some(8192));
         assert_eq!(spec.capabilities.max_output_tokens, Some(2048));
+    }
+
+    #[test]
+    fn enforces_downstream_protocol_matrix() {
+        assert!(UpstreamProtocol::Responses.supports_downstream("responses"));
+        assert!(UpstreamProtocol::Responses.supports_downstream("anthropic_messages"));
+        assert!(!UpstreamProtocol::Responses.supports_downstream("chat_completions"));
+
+        assert!(UpstreamProtocol::AnthropicMessages.supports_downstream("responses"));
+        assert!(!UpstreamProtocol::AnthropicMessages.supports_downstream("chat_completions"));
+
+        assert!(UpstreamProtocol::ChatCompletions.supports_downstream("responses"));
+        assert!(UpstreamProtocol::ChatCompletions.supports_downstream("chat_completions"));
+        assert!(UpstreamProtocol::ChatCompletions.supports_downstream("anthropic_messages"));
+
+        assert!(UpstreamProtocol::OllamaNative.supports_downstream("responses"));
+        assert!(UpstreamProtocol::OllamaNative.supports_downstream("chat_completions"));
+        assert!(UpstreamProtocol::OllamaNative.supports_downstream("anthropic_messages"));
+        assert!(UpstreamProtocol::OllamaNative.supports_downstream("ollama_native"));
     }
 
     fn provider(provider_type: &str) -> ProviderConfig {

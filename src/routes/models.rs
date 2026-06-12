@@ -101,6 +101,16 @@ fn model_entry_for_alias(
     providers_by_id: &HashMap<String, (String, ProviderSpec)>,
 ) -> ModelEntry {
     let provider = providers_by_id.get(&alias.provider_id);
+    let downstream_protocols = provider
+        .map(|(_, spec)| {
+            alias
+                .downstream_protocols
+                .iter()
+                .filter(|protocol| spec.protocol.supports_downstream(protocol))
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| alias.downstream_protocols.clone());
 
     ModelEntry {
         id: alias.alias,
@@ -116,7 +126,7 @@ fn model_entry_for_alias(
             .map(|spec| protocol_name(spec.protocol))
             .unwrap_or("alias"),
         upstream_model: alias.upstream_model,
-        downstream_protocols: alias.downstream_protocols,
+        downstream_protocols,
         capabilities: provider
             .map(|(_, spec)| spec)
             .map(|spec| spec.capabilities.into())
@@ -151,22 +161,11 @@ fn protocol_name(protocol: UpstreamProtocol) -> &'static str {
 }
 
 fn downstream_protocols_for_upstream(protocol: UpstreamProtocol) -> Vec<String> {
-    match protocol {
-        UpstreamProtocol::Responses => &["responses", "anthropic_messages"][..],
-        UpstreamProtocol::ChatCompletions => {
-            &["responses", "chat_completions", "anthropic_messages"][..]
-        }
-        UpstreamProtocol::AnthropicMessages => &["responses", "anthropic_messages"][..],
-        UpstreamProtocol::OllamaNative => &[
-            "responses",
-            "chat_completions",
-            "anthropic_messages",
-            "ollama_native",
-        ][..],
-    }
-    .iter()
-    .map(|protocol| (*protocol).to_string())
-    .collect()
+    protocol
+        .downstream_protocols()
+        .iter()
+        .map(|protocol| (*protocol).to_string())
+        .collect()
 }
 
 #[cfg(test)]
@@ -257,6 +256,45 @@ mod tests {
             && model.upstream_protocol == "chat_completions"
             && model.upstream_model == "deepseek-chat"
             && model.downstream_protocols == ["responses"]));
+    }
+
+    #[tokio::test]
+    async fn clips_alias_downstream_protocols_to_provider_supported_protocols() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        let provider =
+            db::create_config(&db, "OpenAI", "openai", "https://api.openai.com", "sk-test")
+                .await
+                .expect("create provider");
+        db::create_model_alias(
+            &db,
+            "coder",
+            &provider.id,
+            "gpt-4.1",
+            &["responses", "chat_completions"],
+        )
+        .await
+        .expect("create alias");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+            admin_token: None,
+        };
+
+        let response = list_models(State(state)).await.expect("list models");
+        let alias = response
+            .0
+            .data
+            .iter()
+            .find(|model| model.id == "coder")
+            .expect("alias listed");
+
+        assert_eq!(alias.upstream_protocol, "responses");
+        assert_eq!(alias.downstream_protocols, ["responses"]);
     }
 
     #[tokio::test]

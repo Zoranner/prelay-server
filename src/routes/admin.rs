@@ -11,6 +11,7 @@ use crate::{
     error::AppError,
     models::{ConfigResponse, CreateConfigRequest, UpdateConfigRequest},
     models::{CreateModelAliasRequest, ModelAliasResponse},
+    providers::spec::ProviderSpec,
     AppState,
 };
 
@@ -136,6 +137,22 @@ async fn create_model_alias(
     if req.upstream_model.trim().is_empty() {
         return Err(AppError::BadRequest("上游模型不能为空".to_string()));
     }
+    if req.downstream_protocols.is_empty() {
+        return Err(AppError::BadRequest("下游协议不能为空".to_string()));
+    }
+    let provider = db::get_config_by_id(&state.db, &req.provider_id)
+        .await?
+        .ok_or_else(|| AppError::BadRequest(format!("Provider {} 不存在", req.provider_id)))?;
+    let provider_spec = ProviderSpec::from_provider_config(&provider);
+    if let Some(protocol) = req
+        .downstream_protocols
+        .iter()
+        .find(|protocol| !provider_spec.protocol.supports_downstream(protocol))
+    {
+        return Err(AppError::BadRequest(format!(
+            "Provider 上游协议不支持下游协议 {protocol}"
+        )));
+    }
     let protocols = req
         .downstream_protocols
         .iter()
@@ -260,6 +277,59 @@ mod tests {
             .expect("resolve alias")
             .expect("alias exists");
         assert_eq!(resolved.model_upstream, "deepseek-chat");
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn rejects_model_alias_with_unsupported_downstream_protocols() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        let provider = db::create_config(
+            &db,
+            "OpenAI",
+            "openai",
+            "https://api.openai.com",
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+            admin_token: None,
+        };
+        let app = Router::new().nest("/api", super::router().with_state(state));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("read test server address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{addr}/api/model-aliases"))
+            .json(&json!({
+                "alias": "coder",
+                "provider_id": provider.id,
+                "upstream_model": "gpt-4.1",
+                "downstream_protocols": ["responses", "chat_completions"]
+            }))
+            .send()
+            .await
+            .expect("send request");
+
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = response.json().await.expect("parse error body");
+        assert!(body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("chat_completions"));
 
         server.abort();
     }
