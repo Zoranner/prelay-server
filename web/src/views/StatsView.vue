@@ -53,16 +53,17 @@
                     <th class="px-4 py-3 text-right whitespace-nowrap">HTTP</th>
                     <th class="px-4 py-3 text-left whitespace-nowrap">上游 ID</th>
                     <th class="px-4 py-3 text-left whitespace-nowrap">错误</th>
+                    <th class="px-4 py-3 text-left whitespace-nowrap">诊断</th>
                     <th class="px-4 py-3 text-right whitespace-nowrap">Token</th>
                     <th class="px-4 py-3 text-right whitespace-nowrap">耗时</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-stone-100 bg-white">
                   <tr v-if="!loading && requestLogs.length === 0">
-                    <td colspan="10" class="px-4 py-8 text-center text-stone-400">暂无请求记录</td>
+                    <td colspan="11" class="px-4 py-8 text-center text-stone-400">暂无请求记录</td>
                   </tr>
                   <tr
-                    v-for="request in requestLogs"
+                    v-for="{ request, diagnostics } in requestRows"
                     :key="request.id"
                     class="text-stone-600 hover:bg-stone-50/60"
                   >
@@ -100,6 +101,15 @@
                     <td class="px-4 py-3 max-w-[220px]">
                       <span class="block truncate text-xs" :title="errorTitle(request)">
                         {{ errorLabel(request) }}
+                      </span>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap">
+                      <span
+                        class="inline-flex rounded-full border px-2 py-0.5 text-xs font-medium"
+                        :class="diagnosticsClass(diagnostics.tone)"
+                        :title="diagnostics.title"
+                      >
+                        {{ diagnostics.label }}
                       </span>
                     </td>
                     <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
@@ -246,6 +256,14 @@ const error = ref('');
 
 const numberFormatter = new Intl.NumberFormat('zh-CN');
 
+type DiagnosticsTone = 'empty' | 'normal' | 'warning' | 'invalid';
+
+interface DiagnosticsSummary {
+  label: string;
+  title: string;
+  tone: DiagnosticsTone;
+}
+
 const metrics = computed(() => [
   { label: '总请求', value: formatNumber(overview.value.total_requests) },
   { label: '成功', value: formatNumber(overview.value.successful_requests) },
@@ -253,6 +271,13 @@ const metrics = computed(() => [
   { label: '输入 Token', value: formatNumber(overview.value.input_tokens) },
   { label: '输出 Token', value: formatNumber(overview.value.output_tokens) },
 ]);
+
+const requestRows = computed(() =>
+  requestLogs.value.map((request) => ({
+    request,
+    diagnostics: diagnosticsSummary(request),
+  })),
+);
 
 onMounted(() => {
   loadStats();
@@ -330,6 +355,88 @@ function errorTitle(request: RequestLogSummary) {
 
 function upstreamRequestId(request: RequestLogSummary) {
   return request.upstream_request_id || '—';
+}
+
+function diagnosticsSummary(request: RequestLogSummary): DiagnosticsSummary {
+  if (!request.metadata_json?.trim()) {
+    return {
+      label: '—',
+      title: '无 metadata',
+      tone: 'empty',
+    };
+  }
+
+  let metadata: unknown;
+
+  try {
+    metadata = JSON.parse(request.metadata_json);
+  } catch {
+    return {
+      label: '解析失败',
+      title: 'metadata_json 不是有效 JSON',
+      tone: 'invalid',
+    };
+  }
+
+  if (!isRecord(metadata)) {
+    return {
+      label: '无诊断',
+      title: 'metadata 不是对象',
+      tone: 'empty',
+    };
+  }
+
+  const diagnostics = Array.isArray(metadata.diagnostics) ? metadata.diagnostics : [];
+
+  if (diagnostics.length === 0) {
+    return {
+      label: '无诊断',
+      title: 'metadata 未包含 diagnostics，或 diagnostics 为空',
+      tone: 'empty',
+    };
+  }
+
+  const warningCount = diagnostics.filter(isWarningDiagnostic).length;
+  const title = `diagnostics: ${diagnostics.length}，warning: ${warningCount}`;
+
+  return {
+    label:
+      warningCount > 0
+        ? `${diagnostics.length} 条 / ${warningCount} 警告`
+        : `${diagnostics.length} 条`,
+    title,
+    tone: warningCount > 0 ? 'warning' : 'normal',
+  };
+}
+
+function diagnosticsClass(tone: DiagnosticsTone) {
+  if (tone === 'warning') {
+    return 'border-amber-200 bg-amber-50 text-amber-700';
+  }
+
+  if (tone === 'invalid') {
+    return 'border-stone-200 bg-stone-100 text-stone-500';
+  }
+
+  if (tone === 'normal') {
+    return 'border-[#dcebe3] bg-[#f2f8f5] text-[#256047]';
+  }
+
+  return 'border-stone-100 bg-stone-50 text-stone-400';
+}
+
+function isWarningDiagnostic(value: unknown) {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return ['severity', 'level', 'type', 'status'].some(
+    (key) => value[key] === 'warning' || value[key] === 'warn',
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function formatTokenPair(inputTokens: number, outputTokens: number) {

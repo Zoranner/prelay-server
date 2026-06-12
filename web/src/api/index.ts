@@ -113,6 +113,7 @@ export interface RequestLogSummary {
   output_tokens: number | null;
   latency_ms: number | null;
   upstream_request_id: string | null;
+  metadata_json: string | null;
 }
 
 export interface ModelStatsSummary {
