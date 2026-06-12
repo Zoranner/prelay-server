@@ -20,11 +20,11 @@ fn main() {
         run("bun", &["install"], "web");
     }
 
-    progress("Formatting (prettier)...");
-    run("bun", &["run", "format"], "web");
+    progress("Checking format (prettier)...");
+    run("bun", &["run", "format:check"], "web");
 
-    progress("Linting (eslint --fix)...");
-    run("bun", &["run", "lint:fix"], "web");
+    progress("Linting (eslint)...");
+    run("bun", &["run", "lint"], "web");
 
     progress("Building (vite)...");
     run("bun", &["run", "build"], "web");
