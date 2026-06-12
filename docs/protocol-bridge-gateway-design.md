@@ -10,14 +10,13 @@
 - OpenAI Chat Completions API：面向普通 OpenAI-compatible 客户端。
 - Anthropic Messages API：面向 Claude Code / Anthropic-compatible 客户端。
 
-供给侧需要覆盖四类上游：
+供给侧需要覆盖三类上游：
 
 - Chat Completions：DeepSeek、智谱、MiniMax、Kimi、OpenAI-compatible 计费接口等。
 - OpenAI Responses API：OpenAI 原生 Responses 端点，以及支持 Responses 的 Codex 类计费接口。
 - Anthropic Messages API：Anthropic 原生 Messages 端点，以及 Claude Code / Anthropic-compatible 计费接口。
-- Ollama Native：本地大模型接入，主要作为本地供给层。
 
-设计目标是把主流计费接口和本地模型包装成 Codex、Claude Code 和普通客户端可用的统一服务，同时保留清晰的协议边界和统计观测能力。
+设计目标是把主流计费接口包装成 Codex、Claude Code 和普通客户端可用的统一服务，同时保留清晰的协议边界和统计观测能力。
 
 ## 参考项目结论
 
@@ -44,7 +43,6 @@
 - `chat_completions`：主力上游协议。
 - `responses`：OpenAI Responses 原生上游协议。
 - `anthropic_messages`：Anthropic Messages 原生上游协议。
-- `ollama_native`：本地模型上游协议。
 
 ### 允许的转换方向
 
@@ -58,10 +56,6 @@ responses -> anthropic_messages
 
 anthropic_messages -> anthropic_messages
 anthropic_messages -> responses
-
-ollama_native -> chat_completions
-ollama_native -> responses
-ollama_native -> anthropic_messages
 ```
 
 其中 `responses -> anthropic_messages` 和 `anthropic_messages -> responses` 是面向 Codex / Claude Code 互通的高级桥接，优先级低于 `chat_completions -> responses` 和 `chat_completions -> anthropic_messages`。
@@ -90,7 +84,6 @@ anthropic_messages -> chat_completions
 - Chat Completions 上游适配。
 - Responses 原生上游适配。
 - Anthropic Messages 原生上游适配。
-- Ollama Native 上游适配。
 - Responses 桥接，支持 Codex 使用。
 - Anthropic Messages 桥接，支持 Claude Code 使用。
 - 流式 SSE 桥接。
@@ -159,7 +152,6 @@ src/bridge/anthropic_decode.rs
 ```text
 src/bridge/internal.rs
 src/bridge/tools.rs
-src/bridge/compatibility.rs
 src/bridge/sessions.rs
 src/bridge/stream.rs
 ```
@@ -175,7 +167,7 @@ src/bridge/stream.rs
 - `InternalOutputItem`
 - `InternalUsage`
 - `InternalStreamDelta`
-- `CompatibilityDecision`
+- `CompatibilityDiagnostic`
 
 内部模型是协议转换的中心。新增协议时应新增 decoder / encoder / adapter，不应在路由里堆叠分支。
 
@@ -188,7 +180,6 @@ src/providers/spec.rs
 src/providers/chat_completions.rs
 src/providers/responses.rs
 src/providers/anthropic_messages.rs
-src/providers/ollama.rs
 ```
 
 `ProviderSpec` 描述 provider 能力：
@@ -231,7 +222,7 @@ Codex
     -> 解析 model / alias
     -> responses_decode
     -> session chain 合并
-    -> compatibility plan
+    -> compatibility diagnostics
     -> chat_completions adapter
     -> responses_encode
     -> 写 request_logs
@@ -256,7 +247,7 @@ OpenAI-compatible client
   POST /v1/chat/completions
     -> 入站鉴权
     -> chat_decode
-    -> 选择 chat_completions 或 ollama_native 上游
+    -> 选择 chat_completions 上游
     -> adapter 调用
     -> chat_encode
     -> 写 request_logs
@@ -535,25 +526,6 @@ x-api-key: <proxy token>
 - Claude Code 类客户端能通过本服务调用 DeepSeek / OpenAI-compatible 上游。
 - 工具调用结构正确，不降级成纯文本。
 
-### Ollama Native 接入
-
-目标：本地模型可包装成 Chat Completions、Responses 和 Anthropic Messages。
-
-范围：
-
-- Ollama `/api/chat` adapter。
-- 文本非流式。
-- 文本流式。
-- usage 缺失时的空值或估算策略。
-- 工具能力按模型配置开关。
-
-验收：
-
-- Ollama 模型能被普通 OpenAI-compatible 客户端调用。
-- Ollama 模型能被 Codex 以 Responses API 调用。
-- Ollama 模型能被 Anthropic Messages 客户端调用。
-- 能力不足时明确降级或拒绝，不伪装完整支持。
-
 ### Responses 与 Anthropic Messages 互转
 
 目标：仅在明确需求出现时支持 `responses <-> anthropic_messages`。
@@ -582,7 +554,7 @@ Responses SSE 和 Anthropic SSE 都有状态机语义。流式桥接应由 `Inte
 
 ### Reasoning 字段差异
 
-不同 provider 对 reasoning / thinking 支持不同。必须通过 capability plan 做 supported / degraded / ignored / rejected 决策。
+不同 provider 对 reasoning / thinking 支持不同。必须通过 compatibility diagnostics 做映射、默认值补齐、降级或透传决策，并把无法完整表达的字段记录到诊断信息。
 
 ### 会话链膨胀
 
@@ -608,7 +580,6 @@ src/bridge/responses_decode.rs
 src/bridge/responses_encode.rs
 src/bridge/sessions.rs
 src/bridge/stream.rs
-src/bridge/compatibility.rs
 src/providers/mod.rs
 src/providers/spec.rs
 src/providers/chat_completions.rs
@@ -658,6 +629,6 @@ bun run lint
 
 ## 结论
 
-`provider-relay` 应演进为小型协议桥接网关：用户侧支持 Chat Completions、Responses、Anthropic Messages，供给侧支持 Chat Completions、Responses、Anthropic Messages 和 Ollama Native。核心转换通过内部模型承载，不做任意协议互转，明确禁止将入站 `responses` 和 `anthropic_messages` 降格输出到 `chat_completions`。
+`provider-relay` 应演进为小型协议桥接网关：用户侧支持 Chat Completions、Responses、Anthropic Messages，供给侧支持 Chat Completions、Responses、Anthropic Messages。核心转换通过内部模型承载，不做任意协议互转，明确禁止将入站 `responses` 和 `anthropic_messages` 降格输出到 `chat_completions`。
 
-首期先做 `chat_completions -> responses`，以 DeepSeek 让 Codex 可用为验收目标，并同时埋入统计观测字段。统计只做观测，不做限额、预算和扣费。后续再补 Anthropic Messages、Ollama Native 和管理页统计。
+首期先做 `chat_completions -> responses`，以 DeepSeek 让 Codex 可用为验收目标，并同时埋入统计观测字段。统计只做观测，不做限额、预算和扣费。后续再补 Anthropic Messages 和管理页统计。

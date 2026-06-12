@@ -203,10 +203,10 @@ mod tests {
         let response = reqwest::Client::new()
             .post(format!("http://{addr}/api/configs"))
             .json(&json!({
-                "name": "Local Llama",
-                "provider_type": "ollama_native",
-                "base_url": "http://127.0.0.1:11434/api",
-                "api_key": "unused",
+                "name": "DeepSeek",
+                "provider_type": "openai_compatible",
+                "base_url": "https://api.deepseek.com/v1",
+                "api_key": "sk-upstream",
                 "capabilities": {
                     "tool_calls": true,
                     "structured_outputs": true,

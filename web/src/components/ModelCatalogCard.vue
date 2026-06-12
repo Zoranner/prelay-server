@@ -214,7 +214,6 @@ function protocolLabel(protocol: string) {
     chat_completions: 'Chat Completions',
     responses: 'Responses',
     anthropic_messages: 'Anthropic Messages',
-    ollama_native: 'Ollama Native',
   };
 
   return labels[protocol] ?? protocol;

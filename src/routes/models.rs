@@ -156,7 +156,6 @@ fn protocol_name(protocol: UpstreamProtocol) -> &'static str {
         UpstreamProtocol::Responses => "responses",
         UpstreamProtocol::ChatCompletions => "chat_completions",
         UpstreamProtocol::AnthropicMessages => "anthropic_messages",
-        UpstreamProtocol::OllamaNative => "ollama_native",
     }
 }
 
@@ -372,53 +371,6 @@ mod tests {
             ["responses", "anthropic_messages"]
         );
         assert!(model.capabilities.tool_calls);
-    }
-
-    #[tokio::test]
-    async fn lists_ollama_native_providers_as_openai_models() {
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
-            "Local Ollama",
-            "ollama_native",
-            "http://127.0.0.1:11434",
-            "",
-        )
-        .await
-        .expect("create provider");
-        let state = AppState {
-            db,
-            client: reqwest::Client::new(),
-            admin_token: None,
-        };
-
-        let response = list_models(State(state)).await.expect("list models");
-        let model = response
-            .0
-            .data
-            .iter()
-            .find(|model| model.provider_id == provider.id)
-            .expect("provider model listed");
-
-        assert_eq!(model.id, provider.name);
-        assert_eq!(model.upstream_protocol, "ollama_native");
-        assert_eq!(
-            model.downstream_protocols,
-            [
-                "responses",
-                "chat_completions",
-                "anthropic_messages",
-                "ollama_native"
-            ]
-        );
-        assert!(!model.capabilities.tool_calls);
-        assert!(model.capabilities.system_messages);
-        assert!(!model.capabilities.tool_choice);
     }
 
     #[tokio::test]

@@ -61,34 +61,33 @@ fn decode_tools(value: Option<&Value>) -> Result<Vec<InternalTool>, AppError> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
-    let tools = value
-        .as_array()
-        .ok_or_else(|| AppError::BadRequest("tools 必须是数组".to_string()))?;
+    let Some(tools) = value.as_array() else {
+        return Ok(Vec::new());
+    };
 
-    tools
-        .iter()
-        .map(|tool| {
-            let name = tool
-                .get("name")
-                .and_then(Value::as_str)
-                .filter(|name| !name.trim().is_empty())
-                .ok_or_else(|| AppError::BadRequest("tool.name 不能为空".to_string()))?
-                .to_string();
-            let input_schema = tool
-                .get("input_schema")
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({ "type": "object" }));
+    Ok(tools.iter().filter_map(decode_tool).collect())
+}
 
-            Ok(InternalTool {
-                name,
-                description: tool
-                    .get("description")
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
-                input_schema,
-            })
-        })
-        .collect()
+fn decode_tool(tool: &Value) -> Option<InternalTool> {
+    let name = tool
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|name| !name.trim().is_empty())?
+        .to_string();
+    let input_schema = tool
+        .get("input_schema")
+        .or_else(|| tool.get("parameters"))
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({ "type": "object" }));
+
+    Some(InternalTool {
+        name,
+        description: tool
+            .get("description")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        input_schema,
+    })
 }
 
 fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
@@ -100,11 +99,8 @@ fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
         .get("role")
         .and_then(Value::as_str)
         .map(decode_role)
-        .transpose()?
         .unwrap_or(InternalRole::User);
-    let content = value
-        .get("content")
-        .ok_or_else(|| AppError::BadRequest("message.content 不能为空".to_string()))?;
+    let content = value.get("content").unwrap_or(value);
 
     Ok(InternalMessage {
         role,
@@ -126,17 +122,18 @@ fn decode_tool_result_message(value: &Value) -> Result<Option<InternalMessage>, 
     }) else {
         return Ok(None);
     };
-    let tool_call_id = tool_result
+    let Some(tool_call_id) = tool_result
         .get("tool_use_id")
         .and_then(Value::as_str)
         .filter(|id| !id.trim().is_empty())
-        .ok_or_else(|| AppError::BadRequest("tool_result.tool_use_id 不能为空".to_string()))?
-        .to_string();
+    else {
+        return Ok(None);
+    };
 
     Ok(Some(InternalMessage {
         role: InternalRole::Tool,
         content: decode_tool_result_content(tool_result.get("content"))?,
-        tool_call_id: Some(tool_call_id),
+        tool_call_id: Some(tool_call_id.to_string()),
         tool_calls: Vec::new(),
         reasoning_content: None,
     }))
@@ -152,11 +149,12 @@ fn decode_tool_result_content(value: Option<&Value>) -> Result<Vec<InternalConte
     decode_content(value)
 }
 
-fn decode_role(role: &str) -> Result<InternalRole, AppError> {
+fn decode_role(role: &str) -> InternalRole {
     match role {
-        "user" => Ok(InternalRole::User),
-        "assistant" => Ok(InternalRole::Assistant),
-        _ => Err(AppError::BadRequest(format!("不支持的消息角色: {role}"))),
+        "assistant" => InternalRole::Assistant,
+        "system" | "developer" => InternalRole::System,
+        "tool" => InternalRole::Tool,
+        _ => InternalRole::User,
     }
 }
 
@@ -165,29 +163,41 @@ fn decode_content(value: &Value) -> Result<Vec<InternalContentPart>, AppError> {
         return Ok(vec![InternalContentPart::Text(text.to_string())]);
     }
 
-    let parts = value
-        .as_array()
-        .ok_or_else(|| AppError::BadRequest("content 必须是字符串或数组".to_string()))?;
+    let Some(parts) = value.as_array() else {
+        return Ok(vec![InternalContentPart::Text(value_to_text(value))]);
+    };
     let text_parts = parts
         .iter()
-        .filter_map(|part| {
-            part.get("type")
-                .and_then(Value::as_str)
-                .is_some_and(|kind| kind == "text")
-                .then(|| {
-                    part.get("text")
-                        .and_then(Value::as_str)
-                        .map(|text| InternalContentPart::Text(text.to_string()))
-                })
-                .flatten()
-        })
+        .filter_map(|part| decode_content_part_text(part).map(InternalContentPart::Text))
         .collect::<Vec<_>>();
 
     if text_parts.is_empty() {
-        return Err(AppError::BadRequest("content 没有可用文本".to_string()));
+        return Ok(parts
+            .iter()
+            .map(|part| InternalContentPart::Text(value_to_text(part)))
+            .collect());
     }
 
     Ok(text_parts)
+}
+
+fn decode_content_part_text(part: &Value) -> Option<String> {
+    let kind = part.get("type").and_then(Value::as_str);
+    if kind.is_some_and(|kind| kind == "tool_result" || kind == "tool_use") {
+        return None;
+    }
+
+    part.get("text")
+        .or_else(|| part.get("content"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn value_to_text(value: &Value) -> String {
+    value
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| value.to_string())
 }
 
 #[cfg(test)]
@@ -283,6 +293,68 @@ mod tests {
         assert_eq!(
             request.tools[0].input_schema["properties"]["path"]["type"],
             "string"
+        );
+    }
+
+    #[test]
+    fn decodes_anthropic_extensions_without_rejecting_request() {
+        let request = decode_anthropic_request(json!({
+            "model": "deepseek-chat",
+            "max_tokens": 1024,
+            "tools": [
+                {
+                    "type": "server_tool"
+                },
+                {
+                    "name": "read_file",
+                    "parameters": {
+                        "type": "object"
+                    }
+                }
+            ],
+            "messages": [
+                {
+                    "role": "planner",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "url",
+                                "url": "https://example.com/image.png"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "content": "missing tool_use_id should stay textual"
+                        }
+                    ]
+                }
+            ]
+        }))
+        .expect("decode anthropic request");
+
+        assert_eq!(request.tools.len(), 1);
+        assert_eq!(request.tools[0].name, "read_file");
+        assert_eq!(request.messages[0].role, InternalRole::User);
+        assert_eq!(
+            request.messages[0].content,
+            vec![InternalContentPart::Text(
+                r#"{"source":{"type":"url","url":"https://example.com/image.png"},"type":"image"}"#
+                    .to_string()
+            )]
+        );
+        assert_eq!(request.messages[1].role, InternalRole::User);
+        assert_eq!(
+            request.messages[1].content,
+            vec![InternalContentPart::Text(
+                r#"{"content":"missing tool_use_id should stay textual","type":"tool_result"}"#
+                    .to_string()
+            )]
         );
     }
 

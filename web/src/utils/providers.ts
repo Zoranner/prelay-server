@@ -10,7 +10,6 @@ export const DEFAULT_BASE_URLS: Record<string, string> = {
   // 其他自定义
   openai_compatible: '',
   anthropic_compatible: '',
-  ollama_native: 'http://localhost:11434/api',
 };
 
 export const PROVIDER_LABELS: Record<string, string> = {
@@ -22,7 +21,6 @@ export const PROVIDER_LABELS: Record<string, string> = {
   minimax: 'MiniMax',
   openai_compatible: '自定义 OpenAI 兼容',
   anthropic_compatible: '自定义 Anthropic 兼容',
-  ollama_native: 'Ollama 本地模型',
 };
 
 export const PROVIDER_DOT_CLASSES: Record<string, string> = {
@@ -34,7 +32,6 @@ export const PROVIDER_DOT_CLASSES: Record<string, string> = {
   minimax: 'bg-[#8b5fc4]',
   openai_compatible: 'bg-stone-400',
   anthropic_compatible: 'bg-stone-300',
-  ollama_native: 'bg-[#4f8f74]',
 };
 
 export const PROVIDER_BADGE_CLASSES: Record<string, string> = {
@@ -46,7 +43,6 @@ export const PROVIDER_BADGE_CLASSES: Record<string, string> = {
   minimax: 'bg-[#f0edf8] text-[#5c3d8b]',
   openai_compatible: 'bg-stone-100 text-stone-600',
   anthropic_compatible: 'bg-stone-100 text-stone-500',
-  ollama_native: 'bg-[#e4f2ec] text-[#2d6b50]',
 };
 
 export function providerLabel(type: string): string {

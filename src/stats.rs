@@ -612,15 +612,15 @@ mod tests {
             RequestLogInsert {
                 protocol_in: "responses".to_string(),
                 protocol_out: "responses".to_string(),
-                protocol_upstream: "ollama_native".to_string(),
+                protocol_upstream: "chat_completions".to_string(),
                 provider_id: "provider-1".to_string(),
-                provider_name: "Ollama".to_string(),
-                model_requested: "llama3.2".to_string(),
-                model_upstream: "llama3.2".to_string(),
+                provider_name: "DeepSeek".to_string(),
+                model_requested: "deepseek-chat".to_string(),
+                model_upstream: "deepseek-chat".to_string(),
                 status: "failed".to_string(),
-                http_status: 400,
-                error_code: Some("compatibility_rejected".to_string()),
-                error_message: Some("provider does not advertise tool call support".to_string()),
+                http_status: 502,
+                error_code: Some("upstream_error".to_string()),
+                error_message: Some("upstream request failed".to_string()),
                 is_streaming: false,
                 input_tokens: None,
                 output_tokens: None,
@@ -630,7 +630,7 @@ mod tests {
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
-                metadata_json: Some(r#"{"decision":"rejected"}"#.to_string()),
+                metadata_json: Some(r#"{"phase":"upstream"}"#.to_string()),
             },
             &[],
         )
@@ -644,12 +644,9 @@ mod tests {
         .await
         .expect("load request log");
 
-        assert_eq!(row.0.as_deref(), Some("compatibility_rejected"));
-        assert_eq!(
-            row.1.as_deref(),
-            Some("provider does not advertise tool call support")
-        );
-        assert_eq!(row.2.as_deref(), Some(r#"{"decision":"rejected"}"#));
+        assert_eq!(row.0.as_deref(), Some("upstream_error"));
+        assert_eq!(row.1.as_deref(), Some("upstream request failed"));
+        assert_eq!(row.2.as_deref(), Some(r#"{"phase":"upstream"}"#));
     }
 
     #[tokio::test]

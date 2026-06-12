@@ -5,7 +5,6 @@ pub enum UpstreamProtocol {
     Responses,
     ChatCompletions,
     AnthropicMessages,
-    OllamaNative,
 }
 
 impl UpstreamProtocol {
@@ -16,12 +15,6 @@ impl UpstreamProtocol {
                 &["responses", "chat_completions", "anthropic_messages"]
             }
             UpstreamProtocol::AnthropicMessages => &["responses", "anthropic_messages"],
-            UpstreamProtocol::OllamaNative => &[
-                "responses",
-                "chat_completions",
-                "anthropic_messages",
-                "ollama_native",
-            ],
         }
     }
 
@@ -34,7 +27,6 @@ impl UpstreamProtocol {
 pub enum AuthScheme {
     Bearer,
     Anthropic,
-    None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,21 +137,6 @@ impl ProviderSpec {
                 auth_scheme: AuthScheme::Anthropic,
                 capabilities: ProviderCapabilities::limited(),
             },
-            "ollama_native" => Self {
-                protocol: UpstreamProtocol::OllamaNative,
-                auth_scheme: AuthScheme::None,
-                capabilities: ProviderCapabilities {
-                    tool_calls: false,
-                    reasoning: false,
-                    tool_choice: false,
-                    parallel_tool_calls: false,
-                    system_messages: true,
-                    structured_outputs: false,
-                    streaming_usage: false,
-                    max_context_tokens: None,
-                    max_output_tokens: None,
-                },
-            },
             _ => Self {
                 protocol: UpstreamProtocol::ChatCompletions,
                 auth_scheme: AuthScheme::Bearer,
@@ -198,17 +175,6 @@ mod tests {
     }
 
     #[test]
-    fn maps_ollama_native_to_native_chat_without_auth_or_tools() {
-        let spec = ProviderSpec::from_provider_config(&provider("ollama_native"));
-
-        assert_eq!(spec.protocol, UpstreamProtocol::OllamaNative);
-        assert_eq!(spec.auth_scheme, AuthScheme::None);
-        assert!(!spec.capabilities.tool_calls);
-        assert!(spec.capabilities.system_messages);
-        assert!(!spec.capabilities.structured_outputs);
-    }
-
-    #[test]
     fn preserves_unknown_provider_type_as_chat_completions_bearer_without_tools() {
         let spec = ProviderSpec::from_provider_config(&provider("custom"));
 
@@ -242,7 +208,7 @@ mod tests {
 
     #[test]
     fn applies_provider_capability_overrides() {
-        let mut provider = provider("ollama_native");
+        let mut provider = provider("openai_compatible");
         provider.capabilities_json = Some(
             serde_json::to_string(&ProviderCapabilityOverrides {
                 tool_calls: Some(true),
@@ -274,11 +240,6 @@ mod tests {
         assert!(UpstreamProtocol::ChatCompletions.supports_downstream("responses"));
         assert!(UpstreamProtocol::ChatCompletions.supports_downstream("chat_completions"));
         assert!(UpstreamProtocol::ChatCompletions.supports_downstream("anthropic_messages"));
-
-        assert!(UpstreamProtocol::OllamaNative.supports_downstream("responses"));
-        assert!(UpstreamProtocol::OllamaNative.supports_downstream("chat_completions"));
-        assert!(UpstreamProtocol::OllamaNative.supports_downstream("anthropic_messages"));
-        assert!(UpstreamProtocol::OllamaNative.supports_downstream("ollama_native"));
     }
 
     fn provider(provider_type: &str) -> ProviderConfig {

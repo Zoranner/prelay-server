@@ -8,6 +8,7 @@ use crate::{
     error::AppError,
 };
 
+#[cfg(test)]
 pub fn decode_chat_request(value: Value) -> Result<InternalRequest, AppError> {
     let model = value
         .get("model")
@@ -69,41 +70,6 @@ pub fn encode_chat_request(request: &InternalRequest) -> Value {
     }
     if !request.tools.is_empty() {
         value["tools"] = json!(request.tools.iter().map(encode_tool).collect::<Vec<_>>());
-    }
-    value
-}
-
-pub fn encode_chat_response(response: InternalResponse) -> Value {
-    let message = response
-        .output
-        .first()
-        .map(encode_output_item)
-        .unwrap_or_else(|| json!({ "role": "assistant", "content": "" }));
-    let mut value = json!({
-        "id": response.id,
-        "object": "chat.completion",
-        "created": chrono::Utc::now().timestamp(),
-        "model": response.model,
-        "choices": [
-            {
-                "index": 0,
-                "message": message,
-                "finish_reason": "stop",
-            }
-        ],
-    });
-    if let Some(usage) = response.usage {
-        let mut usage_value = json!({
-            "prompt_tokens": usage.input_tokens.unwrap_or(0),
-            "completion_tokens": usage.output_tokens.unwrap_or(0),
-            "total_tokens": usage.input_tokens.unwrap_or(0) + usage.output_tokens.unwrap_or(0),
-        });
-        if let Some(reasoning_tokens) = usage.reasoning_tokens {
-            usage_value["completion_tokens_details"] = json!({
-                "reasoning_tokens": reasoning_tokens,
-            });
-        }
-        value["usage"] = usage_value;
     }
     value
 }
@@ -175,13 +141,13 @@ pub fn decode_chat_sse_text_deltas(body: &str) -> Vec<String> {
         .collect()
 }
 
+#[cfg(test)]
 fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
     let role = value
         .get("role")
         .and_then(Value::as_str)
         .map(decode_role)
-        .transpose()?
-        .ok_or_else(|| AppError::BadRequest("message.role 不能为空".to_string()))?;
+        .unwrap_or(InternalRole::User);
     let content = value
         .get("content")
         .map(decode_content)
@@ -213,6 +179,7 @@ fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
     })
 }
 
+#[cfg(test)]
 fn decode_content(value: &Value) -> Result<Vec<InternalContentPart>, AppError> {
     if value.is_null() {
         return Ok(Vec::new());
@@ -220,31 +187,25 @@ fn decode_content(value: &Value) -> Result<Vec<InternalContentPart>, AppError> {
     if let Some(text) = value.as_str() {
         return Ok(vec![InternalContentPart::Text(text.to_string())]);
     }
-    let parts = value
-        .as_array()
-        .ok_or_else(|| AppError::BadRequest("message.content 必须是字符串或数组".to_string()))?;
-    parts
+    let Some(parts) = value.as_array() else {
+        return Ok(vec![InternalContentPart::Text(value_to_text(value))]);
+    };
+    let text_parts = parts
         .iter()
-        .map(|part| {
-            if let Some(text) = part.get("text").and_then(Value::as_str) {
-                return Ok(InternalContentPart::Text(text.to_string()));
-            }
-            if part.get("type").and_then(Value::as_str) == Some("text") {
-                return part
-                    .get("content")
-                    .and_then(Value::as_str)
-                    .or_else(|| part.get("text").and_then(Value::as_str))
-                    .map(|text| InternalContentPart::Text(text.to_string()))
-                    .ok_or_else(|| AppError::BadRequest("文本内容块缺少 text".to_string()));
-            }
+        .filter_map(|part| decode_content_part_text(part).map(InternalContentPart::Text))
+        .collect::<Vec<_>>();
 
-            Err(AppError::BadRequest(
-                "message.content 只支持文本内容块".to_string(),
-            ))
-        })
-        .collect()
+    if text_parts.is_empty() {
+        return Ok(parts
+            .iter()
+            .map(|part| InternalContentPart::Text(value_to_text(part)))
+            .collect());
+    }
+
+    Ok(text_parts)
 }
 
+#[cfg(test)]
 fn decode_tools(value: Option<&Value>) -> Result<Vec<InternalTool>, AppError> {
     let Some(value) = value else {
         return Ok(Vec::new());
@@ -280,6 +241,7 @@ fn decode_tools(value: Option<&Value>) -> Result<Vec<InternalTool>, AppError> {
         .collect()
 }
 
+#[cfg(test)]
 fn decode_internal_tool_call(value: &Value) -> Option<InternalToolCall> {
     let id = value.get("id").and_then(Value::as_str)?.to_string();
     let function = value.get("function")?;
@@ -316,40 +278,6 @@ fn decode_tool_call(
         arguments,
         reasoning_content,
     })
-}
-
-fn encode_output_item(item: &InternalOutputItem) -> Value {
-    match item {
-        InternalOutputItem::Message { role, content, .. } => json!({
-            "role": encode_role(role),
-            "content": join_text_content(content),
-        }),
-        InternalOutputItem::FunctionToolCall {
-            id,
-            name,
-            arguments,
-            reasoning_content,
-        } => {
-            let mut message = json!({
-                "role": "assistant",
-                "content": null,
-                "tool_calls": [
-                    {
-                        "id": id,
-                        "type": "function",
-                        "function": {
-                            "name": name,
-                            "arguments": arguments,
-                        }
-                    }
-                ],
-            });
-            if let Some(reasoning_content) = reasoning_content {
-                message["reasoning_content"] = json!(reasoning_content);
-            }
-            message
-        }
-    }
 }
 
 fn encode_message(message: &InternalMessage) -> Value {
@@ -411,14 +339,30 @@ fn encode_role(role: &InternalRole) -> &'static str {
     }
 }
 
-fn decode_role(role: &str) -> Result<InternalRole, AppError> {
+#[cfg(test)]
+fn decode_role(role: &str) -> InternalRole {
     match role {
-        "user" => Ok(InternalRole::User),
-        "assistant" => Ok(InternalRole::Assistant),
-        "system" | "developer" => Ok(InternalRole::System),
-        "tool" => Ok(InternalRole::Tool),
-        _ => Err(AppError::BadRequest(format!("不支持的消息角色: {role}"))),
+        "assistant" => InternalRole::Assistant,
+        "system" | "developer" => InternalRole::System,
+        "tool" => InternalRole::Tool,
+        _ => InternalRole::User,
     }
+}
+
+#[cfg(test)]
+fn decode_content_part_text(part: &Value) -> Option<String> {
+    part.get("text")
+        .or_else(|| part.get("content"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+#[cfg(test)]
+fn value_to_text(value: &Value) -> String {
+    value
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| value.to_string())
 }
 
 fn join_text_content(content: &[InternalContentPart]) -> String {
@@ -616,12 +560,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_chat_completions_non_text_content_parts() {
-        let error = decode_chat_request(json!({
+    fn decodes_chat_completions_extensions_without_rejecting_request() {
+        let request = decode_chat_request(json!({
             "model": "deepseek-chat",
             "messages": [
                 {
-                    "role": "user",
+                    "role": "planner",
                     "content": [
                         {
                             "type": "image_url",
@@ -631,9 +575,16 @@ mod tests {
                 }
             ]
         }))
-        .expect_err("non-text content should fail");
+        .expect("decode chat request");
 
-        assert!(format!("{error:?}").contains("只支持文本内容块"));
+        assert_eq!(request.messages[0].role, InternalRole::User);
+        assert_eq!(
+            request.messages[0].content,
+            vec![InternalContentPart::Text(
+                r#"{"image_url":{"url":"https://example.com/image.png"},"type":"image_url"}"#
+                    .to_string()
+            )]
+        );
     }
 
     #[test]

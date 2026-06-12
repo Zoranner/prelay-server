@@ -4,12 +4,12 @@
 
 ## 当前结论
 
-协议桥接主体已经从透明代理演进为多入口、多上游协议的桥接网关。`chat_completions`、`responses`、`anthropic_messages` 和 `ollama_native` 已经进入路由、provider 能力模型、模型目录和统计埋点。
+协议桥接主体已经从透明代理演进为多入口、多上游协议的桥接网关。当前产品范围收敛为 `chat_completions`、`responses` 和 `anthropic_messages`。Ollama Native 因无法稳定支撑 Codex / Claude Code 的工具调用和复杂会话目标，已从协议入口、上游类型、模型目录和前端 provider 选项中下线。
 
-当前可认为后端主链路已完成第一版骨架，但还没有达到完整产品验收。主要缺口集中在三类：
+当前后端主链路已完成第一版骨架，但还没有达到完整产品验收。主要缺口集中在三类：
 
 - `responses <-> anthropic_messages` 已支持非流式和文本流式互转，但工具调用增量、usage 聚合和真实客户端复杂会话仍未完整验收。
-- 现有验证以 mock upstream 和单元测试为主，缺少 Codex、Claude Code、DeepSeek、OpenAI、Anthropic、Ollama 的真实客户端联调记录。
+- 现有验证以 mock upstream 和单元测试为主，缺少 Codex、Claude Code、DeepSeek、OpenAI、Anthropic 的真实客户端联调记录。
 - 统计已经能记录请求、token、成本估算、延迟、错误和聚合数据，但流式请求统计仍偏粗，`first_token_ms`、流式 token、流式 tool-call 数量和上游 request id 多数没有准确回填。
 
 ## 已实现范围
@@ -21,27 +21,24 @@
 - `/v1/chat/completions`：普通 OpenAI Chat Completions 入口。
 - `/v1/responses`：OpenAI Responses 入口，面向 Codex 类客户端。
 - `/v1/messages`：Anthropic Messages 入口，面向 Claude Code / Anthropic-compatible 客户端。
-- `/api/chat`：Ollama Native 入口，主要用于本地模型原生接入。
 - `/v1/models` 和 `/models`：模型目录入口，返回 provider、上游协议、上游模型、可用下游协议和能力声明。
 
 ### 供给侧协议模型
 
-`ProviderSpec` 已经把上游分为四类：
+`ProviderSpec` 当前把上游分为三类：
 
 - `responses`
 - `chat_completions`
 - `anthropic_messages`
-- `ollama_native`
 
 当前 provider 类型映射大致为：
 
 - `openai` 映射为原生 Responses 上游。
 - `openai_compatible` 映射为 Chat Completions 上游。
 - `anthropic` 和 `anthropic_compatible` 映射为 Anthropic Messages 上游。
-- `ollama_native` 映射为 Ollama Native 上游。
-- 未识别 provider 默认按 Chat Completions 处理，但高级能力默认关闭。
+- 未识别 provider 默认按 Chat Completions 处理。
 - provider 能力模型已覆盖工具调用、reasoning、tool choice、并行工具调用、system message、结构化输出、流式 usage，以及上下文和输出 token 上限。
-- provider 配置支持通过 `capabilities` 覆盖默认能力声明，旧配置没有覆盖字段时继续按 provider 类型推导默认能力。
+- provider 能力声明用于模型目录展示、诊断和后续兼容策略，不作为主链路硬拒绝条件。
 
 ### 已实现的协议方向
 
@@ -54,12 +51,6 @@
 - `responses -> anthropic_messages`，支持非流式和文本流式。
 - `anthropic_messages -> anthropic_messages`
 - `anthropic_messages -> responses`，支持非流式和文本流式。
-- `ollama_native -> ollama_native`
-- `ollama_native -> chat_completions`
-- `ollama_native -> responses`
-- `ollama_native -> anthropic_messages`
-
-`ollama_native -> chat_completions` 已作为 OpenAI Chat Completions 入口的上游路径实现，普通 OpenAI-compatible 客户端可以通过 `/v1/chat/completions` 调用 Ollama Native 上游。
 
 ### 流式桥接
 
@@ -72,10 +63,6 @@
 - Responses 上游文本流式转换为 Anthropic Messages SSE。
 - 原生 Anthropic Messages 上游流式直通到 Messages 入口。
 - Anthropic Messages 上游文本流式转换为 Responses SSE。
-- Ollama Native 流式转换为 Responses SSE。
-- Ollama Native 流式转换为 Chat Completions SSE。
-- Ollama Native 流式转换为 Anthropic Messages SSE。
-- Ollama Native 流式原生透传到 `/api/chat`。
 
 当前流式桥接仍未完整覆盖跨 agent 协议的工具增量和 usage 聚合。
 
@@ -87,7 +74,7 @@
 - 非流式 Responses 响应会保存会话，用于后续工具回合恢复上下文。
 - Chat Completions 工具调用可以编码到 Responses 输出。
 - Anthropic `tool_use` / `tool_result` 与内部工具模型已有基础互映。
-- 对不支持工具调用的 provider，会通过兼容性检查拒绝请求并记录统计。
+- 桥接层优先尝试映射、透传和降级，不因 provider 能力声明不完全匹配而提前拒绝。
 
 仍需补齐的内容：
 
@@ -166,14 +153,10 @@
 - Chat Completions 非流式和流式代理。
 - Responses 到 Chat Completions 上游。
 - Responses 到原生 Responses 上游。
-- Responses 到 Ollama Native 上游。
-- Responses 到 Anthropic Messages 上游的非流式桥接。
+- Responses 到 Anthropic Messages 上游的非流式和文本流式桥接。
 - Anthropic Messages 到 Chat Completions 上游。
 - Anthropic Messages 到原生 Anthropic Messages 上游。
-- Anthropic Messages 到 Responses 上游的非流式桥接。
-- Anthropic Messages 到 Ollama Native 上游。
-- Ollama Native 原生 `/api/chat`。
-- Chat Completions 到 Ollama Native 上游。
+- Anthropic Messages 到 Responses 上游的非流式和文本流式桥接。
 - `previous_response_id` 多跳历史。
 - function tool call 回合。
 - 统计 API 聚合。
@@ -186,12 +169,10 @@
 
 - Codex 使用 `wire_api = "responses"` 通过本服务调用 DeepSeek Chat Completions 上游。
 - Codex 通过本服务调用 OpenAI 原生 Responses 上游。
-- Codex 通过本服务调用 Ollama Native 上游。
 - Claude Code / Anthropic-compatible 客户端通过本服务调用 DeepSeek Chat Completions 上游。
 - Claude Code / Anthropic-compatible 客户端通过本服务调用 Anthropic 原生 Messages 上游。
 - Claude Code / Anthropic-compatible 客户端通过本服务调用 OpenAI Responses 上游的非流式桥接。
 - 普通 OpenAI-compatible 客户端通过 `/v1/chat/completions` 调用 Chat Completions 上游。
-- Ollama 客户端通过 `/api/chat` 调用 Ollama Native 上游。
 
 真实联调需要至少记录：
 
@@ -235,7 +216,7 @@
 - 是否支持流式 usage。
 - 最大上下文和最大输出 token。
 
-当前已经参与强制拒绝判断的字段包括工具调用、reasoning、tool choice、并行工具调用、system message、结构化输出、流式 usage 和最大输出 token。仍需继续细化的是能力使用策略：哪些字段可以安全忽略、哪些需要降级、哪些必须拒绝，以及不同 provider 的真实能力默认值是否准确。
+能力画像当前不作为硬拒绝条件。后续应改造成兼容计划输入：优先映射，其次补默认值或降级，再记录诊断。只有上游真实返回错误或协议状态无法闭合时，才以失败请求落库。
 
 ### 错误和审计差距
 
@@ -243,7 +224,7 @@
 
 - 上游错误体没有统一结构化。
 - 上游 request id 没有普遍提取。
-- 兼容性拒绝和上游失败的错误分类还不够细。
+- 兼容性降级、字段忽略和上游失败的错误分类还不够细。
 - 流式中途失败没有最终落库状态修正。
 
 ## 建议优先级
@@ -256,7 +237,6 @@
 - Claude Code + DeepSeek Chat Completions，上游走 `/v1/messages`。
 - Codex + OpenAI Responses，原生上游直通。
 - Claude Code + Anthropic Messages，原生上游直通。
-- Codex / Claude Code + Ollama Native，确认本地模型降级边界。
 
 ### 再补统计准确性
 
@@ -276,8 +256,8 @@
 
 如果按内部试用口径，当前可以作为协议桥接网关的早期版本使用：
 
-- 支持 Codex 通过 Responses 调用 Chat Completions、Responses 和 Ollama 上游。
-- 支持 Claude Code 类客户端通过 Messages 调用 Chat Completions、Anthropic Messages 和 Ollama 上游。
+- 支持 Codex 通过 Responses 调用 Chat Completions 和 Responses 上游。
+- 支持 Claude Code 类客户端通过 Messages 调用 Chat Completions 和 Anthropic Messages 上游。
 - 支持普通 OpenAI-compatible 客户端调用 Chat Completions 上游。
 - 支持基础统计页面和请求日志。
 

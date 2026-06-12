@@ -67,45 +67,37 @@ fn decode_tools(value: Option<&Value>) -> Result<Vec<InternalTool>, AppError> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
-    let tools = value
-        .as_array()
-        .ok_or_else(|| AppError::BadRequest("tools 必须是数组".to_string()))?;
+    let Some(tools) = value.as_array() else {
+        return Ok(Vec::new());
+    };
 
-    tools
-        .iter()
-        .map(|tool| {
-            let tool_type = tool
-                .get("type")
-                .and_then(Value::as_str)
-                .ok_or_else(|| AppError::BadRequest("tool.type 不能为空".to_string()))?;
-            if tool_type != "function" {
-                return Err(AppError::BadRequest(format!(
-                    "不支持的 Responses tool 类型: {tool_type}"
-                )));
-            }
+    Ok(tools.iter().filter_map(decode_tool).collect())
+}
 
-            let name = tool
-                .get("name")
-                .and_then(Value::as_str)
-                .filter(|name| !name.trim().is_empty())
-                .ok_or_else(|| AppError::BadRequest("tool.name 不能为空".to_string()))?
-                .to_string();
-            let description = tool
-                .get("description")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            let input_schema = tool
-                .get("parameters")
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({ "type": "object" }));
+fn decode_tool(tool: &Value) -> Option<InternalTool> {
+    let function = tool.get("function").unwrap_or(tool);
+    let name = function
+        .get("name")
+        .or_else(|| tool.get("name"))
+        .and_then(Value::as_str)
+        .filter(|name| !name.trim().is_empty())?
+        .to_string();
+    let description = function
+        .get("description")
+        .or_else(|| tool.get("description"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let input_schema = function
+        .get("parameters")
+        .or_else(|| function.get("input_schema"))
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({ "type": "object" }));
 
-            Ok(InternalTool {
-                name,
-                description,
-                input_schema,
-            })
-        })
-        .collect()
+    Some(InternalTool {
+        name,
+        description,
+        input_schema,
+    })
 }
 
 fn decode_input(input: &Value) -> Result<Vec<InternalMessage>, AppError> {
@@ -149,15 +141,26 @@ fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
         });
     }
 
+    if value
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind == "function_call")
+    {
+        return Ok(InternalMessage {
+            role: InternalRole::Assistant,
+            content: Vec::new(),
+            tool_call_id: None,
+            tool_calls: decode_function_call(value).into_iter().collect(),
+            reasoning_content: None,
+        });
+    }
+
     let role = value
         .get("role")
         .and_then(Value::as_str)
         .map(decode_role)
-        .transpose()?
         .unwrap_or(InternalRole::User);
-    let content = value
-        .get("content")
-        .ok_or_else(|| AppError::BadRequest("message.content 不能为空".to_string()))?;
+    let content = value.get("content").unwrap_or(value);
 
     Ok(InternalMessage {
         role,
@@ -171,13 +174,32 @@ fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
     })
 }
 
-fn decode_role(role: &str) -> Result<InternalRole, AppError> {
+fn decode_function_call(value: &Value) -> Option<crate::bridge::internal::InternalToolCall> {
+    let id = value
+        .get("call_id")
+        .or_else(|| value.get("id"))
+        .and_then(Value::as_str)
+        .unwrap_or("call_unknown")
+        .to_string();
+    let name = value.get("name").and_then(Value::as_str)?.to_string();
+    let arguments = value
+        .get("arguments")
+        .map(value_to_text)
+        .unwrap_or_else(|| "{}".to_string());
+
+    Some(crate::bridge::internal::InternalToolCall {
+        id,
+        name,
+        arguments,
+    })
+}
+
+fn decode_role(role: &str) -> InternalRole {
     match role {
-        "user" => Ok(InternalRole::User),
-        "assistant" => Ok(InternalRole::Assistant),
-        "system" | "developer" => Ok(InternalRole::System),
-        "tool" => Ok(InternalRole::Tool),
-        _ => Err(AppError::BadRequest(format!("不支持的消息角色: {role}"))),
+        "assistant" => InternalRole::Assistant,
+        "system" | "developer" => InternalRole::System,
+        "tool" => InternalRole::Tool,
+        _ => InternalRole::User,
     }
 }
 
@@ -186,25 +208,36 @@ fn decode_content(value: &Value) -> Result<Vec<InternalContentPart>, AppError> {
         return Ok(vec![InternalContentPart::Text(text.to_string())]);
     }
 
-    let parts = value
-        .as_array()
-        .ok_or_else(|| AppError::BadRequest("message.content 必须是字符串或数组".to_string()))?;
+    let Some(parts) = value.as_array() else {
+        return Ok(vec![InternalContentPart::Text(value_to_text(value))]);
+    };
     let text_parts = parts
         .iter()
-        .filter_map(|part| {
-            part.get("text")
-                .and_then(Value::as_str)
-                .map(|text| InternalContentPart::Text(text.to_string()))
-        })
+        .filter_map(|part| decode_content_part_text(part).map(InternalContentPart::Text))
         .collect::<Vec<_>>();
 
     if text_parts.is_empty() {
-        return Err(AppError::BadRequest(
-            "message.content 没有可用文本".to_string(),
-        ));
+        return Ok(parts
+            .iter()
+            .map(|part| InternalContentPart::Text(value_to_text(part)))
+            .collect());
     }
 
     Ok(text_parts)
+}
+
+fn decode_content_part_text(part: &Value) -> Option<String> {
+    part.get("text")
+        .or_else(|| part.get("content"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn value_to_text(value: &Value) -> String {
+    value
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| value.to_string())
 }
 
 #[cfg(test)]
@@ -333,6 +366,58 @@ mod tests {
         assert_eq!(
             request.tools[0].input_schema["properties"]["path"]["type"],
             "string"
+        );
+    }
+
+    #[test]
+    fn decodes_responses_extensions_without_rejecting_request() {
+        let request = decode_responses_request(json!({
+            "model": "deepseek-chat",
+            "input": [
+                {
+                    "role": "planner",
+                    "content": [
+                        {
+                            "type": "input_image",
+                            "image_url": "https://example.com/image.png"
+                        }
+                    ]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "read_file",
+                    "arguments": { "path": "Cargo.toml" }
+                }
+            ],
+            "tools": [
+                {
+                    "type": "web_search_preview"
+                },
+                {
+                    "type": "function",
+                    "name": "read_file"
+                }
+            ]
+        }))
+        .expect("decode responses request");
+
+        assert_eq!(request.tools.len(), 1);
+        assert_eq!(request.tools[0].name, "read_file");
+        assert_eq!(request.messages[0].role, InternalRole::User);
+        assert_eq!(
+            request.messages[0].content,
+            vec![InternalContentPart::Text(
+                r#"{"image_url":"https://example.com/image.png","type":"input_image"}"#.to_string()
+            )]
+        );
+        assert_eq!(request.messages[1].role, InternalRole::Assistant);
+        assert_eq!(request.messages[1].tool_calls.len(), 1);
+        assert_eq!(request.messages[1].tool_calls[0].id, "call_1");
+        assert_eq!(request.messages[1].tool_calls[0].name, "read_file");
+        assert_eq!(
+            request.messages[1].tool_calls[0].arguments,
+            r#"{"path":"Cargo.toml"}"#
         );
     }
 
