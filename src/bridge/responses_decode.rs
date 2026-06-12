@@ -1,11 +1,18 @@
 use serde_json::Value;
 
-use crate::bridge::internal::{
-    InternalContentPart, InternalMessage, InternalRequest, InternalRole, InternalTool,
+use crate::bridge::{
+    diagnostics::{BridgeDiagnostic, DecodedRequest, DiagnosticAction, DiagnosticSeverity},
+    internal::{InternalContentPart, InternalMessage, InternalRequest, InternalRole, InternalTool},
 };
 use crate::error::AppError;
 
+#[cfg(test)]
 pub fn decode_responses_request(value: Value) -> Result<InternalRequest, AppError> {
+    Ok(decode_responses_request_with_diagnostics(value)?.request)
+}
+
+pub fn decode_responses_request_with_diagnostics(value: Value) -> Result<DecodedRequest, AppError> {
+    let mut diagnostics = Vec::new();
     let model = value
         .get("model")
         .and_then(Value::as_str)
@@ -37,7 +44,7 @@ pub fn decode_responses_request(value: Value) -> Result<InternalRequest, AppErro
         .get("input")
         .ok_or_else(|| AppError::BadRequest("input 不能为空".to_string()))?;
 
-    Ok(InternalRequest {
+    let request = InternalRequest {
         model,
         stream,
         max_tokens,
@@ -47,8 +54,12 @@ pub fn decode_responses_request(value: Value) -> Result<InternalRequest, AppErro
         structured_output_requested,
         parallel_tool_calls_requested,
         streaming_usage_requested,
-        tools: decode_tools(value.get("tools"))?,
-        messages: decode_input(input)?,
+        tools: decode_tools(value.get("tools"), &mut diagnostics)?,
+        messages: decode_input(input, &mut diagnostics)?,
+    };
+    Ok(DecodedRequest {
+        request,
+        diagnostics,
     })
 }
 
@@ -63,7 +74,10 @@ fn responses_structured_output_requested(value: &Value) -> bool {
             .is_some_and(|kind| kind != "text")
 }
 
-fn decode_tools(value: Option<&Value>) -> Result<Vec<InternalTool>, AppError> {
+fn decode_tools(
+    value: Option<&Value>,
+    diagnostics: &mut Vec<BridgeDiagnostic>,
+) -> Result<Vec<InternalTool>, AppError> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
@@ -71,17 +85,37 @@ fn decode_tools(value: Option<&Value>) -> Result<Vec<InternalTool>, AppError> {
         return Ok(Vec::new());
     };
 
-    Ok(tools.iter().filter_map(decode_tool).collect())
+    Ok(tools
+        .iter()
+        .enumerate()
+        .filter_map(|(index, tool)| decode_tool(tool, index, diagnostics))
+        .collect())
 }
 
-fn decode_tool(tool: &Value) -> Option<InternalTool> {
+fn decode_tool(
+    tool: &Value,
+    index: usize,
+    diagnostics: &mut Vec<BridgeDiagnostic>,
+) -> Option<InternalTool> {
     let function = tool.get("function").unwrap_or(tool);
-    let name = function
+    let Some(name) = function
         .get("name")
         .or_else(|| tool.get("name"))
         .and_then(Value::as_str)
-        .filter(|name| !name.trim().is_empty())?
-        .to_string();
+        .filter(|name| !name.trim().is_empty())
+    else {
+        diagnostics.push(BridgeDiagnostic::new(
+            "responses",
+            format!("/tools/{index}"),
+            DiagnosticAction::Ignored,
+            DiagnosticSeverity::Warning,
+            "responses.tool.unsupported",
+            "跳过无法映射为 function tool 的工具定义",
+            tool.get("type").and_then(Value::as_str).map(str::to_string),
+        ));
+        return None;
+    };
+    let name = name.to_string();
     let description = function
         .get("description")
         .or_else(|| tool.get("description"))
@@ -100,7 +134,10 @@ fn decode_tool(tool: &Value) -> Option<InternalTool> {
     })
 }
 
-fn decode_input(input: &Value) -> Result<Vec<InternalMessage>, AppError> {
+fn decode_input(
+    input: &Value,
+    diagnostics: &mut Vec<BridgeDiagnostic>,
+) -> Result<Vec<InternalMessage>, AppError> {
     if let Some(text) = input.as_str() {
         return Ok(vec![InternalMessage {
             role: InternalRole::User,
@@ -114,10 +151,18 @@ fn decode_input(input: &Value) -> Result<Vec<InternalMessage>, AppError> {
     let items = input
         .as_array()
         .ok_or_else(|| AppError::BadRequest("input 必须是字符串或消息数组".to_string()))?;
-    items.iter().map(decode_message).collect()
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, value)| decode_message(value, &format!("/input/{index}"), diagnostics))
+        .collect()
 }
 
-fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
+fn decode_message(
+    value: &Value,
+    path: &str,
+    diagnostics: &mut Vec<BridgeDiagnostic>,
+) -> Result<InternalMessage, AppError> {
     if value
         .get("type")
         .and_then(Value::as_str)
@@ -150,7 +195,9 @@ fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
             role: InternalRole::Assistant,
             content: Vec::new(),
             tool_call_id: None,
-            tool_calls: decode_function_call(value).into_iter().collect(),
+            tool_calls: decode_function_call(value, path, diagnostics)
+                .into_iter()
+                .collect(),
             reasoning_content: None,
         });
     }
@@ -158,13 +205,13 @@ fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
     let role = value
         .get("role")
         .and_then(Value::as_str)
-        .map(decode_role)
+        .map(|role| decode_role(role, &format!("{path}/role"), diagnostics))
         .unwrap_or(InternalRole::User);
     let content = value.get("content").unwrap_or(value);
 
     Ok(InternalMessage {
         role,
-        content: decode_content(content)?,
+        content: decode_content(content, &format!("{path}/content"), diagnostics)?,
         tool_call_id: value
             .get("call_id")
             .and_then(Value::as_str)
@@ -174,18 +221,45 @@ fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
     })
 }
 
-fn decode_function_call(value: &Value) -> Option<crate::bridge::internal::InternalToolCall> {
+fn decode_function_call(
+    value: &Value,
+    path: &str,
+    diagnostics: &mut Vec<BridgeDiagnostic>,
+) -> Option<crate::bridge::internal::InternalToolCall> {
     let id = value
         .get("call_id")
         .or_else(|| value.get("id"))
         .and_then(Value::as_str)
-        .unwrap_or("call_unknown")
-        .to_string();
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            diagnostics.push(BridgeDiagnostic::new(
+                "responses",
+                format!("{path}/call_id"),
+                DiagnosticAction::Defaulted,
+                DiagnosticSeverity::Warning,
+                "responses.function_call.call_id_missing",
+                "function_call 缺少 call_id，已补默认值",
+                None,
+            ));
+            "call_unknown".to_string()
+        });
     let name = value.get("name").and_then(Value::as_str)?.to_string();
-    let arguments = value
-        .get("arguments")
-        .map(value_to_text)
-        .unwrap_or_else(|| "{}".to_string());
+    let arguments = match value.get("arguments") {
+        Some(arguments) if arguments.is_string() => value_to_text(arguments),
+        Some(arguments) => {
+            diagnostics.push(BridgeDiagnostic::new(
+                "responses",
+                format!("{path}/arguments"),
+                DiagnosticAction::Textified,
+                DiagnosticSeverity::Info,
+                "responses.function_call.arguments_non_string",
+                "function_call arguments 不是字符串，已转为 JSON 字符串",
+                value_kind(arguments),
+            ));
+            value_to_text(arguments)
+        }
+        None => "{}".to_string(),
+    };
 
     Some(crate::bridge::internal::InternalToolCall {
         id,
@@ -194,21 +268,46 @@ fn decode_function_call(value: &Value) -> Option<crate::bridge::internal::Intern
     })
 }
 
-fn decode_role(role: &str) -> InternalRole {
+fn decode_role(role: &str, path: &str, diagnostics: &mut Vec<BridgeDiagnostic>) -> InternalRole {
     match role {
+        "user" => InternalRole::User,
         "assistant" => InternalRole::Assistant,
         "system" | "developer" => InternalRole::System,
         "tool" => InternalRole::Tool,
-        _ => InternalRole::User,
+        _ => {
+            diagnostics.push(BridgeDiagnostic::new(
+                "responses",
+                path,
+                DiagnosticAction::Mapped,
+                DiagnosticSeverity::Warning,
+                "responses.role.unknown",
+                "未知 role 已映射为 user",
+                Some(role.to_string()),
+            ));
+            InternalRole::User
+        }
     }
 }
 
-fn decode_content(value: &Value) -> Result<Vec<InternalContentPart>, AppError> {
+fn decode_content(
+    value: &Value,
+    path: &str,
+    diagnostics: &mut Vec<BridgeDiagnostic>,
+) -> Result<Vec<InternalContentPart>, AppError> {
     if let Some(text) = value.as_str() {
         return Ok(vec![InternalContentPart::Text(text.to_string())]);
     }
 
     let Some(parts) = value.as_array() else {
+        diagnostics.push(BridgeDiagnostic::new(
+            "responses",
+            path,
+            DiagnosticAction::Textified,
+            DiagnosticSeverity::Info,
+            "responses.content.non_text",
+            "非文本 content 已转为 JSON 字符串",
+            value_kind(value),
+        ));
         return Ok(vec![InternalContentPart::Text(value_to_text(value))]);
     };
     let text_parts = parts
@@ -219,7 +318,19 @@ fn decode_content(value: &Value) -> Result<Vec<InternalContentPart>, AppError> {
     if text_parts.is_empty() {
         return Ok(parts
             .iter()
-            .map(|part| InternalContentPart::Text(value_to_text(part)))
+            .enumerate()
+            .map(|(index, part)| {
+                diagnostics.push(BridgeDiagnostic::new(
+                    "responses",
+                    format!("{path}/{index}"),
+                    DiagnosticAction::Textified,
+                    DiagnosticSeverity::Info,
+                    "responses.content_part.non_text",
+                    "非文本 content part 已转为 JSON 字符串",
+                    part.get("type").and_then(Value::as_str).map(str::to_string),
+                ));
+                InternalContentPart::Text(value_to_text(part))
+            })
             .collect());
     }
 
@@ -240,12 +351,29 @@ fn value_to_text(value: &Value) -> String {
         .unwrap_or_else(|| value.to_string())
 }
 
+fn value_kind(value: &Value) -> Option<String> {
+    Some(
+        match value {
+            Value::Null => "null",
+            Value::Bool(_) => "bool",
+            Value::Number(_) => "number",
+            Value::String(_) => "string",
+            Value::Array(_) => "array",
+            Value::Object(_) => "object",
+        }
+        .to_string(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::decode_responses_request;
-    use crate::bridge::internal::{InternalContentPart, InternalRole};
+    use crate::bridge::{
+        diagnostics::{DiagnosticAction, DiagnosticPhase, DiagnosticSeverity},
+        internal::{InternalContentPart, InternalRole},
+    };
 
     #[test]
     fn decodes_string_input_into_user_message() {
@@ -418,6 +546,86 @@ mod tests {
         assert_eq!(
             request.messages[1].tool_calls[0].arguments,
             r#"{"path":"Cargo.toml"}"#
+        );
+    }
+
+    #[test]
+    fn records_diagnostics_for_responses_compatibility_actions() {
+        let decoded = super::decode_responses_request_with_diagnostics(json!({
+            "model": "deepseek-chat",
+            "input": [
+                {
+                    "role": "planner",
+                    "content": [
+                        {
+                            "type": "input_image",
+                            "image_url": "https://example.com/image.png"
+                        }
+                    ]
+                },
+                {
+                    "type": "function_call",
+                    "name": "read_file",
+                    "arguments": { "path": "Cargo.toml" }
+                }
+            ],
+            "tools": [
+                {
+                    "type": "web_search_preview"
+                },
+                {
+                    "type": "function",
+                    "name": "read_file"
+                }
+            ]
+        }))
+        .expect("decode responses request");
+
+        assert_eq!(decoded.request.messages[0].role, InternalRole::User);
+        assert_eq!(decoded.request.messages[1].tool_calls[0].id, "call_unknown");
+        assert_eq!(
+            decoded
+                .diagnostics
+                .iter()
+                .map(|diagnostic| (
+                    diagnostic.phase.clone(),
+                    diagnostic.action.clone(),
+                    diagnostic.severity.clone(),
+                    diagnostic.code.as_str()
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    DiagnosticPhase::Decode,
+                    DiagnosticAction::Ignored,
+                    DiagnosticSeverity::Warning,
+                    "responses.tool.unsupported"
+                ),
+                (
+                    DiagnosticPhase::Decode,
+                    DiagnosticAction::Mapped,
+                    DiagnosticSeverity::Warning,
+                    "responses.role.unknown"
+                ),
+                (
+                    DiagnosticPhase::Decode,
+                    DiagnosticAction::Textified,
+                    DiagnosticSeverity::Info,
+                    "responses.content_part.non_text"
+                ),
+                (
+                    DiagnosticPhase::Decode,
+                    DiagnosticAction::Defaulted,
+                    DiagnosticSeverity::Warning,
+                    "responses.function_call.call_id_missing"
+                ),
+                (
+                    DiagnosticPhase::Decode,
+                    DiagnosticAction::Textified,
+                    DiagnosticSeverity::Info,
+                    "responses.function_call.arguments_non_string"
+                )
+            ]
         );
     }
 

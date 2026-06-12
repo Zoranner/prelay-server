@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::{
     bridge::{
-        anthropic_decode::decode_anthropic_request,
+        anthropic_decode::decode_anthropic_request_with_diagnostics,
         anthropic_encode::encode_anthropic_response,
         stream::{
             chat_sse_response_to_anthropic_messages_sse,
@@ -23,7 +23,7 @@ use crate::{
     providers::chat_completions::{decode_chat_response, encode_chat_request},
     providers::responses::{decode_responses_response, encode_responses_request},
     providers::spec::{ProviderSpec, UpstreamProtocol},
-    routes::stream_stats::record_first_chunk,
+    routes::{request_metadata::build_request_metadata, stream_stats::record_first_chunk},
     stats::{insert_request_log, RequestLogInsert},
     AppState,
 };
@@ -38,7 +38,9 @@ async fn create_message(
 ) -> Result<Response, AppError> {
     let started_at = std::time::Instant::now();
     let original_payload = payload.clone();
-    let request = decode_anthropic_request(payload)?;
+    let decoded_request = decode_anthropic_request_with_diagnostics(payload)?;
+    let request = decoded_request.request;
+    let diagnostics = decoded_request.diagnostics;
     let model_requested = request.model.clone();
     let is_streaming = request.stream;
     let resolved = db::get_provider_by_model(&state.db, &request.model, "anthropic_messages")
@@ -47,6 +49,14 @@ async fn create_message(
     let provider = resolved.provider;
     let provider_spec = ProviderSpec::from_provider_config(&provider);
     let model_upstream = resolved.model_upstream;
+    let metadata_json = build_request_metadata(
+        "anthropic_messages",
+        "anthropic_messages",
+        provider_spec.protocol,
+        &model_requested,
+        &model_upstream,
+        diagnostics,
+    )?;
     let mut upstream_payload = original_payload.clone();
     upstream_payload["model"] = Value::String(model_upstream.clone());
     let mut request = request;
@@ -58,6 +68,7 @@ async fn create_message(
             provider,
             model_requested,
             is_streaming,
+            metadata_json,
             started_at,
         )
         .await
@@ -70,6 +81,7 @@ async fn create_message(
             provider,
             model_requested,
             is_streaming,
+            metadata_json,
             started_at,
         )
         .await
@@ -115,7 +127,7 @@ async fn create_message(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
-                metadata_json: None,
+                metadata_json: Some(metadata_json.clone()),
             },
         )
         .await?;
@@ -144,7 +156,7 @@ async fn create_message(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: None,
+            metadata_json: Some(metadata_json.clone()),
         };
         let stream =
             chat_sse_response_to_anthropic_messages_sse(upstream_response, request.model.clone());
@@ -195,7 +207,7 @@ async fn create_message(
             first_token_ms: None,
             tool_call_count: Some(tool_call_count),
             upstream_request_id: None,
-            metadata_json: None,
+            metadata_json: Some(metadata_json),
         },
     )
     .await?;
@@ -209,6 +221,7 @@ async fn create_responses_anthropic_message(
     provider: crate::models::ProviderConfig,
     model_requested: String,
     is_streaming: bool,
+    metadata_json: String,
     started_at: std::time::Instant,
 ) -> Result<Response, AppError> {
     let upstream_url = format!("{}/responses", provider.base_url.trim_end_matches('/'));
@@ -248,7 +261,7 @@ async fn create_responses_anthropic_message(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
-                metadata_json: None,
+                metadata_json: Some(metadata_json.clone()),
             },
         )
         .await?;
@@ -277,7 +290,7 @@ async fn create_responses_anthropic_message(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: None,
+            metadata_json: Some(metadata_json.clone()),
         };
         let stream =
             responses_sse_response_to_anthropic_messages_sse(upstream_response, request.model);
@@ -328,7 +341,7 @@ async fn create_responses_anthropic_message(
             first_token_ms: None,
             tool_call_count: Some(tool_call_count),
             upstream_request_id: None,
-            metadata_json: None,
+            metadata_json: Some(metadata_json),
         },
     )
     .await?;
@@ -342,6 +355,7 @@ async fn create_native_anthropic_message(
     provider: crate::models::ProviderConfig,
     model_requested: String,
     is_streaming: bool,
+    metadata_json: String,
     started_at: std::time::Instant,
 ) -> Result<Response, AppError> {
     let upstream_url = format!("{}/messages", provider.base_url.trim_end_matches('/'));
@@ -382,7 +396,7 @@ async fn create_native_anthropic_message(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
-                metadata_json: None,
+                metadata_json: Some(metadata_json.clone()),
             },
         )
         .await?;
@@ -416,7 +430,7 @@ async fn create_native_anthropic_message(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: None,
+            metadata_json: Some(metadata_json.clone()),
         };
 
         return Response::builder()
@@ -469,7 +483,7 @@ async fn create_native_anthropic_message(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: None,
+            metadata_json: Some(metadata_json),
         },
     )
     .await?;
@@ -855,6 +869,69 @@ mod tests {
         assert_eq!(overview.successful_requests, 1);
         assert_eq!(overview.input_tokens, 3);
         assert_eq!(overview.output_tokens, 4);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn records_anthropic_decode_diagnostics_in_request_metadata() {
+        let upstream = spawn_user_only_chat_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(
+            &db,
+            "deepseek-chat",
+            "openai_compatible",
+            &upstream,
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+            admin_token: None,
+        };
+        let app = Router::new().merge(super::router().with_state(state.clone()));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("read test server address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{addr}/v1/messages"))
+            .json(&json!({
+                "model": "deepseek-chat",
+                "max_tokens": 1024,
+                "messages": [
+                    { "role": "planner", "content": "hello" }
+                ]
+            }))
+            .send()
+            .await
+            .expect("send request");
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let metadata_json: Option<String> =
+            sqlx::query_scalar("SELECT metadata_json FROM request_logs LIMIT 1")
+                .fetch_one(&state.db)
+                .await
+                .expect("load metadata");
+        let metadata: serde_json::Value =
+            serde_json::from_str(&metadata_json.expect("metadata json")).expect("parse metadata");
+
+        assert_eq!(metadata["bridge"]["protocol_in"], "anthropic_messages");
+        assert_eq!(metadata["bridge"]["protocol_upstream"], "chat_completions");
+        assert_eq!(metadata["bridge"]["model_requested"], "deepseek-chat");
+        assert_eq!(metadata["bridge"]["model_upstream"], "deepseek-chat");
+        assert_eq!(metadata["diagnostics"][0]["code"], "anthropic.role.unknown");
+        assert_eq!(metadata["diagnostics"][0]["severity"], "warning");
 
         server.abort();
     }

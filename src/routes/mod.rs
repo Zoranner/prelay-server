@@ -4,6 +4,7 @@ pub mod chat;
 pub mod messages;
 pub mod models;
 pub mod proxy;
+pub mod request_metadata;
 pub mod responses;
 pub mod stats;
 mod stream_stats;

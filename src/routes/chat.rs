@@ -12,7 +12,11 @@ use serde_json::Value;
 use crate::{
     db,
     error::AppError,
-    routes::{stream_stats::record_first_chunk, upstream_observability::upstream_observability},
+    providers::spec::UpstreamProtocol,
+    routes::{
+        request_metadata::build_request_metadata, stream_stats::record_first_chunk,
+        upstream_observability::upstream_observability,
+    },
     stats::{insert_request_log, RequestLogInsert},
     AppState,
 };
@@ -40,6 +44,14 @@ async fn create_chat_completion(
         .ok_or_else(|| AppError::BadRequest(format!("模型 {model} 未配置")))?;
     let provider = resolved.provider;
     let model_upstream = resolved.model_upstream;
+    let metadata_json = build_request_metadata(
+        "chat_completions",
+        "chat_completions",
+        UpstreamProtocol::ChatCompletions,
+        &model,
+        &model_upstream,
+        Vec::new(),
+    )?;
 
     payload["model"] = Value::String(model_upstream.clone());
     let upstream_url = format!(
@@ -85,7 +97,7 @@ async fn create_chat_completion(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: observability.request_id,
-                metadata_json: None,
+                metadata_json: Some(metadata_json.clone()),
             },
         )
         .await?;
@@ -116,7 +128,7 @@ async fn create_chat_completion(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id,
-            metadata_json: None,
+            metadata_json: Some(metadata_json.clone()),
         };
         let body = Body::from_stream(record_first_chunk(
             state.db.clone(),
@@ -171,7 +183,7 @@ async fn create_chat_completion(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id,
-            metadata_json: None,
+            metadata_json: Some(metadata_json),
         },
     )
     .await?;

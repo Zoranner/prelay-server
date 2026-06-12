@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::{
     bridge::{
         internal::InternalRequest,
-        responses_decode::decode_responses_request,
+        responses_decode::decode_responses_request_with_diagnostics,
         responses_encode::encode_responses_response,
         sessions::{load_response_session_messages, save_response_session},
         stream::{
@@ -27,7 +27,7 @@ use crate::{
     },
     providers::chat_completions::{decode_chat_response, encode_chat_request},
     providers::spec::{ProviderSpec, UpstreamProtocol},
-    routes::stream_stats::record_first_chunk,
+    routes::{request_metadata::build_request_metadata, stream_stats::record_first_chunk},
     stats::{insert_request_log, RequestLogInsert},
     AppState,
 };
@@ -42,7 +42,9 @@ async fn create_response(
 ) -> Result<Response, AppError> {
     let started_at = std::time::Instant::now();
     let original_payload = payload.clone();
-    let request = decode_responses_request(payload)?;
+    let decoded_request = decode_responses_request_with_diagnostics(payload)?;
+    let request = decoded_request.request;
+    let diagnostics = decoded_request.diagnostics;
     let model_requested = request.model.clone();
     let is_streaming = request.stream;
     let previous_response_id = request.previous_response_id.clone();
@@ -52,6 +54,14 @@ async fn create_response(
     let provider = resolved.provider;
     let provider_spec = ProviderSpec::from_provider_config(&provider);
     let model_upstream = resolved.model_upstream;
+    let metadata_json = build_request_metadata(
+        "responses",
+        "responses",
+        provider_spec.protocol,
+        &model_requested,
+        &model_upstream,
+        diagnostics,
+    )?;
     let mut upstream_payload = original_payload.clone();
     upstream_payload["model"] = Value::String(model_upstream.clone());
     let mut request = request;
@@ -63,6 +73,7 @@ async fn create_response(
             provider,
             model_requested,
             is_streaming,
+            metadata_json,
             started_at,
         )
         .await;
@@ -72,10 +83,13 @@ async fn create_response(
             &state,
             request,
             provider,
-            model_requested,
-            is_streaming,
             previous_response_id,
-            started_at,
+            ResponseBridgeContext {
+                model_requested,
+                is_streaming,
+                metadata_json,
+                started_at,
+            },
         )
         .await;
     }
@@ -121,7 +135,7 @@ async fn create_response(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
-                metadata_json: None,
+                metadata_json: Some(metadata_json.clone()),
             },
         )
         .await?;
@@ -150,7 +164,7 @@ async fn create_response(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: None,
+            metadata_json: Some(metadata_json.clone()),
         };
         let body = Body::from_stream(record_first_chunk(
             state.db.clone(),
@@ -212,7 +226,7 @@ async fn create_response(
             first_token_ms: None,
             tool_call_count: Some(tool_call_count),
             upstream_request_id: None,
-            metadata_json: None,
+            metadata_json: Some(metadata_json),
         },
     )
     .await?;
@@ -224,10 +238,8 @@ async fn create_anthropic_messages_response(
     state: &AppState,
     mut request: InternalRequest,
     provider: crate::models::ProviderConfig,
-    model_requested: String,
-    is_streaming: bool,
     previous_response_id: Option<String>,
-    started_at: std::time::Instant,
+    context: ResponseBridgeContext,
 ) -> Result<Response, AppError> {
     request = request_with_session_history(&state.db, request).await?;
     let upstream_url = format!("{}/messages", provider.base_url.trim_end_matches('/'));
@@ -253,57 +265,57 @@ async fn create_anthropic_messages_response(
                 protocol_upstream: "anthropic_messages".to_string(),
                 provider_id: provider.id,
                 provider_name: provider.name,
-                model_requested,
+                model_requested: context.model_requested,
                 model_upstream: request.model,
                 status: "failed".to_string(),
                 http_status: status.as_u16() as i64,
                 error_code: None,
                 error_message: None,
-                is_streaming,
+                is_streaming: context.is_streaming,
                 input_tokens: None,
                 output_tokens: None,
                 reasoning_tokens: None,
-                latency_ms: started_at.elapsed().as_millis() as i64,
+                latency_ms: context.started_at.elapsed().as_millis() as i64,
                 upstream_latency_ms: None,
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
-                metadata_json: None,
+                metadata_json: Some(context.metadata_json.clone()),
             },
         )
         .await?;
         return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
     }
 
-    if is_streaming {
+    if context.is_streaming {
         let log = RequestLogInsert {
             protocol_in: "responses".to_string(),
             protocol_out: "responses".to_string(),
             protocol_upstream: "anthropic_messages".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
-            model_requested,
+            model_requested: context.model_requested,
             model_upstream: request.model,
             status: "success".to_string(),
             http_status: 200,
             error_code: None,
             error_message: None,
-            is_streaming,
+            is_streaming: context.is_streaming,
             input_tokens: None,
             output_tokens: None,
             reasoning_tokens: None,
-            latency_ms: started_at.elapsed().as_millis() as i64,
+            latency_ms: context.started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: None,
+            metadata_json: Some(context.metadata_json.clone()),
         };
         let body = Body::from_stream(record_first_chunk(
             state.db.clone(),
             anthropic_messages_sse_response_to_responses_sse(upstream_response),
             log,
-            started_at,
+            context.started_at,
         ));
         return Ok((
             [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
@@ -337,30 +349,37 @@ async fn create_anthropic_messages_response(
             protocol_upstream: "anthropic_messages".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
-            model_requested,
+            model_requested: context.model_requested,
             model_upstream: response.model.clone(),
             status: "success".to_string(),
             http_status: 200,
             error_code: None,
             error_message: None,
-            is_streaming,
+            is_streaming: context.is_streaming,
             input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
             output_tokens: response
                 .usage
                 .as_ref()
                 .and_then(|usage| usage.output_tokens),
             reasoning_tokens: None,
-            latency_ms: started_at.elapsed().as_millis() as i64,
+            latency_ms: context.started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
             first_token_ms: None,
             tool_call_count: Some(tool_call_count),
             upstream_request_id: None,
-            metadata_json: None,
+            metadata_json: Some(context.metadata_json),
         },
     )
     .await?;
 
     Ok(Json(encode_responses_response(response)).into_response())
+}
+
+struct ResponseBridgeContext {
+    model_requested: String,
+    is_streaming: bool,
+    metadata_json: String,
+    started_at: std::time::Instant,
 }
 
 async fn create_native_response(
@@ -369,6 +388,7 @@ async fn create_native_response(
     provider: crate::models::ProviderConfig,
     model_requested: String,
     is_streaming: bool,
+    metadata_json: String,
     started_at: std::time::Instant,
 ) -> Result<Response, AppError> {
     let upstream_url = format!("{}/responses", provider.base_url.trim_end_matches('/'));
@@ -408,7 +428,7 @@ async fn create_native_response(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
-                metadata_json: None,
+                metadata_json: Some(metadata_json.clone()),
             },
         )
         .await?;
@@ -441,7 +461,7 @@ async fn create_native_response(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: None,
+            metadata_json: Some(metadata_json.clone()),
         };
         let body = Body::from_stream(record_first_chunk(
             state.db.clone(),
@@ -495,7 +515,7 @@ async fn create_native_response(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: None,
+            metadata_json: Some(metadata_json),
         },
     )
     .await?;
@@ -860,6 +880,62 @@ mod tests {
         assert_eq!(overview.failed_requests, 0);
         assert_eq!(overview.input_tokens, 3);
         assert_eq!(overview.output_tokens, 4);
+    }
+
+    #[tokio::test]
+    async fn records_response_decode_diagnostics_in_request_metadata() {
+        let upstream = spawn_chat_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        db::create_config(
+            &db,
+            "deepseek-chat",
+            "openai_compatible",
+            &upstream,
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+            admin_token: None,
+        };
+
+        let _response = create_response(
+            State(state.clone()),
+            axum::Json(json!({
+                "model": "deepseek-chat",
+                "input": [
+                    {
+                        "role": "planner",
+                        "content": "hello"
+                    }
+                ]
+            })),
+        )
+        .await
+        .expect("create response");
+        let metadata_json: Option<String> =
+            sqlx::query_scalar("SELECT metadata_json FROM request_logs LIMIT 1")
+                .fetch_one(&state.db)
+                .await
+                .expect("load metadata");
+        let metadata: serde_json::Value =
+            serde_json::from_str(&metadata_json.expect("metadata json")).expect("parse metadata");
+
+        assert_eq!(metadata["schema"], "provider-relay.request_metadata.v1");
+        assert_eq!(metadata["bridge"]["protocol_in"], "responses");
+        assert_eq!(metadata["bridge"]["protocol_upstream"], "chat_completions");
+        assert_eq!(metadata["bridge"]["model_requested"], "deepseek-chat");
+        assert_eq!(metadata["bridge"]["model_upstream"], "deepseek-chat");
+        assert_eq!(metadata["diagnostics"][0]["code"], "responses.role.unknown");
+        assert_eq!(metadata["diagnostics"][0]["action"], "mapped");
+        assert_eq!(metadata["diagnostics"][0]["severity"], "warning");
     }
 
     #[tokio::test]
