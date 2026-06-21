@@ -6,11 +6,10 @@
 
 协议桥接主体已经从透明代理演进为多入口、多上游协议的桥接网关。当前产品范围收敛为 `chat_completions`、`responses` 和 `anthropic_messages`。Ollama Native 因无法稳定支撑 Codex / Claude Code 的工具调用和复杂会话目标，已从协议入口、上游类型、模型目录和前端 provider 选项中下线。
 
-当前后端主链路已完成第一版骨架，但还没有达到完整产品验收。主要缺口集中在三类：
+当前后端主链路已完成第一版骨架，并已补齐本阶段要求的跨 agent 流式工具调用、流式 usage 统计回填和 typed metadata 详情展示。当前仍不能等同于完整产品验收，主要边界集中在两类：
 
-- `responses <-> anthropic_messages` 已支持非流式和文本流式互转，但工具调用增量、usage 聚合和真实客户端复杂会话仍未完整验收。
 - 现有验证以 mock upstream 和单元测试为主，缺少 Codex、Claude Code、DeepSeek、OpenAI、Anthropic 的真实客户端联调记录。
-- 统计已经能记录请求、token、成本估算、延迟、错误和聚合数据，但流式请求统计仍偏粗，`first_token_ms`、流式 token、流式 tool-call 数量和上游 request id 多数没有准确回填。
+- 原生 Responses / Anthropic Messages 流式直通仍不解析上游 usage 事件；已通过桥接语义层的流式路径可以回填 usage、tool-call 数量、完成状态、空流和流中错误。
 
 ## 已实现范围
 
@@ -48,9 +47,9 @@
 - `chat_completions -> responses`
 - `chat_completions -> anthropic_messages`
 - `responses -> responses`
-- `responses -> anthropic_messages`，支持非流式和文本流式。
+- `responses -> anthropic_messages`，支持非流式、文本流式、流式工具调用和 usage 事件。
 - `anthropic_messages -> anthropic_messages`
-- `anthropic_messages -> responses`，支持非流式和文本流式。
+- `anthropic_messages -> responses`，支持非流式、文本流式、流式工具调用和 usage 事件。
 
 ### 流式桥接
 
@@ -60,11 +59,11 @@
 - Chat Completions 上游流式转换为 Responses SSE。
 - Chat Completions 上游流式转换为 Anthropic Messages SSE。
 - 原生 Responses 上游流式直通到 Responses 入口。
-- Responses 上游文本流式转换为 Anthropic Messages SSE。
+- Responses 上游文本流式、function call 增量和 usage 事件转换为 Anthropic Messages SSE。
 - 原生 Anthropic Messages 上游流式直通到 Messages 入口。
-- Anthropic Messages 上游文本流式转换为 Responses SSE。
+- Anthropic Messages 上游文本流式、tool_use 增量和 usage 事件转换为 Responses SSE。
 
-当前流式桥接仍未完整覆盖跨 agent 协议的工具增量和 usage 聚合。
+当前跨 agent 流式桥接已经覆盖工具增量和 usage 聚合。未知 SSE 事件会被忽略并继续处理后续事件，但还没有把 Raw/diagnostic 事件正式写入 metadata。
 
 ### 会话和工具调用
 
@@ -79,7 +78,7 @@
 仍需补齐的内容：
 
 - DeepSeek reasoning / thinking 回放只具备设计预期，当前没有看到完整 provider 特化处理闭环。
-- 流式 tool-call 的统计和跨协议状态机还不完整。
+- 流式 tool-call 的跨协议状态机已补齐本地实现和 mock 测试，真实客户端复杂会话仍需验收。
 - Responses 会话链主要服务 Responses 入口，Anthropic Messages 侧没有等价的持久会话链能力。
 
 ## 统计观测状态
@@ -115,6 +114,7 @@
 - 请求状态、provider、模型、协议、HTTP 状态、上游 ID、错误、token、耗时。
 - 模型聚合。
 - Provider 聚合。
+- 请求 metadata 详情展开，展示 bridge 协议/模型、diagnostics 明细、stream 状态和 upstream 摘要。
 
 ### 统计边界
 
@@ -132,10 +132,10 @@
 
 ### 统计差距
 
-当前统计仍有明显边界：
+当前统计仍有边界：
 
-- 流式请求通常在返回流之前先写成功日志，后续流是否中断、最终 token、最终 tool-call 数量不能准确回填。
-- `first_token_ms` 字段已建模和聚合展示，但多数真实请求路径写入 `None`。
+- 流式请求已采用固定 log id，首包插入后在结束时回填 completed、empty、final_usage_seen、stream_error、usage 和 tool_call_count。
+- `first_token_ms` 字段已建模和聚合展示，流式路径会在首个 bytes chunk 到达时写入。
 - `upstream_request_id` 字段已建模和展示，但多数 provider 响应路径没有从响应头或响应体提取。
 - 上游错误多数只记录 HTTP 状态，没有统一解析 provider error code、error message 和 request id。
 - 原生 Responses / Anthropic Messages 流式直通时，usage 事件没有被解析并归一化到统计字段。
@@ -157,6 +157,9 @@
 - Anthropic Messages 到 Chat Completions 上游。
 - Anthropic Messages 到原生 Anthropic Messages 上游。
 - Anthropic Messages 到 Responses 上游的非流式和文本流式桥接。
+- Responses 到 Anthropic Messages 上游的流式工具调用和 usage 事件桥接。
+- Anthropic Messages 到 Responses 上游的流式工具调用和 usage 事件桥接。
+- 流式 request log 的首包插入、结束态回填、空流和流中错误 metadata。
 - `previous_response_id` 多跳历史。
 - function tool call 回合。
 - 统计 API 聚合。
@@ -187,7 +190,7 @@
 
 ### 协议方向差距
 
-设计要求的主要协议方向已实现。`responses <-> anthropic_messages` 已支持非流式和文本流式互转，但工具调用增量和 usage 聚合仍属于增强项。
+设计要求的主要协议方向已实现。`responses <-> anthropic_messages` 已支持非流式、文本流式、工具调用增量和 usage 聚合的本地实现。
 
 设计中禁止的方向仍保持关闭：
 
@@ -196,10 +199,11 @@
 
 ### 流式状态机差距
 
-当前已有多条流式文本路径，跨 agent 协议互转已经具备文本增量状态机，但复杂事件仍需继续补齐：
+当前已有多条流式文本路径，跨 agent 协议互转已经具备工具调用和 usage 事件状态机：
 
-- 跨协议流式 tool-call 增量没有完整状态聚合。
-- 流式 usage 事件没有统一解析。
+- Responses SSE 的 function_call added、arguments delta/done、output item done、usage、completed 已进入内部事件层。
+- Anthropic Messages SSE 的 tool_use、input_json_delta、content_block_stop、message_delta usage、message_stop 已进入内部事件层。
+- 未知 SSE 事件当前按忽略处理，不中断后续流；Raw/diagnostic metadata 仍是后续增强项。
 
 这部分不应简单透传，需要明确事件状态机，否则容易造成客户端等待、工具调用不闭合或统计不准确。
 
@@ -225,7 +229,7 @@
 - 上游错误体没有统一结构化。
 - 上游 request id 没有普遍提取。
 - 兼容性降级、字段忽略和上游失败的错误分类还不够细。
-- 流式中途失败没有最终落库状态修正。
+- 流式中途失败已通过 stream recorder 回填失败状态和 `stream.stream_error`。
 
 ## 建议优先级
 
@@ -238,19 +242,17 @@
 - Codex + OpenAI Responses，原生上游直通。
 - Claude Code + Anthropic Messages，原生上游直通。
 
-### 再补统计准确性
+### 再补真实统计边界
 
-统计应先补流式请求的准确性：
+统计已补齐桥接流式路径的结束态回填。后续重点是原生透传和真实上游字段提取：
 
-- 记录首 token 时间。
-- 尽量从最终 usage 或 done 事件回填 token。
 - 提取上游 request id。
-- 流式中途失败时记录失败或部分完成状态。
+- 原生 Responses / Anthropic Messages 直通流解析 usage。
 - 明确无法统计的字段为空，而不是估算成错误值。
 
-### 最后推进跨 agent 流式增强
+### 最后推进真实客户端验收
 
-`responses <-> anthropic_messages` 文本流式互转已经具备基础状态机。后续应补齐工具调用增量和 usage 事件聚合，并用真实 Codex / Claude Code 客户端做端到端验收。
+`responses <-> anthropic_messages` 跨 agent 流式增强已完成本地实现。后续应使用真实 Codex / Claude Code 客户端做端到端验收。
 
 ## 当前可发布边界
 
@@ -263,7 +265,6 @@
 
 如果按对外产品口径，仍不应宣称完整支持：
 
-- 不应宣称完整支持 Responses 与 Anthropic Messages 工具流式互转。
 - 不应宣称已完成 Codex / Claude Code 真实兼容性认证。
-- 不应宣称统计 token、成本、首 token、上游 request id 在所有协议上都准确。
+- 不应宣称统计 token、成本、首 token、上游 request id 在所有原生透传协议上都准确。
 - 不应宣称支持限额、预算、计费或企业审计。

@@ -9,6 +9,14 @@
 - 后端提交 `f06bf64 记录桥接兼容诊断`，新增桥接兼容诊断模型和 request metadata schema，并把 Chat、Responses、Messages 请求日志接入 metadata / diagnostics。
 - 前端提交 `7b907b0 展示请求诊断 metadata`，请求日志列表已经展示 diagnostics 摘要和 warning 标记。
 - 工程治理提交 `82383dc 收口构建检查治理` 已移除 Cargo build script 自动修复动作，补齐 `format:check`、`.editorconfig`、`.gitattributes` 和 `.refs/` 忽略规则。
+- 流式结构提交 `d0ae433 拆分流式桥接模块` 已将 `stream.rs` 拆成 stream 模块目录。
+
+截至当前开发推进，阶段内代码项已经继续完成：
+
+- Responses / Anthropic Messages 复杂流式互转已补齐工具调用增量、usage 事件和未知事件不中断处理。
+- 流式统计已升级为固定 log id、首包插入和结束态 update，能够回填 completed、empty、final_usage_seen、stream_error、usage 和 tool_call_count。
+- Stats API 已恢复返回 `metadata_json`，前端最近请求列表已支持 typed metadata 详情展开。
+- 真实 Codex / Claude Code 客户端验收仍需在实际联调环境中补齐，当前本地验证仍以 mock upstream、单元测试和路由集成测试为主。
 
 新的阶段目标不是继续堆单点补丁，而是把影响后续能力扩展的结构问题先处理掉。当前最明显的结构瓶颈已经收敛为：
 
