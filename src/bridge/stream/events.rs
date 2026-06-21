@@ -24,6 +24,42 @@ pub struct StreamUsage {
     pub total_tokens: Option<u64>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StreamStatsSnapshot {
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub total_tokens: Option<i64>,
+    pub tool_call_count: i64,
+    pub completed: bool,
+    pub final_usage_seen: bool,
+}
+
+impl StreamStatsSnapshot {
+    pub(crate) fn record_event(&mut self, event: &InternalStreamEvent) {
+        match event {
+            InternalStreamEvent::ToolCallDone { .. } => {
+                self.tool_call_count += 1;
+            }
+            InternalStreamEvent::Usage(usage) => {
+                self.input_tokens = usage.input_tokens.and_then(u64_to_i64);
+                self.output_tokens = usage.output_tokens.and_then(u64_to_i64);
+                self.total_tokens = usage.total_tokens.and_then(u64_to_i64);
+                self.final_usage_seen = usage.input_tokens.is_some()
+                    || usage.output_tokens.is_some()
+                    || usage.total_tokens.is_some();
+            }
+            InternalStreamEvent::Finished(_) => {
+                self.completed = true;
+            }
+            InternalStreamEvent::TextDelta(_) | InternalStreamEvent::ToolCallDelta { .. } => {}
+        }
+    }
+}
+
+fn u64_to_i64(value: u64) -> Option<i64> {
+    i64::try_from(value).ok()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InternalFinishReason {
     Stop,
@@ -36,7 +72,7 @@ pub enum InternalFinishReason {
 
 pub(crate) fn internal_finish_reason_from_str(reason: Option<&str>) -> InternalFinishReason {
     match reason {
-        Some("stop") | Some("end_turn") => InternalFinishReason::Stop,
+        Some("stop") | Some("end_turn") | Some("stop_sequence") => InternalFinishReason::Stop,
         Some("length") | Some("max_tokens") => InternalFinishReason::Length,
         Some("tool_calls") | Some("tool_use") => InternalFinishReason::ToolUse,
         Some("content_filter") => InternalFinishReason::ContentFilter,
@@ -93,14 +129,14 @@ pub(crate) struct ChatToolCallDelta {
 }
 
 pub(crate) struct AnthropicMessagesSseEvent {
-    pub(crate) text_delta: Option<String>,
-    pub(crate) finished: bool,
+    pub(crate) finish_reason: Option<InternalFinishReason>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        internal_finish_reason_from_str, InternalFinishReason, InternalStreamEvent, StreamUsage,
+        internal_finish_reason_from_str, InternalFinishReason, InternalStreamEvent,
+        StreamStatsSnapshot, StreamUsage,
     };
 
     #[test]
@@ -147,5 +183,32 @@ mod tests {
                 total_tokens: Some(8),
             })
         ));
+    }
+
+    #[test]
+    fn records_stream_stats_from_internal_events() {
+        let mut stats = StreamStatsSnapshot::default();
+
+        stats.record_event(&InternalStreamEvent::Usage(StreamUsage {
+            input_tokens: Some(3),
+            output_tokens: Some(5),
+            total_tokens: Some(8),
+        }));
+        stats.record_event(&InternalStreamEvent::ToolCallDone {
+            index: 0,
+            id: "call_1".to_string(),
+            name: "get_weather".to_string(),
+            arguments: "{}".to_string(),
+        });
+        stats.record_event(&InternalStreamEvent::Finished(
+            InternalFinishReason::ToolUse,
+        ));
+
+        assert_eq!(stats.input_tokens, Some(3));
+        assert_eq!(stats.output_tokens, Some(5));
+        assert_eq!(stats.total_tokens, Some(8));
+        assert_eq!(stats.tool_call_count, 1);
+        assert!(stats.completed);
+        assert!(stats.final_usage_seen);
     }
 }

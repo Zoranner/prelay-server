@@ -17,7 +17,8 @@ use crate::{
         responses_encode::encode_responses_response,
         sessions::{load_response_session_messages, save_response_session},
         stream::{
-            anthropic_messages_sse_response_to_responses_sse, chat_sse_response_to_responses_sse,
+            anthropic_messages_sse_response_to_responses_sse_with_stats,
+            chat_sse_response_to_responses_sse_with_stats,
         },
     },
     db,
@@ -27,7 +28,10 @@ use crate::{
     },
     providers::chat_completions::{decode_chat_response, encode_chat_request},
     providers::spec::{ProviderSpec, UpstreamProtocol},
-    routes::{request_metadata::build_request_metadata, stream_stats::record_first_chunk},
+    routes::{
+        request_metadata::build_request_metadata,
+        stream_stats::{record_first_chunk, record_stream},
+    },
     stats::{insert_request_log, RequestLogInsert},
     AppState,
 };
@@ -166,11 +170,14 @@ async fn create_response(
             upstream_request_id: None,
             metadata_json: Some(metadata_json.clone()),
         };
-        let body = Body::from_stream(record_first_chunk(
+        let (stream, stream_stats) =
+            chat_sse_response_to_responses_sse_with_stats(upstream_response);
+        let body = Body::from_stream(record_stream(
             state.db.clone(),
-            chat_sse_response_to_responses_sse(upstream_response),
+            stream,
             log,
             started_at,
+            stream_stats,
         ));
         return Ok((
             [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
@@ -311,11 +318,14 @@ async fn create_anthropic_messages_response(
             upstream_request_id: None,
             metadata_json: Some(context.metadata_json.clone()),
         };
-        let body = Body::from_stream(record_first_chunk(
+        let (stream, stream_stats) =
+            anthropic_messages_sse_response_to_responses_sse_with_stats(upstream_response);
+        let body = Body::from_stream(record_stream(
             state.db.clone(),
-            anthropic_messages_sse_response_to_responses_sse(upstream_response),
+            stream,
             log,
             context.started_at,
+            stream_stats,
         ));
         return Ok((
             [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],

@@ -1,4 +1,5 @@
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::bridge::diagnostics::BridgeDiagnostic;
 use crate::error::AppError;
@@ -31,6 +32,99 @@ pub fn build_request_metadata(
         .diagnostics(diagnostics)
         .into_json_string()
         .map_err(|error| AppError::Internal(error.into()))
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct StreamMetadataUpdate {
+    pub empty: Option<bool>,
+    pub completed: Option<bool>,
+    pub final_usage_seen: Option<bool>,
+    pub stream_error: Option<String>,
+    pub upstream_request_id: Option<String>,
+    pub upstream_error_body_excerpt: Option<String>,
+}
+
+pub fn update_stream_metadata(
+    metadata_json: Option<&str>,
+    update: &StreamMetadataUpdate,
+) -> Result<String, AppError> {
+    let mut metadata = match metadata_json.filter(|metadata| !metadata.trim().is_empty()) {
+        Some(raw_metadata) => match serde_json::from_str::<Value>(raw_metadata) {
+            Ok(metadata) => metadata,
+            Err(error) => serde_json::json!({
+                "schema": "provider-relay.request_metadata.v1",
+                "bridge": {},
+                "diagnostics": [],
+                "stream": {},
+                "upstream": {},
+                "metadata_parse_error": {
+                    "raw": raw_metadata,
+                    "message": error.to_string()
+                }
+            }),
+        },
+        None => serde_json::json!({
+            "schema": "provider-relay.request_metadata.v1",
+            "bridge": {},
+            "diagnostics": [],
+            "stream": {},
+            "upstream": {}
+        }),
+    };
+
+    if !metadata.is_object() {
+        metadata = serde_json::json!({
+            "schema": "provider-relay.request_metadata.v1",
+            "bridge": {},
+            "diagnostics": [],
+            "stream": {},
+            "upstream": {}
+        });
+    }
+
+    ensure_object_field(&mut metadata, "stream");
+    ensure_object_field(&mut metadata, "upstream");
+
+    if let Some(stream) = metadata.get_mut("stream").and_then(Value::as_object_mut) {
+        if let Some(empty) = update.empty {
+            stream.insert("empty".to_string(), Value::Bool(empty));
+        }
+        if let Some(completed) = update.completed {
+            stream.insert("completed".to_string(), Value::Bool(completed));
+        }
+        if let Some(final_usage_seen) = update.final_usage_seen {
+            stream.insert(
+                "final_usage_seen".to_string(),
+                Value::Bool(final_usage_seen),
+            );
+        }
+        if let Some(stream_error) = &update.stream_error {
+            stream.insert(
+                "stream_error".to_string(),
+                Value::String(stream_error.clone()),
+            );
+        }
+    }
+
+    if let Some(upstream) = metadata.get_mut("upstream").and_then(Value::as_object_mut) {
+        if let Some(request_id) = &update.upstream_request_id {
+            upstream.insert("request_id".to_string(), Value::String(request_id.clone()));
+        }
+        if let Some(error_body_excerpt) = &update.upstream_error_body_excerpt {
+            upstream.insert(
+                "error_body_excerpt".to_string(),
+                Value::String(error_body_excerpt.clone()),
+            );
+        }
+    }
+
+    serde_json::to_string(&metadata).map_err(|error| AppError::Internal(error.into()))
+}
+
+fn ensure_object_field(metadata: &mut Value, field: &str) {
+    if !metadata.get(field).is_some_and(Value::is_object) {
+        metadata[field] = serde_json::json!({});
+    }
 }
 
 fn upstream_protocol_label(protocol: UpstreamProtocol) -> &'static str {
@@ -138,7 +232,9 @@ mod tests {
     use crate::{
         bridge::diagnostics::{BridgeDiagnostic, DiagnosticAction, DiagnosticSeverity},
         providers::spec::UpstreamProtocol,
-        routes::request_metadata::build_request_metadata,
+        routes::request_metadata::{
+            build_request_metadata, update_stream_metadata, StreamMetadataUpdate,
+        },
     };
 
     #[test]
@@ -196,5 +292,64 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[test]
+    fn updates_stream_metadata_without_losing_bridge_fields() {
+        let metadata = build_request_metadata(
+            "responses",
+            "responses",
+            UpstreamProtocol::ChatCompletions,
+            "coder",
+            "deepseek-chat",
+            Vec::new(),
+        )
+        .expect("serialize request metadata");
+
+        let updated = update_stream_metadata(
+            Some(&metadata),
+            &StreamMetadataUpdate {
+                empty: Some(false),
+                completed: Some(true),
+                final_usage_seen: Some(true),
+                stream_error: None,
+                upstream_request_id: Some("req_123".to_string()),
+                upstream_error_body_excerpt: None,
+            },
+        )
+        .expect("update metadata");
+        let metadata: serde_json::Value =
+            serde_json::from_str(&updated).expect("parse updated metadata");
+
+        assert_eq!(metadata["bridge"]["model_requested"], "coder");
+        assert_eq!(metadata["stream"]["empty"], false);
+        assert_eq!(metadata["stream"]["completed"], true);
+        assert_eq!(metadata["stream"]["final_usage_seen"], true);
+        assert_eq!(metadata["upstream"]["request_id"], "req_123");
+    }
+
+    #[test]
+    fn updates_stream_metadata_preserves_invalid_metadata_for_audit() {
+        let updated = update_stream_metadata(
+            Some("{invalid metadata"),
+            &StreamMetadataUpdate {
+                empty: Some(false),
+                completed: Some(true),
+                final_usage_seen: Some(false),
+                stream_error: None,
+                upstream_request_id: Some("req_bad_metadata".to_string()),
+                upstream_error_body_excerpt: None,
+            },
+        )
+        .expect("update invalid metadata");
+        let metadata: serde_json::Value =
+            serde_json::from_str(&updated).expect("parse updated metadata");
+
+        assert_eq!(metadata["stream"]["empty"], false);
+        assert_eq!(metadata["stream"]["completed"], true);
+        assert_eq!(metadata["stream"]["final_usage_seen"], false);
+        assert_eq!(metadata["upstream"]["request_id"], "req_bad_metadata");
+        assert_eq!(metadata["metadata_parse_error"]["raw"], "{invalid metadata");
+        assert!(metadata["metadata_parse_error"]["message"].is_string());
     }
 }

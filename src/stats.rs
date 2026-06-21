@@ -29,6 +29,7 @@ pub struct RequestLogSummary {
     pub output_tokens: Option<i64>,
     pub latency_ms: Option<i64>,
     pub upstream_request_id: Option<String>,
+    pub metadata_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -92,12 +93,21 @@ pub struct ModelPrice {
 }
 
 pub async fn insert_request_log(pool: &SqlitePool, log: RequestLogInsert) -> Result<()> {
+    insert_request_log_with_id(pool, Uuid::new_v4().to_string(), log).await
+}
+
+pub async fn insert_request_log_with_id(
+    pool: &SqlitePool,
+    id: impl Into<String>,
+    log: RequestLogInsert,
+) -> Result<()> {
     let prices = load_model_prices().unwrap_or_default();
-    insert_request_log_with_prices(pool, log, &prices).await
+    insert_request_log_with_prices(pool, id.into(), log, &prices).await
 }
 
 async fn insert_request_log_with_prices(
     pool: &SqlitePool,
+    id: String,
     log: RequestLogInsert,
     prices: &[ModelPrice],
 ) -> Result<()> {
@@ -134,7 +144,7 @@ async fn insert_request_log_with_prices(
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
-    .bind(Uuid::new_v4().to_string())
+    .bind(id)
     .bind(chrono::Utc::now().to_rfc3339())
     .bind(log.protocol_in)
     .bind(log.protocol_out)
@@ -163,6 +173,139 @@ async fn insert_request_log_with_prices(
     .await?;
 
     Ok(())
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct StreamRequestLogUpdate {
+    pub status: String,
+    pub http_status: i64,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub reasoning_tokens: Option<i64>,
+    pub latency_ms: i64,
+    pub tool_call_count: Option<i64>,
+    pub upstream_request_id: Option<String>,
+    pub metadata_json: Option<String>,
+}
+
+pub async fn update_stream_request_log(
+    pool: &SqlitePool,
+    id: &str,
+    update: StreamRequestLogUpdate,
+) -> Result<()> {
+    let prices = load_model_prices().unwrap_or_default();
+    update_stream_request_log_with_prices(pool, id, update, &prices).await
+}
+
+async fn update_stream_request_log_with_prices(
+    pool: &SqlitePool,
+    id: &str,
+    update: StreamRequestLogUpdate,
+    prices: &[ModelPrice],
+) -> Result<()> {
+    let pricing_log = RequestLogInsert {
+        protocol_in: String::new(),
+        protocol_out: String::new(),
+        protocol_upstream: String::new(),
+        provider_id: String::new(),
+        provider_name: String::new(),
+        model_requested: String::new(),
+        model_upstream: String::new(),
+        status: update.status.clone(),
+        http_status: update.http_status,
+        error_code: update.error_code.clone(),
+        error_message: update.error_message.clone(),
+        is_streaming: true,
+        input_tokens: update.input_tokens,
+        output_tokens: update.output_tokens,
+        reasoning_tokens: update.reasoning_tokens,
+        latency_ms: update.latency_ms,
+        upstream_latency_ms: None,
+        first_token_ms: None,
+        tool_call_count: update.tool_call_count,
+        upstream_request_id: update.upstream_request_id.clone(),
+        metadata_json: update.metadata_json.clone(),
+    };
+    let cost = estimate_cost_for_existing_log(pool, id, &pricing_log, prices).await?;
+
+    sqlx::query(
+        r#"
+        UPDATE request_logs
+        SET
+            status = ?,
+            http_status = ?,
+            error_code = ?,
+            error_message = ?,
+            input_tokens = ?,
+            output_tokens = ?,
+            reasoning_tokens = ?,
+            estimated_cost = ?,
+            currency = ?,
+            latency_ms = ?,
+            tool_call_count = ?,
+            upstream_request_id = COALESCE(?, upstream_request_id),
+            metadata_json = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(update.status)
+    .bind(update.http_status)
+    .bind(update.error_code)
+    .bind(update.error_message)
+    .bind(update.input_tokens)
+    .bind(update.output_tokens)
+    .bind(update.reasoning_tokens)
+    .bind(cost.as_ref().map(|cost| cost.estimated_cost))
+    .bind(cost.as_ref().map(|cost| cost.currency.as_str()))
+    .bind(update.latency_ms)
+    .bind(update.tool_call_count)
+    .bind(update.upstream_request_id)
+    .bind(update.metadata_json)
+    .bind(id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+async fn estimate_cost_for_existing_log(
+    pool: &SqlitePool,
+    id: &str,
+    update: &RequestLogInsert,
+    prices: &[ModelPrice],
+) -> Result<Option<EstimatedCost>> {
+    #[derive(sqlx::FromRow)]
+    struct PricingContext {
+        provider_name: String,
+        model_requested: String,
+        model_upstream: String,
+    }
+
+    let Some(context) = sqlx::query_as::<_, PricingContext>(
+        r#"
+        SELECT
+            COALESCE(provider_name, '') AS provider_name,
+            COALESCE(model_requested, '') AS model_requested,
+            COALESCE(model_upstream, '') AS model_upstream
+        FROM request_logs
+        WHERE id = ?
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Ok(None);
+    };
+
+    let mut pricing_log = update.clone();
+    pricing_log.provider_name = context.provider_name;
+    pricing_log.model_requested = context.model_requested;
+    pricing_log.model_upstream = context.model_upstream;
+
+    Ok(estimate_cost(&pricing_log, prices))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -238,7 +381,8 @@ pub async fn list_requests(pool: &SqlitePool, limit: usize) -> Result<Vec<Reques
             input_tokens,
             output_tokens,
             latency_ms,
-            upstream_request_id
+            upstream_request_id,
+            metadata_json
         FROM request_logs
         ORDER BY created_at DESC
         LIMIT ?
@@ -305,7 +449,8 @@ mod tests {
 
     use super::{
         estimate_cost, insert_request_log_with_prices, list_model_stats, list_provider_stats,
-        overview, ModelPrice, RequestLogInsert,
+        list_requests, overview, update_stream_request_log_with_prices, ModelPrice,
+        RequestLogInsert, StreamRequestLogUpdate,
     };
     use crate::db;
 
@@ -400,6 +545,52 @@ mod tests {
         assert_eq!(rows[1].model_requested.as_deref(), Some("kimi-k2"));
     }
 
+    #[tokio::test]
+    async fn list_requests_returns_metadata_json() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+
+        sqlx::query(
+            r#"
+            INSERT INTO request_logs (
+                id,
+                created_at,
+                protocol_in,
+                protocol_upstream,
+                provider_name,
+                model_requested,
+                status,
+                metadata_json
+            )
+            VALUES (
+                'log-metadata',
+                '2026-06-05T00:00:00Z',
+                'responses',
+                'chat_completions',
+                'DeepSeek',
+                'coder',
+                'success',
+                '{"schema":"provider-relay.request_metadata.v1"}'
+            )
+            "#,
+        )
+        .execute(&db)
+        .await
+        .expect("insert request log");
+
+        let rows = list_requests(&db, 50).await.expect("list requests");
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].metadata_json.as_deref(),
+            Some(r#"{"schema":"provider-relay.request_metadata.v1"}"#)
+        );
+    }
+
     #[test]
     fn estimates_cost_from_matching_model_price() {
         let cost = estimate_cost(
@@ -483,6 +674,7 @@ mod tests {
 
         insert_request_log_with_prices(
             &db,
+            "log-cost".to_string(),
             RequestLogInsert {
                 protocol_in: "responses".to_string(),
                 protocol_out: "responses".to_string(),
@@ -538,6 +730,7 @@ mod tests {
 
         insert_request_log_with_prices(
             &db,
+            "log-observability".to_string(),
             RequestLogInsert {
                 protocol_in: "responses".to_string(),
                 protocol_out: "responses".to_string(),
@@ -599,6 +792,110 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_stream_request_log_updates_existing_row() {
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+
+        insert_request_log_with_prices(
+            &db,
+            "log-stream".to_string(),
+            RequestLogInsert {
+                protocol_in: "responses".to_string(),
+                protocol_out: "responses".to_string(),
+                protocol_upstream: "chat_completions".to_string(),
+                provider_id: "provider-1".to_string(),
+                provider_name: "DeepSeek".to_string(),
+                model_requested: "deepseek-chat".to_string(),
+                model_upstream: "deepseek-chat".to_string(),
+                status: "success".to_string(),
+                http_status: 200,
+                error_code: None,
+                error_message: None,
+                is_streaming: true,
+                input_tokens: None,
+                output_tokens: None,
+                reasoning_tokens: None,
+                latency_ms: 30,
+                upstream_latency_ms: Some(20),
+                first_token_ms: Some(30),
+                tool_call_count: None,
+                upstream_request_id: None,
+                metadata_json: Some(r#"{"stream":{"completed":null}}"#.to_string()),
+            },
+            &[],
+        )
+        .await
+        .expect("insert stream log");
+
+        update_stream_request_log_with_prices(
+            &db,
+            "log-stream",
+            StreamRequestLogUpdate {
+                status: "success".to_string(),
+                http_status: 200,
+                error_code: None,
+                error_message: None,
+                input_tokens: Some(11),
+                output_tokens: Some(7),
+                reasoning_tokens: Some(2),
+                latency_ms: 80,
+                tool_call_count: Some(1),
+                upstream_request_id: Some("req_stream".to_string()),
+                metadata_json: Some(r#"{"stream":{"completed":true}}"#.to_string()),
+            },
+            &[],
+        )
+        .await
+        .expect("update stream log");
+
+        #[derive(sqlx::FromRow)]
+        struct StreamUpdateRow {
+            row_count: i64,
+            input_tokens: Option<i64>,
+            output_tokens: Option<i64>,
+            reasoning_tokens: Option<i64>,
+            latency_ms: Option<i64>,
+            tool_call_count: Option<i64>,
+            upstream_request_id: Option<String>,
+            metadata_json: Option<String>,
+        }
+
+        let row: StreamUpdateRow = sqlx::query_as(
+            r#"
+            SELECT
+                COUNT(*) AS row_count,
+                input_tokens,
+                output_tokens,
+                reasoning_tokens,
+                latency_ms,
+                tool_call_count,
+                upstream_request_id,
+                metadata_json
+            FROM request_logs
+            "#,
+        )
+        .fetch_one(&db)
+        .await
+        .expect("load stream log");
+
+        assert_eq!(row.row_count, 1);
+        assert_eq!(row.input_tokens, Some(11));
+        assert_eq!(row.output_tokens, Some(7));
+        assert_eq!(row.reasoning_tokens, Some(2));
+        assert_eq!(row.latency_ms, Some(80));
+        assert_eq!(row.tool_call_count, Some(1));
+        assert_eq!(row.upstream_request_id.as_deref(), Some("req_stream"));
+        assert_eq!(
+            row.metadata_json.as_deref(),
+            Some(r#"{"stream":{"completed":true}}"#)
+        );
+    }
+
+    #[tokio::test]
     async fn request_log_insert_writes_error_details() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
@@ -609,6 +906,7 @@ mod tests {
 
         insert_request_log_with_prices(
             &db,
+            "log-error".to_string(),
             RequestLogInsert {
                 protocol_in: "responses".to_string(),
                 protocol_out: "responses".to_string(),

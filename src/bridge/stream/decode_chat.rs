@@ -8,8 +8,11 @@ use super::{
         responses_function_call_added_sse, responses_function_call_arguments_delta_sse,
         responses_function_call_arguments_done_sse, responses_output_item_done_sse,
     },
-    events::{internal_finish_reason_from_str, ChatSseEvent, ChatToolCallDelta, ChatToolCallState},
-    pipeline::ByteStreamDecoder,
+    events::{
+        internal_finish_reason_from_str, ChatSseEvent, ChatToolCallDelta, ChatToolCallState,
+        InternalFinishReason,
+    },
+    pipeline::{ByteStreamDecoder, SharedStreamStats},
     responses_completed_sse, responses_text_delta_sse,
     sse::drain_lines,
     InternalStreamEvent, StreamUsage,
@@ -21,6 +24,7 @@ pub(crate) struct ChatToResponsesSseDecoder {
     data_lines: Vec<String>,
     tool_calls: BTreeMap<usize, ChatToolCallState>,
     completed: bool,
+    stats: Option<SharedStreamStats>,
 }
 
 impl ChatToResponsesSseDecoder {
@@ -60,6 +64,7 @@ impl ChatToResponsesSseDecoder {
 
         let mut output = Vec::new();
         for event in event.to_internal_events() {
+            self.record_internal_event(&event);
             output.extend(self.internal_event_to_responses_sse(event));
         }
         output
@@ -84,6 +89,15 @@ impl ChatToResponsesSseDecoder {
                 self.finish_response()
             }
             InternalStreamEvent::ToolCallDone { .. } | InternalStreamEvent::Usage(_) => Vec::new(),
+        }
+    }
+
+    fn record_internal_event(&self, event: &InternalStreamEvent) {
+        let Some(stats) = &self.stats else {
+            return;
+        };
+        if let Ok(mut stats) = stats.lock() {
+            stats.record_event(event);
         }
     }
 
@@ -117,6 +131,7 @@ impl ChatToResponsesSseDecoder {
 
     fn finish_response(&mut self) -> Vec<Bytes> {
         let mut output = Vec::new();
+        let mut events_to_record = Vec::new();
         for (index, tool_call) in self.tool_calls.iter_mut() {
             if !tool_call.done {
                 tool_call.done = true;
@@ -126,14 +141,18 @@ impl ChatToResponsesSseDecoder {
                     name: tool_call.name.clone(),
                     arguments: tool_call.arguments.clone(),
                 };
+                events_to_record.push(event.clone());
                 output.extend(responses_tool_call_done_sse(event, tool_call));
             }
         }
-        output.extend(
-            self.internal_event_to_responses_sse(
-                InternalStreamEvent::Usage(StreamUsage::default()),
-            ),
-        );
+        for event in events_to_record {
+            self.record_internal_event(&event);
+        }
+        let usage_event = InternalStreamEvent::Usage(StreamUsage::default());
+        self.record_internal_event(&usage_event);
+        output.extend(self.internal_event_to_responses_sse(usage_event));
+        let finished_event = InternalStreamEvent::Finished(InternalFinishReason::Stop);
+        self.record_internal_event(&finished_event);
         output.push(responses_completed_sse());
         output
     }
@@ -177,6 +196,10 @@ impl ByteStreamDecoder for ChatToResponsesSseDecoder {
             output.extend(self.finish_response());
         }
         output
+    }
+
+    fn set_stats(&mut self, stats: SharedStreamStats) {
+        self.stats = Some(stats);
     }
 }
 

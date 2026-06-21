@@ -14,8 +14,8 @@ use crate::{
         anthropic_decode::decode_anthropic_request_with_diagnostics,
         anthropic_encode::encode_anthropic_response,
         stream::{
-            chat_sse_response_to_anthropic_messages_sse,
-            responses_sse_response_to_anthropic_messages_sse,
+            chat_sse_response_to_anthropic_messages_sse_with_stats,
+            responses_sse_response_to_anthropic_messages_sse_with_stats,
         },
     },
     db,
@@ -23,7 +23,10 @@ use crate::{
     providers::chat_completions::{decode_chat_response, encode_chat_request},
     providers::responses::{decode_responses_response, encode_responses_request},
     providers::spec::{ProviderSpec, UpstreamProtocol},
-    routes::{request_metadata::build_request_metadata, stream_stats::record_first_chunk},
+    routes::{
+        request_metadata::build_request_metadata,
+        stream_stats::{record_first_chunk, record_stream},
+    },
     stats::{insert_request_log, RequestLogInsert},
     AppState,
 };
@@ -158,15 +161,18 @@ async fn create_message(
             upstream_request_id: None,
             metadata_json: Some(metadata_json.clone()),
         };
-        let stream =
-            chat_sse_response_to_anthropic_messages_sse(upstream_response, request.model.clone());
+        let (stream, stream_stats) = chat_sse_response_to_anthropic_messages_sse_with_stats(
+            upstream_response,
+            request.model.clone(),
+        );
         return Response::builder()
             .header(header::CONTENT_TYPE, "text/event-stream")
-            .body(Body::from_stream(record_first_chunk(
+            .body(Body::from_stream(record_stream(
                 state.db.clone(),
                 stream,
                 log,
                 started_at,
+                stream_stats,
             )))
             .map_err(|error| AppError::Internal(error.into()));
     }
@@ -292,15 +298,18 @@ async fn create_responses_anthropic_message(
             upstream_request_id: None,
             metadata_json: Some(metadata_json.clone()),
         };
-        let stream =
-            responses_sse_response_to_anthropic_messages_sse(upstream_response, request.model);
+        let (stream, stream_stats) = responses_sse_response_to_anthropic_messages_sse_with_stats(
+            upstream_response,
+            request.model,
+        );
         return Response::builder()
             .header(header::CONTENT_TYPE, "text/event-stream")
-            .body(Body::from_stream(record_first_chunk(
+            .body(Body::from_stream(record_stream(
                 state.db.clone(),
                 stream,
                 log,
                 started_at,
+                stream_stats,
             )))
             .map_err(|error| AppError::Internal(error.into()));
     }

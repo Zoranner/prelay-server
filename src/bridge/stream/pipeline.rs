@@ -1,12 +1,22 @@
-use std::{collections::VecDeque, pin::Pin};
+use std::{
+    collections::VecDeque,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
 use axum::body::Bytes;
 use futures::{Stream, StreamExt};
+
+use super::events::StreamStatsSnapshot;
+
+pub type SharedStreamStats = Arc<Mutex<StreamStatsSnapshot>>;
 
 pub(crate) trait ByteStreamDecoder {
     fn push_chunk(&mut self, chunk: &[u8]) -> Vec<Bytes>;
 
     fn finish(&mut self) -> Vec<Bytes>;
+
+    fn set_stats(&mut self, _stats: SharedStreamStats) {}
 }
 
 struct StreamState<D> {
@@ -23,7 +33,23 @@ pub(crate) fn map_response_stream<D>(
 where
     D: ByteStreamDecoder,
 {
+    let (stream, _) = map_response_stream_with_stats(response, decoder);
+    stream
+}
+
+pub(crate) fn map_response_stream_with_stats<D>(
+    response: reqwest::Response,
+    mut decoder: D,
+) -> (
+    impl Stream<Item = Result<Bytes, std::io::Error>>,
+    SharedStreamStats,
+)
+where
+    D: ByteStreamDecoder,
+{
     let upstream = response.bytes_stream();
+    let stats = Arc::new(Mutex::new(StreamStatsSnapshot::default()));
+    decoder.set_stats(stats.clone());
     let state = StreamState {
         upstream: Box::pin(upstream),
         decoder,
@@ -31,29 +57,32 @@ where
         upstream_done: false,
     };
 
-    futures::stream::unfold(state, |mut state| async move {
-        loop {
-            if let Some(chunk) = state.pending.pop_front() {
-                return Some((Ok(chunk), state));
-            }
-            if state.upstream_done {
-                return None;
-            }
+    (
+        futures::stream::unfold(state, |mut state| async move {
+            loop {
+                if let Some(chunk) = state.pending.pop_front() {
+                    return Some((Ok(chunk), state));
+                }
+                if state.upstream_done {
+                    return None;
+                }
 
-            match state.upstream.next().await {
-                Some(Ok(chunk)) => {
-                    state.pending.extend(state.decoder.push_chunk(&chunk));
-                }
-                Some(Err(error)) => {
-                    return Some((Err(std::io::Error::other(error)), state));
-                }
-                None => {
-                    state.upstream_done = true;
-                    state.pending.extend(state.decoder.finish());
+                match state.upstream.next().await {
+                    Some(Ok(chunk)) => {
+                        state.pending.extend(state.decoder.push_chunk(&chunk));
+                    }
+                    Some(Err(error)) => {
+                        return Some((Err(std::io::Error::other(error)), state));
+                    }
+                    None => {
+                        state.upstream_done = true;
+                        state.pending.extend(state.decoder.finish());
+                    }
                 }
             }
-        }
-    })
+        }),
+        stats,
+    )
 }
 
 #[cfg(test)]
