@@ -56,69 +56,219 @@
                     <th class="px-4 py-3 text-left whitespace-nowrap">诊断</th>
                     <th class="px-4 py-3 text-right whitespace-nowrap">Token</th>
                     <th class="px-4 py-3 text-right whitespace-nowrap">耗时</th>
+                    <th class="px-4 py-3 text-right whitespace-nowrap">详情</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-stone-100 bg-white">
                   <tr v-if="!loading && requestLogs.length === 0">
-                    <td colspan="11" class="px-4 py-8 text-center text-stone-400">暂无请求记录</td>
+                    <td colspan="12" class="px-4 py-8 text-center text-stone-400">暂无请求记录</td>
                   </tr>
-                  <tr
-                    v-for="{ request, diagnostics } in requestRows"
+                  <template
+                    v-for="{ request, metadata, diagnostics } in requestRows"
                     :key="request.id"
-                    class="text-stone-600 hover:bg-stone-50/60"
                   >
-                    <td class="px-4 py-3 whitespace-nowrap text-xs text-stone-500">
-                      {{ formatDate(request.created_at) }}
-                    </td>
-                    <td class="px-4 py-3 whitespace-nowrap">
-                      <span
-                        class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium"
-                        :class="statusClass(request.status)"
-                      >
-                        {{ statusLabel(request.status) }}
-                      </span>
-                    </td>
-                    <td class="px-4 py-3 whitespace-nowrap">
-                      {{ request.provider_name || '—' }}
-                    </td>
-                    <td class="px-4 py-3 whitespace-nowrap font-mono text-xs">
-                      {{ request.model_requested || '—' }}
-                    </td>
-                    <td class="px-4 py-3 whitespace-nowrap text-xs">
-                      {{ protocolLabel(request) }}
-                    </td>
-                    <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
-                      {{ request.http_status ?? '—' }}
-                    </td>
-                    <td class="px-4 py-3 max-w-[180px]">
-                      <span
-                        class="block truncate font-mono text-xs"
-                        :title="upstreamRequestId(request)"
-                      >
-                        {{ upstreamRequestId(request) }}
-                      </span>
-                    </td>
-                    <td class="px-4 py-3 max-w-[220px]">
-                      <span class="block truncate text-xs" :title="errorTitle(request)">
-                        {{ errorLabel(request) }}
-                      </span>
-                    </td>
-                    <td class="px-4 py-3 whitespace-nowrap">
-                      <span
-                        class="inline-flex rounded-full border px-2 py-0.5 text-xs font-medium"
-                        :class="diagnosticsClass(diagnostics.tone)"
-                        :title="diagnostics.title"
-                      >
-                        {{ diagnostics.label }}
-                      </span>
-                    </td>
-                    <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
-                      {{ formatTokens(request) }}
-                    </td>
-                    <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
-                      {{ formatLatency(request.latency_ms) }}
-                    </td>
-                  </tr>
+                    <tr class="text-stone-600 hover:bg-stone-50/60">
+                      <td class="px-4 py-3 whitespace-nowrap text-xs text-stone-500">
+                        {{ formatDate(request.created_at) }}
+                      </td>
+                      <td class="px-4 py-3 whitespace-nowrap">
+                        <span
+                          class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium"
+                          :class="statusClass(request.status)"
+                        >
+                          {{ statusLabel(request.status) }}
+                        </span>
+                      </td>
+                      <td class="px-4 py-3 whitespace-nowrap">
+                        {{ request.provider_name || '—' }}
+                      </td>
+                      <td class="px-4 py-3 whitespace-nowrap font-mono text-xs">
+                        {{ request.model_requested || '—' }}
+                      </td>
+                      <td class="px-4 py-3 whitespace-nowrap text-xs">
+                        {{ protocolLabel(request) }}
+                      </td>
+                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                        {{ request.http_status ?? '—' }}
+                      </td>
+                      <td class="px-4 py-3 max-w-[180px]">
+                        <span
+                          class="block truncate font-mono text-xs"
+                          :title="upstreamRequestId(request)"
+                        >
+                          {{ upstreamRequestId(request) }}
+                        </span>
+                      </td>
+                      <td class="px-4 py-3 max-w-[220px]">
+                        <span class="block truncate text-xs" :title="errorTitle(request)">
+                          {{ errorLabel(request) }}
+                        </span>
+                      </td>
+                      <td class="px-4 py-3 whitespace-nowrap">
+                        <span
+                          class="inline-flex rounded-full border px-2 py-0.5 text-xs font-medium"
+                          :class="diagnosticsClass(diagnostics.tone)"
+                          :title="diagnostics.title"
+                        >
+                          {{ diagnostics.label }}
+                        </span>
+                      </td>
+                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                        {{ formatTokens(request) }}
+                      </td>
+                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                        {{ formatLatency(request.latency_ms) }}
+                      </td>
+                      <td class="px-4 py-3 text-right whitespace-nowrap">
+                        <button
+                          class="rounded-lg border border-stone-200 px-2 py-1 text-xs font-medium text-stone-500 hover:bg-stone-50"
+                          type="button"
+                          @click="toggleRequestDetails(request.id)"
+                        >
+                          {{ expandedRequestId === request.id ? '收起' : '查看' }}
+                        </button>
+                      </td>
+                    </tr>
+                    <tr v-if="expandedRequestId === request.id" class="bg-stone-50/70">
+                      <td colspan="12" class="px-4 py-4">
+                        <div class="grid gap-3 text-xs text-stone-600 lg:grid-cols-4">
+                          <div class="rounded-xl border border-stone-100 bg-white px-4 py-3">
+                            <p class="font-semibold text-stone-700">桥接</p>
+                            <dl class="mt-2 space-y-1">
+                              <div class="flex justify-between gap-3">
+                                <dt class="text-stone-400">协议</dt>
+                                <dd class="font-mono text-right">
+                                  {{ metadataBridgeProtocol(metadata, request) }}
+                                </dd>
+                              </div>
+                              <div class="flex justify-between gap-3">
+                                <dt class="text-stone-400">请求模型</dt>
+                                <dd class="font-mono text-right">
+                                  {{ metadataBridgeValue(metadata, 'model_requested') }}
+                                </dd>
+                              </div>
+                              <div class="flex justify-between gap-3">
+                                <dt class="text-stone-400">上游模型</dt>
+                                <dd class="font-mono text-right">
+                                  {{ metadataBridgeValue(metadata, 'model_upstream') }}
+                                </dd>
+                              </div>
+                            </dl>
+                          </div>
+
+                          <div class="rounded-xl border border-stone-100 bg-white px-4 py-3">
+                            <p class="font-semibold text-stone-700">流式</p>
+                            <dl class="mt-2 space-y-1">
+                              <div
+                                v-for="item in streamMetadataItems(metadata)"
+                                :key="item.label"
+                                class="flex justify-between gap-3"
+                              >
+                                <dt class="text-stone-400">{{ item.label }}</dt>
+                                <dd class="font-mono text-right">{{ item.value }}</dd>
+                              </div>
+                            </dl>
+                          </div>
+
+                          <div class="rounded-xl border border-stone-100 bg-white px-4 py-3">
+                            <p class="font-semibold text-stone-700">上游</p>
+                            <dl class="mt-2 space-y-1">
+                              <div class="flex justify-between gap-3">
+                                <dt class="text-stone-400">request_id</dt>
+                                <dd class="max-w-[180px] truncate font-mono text-right">
+                                  {{ metadataUpstreamRequestId(metadata, request) }}
+                                </dd>
+                              </div>
+                              <div class="space-y-1">
+                                <dt class="text-stone-400">error_body_excerpt</dt>
+                                <dd class="break-words font-mono text-[11px] leading-5">
+                                  {{ metadataUpstreamErrorExcerpt(metadata) }}
+                                </dd>
+                              </div>
+                            </dl>
+                          </div>
+
+                          <div class="rounded-xl border border-stone-100 bg-white px-4 py-3">
+                            <div class="flex items-center justify-between gap-3">
+                              <p class="font-semibold text-stone-700">Metadata</p>
+                              <span
+                                class="rounded-full border px-2 py-0.5 font-medium"
+                                :class="metadataStatusClass(metadata.status)"
+                              >
+                                {{ metadataStatusLabel(metadata) }}
+                              </span>
+                            </div>
+                            <p class="mt-2 break-words text-stone-400">
+                              {{ metadataStatusDetail(metadata) }}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div class="mt-3 rounded-xl border border-stone-100 bg-white px-4 py-3">
+                          <div class="flex items-center justify-between gap-3">
+                            <p class="text-xs font-semibold text-stone-700">诊断明细</p>
+                            <span class="text-xs text-stone-400">
+                              {{ metadataDiagnostics(metadata).length }} 条
+                            </span>
+                          </div>
+                          <div
+                            v-if="metadataDiagnostics(metadata).length === 0"
+                            class="mt-3 text-xs text-stone-400"
+                          >
+                            无 diagnostics 明细
+                          </div>
+                          <div v-else class="mt-3 overflow-x-auto">
+                            <table class="min-w-full divide-y divide-stone-100 text-xs">
+                              <thead class="text-stone-400">
+                                <tr>
+                                  <th class="py-2 pr-3 text-left font-medium">级别</th>
+                                  <th class="px-3 py-2 text-left font-medium">阶段</th>
+                                  <th class="px-3 py-2 text-left font-medium">动作</th>
+                                  <th class="px-3 py-2 text-left font-medium">协议</th>
+                                  <th class="px-3 py-2 text-left font-medium">路径</th>
+                                  <th class="px-3 py-2 text-left font-medium">代码</th>
+                                  <th class="py-2 pl-3 text-left font-medium">摘要</th>
+                                </tr>
+                              </thead>
+                              <tbody class="divide-y divide-stone-100">
+                                <tr
+                                  v-for="(diagnostic, index) in metadataDiagnostics(metadata)"
+                                  :key="`${request.id}-diagnostic-${index}`"
+                                >
+                                  <td class="py-2 pr-3">
+                                    <span
+                                      class="rounded-full border px-2 py-0.5 font-medium"
+                                      :class="diagnosticSeverityClass(diagnostic.severity)"
+                                    >
+                                      {{ diagnosticValue(diagnostic.severity) }}
+                                    </span>
+                                  </td>
+                                  <td class="px-3 py-2 font-mono">
+                                    {{ diagnosticValue(diagnostic.phase) }}
+                                  </td>
+                                  <td class="px-3 py-2 font-mono">
+                                    {{ diagnosticValue(diagnostic.action) }}
+                                  </td>
+                                  <td class="px-3 py-2 font-mono">
+                                    {{ diagnosticValue(diagnostic.protocol) }}
+                                  </td>
+                                  <td class="px-3 py-2 font-mono">
+                                    {{ diagnosticValue(diagnostic.path) }}
+                                  </td>
+                                  <td class="px-3 py-2 font-mono">
+                                    {{ diagnosticValue(diagnostic.code) }}
+                                  </td>
+                                  <td class="py-2 pl-3">
+                                    {{ diagnosticMessage(diagnostic) }}
+                                  </td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  </template>
                 </tbody>
               </table>
             </div>
@@ -233,8 +383,10 @@ import AppHeader from '../components/AppHeader.vue';
 import { Alert } from '../components/base';
 import {
   statsApi,
+  type BridgeDiagnostic,
   type ModelStatsSummary,
   type ProviderStatsSummary,
+  type RequestMetadata,
   type RequestLogSummary,
   type StatsOverview,
 } from '../api';
@@ -253,15 +405,24 @@ const modelStats = ref<ModelStatsSummary[]>([]);
 const providerStats = ref<ProviderStatsSummary[]>([]);
 const loading = ref(false);
 const error = ref('');
+const expandedRequestId = ref<string | null>(null);
 
 const numberFormatter = new Intl.NumberFormat('zh-CN');
 
 type DiagnosticsTone = 'empty' | 'normal' | 'warning' | 'invalid';
+type MetadataStatus = 'empty' | 'valid' | 'invalid';
+type BridgeField = keyof NonNullable<RequestMetadata['bridge']>;
 
 interface DiagnosticsSummary {
   label: string;
   title: string;
   tone: DiagnosticsTone;
+}
+
+interface MetadataParseResult {
+  status: MetadataStatus;
+  metadata: RequestMetadata | null;
+  detail: string;
 }
 
 const metrics = computed(() => [
@@ -273,10 +434,15 @@ const metrics = computed(() => [
 ]);
 
 const requestRows = computed(() =>
-  requestLogs.value.map((request) => ({
-    request,
-    diagnostics: diagnosticsSummary(request),
-  })),
+  requestLogs.value.map((request) => {
+    const metadata = parseRequestMetadata(request);
+
+    return {
+      request,
+      metadata,
+      diagnostics: diagnosticsSummary(request, metadata),
+    };
+  }),
 );
 
 onMounted(() => {
@@ -357,7 +523,14 @@ function upstreamRequestId(request: RequestLogSummary) {
   return request.upstream_request_id || '—';
 }
 
-function diagnosticsSummary(request: RequestLogSummary): DiagnosticsSummary {
+function toggleRequestDetails(requestId: string) {
+  expandedRequestId.value = expandedRequestId.value === requestId ? null : requestId;
+}
+
+function diagnosticsSummary(
+  request: RequestLogSummary,
+  metadataResult = parseRequestMetadata(request),
+): DiagnosticsSummary {
   if (!request.metadata_json?.trim()) {
     return {
       label: '—',
@@ -366,27 +539,15 @@ function diagnosticsSummary(request: RequestLogSummary): DiagnosticsSummary {
     };
   }
 
-  let metadata: unknown;
-
-  try {
-    metadata = JSON.parse(request.metadata_json);
-  } catch {
+  if (metadataResult.status === 'invalid') {
     return {
       label: '解析失败',
-      title: 'metadata_json 不是有效 JSON',
+      title: metadataResult.detail,
       tone: 'invalid',
     };
   }
 
-  if (!isRecord(metadata)) {
-    return {
-      label: '无诊断',
-      title: 'metadata 不是对象',
-      tone: 'empty',
-    };
-  }
-
-  const diagnostics = Array.isArray(metadata.diagnostics) ? metadata.diagnostics : [];
+  const diagnostics = metadataDiagnostics(metadataResult);
 
   if (diagnostics.length === 0) {
     return {
@@ -407,6 +568,121 @@ function diagnosticsSummary(request: RequestLogSummary): DiagnosticsSummary {
     title,
     tone: warningCount > 0 ? 'warning' : 'normal',
   };
+}
+
+function parseRequestMetadata(request: RequestLogSummary): MetadataParseResult {
+  if (!request.metadata_json?.trim()) {
+    return {
+      status: 'empty',
+      metadata: null,
+      detail: '无 metadata',
+    };
+  }
+
+  let metadata: unknown;
+
+  try {
+    metadata = JSON.parse(request.metadata_json);
+  } catch {
+    return {
+      status: 'invalid',
+      metadata: null,
+      detail: 'metadata_json 不是有效 JSON',
+    };
+  }
+
+  if (!isRecord(metadata)) {
+    return {
+      status: 'invalid',
+      metadata: null,
+      detail: 'metadata_json 不是对象',
+    };
+  }
+
+  return {
+    status: 'valid',
+    metadata: metadata as RequestMetadata,
+    detail: '已按 request metadata schema 解析',
+  };
+}
+
+function metadataDiagnostics(metadataResult: MetadataParseResult): BridgeDiagnostic[] {
+  const diagnostics = metadataResult.metadata?.diagnostics;
+
+  if (!Array.isArray(diagnostics)) {
+    return [];
+  }
+
+  return diagnostics.filter(isRecord) as BridgeDiagnostic[];
+}
+
+function metadataBridgeProtocol(metadataResult: MetadataParseResult, request: RequestLogSummary) {
+  const bridge = metadataResult.metadata?.bridge;
+  const protocolIn = valueOrDash(bridge?.protocol_in ?? request.protocol_in);
+  const protocolOut = valueOrDash(bridge?.protocol_out);
+  const protocolUpstream = valueOrDash(bridge?.protocol_upstream ?? request.protocol_upstream);
+
+  return `${protocolIn} → ${protocolOut} → ${protocolUpstream}`;
+}
+
+function metadataBridgeValue(metadataResult: MetadataParseResult, field: BridgeField) {
+  return valueOrDash(metadataResult.metadata?.bridge?.[field]);
+}
+
+function streamMetadataItems(metadataResult: MetadataParseResult) {
+  const stream = metadataResult.metadata?.stream;
+
+  return [
+    { label: 'completed', value: boolOrDash(stream?.completed) },
+    { label: 'empty', value: boolOrDash(stream?.empty) },
+    { label: 'final_usage_seen', value: boolOrDash(stream?.final_usage_seen) },
+    { label: 'stream_error', value: valueOrDash(stream?.stream_error) },
+  ];
+}
+
+function metadataUpstreamRequestId(
+  metadataResult: MetadataParseResult,
+  request: RequestLogSummary,
+) {
+  return valueOrDash(metadataResult.metadata?.upstream?.request_id ?? request.upstream_request_id);
+}
+
+function metadataUpstreamErrorExcerpt(metadataResult: MetadataParseResult) {
+  return valueOrDash(truncateMetadataText(metadataResult.metadata?.upstream?.error_body_excerpt));
+}
+
+function metadataStatusLabel(metadataResult: MetadataParseResult) {
+  if (metadataResult.status === 'valid') {
+    return '已解析';
+  }
+
+  if (metadataResult.status === 'invalid') {
+    return '异常';
+  }
+
+  return '为空';
+}
+
+function metadataStatusDetail(metadataResult: MetadataParseResult) {
+  const schema = metadataResult.metadata?.schema;
+
+  if (metadataResult.status === 'valid' && schema) {
+    return `schema: ${schema}`;
+  }
+
+  return metadataResult.detail;
+}
+
+function metadataStatusClass(status: MetadataStatus) {
+  if (status === 'valid') {
+    return 'border-[#dcebe3] bg-[#f2f8f5] text-[#256047]';
+  }
+
+  if (status === 'invalid') {
+    return 'border-amber-200 bg-amber-50 text-amber-700';
+  }
+
+  return 'border-stone-100 bg-stone-50 text-stone-400';
 }
 
 function diagnosticsClass(tone: DiagnosticsTone) {
@@ -433,6 +709,65 @@ function isWarningDiagnostic(value: unknown) {
   return ['severity', 'level', 'type', 'status'].some(
     (key) => value[key] === 'warning' || value[key] === 'warn',
   );
+}
+
+function diagnosticSeverityClass(value: unknown) {
+  return metadataText(value) === 'warning'
+    ? 'border-amber-200 bg-amber-50 text-amber-700'
+    : 'border-stone-100 bg-stone-50 text-stone-500';
+}
+
+function diagnosticValue(value: unknown) {
+  return metadataText(value) || '—';
+}
+
+function diagnosticMessage(diagnostic: BridgeDiagnostic) {
+  const message = truncateMetadataText(diagnostic.message);
+  const originalKind = metadataText(diagnostic.original_kind);
+
+  if (!originalKind) {
+    return valueOrDash(message);
+  }
+
+  return `${valueOrDash(message)}（原始类型：${originalKind}）`;
+}
+
+function truncateMetadataText(value: unknown) {
+  const text = metadataText(value);
+
+  if (!text) {
+    return null;
+  }
+
+  return text.length > 240 ? `${text.slice(0, 240)}…` : text;
+}
+
+function boolOrDash(value: boolean | null | undefined) {
+  if (value === true) {
+    return 'true';
+  }
+
+  if (value === false) {
+    return 'false';
+  }
+
+  return '—';
+}
+
+function valueOrDash(value: unknown) {
+  return metadataText(value) || '—';
+}
+
+function metadataText(value: unknown) {
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+
+  return '';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

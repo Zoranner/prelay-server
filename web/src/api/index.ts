@@ -116,6 +116,45 @@ export interface RequestLogSummary {
   metadata_json: string | null;
 }
 
+export interface RequestMetadata {
+  schema?: string | null;
+  bridge?: RequestMetadataBridge | null;
+  diagnostics?: BridgeDiagnostic[] | null;
+  stream?: RequestStreamMetadata | null;
+  upstream?: RequestUpstreamMetadata | null;
+}
+
+export interface RequestMetadataBridge {
+  protocol_in?: string | null;
+  protocol_out?: string | null;
+  protocol_upstream?: string | null;
+  model_requested?: string | null;
+  model_upstream?: string | null;
+}
+
+export interface BridgeDiagnostic {
+  phase?: string | null;
+  protocol?: string | null;
+  path?: string | null;
+  action?: string | null;
+  severity?: string | null;
+  code?: string | null;
+  message?: string | null;
+  original_kind?: string | null;
+}
+
+export interface RequestStreamMetadata {
+  empty?: boolean | null;
+  completed?: boolean | null;
+  final_usage_seen?: boolean | null;
+  stream_error?: string | null;
+}
+
+export interface RequestUpstreamMetadata {
+  request_id?: string | null;
+  error_body_excerpt?: string | null;
+}
+
 export interface ModelStatsSummary {
   model_requested: string | null;
   total_requests: number;
