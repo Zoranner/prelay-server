@@ -2,6 +2,7 @@ use axum::{
     body::Body,
     extract::State,
     http::header,
+    http::HeaderMap,
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
@@ -21,14 +22,14 @@ use crate::{
             chat_sse_response_to_responses_sse_with_stats,
         },
     },
-    db,
     error::AppError,
     providers::anthropic_messages::{
         decode_anthropic_messages_response, encode_anthropic_messages_request,
     },
     providers::chat_completions::{decode_chat_response, encode_chat_request},
-    providers::spec::{ProviderSpec, UpstreamProtocol},
+    providers::spec::{provider_upstream_base_url, UpstreamProtocol},
     routes::{
+        interface_resolver::resolve_interface_model,
         request_metadata::build_request_metadata,
         stream_stats::{record_first_chunk, record_stream},
     },
@@ -42,6 +43,7 @@ pub fn router() -> Router<AppState> {
 
 async fn create_response(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Response, AppError> {
     let started_at = std::time::Instant::now();
@@ -52,16 +54,15 @@ async fn create_response(
     let model_requested = request.model.clone();
     let is_streaming = request.stream;
     let previous_response_id = request.previous_response_id.clone();
-    let resolved = db::get_provider_by_model(&state.db, &request.model, "responses")
-        .await?
-        .ok_or_else(|| AppError::BadRequest(format!("模型 {} 未配置", request.model)))?;
+    let resolved =
+        resolve_interface_model(&state.db, &headers, &request.model, "responses").await?;
     let provider = resolved.provider;
-    let provider_spec = ProviderSpec::from_provider_config(&provider);
+    let upstream_protocol = resolved.upstream_protocol;
     let model_upstream = resolved.model_upstream;
     let metadata_json = build_request_metadata(
         "responses",
         "responses",
-        provider_spec.protocol,
+        upstream_protocol,
         &model_requested,
         &model_upstream,
         diagnostics,
@@ -70,7 +71,7 @@ async fn create_response(
     upstream_payload["model"] = Value::String(model_upstream.clone());
     let mut request = request;
     request.model = model_upstream.clone();
-    if provider_spec.protocol == UpstreamProtocol::Responses {
+    if upstream_protocol == UpstreamProtocol::Responses {
         return create_native_response(
             &state,
             upstream_payload,
@@ -82,7 +83,7 @@ async fn create_response(
         )
         .await;
     }
-    if provider_spec.protocol == UpstreamProtocol::AnthropicMessages {
+    if upstream_protocol == UpstreamProtocol::AnthropicMessages {
         return create_anthropic_messages_response(
             &state,
             request,
@@ -99,9 +100,10 @@ async fn create_response(
     }
 
     let request = request_with_session_history(&state.db, request).await?;
+    let upstream_base_url = provider_upstream_base_url(&provider, upstream_protocol);
     let upstream_url = format!(
         "{}/chat/completions",
-        provider.base_url.trim_end_matches('/')
+        upstream_base_url.trim_end_matches('/')
     );
     let upstream_started_at = std::time::Instant::now();
     let upstream_response = state
@@ -249,7 +251,9 @@ async fn create_anthropic_messages_response(
     context: ResponseBridgeContext,
 ) -> Result<Response, AppError> {
     request = request_with_session_history(&state.db, request).await?;
-    let upstream_url = format!("{}/messages", provider.base_url.trim_end_matches('/'));
+    let upstream_base_url =
+        provider_upstream_base_url(&provider, UpstreamProtocol::AnthropicMessages);
+    let upstream_url = format!("{}/messages", upstream_base_url.trim_end_matches('/'));
     let upstream_started_at = std::time::Instant::now();
     let upstream_response = state
         .client
@@ -401,7 +405,8 @@ async fn create_native_response(
     metadata_json: String,
     started_at: std::time::Instant,
 ) -> Result<Response, AppError> {
-    let upstream_url = format!("{}/responses", provider.base_url.trim_end_matches('/'));
+    let upstream_base_url = provider_upstream_base_url(&provider, UpstreamProtocol::Responses);
+    let upstream_url = format!("{}/responses", upstream_base_url.trim_end_matches('/'));
     let upstream_started_at = std::time::Instant::now();
     let upstream_response = state
         .client
@@ -587,7 +592,13 @@ mod tests {
 
     use super::create_response;
     use super::responses_sse_from_text_chunks;
-    use crate::{db, AppState};
+    use crate::{
+        db,
+        routes::interface_resolver::{
+            create_empty_test_interface_auth, create_test_interface_auth,
+        },
+        AppState,
+    };
 
     #[tokio::test]
     async fn rejects_unauthenticated_responses_request() {
@@ -636,6 +647,7 @@ mod tests {
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
+        let auth = create_empty_test_interface_auth(&db).await;
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -644,15 +656,16 @@ mod tests {
 
         let error = create_response(
             State(state),
+            auth.headers,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": "hello"
             })),
         )
         .await
-        .expect_err("missing provider should fail");
+        .expect_err("missing interface model should fail");
 
-        assert!(format!("{error:?}").contains("模型 deepseek-chat 未配置"));
+        assert!(format!("{error:?}").contains("接口 Test Interface 未配置模型 deepseek-chat"));
     }
 
     #[tokio::test]
@@ -664,7 +677,7 @@ mod tests {
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        db::create_config(
+        let provider = db::create_config(
             &db,
             "deepseek-chat",
             "openai_compatible",
@@ -673,6 +686,8 @@ mod tests {
         )
         .await
         .expect("create provider");
+        let auth =
+            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -681,6 +696,7 @@ mod tests {
 
         let response = create_response(
             State(state),
+            auth.headers,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": "hello"
@@ -702,17 +718,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn forwards_responses_request_to_native_upstream() {
-        let upstream = spawn_native_responses_upstream().await;
+    async fn forwards_responses_request_to_chat_bridge_before_anthropic_for_multi_protocol_provider(
+    ) {
+        let upstream = spawn_chat_upstream().await;
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        db::create_config(&db, "gpt-4.1", "openai", &upstream, "sk-upstream")
-            .await
-            .expect("create provider");
+        let provider = db::create_config(
+            &db,
+            "deepseek-chat",
+            "kimi_coding_anthropic",
+            &upstream,
+            "sk-upstream",
+        )
+        .await
+        .expect("create provider");
+        let auth =
+            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -721,6 +746,46 @@ mod tests {
 
         let response = create_response(
             State(state),
+            auth.headers,
+            axum::Json(json!({
+                "model": "deepseek-chat",
+                "input": "hello"
+            })),
+        )
+        .await
+        .expect("create response");
+        let response = response_json(response).await;
+
+        assert_eq!(response["object"], "response");
+        assert_eq!(response["model"], "deepseek-chat");
+        assert_eq!(
+            response["output"][0]["content"][0]["text"],
+            "upstream hello"
+        );
+    }
+
+    #[tokio::test]
+    async fn forwards_responses_request_to_native_upstream() {
+        let upstream = spawn_native_responses_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        let provider = db::create_config(&db, "gpt-4.1", "openai", &upstream, "sk-upstream")
+            .await
+            .expect("create provider");
+        let auth = create_test_interface_auth(&db, &provider, "gpt-4.1", "gpt-4.1").await;
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+            admin_token: None,
+        };
+
+        let response = create_response(
+            State(state),
+            auth.headers,
             axum::Json(json!({
                 "model": "gpt-4.1",
                 "input": "hello"
@@ -748,7 +813,7 @@ mod tests {
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        db::create_config(
+        let provider = db::create_config(
             &db,
             "claude-sonnet",
             "anthropic_compatible",
@@ -757,6 +822,8 @@ mod tests {
         )
         .await
         .expect("create provider");
+        let auth =
+            create_test_interface_auth(&db, &provider, "claude-sonnet", "claude-sonnet").await;
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -765,6 +832,7 @@ mod tests {
 
         let response = create_response(
             State(state),
+            auth.headers,
             axum::Json(json!({
                 "model": "claude-sonnet",
                 "input": "hello"
@@ -793,7 +861,7 @@ mod tests {
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        db::create_config(
+        let provider = db::create_config(
             &db,
             "claude-sonnet",
             "anthropic_compatible",
@@ -802,6 +870,8 @@ mod tests {
         )
         .await
         .expect("create provider");
+        let auth =
+            create_test_interface_auth(&db, &provider, "claude-sonnet", "claude-sonnet").await;
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -810,6 +880,7 @@ mod tests {
 
         let response = create_response(
             State(state.clone()),
+            auth.headers,
             axum::Json(json!({
                 "model": "claude-sonnet",
                 "input": "hello",
@@ -857,7 +928,7 @@ mod tests {
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        db::create_config(
+        let provider = db::create_config(
             &db,
             "deepseek-chat",
             "openai_compatible",
@@ -866,6 +937,8 @@ mod tests {
         )
         .await
         .expect("create provider");
+        let auth =
+            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -874,6 +947,7 @@ mod tests {
 
         let _response = create_response(
             State(state.clone()),
+            auth.headers,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": "hello"
@@ -901,7 +975,7 @@ mod tests {
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        db::create_config(
+        let provider = db::create_config(
             &db,
             "deepseek-chat",
             "openai_compatible",
@@ -910,6 +984,8 @@ mod tests {
         )
         .await
         .expect("create provider");
+        let auth =
+            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -918,6 +994,7 @@ mod tests {
 
         let _response = create_response(
             State(state.clone()),
+            auth.headers,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": [
@@ -957,7 +1034,7 @@ mod tests {
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        db::create_config(
+        let provider = db::create_config(
             &db,
             "deepseek-chat",
             "openai_compatible",
@@ -966,6 +1043,8 @@ mod tests {
         )
         .await
         .expect("create provider");
+        let auth =
+            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -974,6 +1053,7 @@ mod tests {
 
         create_response(
             State(state.clone()),
+            auth.headers,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": "hello"
@@ -999,7 +1079,7 @@ mod tests {
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        db::create_config(
+        let provider = db::create_config(
             &db,
             "deepseek-chat",
             "openai_compatible",
@@ -1008,6 +1088,8 @@ mod tests {
         )
         .await
         .expect("create provider");
+        let auth =
+            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -1016,6 +1098,7 @@ mod tests {
 
         let response = create_response(
             State(state),
+            auth.headers,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": "hello",
@@ -1052,7 +1135,7 @@ mod tests {
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        db::create_config(
+        let provider = db::create_config(
             &db,
             "deepseek-chat",
             "openai_compatible",
@@ -1061,6 +1144,8 @@ mod tests {
         )
         .await
         .expect("create provider");
+        let auth =
+            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -1078,6 +1163,7 @@ mod tests {
         let started = std::time::Instant::now();
         let response = reqwest::Client::new()
             .post(format!("http://{addr}/v1/responses"))
+            .bearer_auth(&auth.token)
             .json(&json!({
                 "model": "deepseek-chat",
                 "input": "hello",
@@ -1114,9 +1200,10 @@ mod tests {
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        db::create_config(&db, "gpt-4.1", "openai", &upstream, "sk-upstream")
+        let provider = db::create_config(&db, "gpt-4.1", "openai", &upstream, "sk-upstream")
             .await
             .expect("create provider");
+        let auth = create_test_interface_auth(&db, &provider, "gpt-4.1", "gpt-4.1").await;
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -1133,6 +1220,7 @@ mod tests {
 
         let response = reqwest::Client::new()
             .post(format!("http://{addr}/v1/responses"))
+            .bearer_auth(&auth.token)
             .json(&json!({
                 "model": "gpt-4.1",
                 "input": "hello",
@@ -1172,7 +1260,7 @@ mod tests {
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        db::create_config(
+        let provider = db::create_config(
             &db,
             "deepseek-chat",
             "openai_compatible",
@@ -1181,6 +1269,8 @@ mod tests {
         )
         .await
         .expect("create provider");
+        let auth =
+            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -1189,6 +1279,7 @@ mod tests {
 
         let first = create_response(
             State(state.clone()),
+            auth.headers.clone(),
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": "first user"
@@ -1201,6 +1292,7 @@ mod tests {
 
         let second = create_response(
             State(state.clone()),
+            auth.headers.clone(),
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "previous_response_id": first_id,
@@ -1219,6 +1311,7 @@ mod tests {
 
         let third = create_response(
             State(state.clone()),
+            auth.headers,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "previous_response_id": second_id,
@@ -1244,7 +1337,7 @@ mod tests {
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        db::create_config(
+        let provider = db::create_config(
             &db,
             "deepseek-chat",
             "openai_compatible",
@@ -1253,6 +1346,8 @@ mod tests {
         )
         .await
         .expect("create provider");
+        let auth =
+            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -1261,6 +1356,7 @@ mod tests {
 
         let first = create_response(
             State(state.clone()),
+            auth.headers.clone(),
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": "please read"
@@ -1276,6 +1372,7 @@ mod tests {
 
         let second = create_response(
             State(state.clone()),
+            auth.headers,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "previous_response_id": first_id,
@@ -1313,7 +1410,7 @@ mod tests {
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        db::create_config(
+        let provider = db::create_config(
             &db,
             "deepseek-chat",
             "openai_compatible",
@@ -1322,6 +1419,8 @@ mod tests {
         )
         .await
         .expect("create provider");
+        let auth =
+            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -1330,6 +1429,7 @@ mod tests {
 
         let error = create_response(
             State(state),
+            auth.headers,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "previous_response_id": "resp_missing",

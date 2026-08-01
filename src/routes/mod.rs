@@ -1,6 +1,7 @@
 pub mod admin;
 pub mod auth;
 pub mod chat;
+mod interface_resolver;
 pub mod messages;
 pub mod models;
 pub mod proxy;

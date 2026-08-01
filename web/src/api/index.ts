@@ -4,12 +4,30 @@ const api = axios.create({ baseURL: '/api' });
 const protocolApi = axios.create();
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('provider-relay-admin-token')?.trim();
+  const token = readAdminToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 });
+
+export function readAdminToken(
+  storage: Pick<Storage, 'getItem'> | null = availableLocalStorage(),
+): string | null {
+  try {
+    return storage?.getItem('provider-relay-admin-token')?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function availableLocalStorage(): Storage | null {
+  try {
+    return typeof localStorage === 'undefined' ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
 
 export function withProtocolToken(token: string) {
   return {
@@ -27,6 +45,14 @@ export interface ProviderConfig {
   api_key_masked: string;
   token: string;
   capabilities: ModelCatalogCapabilities;
+  models: ProviderModelResponse[];
+  created_at: string;
+}
+
+export interface ProviderModelResponse {
+  id: string;
+  provider_id: string;
+  model_name: string;
   created_at: string;
 }
 
@@ -36,6 +62,7 @@ export interface CreateConfigRequest {
   base_url: string;
   api_key: string;
   capabilities?: ModelCatalogCapabilities;
+  models: string[];
 }
 
 export interface UpdateConfigRequest {
@@ -44,20 +71,88 @@ export interface UpdateConfigRequest {
   base_url?: string;
   api_key?: string;
   capabilities?: ModelCatalogCapabilities;
+  models?: string[];
 }
 
-export interface CreateModelAliasRequest {
-  alias: string;
-  provider_id: string;
-  upstream_model: string;
-  downstream_protocols: string[];
+export interface CreateInterfaceRequest {
+  name: string;
+  protocol?: string;
+  models: InterfaceModelInput[];
 }
 
-export interface ModelAliasResponse {
-  alias: string;
+export interface UpdateInterfaceRequest {
+  name?: string;
+  models?: InterfaceModelInput[];
+}
+
+export interface InterfaceModelInput {
   provider_id: string;
   upstream_model: string;
-  downstream_protocols: string[];
+  model_name?: string;
+}
+
+export type CreateInterfaceModelRequest = InterfaceModelInput;
+
+export interface CreateProviderModelRequest {
+  model_name: string;
+}
+
+export interface DiscoverProviderModelsRequest {
+  provider_type: string;
+  base_url: string;
+  api_key: string;
+}
+
+export interface DiscoverProviderModelsResponse {
+  models: string[];
+}
+
+export type ProviderUpstreamProtocol = 'responses' | 'openai' | 'anthropic';
+
+export interface ProviderProtocolBaseUrls {
+  responses?: string | null;
+  openai?: string | null;
+  anthropic?: string | null;
+}
+
+export interface TestProviderProtocolRequest {
+  provider_type: string;
+  protocol: ProviderUpstreamProtocol;
+  base_url: string;
+  api_key?: string;
+  model?: string;
+}
+
+export interface TestProviderProtocolResponse {
+  ok: boolean;
+  protocol: ProviderUpstreamProtocol;
+  latency_ms: number;
+  first_token_ms?: number | null;
+  error?: string | null;
+}
+
+export interface PingProviderResponse {
+  ok: boolean;
+  latency_ms: number;
+  error?: string | null;
+}
+
+export interface InterfaceModelResponse {
+  id: string;
+  interface_id: string;
+  model_name: string;
+  provider_id: string;
+  upstream_model: string;
+  created_at: string;
+}
+
+export interface InterfaceResponse {
+  id: string;
+  name: string;
+  protocol: string;
+  token: string;
+  models: InterfaceModelResponse[];
+  created_at: string;
 }
 
 export interface ModelCatalogEntry {
@@ -74,6 +169,8 @@ export interface ModelCatalogEntry {
 }
 
 export interface ModelCatalogCapabilities {
+  upstream_protocols?: ProviderUpstreamProtocol[];
+  protocol_base_urls?: ProviderProtocolBaseUrls;
   tool_calls?: boolean;
   reasoning?: boolean;
   tool_choice?: boolean;
@@ -187,9 +284,31 @@ export const configApi = {
     api.put<ProviderConfig>(`/configs/${id}`, data),
   delete: (id: string) => api.delete(`/configs/${id}`),
   regenerateToken: (id: string) => api.post<{ token: string }>(`/configs/${id}/regenerate-token`),
-  listModelAliases: () => api.get<ModelAliasResponse[]>('/model-aliases'),
-  createModelAlias: (data: CreateModelAliasRequest) =>
-    api.post<ModelAliasResponse>('/model-aliases', data),
+  discoverModels: (data: DiscoverProviderModelsRequest) =>
+    api.post<DiscoverProviderModelsResponse>('/configs/discover-models', data),
+  discoverSavedModels: (providerId: string) =>
+    api.post<DiscoverProviderModelsResponse>(`/configs/${providerId}/discover-models`),
+  ping: (providerId: string) => api.post<PingProviderResponse>(`/configs/${providerId}/ping`),
+  testProtocol: (data: TestProviderProtocolRequest) =>
+    api.post<TestProviderProtocolResponse>('/configs/test-protocol', data),
+  testSavedProtocol: (providerId: string, data: TestProviderProtocolRequest) =>
+    api.post<TestProviderProtocolResponse>(`/configs/${providerId}/test-protocol`, data),
+  createProviderModel: (providerId: string, data: CreateProviderModelRequest) =>
+    api.post<ProviderModelResponse>(`/configs/${providerId}/models`, data),
+  deleteProviderModel: (providerId: string, modelId: string) =>
+    api.delete(`/configs/${providerId}/models/${modelId}`),
+  listInterfaces: () => api.get<InterfaceResponse[]>('/interfaces'),
+  createInterface: (data: CreateInterfaceRequest) =>
+    api.post<InterfaceResponse>('/interfaces', data),
+  updateInterface: (id: string, data: UpdateInterfaceRequest) =>
+    api.put<InterfaceResponse>(`/interfaces/${id}`, data),
+  deleteInterface: (id: string) => api.delete(`/interfaces/${id}`),
+  regenerateInterfaceToken: (id: string) =>
+    api.post<{ token: string }>(`/interfaces/${id}/regenerate-token`),
+  createInterfaceModel: (interfaceId: string, data: CreateInterfaceModelRequest) =>
+    api.post<InterfaceModelResponse>(`/interfaces/${interfaceId}/models`, data),
+  deleteInterfaceModel: (interfaceId: string, modelId: string) =>
+    api.delete(`/interfaces/${interfaceId}/models/${modelId}`),
 };
 
 export const modelsApi = {

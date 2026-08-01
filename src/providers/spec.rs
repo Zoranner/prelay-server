@@ -1,4 +1,4 @@
-use crate::models::ProviderConfig;
+use crate::models::{ProviderCapabilityOverrides, ProviderConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpstreamProtocol {
@@ -20,6 +20,15 @@ impl UpstreamProtocol {
 
     pub fn supports_downstream(self, downstream_protocol: &str) -> bool {
         self.downstream_protocols().contains(&downstream_protocol)
+    }
+
+    pub(crate) fn from_capability_value(value: &str) -> Option<Self> {
+        match value {
+            "responses" => Some(UpstreamProtocol::Responses),
+            "openai" => Some(UpstreamProtocol::ChatCompletions),
+            "anthropic" => Some(UpstreamProtocol::AnthropicMessages),
+            _ => None,
+        }
     }
 }
 
@@ -77,9 +86,10 @@ impl ProviderCapabilities {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderSpec {
     pub protocol: UpstreamProtocol,
+    pub supported_protocols: Vec<UpstreamProtocol>,
     pub auth_scheme: AuthScheme,
     pub capabilities: ProviderCapabilities,
 }
@@ -87,8 +97,12 @@ pub struct ProviderSpec {
 impl ProviderSpec {
     pub fn from_provider_config(provider: &ProviderConfig) -> Self {
         let mut spec = match provider.provider_type.as_str() {
-            "openai" => Self {
+            "openai" | "responses_compatible" | "qwen_responses" | "minimax_responses" => Self {
                 protocol: UpstreamProtocol::Responses,
+                supported_protocols: provider_supported_protocols(
+                    &provider.provider_type,
+                    UpstreamProtocol::Responses,
+                ),
                 auth_scheme: AuthScheme::Bearer,
                 capabilities: ProviderCapabilities {
                     tool_calls: true,
@@ -102,8 +116,21 @@ impl ProviderSpec {
                     max_output_tokens: None,
                 },
             },
-            "openai_compatible" => Self {
+            "openai_compatible"
+            | "kimi"
+            | "deepseek"
+            | "qwen"
+            | "kimi_coding"
+            | "zai_coding_openai"
+            | "zhipu_coding_openai"
+            | "minimax_token_openai"
+            | "bailian_coding_openai"
+            | "bailian_token_openai" => Self {
                 protocol: UpstreamProtocol::ChatCompletions,
+                supported_protocols: provider_supported_protocols(
+                    &provider.provider_type,
+                    UpstreamProtocol::ChatCompletions,
+                ),
                 auth_scheme: AuthScheme::Bearer,
                 capabilities: ProviderCapabilities {
                     tool_calls: true,
@@ -117,8 +144,23 @@ impl ProviderSpec {
                     max_output_tokens: None,
                 },
             },
-            "anthropic" | "anthropic_compatible" => Self {
+            "anthropic"
+            | "anthropic_compatible"
+            | "deepseek_anthropic"
+            | "qwen_anthropic"
+            | "zhipu_anthropic"
+            | "minimax_anthropic"
+            | "kimi_coding_anthropic"
+            | "zai_coding_anthropic"
+            | "zhipu_coding"
+            | "minimax_token"
+            | "bailian_coding_anthropic"
+            | "bailian_token_anthropic" => Self {
                 protocol: UpstreamProtocol::AnthropicMessages,
+                supported_protocols: provider_supported_protocols(
+                    &provider.provider_type,
+                    UpstreamProtocol::AnthropicMessages,
+                ),
                 auth_scheme: AuthScheme::Anthropic,
                 capabilities: ProviderCapabilities {
                     tool_calls: true,
@@ -132,25 +174,137 @@ impl ProviderSpec {
                     max_output_tokens: None,
                 },
             },
-            "minimax_token" | "zhipu_coding" => Self {
-                protocol: UpstreamProtocol::AnthropicMessages,
-                auth_scheme: AuthScheme::Anthropic,
-                capabilities: ProviderCapabilities::limited(),
-            },
             _ => Self {
                 protocol: UpstreamProtocol::ChatCompletions,
+                supported_protocols: vec![UpstreamProtocol::ChatCompletions],
                 auth_scheme: AuthScheme::Bearer,
                 capabilities: ProviderCapabilities::limited(),
             },
         };
         spec.capabilities = spec.capabilities.with_overrides(provider);
+        if let Some(protocols) =
+            supported_protocols_from_overrides(&provider.capability_overrides())
+        {
+            spec.supported_protocols = protocols;
+        }
         spec
+    }
+
+    pub fn supports_downstream(&self, downstream_protocol: &str) -> bool {
+        self.supported_protocols
+            .iter()
+            .any(|protocol| protocol.supports_downstream(downstream_protocol))
+    }
+
+    pub fn upstream_for_downstream(&self, downstream_protocol: &str) -> Option<UpstreamProtocol> {
+        let preference = match downstream_protocol {
+            "responses" => &[
+                UpstreamProtocol::Responses,
+                UpstreamProtocol::ChatCompletions,
+                UpstreamProtocol::AnthropicMessages,
+            ][..],
+            "chat_completions" => &[UpstreamProtocol::ChatCompletions][..],
+            "anthropic_messages" => &[
+                UpstreamProtocol::AnthropicMessages,
+                UpstreamProtocol::ChatCompletions,
+                UpstreamProtocol::Responses,
+            ][..],
+            _ => &[][..],
+        };
+        preference
+            .iter()
+            .copied()
+            .find(|protocol| self.supported_protocols.contains(protocol))
+    }
+}
+
+pub fn provider_upstream_base_url(
+    provider: &ProviderConfig,
+    upstream_protocol: UpstreamProtocol,
+) -> String {
+    let overrides = provider.capability_overrides();
+    let protocol_base_url = overrides
+        .protocol_base_urls
+        .as_ref()
+        .and_then(|base_urls| match upstream_protocol {
+            UpstreamProtocol::Responses => base_urls.responses.as_deref(),
+            UpstreamProtocol::ChatCompletions => base_urls.openai.as_deref(),
+            UpstreamProtocol::AnthropicMessages => base_urls.anthropic.as_deref(),
+        })
+        .map(str::trim)
+        .filter(|base_url| !base_url.is_empty());
+
+    normalize_upstream_base_url(
+        &provider.provider_type,
+        upstream_protocol,
+        protocol_base_url.unwrap_or(provider.base_url.trim()),
+    )
+}
+
+pub fn normalize_upstream_base_url(
+    provider_type: &str,
+    upstream_protocol: UpstreamProtocol,
+    base_url: &str,
+) -> String {
+    let base_url = base_url.trim().trim_end_matches('/');
+    if matches!(provider_type, "kimi_coding" | "kimi_coding_anthropic")
+        && upstream_protocol == UpstreamProtocol::AnthropicMessages
+        && base_url == "https://api.kimi.com/coding"
+    {
+        return format!("{base_url}/v1");
+    }
+    base_url.to_string()
+}
+
+fn supported_protocols_from_overrides(
+    overrides: &ProviderCapabilityOverrides,
+) -> Option<Vec<UpstreamProtocol>> {
+    let values = overrides.upstream_protocols.as_ref()?;
+    let mut protocols = Vec::new();
+    for value in values {
+        let Some(protocol) = UpstreamProtocol::from_capability_value(value) else {
+            continue;
+        };
+        if !protocols.contains(&protocol) {
+            protocols.push(protocol);
+        }
+    }
+    (!protocols.is_empty()).then_some(protocols)
+}
+
+fn provider_supported_protocols(
+    provider_type: &str,
+    default_protocol: UpstreamProtocol,
+) -> Vec<UpstreamProtocol> {
+    match provider_type {
+        "kimi_coding"
+        | "kimi_coding_anthropic"
+        | "zhipu_coding_openai"
+        | "zhipu_coding"
+        | "minimax_token_openai"
+        | "minimax_token"
+        | "deepseek"
+        | "deepseek_anthropic"
+        | "zhipu"
+        | "zhipu_anthropic" => {
+            vec![
+                UpstreamProtocol::ChatCompletions,
+                UpstreamProtocol::AnthropicMessages,
+            ]
+        }
+        "qwen" | "qwen_responses" | "qwen_anthropic" | "minimax" | "minimax_responses"
+        | "minimax_anthropic" => vec![
+            UpstreamProtocol::Responses,
+            UpstreamProtocol::ChatCompletions,
+            UpstreamProtocol::AnthropicMessages,
+        ],
+        _ => vec![default_protocol],
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AuthScheme, ProviderSpec, UpstreamProtocol};
+    use super::{provider_upstream_base_url, AuthScheme, ProviderSpec, UpstreamProtocol};
     use crate::models::{ProviderCapabilityOverrides, ProviderConfig};
 
     #[test]
@@ -163,6 +317,16 @@ mod tests {
         assert!(spec.capabilities.reasoning);
         assert!(spec.capabilities.structured_outputs);
         assert!(spec.capabilities.streaming_usage);
+    }
+
+    #[test]
+    fn maps_custom_responses_compatible_to_native_responses() {
+        let spec = ProviderSpec::from_provider_config(&provider("responses_compatible"));
+
+        assert_eq!(spec.protocol, UpstreamProtocol::Responses);
+        assert_eq!(spec.auth_scheme, AuthScheme::Bearer);
+        assert!(spec.capabilities.tool_calls);
+        assert!(spec.capabilities.reasoning);
     }
 
     #[test]
@@ -196,13 +360,78 @@ mod tests {
     }
 
     #[test]
-    fn preserves_legacy_anthropic_auth_variants_without_tool_capability() {
-        for provider_type in ["minimax_token", "zhipu_coding"] {
+    fn maps_new_api_service_variants_to_chat_completions_with_tools() {
+        for provider_type in ["kimi", "deepseek", "qwen"] {
+            let spec = ProviderSpec::from_provider_config(&provider(provider_type));
+
+            assert_eq!(spec.protocol, UpstreamProtocol::ChatCompletions);
+            assert_eq!(spec.auth_scheme, AuthScheme::Bearer);
+            assert!(spec.capabilities.tool_calls);
+            assert!(spec.capabilities.tool_choice);
+            assert!(spec.capabilities.system_messages);
+        }
+    }
+
+    #[test]
+    fn maps_api_service_protocol_variants_to_documented_upstream_protocols() {
+        for provider_type in ["qwen_responses", "minimax_responses"] {
+            let spec = ProviderSpec::from_provider_config(&provider(provider_type));
+
+            assert_eq!(spec.protocol, UpstreamProtocol::Responses);
+            assert_eq!(spec.auth_scheme, AuthScheme::Bearer);
+            assert!(spec.capabilities.tool_calls);
+        }
+
+        for provider_type in [
+            "deepseek_anthropic",
+            "qwen_anthropic",
+            "zhipu_anthropic",
+            "minimax_anthropic",
+        ] {
             let spec = ProviderSpec::from_provider_config(&provider(provider_type));
 
             assert_eq!(spec.protocol, UpstreamProtocol::AnthropicMessages);
             assert_eq!(spec.auth_scheme, AuthScheme::Anthropic);
-            assert!(!spec.capabilities.tool_calls);
+            assert!(spec.capabilities.tool_calls);
+        }
+    }
+
+    #[test]
+    fn maps_subscription_anthropic_variants_to_messages_with_tools() {
+        for provider_type in [
+            "kimi_coding_anthropic",
+            "zai_coding_anthropic",
+            "zhipu_coding",
+            "minimax_token",
+            "bailian_coding_anthropic",
+            "bailian_token_anthropic",
+        ] {
+            let spec = ProviderSpec::from_provider_config(&provider(provider_type));
+
+            assert_eq!(spec.protocol, UpstreamProtocol::AnthropicMessages);
+            assert_eq!(spec.auth_scheme, AuthScheme::Anthropic);
+            assert!(spec.capabilities.tool_calls);
+            assert!(spec.capabilities.tool_choice);
+        }
+    }
+
+    #[test]
+    fn maps_subscription_openai_variants_to_chat_completions_with_tools() {
+        for provider_type in [
+            "kimi_coding",
+            "zai_coding_openai",
+            "zhipu_coding_openai",
+            "minimax_token_openai",
+            "bailian_coding_openai",
+            "bailian_token_openai",
+        ] {
+            let spec = ProviderSpec::from_provider_config(&provider(provider_type));
+
+            assert_eq!(spec.protocol, UpstreamProtocol::ChatCompletions);
+            assert_eq!(spec.auth_scheme, AuthScheme::Bearer);
+            assert!(spec.capabilities.tool_calls);
+            assert!(spec.capabilities.tool_choice);
+            assert!(spec.capabilities.system_messages);
         }
     }
 
@@ -229,6 +458,112 @@ mod tests {
     }
 
     #[test]
+    fn custom_provider_protocol_declarations_override_provider_type_defaults() {
+        let mut provider = provider("openai_compatible");
+        provider.capabilities_json = Some(
+            serde_json::to_string(&ProviderCapabilityOverrides {
+                upstream_protocols: Some(vec!["anthropic".to_string()]),
+                ..ProviderCapabilityOverrides::default()
+            })
+            .expect("encode capabilities"),
+        );
+
+        let spec = ProviderSpec::from_provider_config(&provider);
+
+        assert!(spec.supports_downstream("responses"));
+        assert!(spec.supports_downstream("anthropic_messages"));
+        assert!(!spec.supports_downstream("chat_completions"));
+    }
+
+    #[test]
+    fn built_in_provider_capabilities_are_not_limited_by_saved_protocol_variant() {
+        let spec = ProviderSpec::from_provider_config(&provider("kimi_coding_anthropic"));
+
+        assert_eq!(spec.protocol, UpstreamProtocol::AnthropicMessages);
+        assert!(spec.supports_downstream("responses"));
+        assert!(spec.supports_downstream("chat_completions"));
+        assert!(spec.supports_downstream("anthropic_messages"));
+    }
+
+    #[test]
+    fn chooses_upstream_protocol_by_downstream_request_preference() {
+        let spec = ProviderSpec::from_provider_config(&provider("kimi_coding_anthropic"));
+
+        assert_eq!(
+            spec.upstream_for_downstream("responses"),
+            Some(UpstreamProtocol::ChatCompletions)
+        );
+        assert_eq!(
+            spec.upstream_for_downstream("chat_completions"),
+            Some(UpstreamProtocol::ChatCompletions)
+        );
+        assert_eq!(
+            spec.upstream_for_downstream("anthropic_messages"),
+            Some(UpstreamProtocol::AnthropicMessages)
+        );
+
+        let spec = ProviderSpec::from_provider_config(&provider("anthropic_compatible"));
+        assert_eq!(
+            spec.upstream_for_downstream("responses"),
+            Some(UpstreamProtocol::AnthropicMessages)
+        );
+        assert_eq!(spec.upstream_for_downstream("chat_completions"), None);
+    }
+
+    #[test]
+    fn resolves_protocol_base_url_from_capability_overrides() {
+        let provider = provider_with_protocol_base_urls(
+            "https://default.example/v1",
+            Some("https://responses.example/v1"),
+            Some("https://chat.example/v1"),
+            Some("https://anthropic.example"),
+        );
+
+        assert_eq!(
+            provider_upstream_base_url(&provider, UpstreamProtocol::Responses),
+            "https://responses.example/v1"
+        );
+        assert_eq!(
+            provider_upstream_base_url(&provider, UpstreamProtocol::ChatCompletions),
+            "https://chat.example/v1"
+        );
+        assert_eq!(
+            provider_upstream_base_url(&provider, UpstreamProtocol::AnthropicMessages),
+            "https://anthropic.example"
+        );
+    }
+
+    #[test]
+    fn falls_back_to_default_base_url_when_protocol_base_url_is_empty() {
+        let provider =
+            provider_with_protocol_base_urls("https://default.example/v1", None, Some(" "), None);
+
+        assert_eq!(
+            provider_upstream_base_url(&provider, UpstreamProtocol::Responses),
+            "https://default.example/v1"
+        );
+        assert_eq!(
+            provider_upstream_base_url(&provider, UpstreamProtocol::ChatCompletions),
+            "https://default.example/v1"
+        );
+        assert_eq!(
+            provider_upstream_base_url(&provider, UpstreamProtocol::AnthropicMessages),
+            "https://default.example/v1"
+        );
+    }
+
+    #[test]
+    fn normalizes_kimi_code_anthropic_base_url_to_versioned_messages_root() {
+        let mut provider = provider("kimi_coding_anthropic");
+        provider.base_url = "https://api.kimi.com/coding/".to_string();
+
+        assert_eq!(
+            provider_upstream_base_url(&provider, UpstreamProtocol::AnthropicMessages),
+            "https://api.kimi.com/coding/v1"
+        );
+    }
+
+    #[test]
     fn enforces_downstream_protocol_matrix() {
         assert!(UpstreamProtocol::Responses.supports_downstream("responses"));
         assert!(UpstreamProtocol::Responses.supports_downstream("anthropic_messages"));
@@ -240,6 +575,28 @@ mod tests {
         assert!(UpstreamProtocol::ChatCompletions.supports_downstream("responses"));
         assert!(UpstreamProtocol::ChatCompletions.supports_downstream("chat_completions"));
         assert!(UpstreamProtocol::ChatCompletions.supports_downstream("anthropic_messages"));
+    }
+
+    fn provider_with_protocol_base_urls(
+        base_url: &str,
+        responses: Option<&str>,
+        openai: Option<&str>,
+        anthropic: Option<&str>,
+    ) -> ProviderConfig {
+        let mut provider = provider("openai_compatible");
+        provider.base_url = base_url.to_string();
+        provider.capabilities_json = Some(
+            serde_json::to_string(&ProviderCapabilityOverrides {
+                protocol_base_urls: Some(crate::models::ProviderProtocolBaseUrls {
+                    responses: responses.map(str::to_string),
+                    openai: openai.map(str::to_string),
+                    anthropic: anthropic.map(str::to_string),
+                }),
+                ..ProviderCapabilityOverrides::default()
+            })
+            .expect("encode capabilities"),
+        );
+        provider
     }
 
     fn provider(provider_type: &str) -> ProviderConfig {

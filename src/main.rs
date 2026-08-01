@@ -1,7 +1,10 @@
 use axum::{middleware, routing::any, Router};
 use sqlx::sqlite::SqlitePoolOptions;
 use std::net::SocketAddr;
-use tower_http::{cors::CorsLayer, services::ServeDir};
+use tower_http::{
+    cors::CorsLayer,
+    services::{ServeDir, ServeFile},
+};
 
 mod bridge;
 mod db;
@@ -82,7 +85,11 @@ async fn main() -> anyhow::Result<()> {
         .nest("/api", admin_router)
         .nest("/proxy", proxy_router)
         // Serve built Vue frontend from ./static/
-        .fallback_service(ServeDir::new("static").append_index_html_on_directories(true))
+        .fallback_service(
+            ServeDir::new("static")
+                .append_index_html_on_directories(true)
+                .fallback(ServeFile::new("static/index.html")),
+        )
         .layer(CorsLayer::permissive());
 
     let port: u16 = std::env::var("LISTEN_PORT")

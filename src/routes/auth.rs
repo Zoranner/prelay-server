@@ -34,7 +34,7 @@ pub async fn authenticate_protocol_request(
     headers: &HeaderMap,
 ) -> Result<(), AppError> {
     let token = extract_token(headers).ok_or(AppError::Unauthorized)?;
-    db::get_config_by_token(db, &token)
+    db::get_interface_by_token(db, &token)
         .await?
         .ok_or(AppError::Unauthorized)?;
     Ok(())
@@ -107,7 +107,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn authenticates_existing_proxy_token() {
+    async fn authenticates_existing_interface_token_and_rejects_provider_token() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -123,13 +123,25 @@ mod tests {
         )
         .await
         .expect("create provider");
-        let mut headers = HeaderMap::new();
-        headers.insert(
+        let interface = db::create_interface(&db, "Codex", "responses")
+            .await
+            .expect("create interface");
+
+        let mut provider_headers = HeaderMap::new();
+        provider_headers.insert(
             "authorization",
             HeaderValue::from_str(&format!("Bearer {}", provider.token)).expect("header value"),
         );
+        assert!(authenticate_protocol_request(&db, &provider_headers)
+            .await
+            .is_err());
 
-        authenticate_protocol_request(&db, &headers)
+        let mut interface_headers = HeaderMap::new();
+        interface_headers.insert(
+            "authorization",
+            HeaderValue::from_str(&format!("Bearer {}", interface.token)).expect("header value"),
+        );
+        authenticate_protocol_request(&db, &interface_headers)
             .await
             .expect("authenticate request");
     }

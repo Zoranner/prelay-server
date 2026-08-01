@@ -6,7 +6,7 @@
 
 协议桥接主体已经从透明代理演进为多入口、多上游协议的桥接网关。当前产品范围收敛为 `chat_completions`、`responses` 和 `anthropic_messages`。Ollama Native 因无法稳定支撑 Codex / Claude Code 的工具调用和复杂会话目标，已从协议入口、上游类型、模型目录和前端 provider 选项中下线。
 
-当前后端主链路已完成第一版骨架，并已补齐本阶段要求的跨 agent 流式工具调用、流式 usage 统计回填和 typed metadata 详情展示。当前仍不能等同于完整产品验收，主要边界集中在两类：
+源码和现有测试用例覆盖跨 agent 流式工具调用、流式 usage 统计回填和 typed metadata 详情展示。当前证据仍不能等同于完整产品验收，主要边界集中在两类：
 
 - 现有验证以 mock upstream 和单元测试为主，缺少 Codex、Claude Code、DeepSeek、OpenAI、Anthropic 的真实客户端联调记录。
 - 原生 Responses / Anthropic Messages 流式直通仍不解析上游 usage 事件；已通过桥接语义层的流式路径可以回填 usage、tool-call 数量、完成状态、空流和流中错误。
@@ -21,6 +21,23 @@
 - `/v1/responses`：OpenAI Responses 入口，面向 Codex 类客户端。
 - `/v1/messages`：Anthropic Messages 入口，面向 Claude Code / Anthropic-compatible 客户端。
 - `/v1/models` 和 `/models`：模型目录入口，返回 provider、上游协议、上游模型、可用下游协议和能力声明。
+
+### 管理配置与事务边界
+
+源码中的 Provider 和 Interface 保存接口使用完整目标状态：
+
+- Provider 请求的 `models` 表示保存后的完整模型集合。创建时必须提供；更新时提供该字段则替换完整集合，缺省则保留已有集合。
+- Interface 请求的 `models` 表示保存后的完整模型映射集合。每项引用 Provider 及其已保存的上游模型，并定义客户端使用的模型名。
+- Provider 配置与模型集合在一个 SQLite 事务中保存；Interface 配置与模型映射集合也在一个事务中保存。校验或写入失败时回滚，不保留部分结果。
+- 删除 Provider 模型时按 Provider 和上游模型组合清理 Interface 引用；删除 Interface 模型时同时匹配父 Interface 和模型 ID。
+
+现有管理路由测试用例覆盖创建、完整集合替换、非法引用回滚、空集合拒绝和跨 Interface 删除边界。这些是源码与本地自动化测试层面的证据，不代表浏览器管理流程已经完成交互验收。
+
+### 鉴权边界
+
+协议入口要求 Interface token，可通过 `Authorization: Bearer` 或 `x-api-key` 传入。解析链先按 token 定位 Interface，再在该 Interface 的完整模型集合中解析客户端模型名；缺少 token、使用 Provider token 或模型只存在于其他 Interface 时均不能通过该链路。
+
+`ADMIN_TOKEN` 只保护 `/api/*` 管理接口。配置后同样支持 Bearer 和 `x-api-key`；未配置或为空时管理 API 以兼容模式开放。该兼容模式和单一管理令牌只适用于本机或受控网络，没有引入用户、角色、登录、会话或多租户系统。
 
 ### 供给侧协议模型
 
@@ -140,6 +157,12 @@
 - 上游错误多数只记录 HTTP 状态，没有统一解析 provider error code、error message 和 request id。
 - 原生 Responses / Anthropic Messages 流式直通时，usage 事件没有被解析并归一化到统计字段。
 - 成本估算依赖本地价格配置，无法匹配价格时只能保持空值；这不是阻塞问题，但需要在产品界面明确显示。
+
+## 构建与部署边界
+
+构建契约要求先在 `web/` 中执行 `bun install --frozen-lockfile`。Cargo 的 `build.rs` 监听 `web/bun.lock`，但不隐式安装依赖；`web/node_modules` 缺失时直接失败并给出冻结安装命令。前端脚本分别提供 `test`、`typecheck` 和 `build` 入口，Docker 构建上下文排除根目录及 `web/` 下的 `.env` 文件。
+
+这些契约用于保证本地和 Docker 构建使用同一锁文件。本文没有记录 Docker 镜像构建或容器运行结果，因此不能据此宣称镜像已经验收。
 
 ## 验收状态
 

@@ -11,13 +11,13 @@ fn main() {
     println!("cargo:rerun-if-changed=web/src");
     println!("cargo:rerun-if-changed=web/index.html");
     println!("cargo:rerun-if-changed=web/package.json");
+    println!("cargo:rerun-if-changed=web/bun.lock");
     println!("cargo:rerun-if-changed=web/vite.config.ts");
     println!("cargo:rerun-if-changed=web/eslint.config.js");
     println!("cargo:rerun-if-changed=web/.prettierrc");
 
     if !Path::new("web/node_modules").exists() {
-        progress("Installing dependencies...");
-        run("bun", &["install"], "web");
+        panic!("web/node_modules is missing; run `cd web` then `bun install --frozen-lockfile`");
     }
 
     progress("Checking format (prettier)...");

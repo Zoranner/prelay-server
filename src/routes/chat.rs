@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
     extract::State,
-    http::header,
+    http::{header, HeaderMap},
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
@@ -10,12 +10,11 @@ use futures::TryStreamExt;
 use serde_json::Value;
 
 use crate::{
-    db,
     error::AppError,
-    providers::spec::UpstreamProtocol,
+    providers::spec::provider_upstream_base_url,
     routes::{
-        request_metadata::build_request_metadata, stream_stats::record_first_chunk,
-        upstream_observability::upstream_observability,
+        interface_resolver::resolve_interface_model, request_metadata::build_request_metadata,
+        stream_stats::record_first_chunk, upstream_observability::upstream_observability,
     },
     stats::{insert_request_log, RequestLogInsert},
     AppState,
@@ -27,6 +26,7 @@ pub fn router() -> Router<AppState> {
 
 async fn create_chat_completion(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(mut payload): Json<Value>,
 ) -> Result<Response, AppError> {
     let started_at = std::time::Instant::now();
@@ -39,24 +39,23 @@ async fn create_chat_completion(
         .get("stream")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let resolved = db::get_provider_by_model(&state.db, &model, "chat_completions")
-        .await?
-        .ok_or_else(|| AppError::BadRequest(format!("模型 {model} 未配置")))?;
+    let resolved = resolve_interface_model(&state.db, &headers, &model, "chat_completions").await?;
     let provider = resolved.provider;
     let model_upstream = resolved.model_upstream;
     let metadata_json = build_request_metadata(
         "chat_completions",
         "chat_completions",
-        UpstreamProtocol::ChatCompletions,
+        resolved.upstream_protocol,
         &model,
         &model_upstream,
         Vec::new(),
     )?;
 
     payload["model"] = Value::String(model_upstream.clone());
+    let upstream_base_url = provider_upstream_base_url(&provider, resolved.upstream_protocol);
     let upstream_url = format!(
         "{}/chat/completions",
-        provider.base_url.trim_end_matches('/')
+        upstream_base_url.trim_end_matches('/')
     );
     let upstream_started_at = std::time::Instant::now();
     let upstream_response = state
@@ -204,7 +203,10 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::create_chat_completion;
-    use crate::{db, AppState};
+    use crate::{
+        db, models::ProviderCapabilityOverrides,
+        routes::interface_resolver::create_test_interface_auth, AppState,
+    };
 
     #[tokio::test]
     async fn rejects_unauthenticated_chat_completion_request() {
@@ -256,7 +258,7 @@ mod tests {
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        db::create_config(
+        let provider = db::create_config(
             &db,
             "deepseek-chat",
             "openai_compatible",
@@ -265,6 +267,8 @@ mod tests {
         )
         .await
         .expect("create provider");
+        let auth =
+            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -273,6 +277,7 @@ mod tests {
 
         let response = create_chat_completion(
             State(state),
+            auth.headers,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "messages": [
@@ -293,7 +298,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolves_chat_completion_model_alias_to_upstream_model() {
+    async fn resolves_interface_model_name_to_upstream_model() {
         let upstream = spawn_alias_chat_upstream().await;
         let db = SqlitePoolOptions::new()
             .max_connections(1)
@@ -310,15 +315,7 @@ mod tests {
         )
         .await
         .expect("create provider");
-        db::create_model_alias(
-            &db,
-            "coder",
-            &provider.id,
-            "deepseek-chat",
-            &["chat_completions"],
-        )
-        .await
-        .expect("create alias");
+        let auth = create_test_interface_auth(&db, &provider, "coder", "deepseek-chat").await;
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -327,6 +324,7 @@ mod tests {
 
         let response = create_chat_completion(
             State(state),
+            auth.headers,
             axum::Json(json!({
                 "model": "coder",
                 "messages": [
@@ -343,7 +341,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_model_alias_when_chat_protocol_is_not_allowed() {
+    async fn rejects_chat_when_provider_only_supports_responses_upstream_protocol() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -353,15 +351,13 @@ mod tests {
         let provider = db::create_config(
             &db,
             "DeepSeek Provider",
-            "openai_compatible",
+            "openai",
             "http://127.0.0.1:1",
             "sk-upstream",
         )
         .await
         .expect("create provider");
-        db::create_model_alias(&db, "coder", &provider.id, "deepseek-chat", &["responses"])
-            .await
-            .expect("create alias");
+        let auth = create_test_interface_auth(&db, &provider, "coder", "deepseek-chat").await;
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -370,6 +366,7 @@ mod tests {
 
         let error = create_chat_completion(
             State(state),
+            auth.headers,
             axum::Json(json!({
                 "model": "coder",
                 "messages": [
@@ -378,58 +375,21 @@ mod tests {
             })),
         )
         .await
-        .expect_err("blocked alias should fail before upstream");
+        .expect_err("unsupported provider protocol should fail before upstream");
 
-        assert!(format!("{error:?}").contains("模型 coder 未配置"));
+        assert!(format!("{error:?}")
+            .contains("供应商 DeepSeek Provider 不支持接口协议 chat_completions"));
     }
 
     #[tokio::test]
-    async fn rejects_responses_provider_name_on_chat_completion_route() {
+    async fn rejects_chat_when_provider_only_supports_anthropic_messages_upstream_protocol() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        db::create_config(
-            &db,
-            "OpenAI Responses",
-            "openai",
-            "http://127.0.0.1:1",
-            "sk-upstream",
-        )
-        .await
-        .expect("create provider");
-        let state = AppState {
-            db,
-            client: reqwest::Client::new(),
-            admin_token: None,
-        };
-
-        let error = create_chat_completion(
-            State(state),
-            axum::Json(json!({
-                "model": "OpenAI Responses",
-                "messages": [
-                    { "role": "user", "content": "hello" }
-                ]
-            })),
-        )
-        .await
-        .expect_err("responses provider should not be exposed as chat completions");
-
-        assert!(format!("{error:?}").contains("模型 OpenAI Responses 未配置"));
-    }
-
-    #[tokio::test]
-    async fn rejects_anthropic_provider_name_on_chat_completion_route() {
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        db::create_config(
+        let provider = db::create_config(
             &db,
             "Claude",
             "anthropic_compatible",
@@ -438,6 +398,7 @@ mod tests {
         )
         .await
         .expect("create provider");
+        let auth = create_test_interface_auth(&db, &provider, "Claude", "claude-sonnet-4").await;
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -446,6 +407,7 @@ mod tests {
 
         let error = create_chat_completion(
             State(state),
+            auth.headers,
             axum::Json(json!({
                 "model": "Claude",
                 "messages": [
@@ -456,7 +418,7 @@ mod tests {
         .await
         .expect_err("anthropic provider should not be exposed as chat completions");
 
-        assert!(format!("{error:?}").contains("模型 Claude 未配置"));
+        assert!(format!("{error:?}").contains("供应商 Claude 不支持接口协议 chat_completions"));
     }
 
     #[tokio::test]
@@ -468,7 +430,7 @@ mod tests {
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        db::create_config(
+        let provider = db::create_config(
             &db,
             "deepseek-chat",
             "openai_compatible",
@@ -477,6 +439,8 @@ mod tests {
         )
         .await
         .expect("create provider");
+        let auth =
+            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -485,6 +449,7 @@ mod tests {
 
         let _response = create_chat_completion(
             State(state.clone()),
+            auth.headers,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "messages": [
@@ -505,6 +470,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn forwards_chat_completion_to_protocol_specific_base_url() {
+        let default_upstream = spawn_unexpected_chat_upstream().await;
+        let chat_upstream = spawn_chat_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        let provider = db::create_config_with_capabilities(
+            &db,
+            "deepseek-chat",
+            "openai_compatible",
+            &default_upstream,
+            "sk-upstream",
+            Some(&ProviderCapabilityOverrides {
+                protocol_base_urls: Some(crate::models::ProviderProtocolBaseUrls {
+                    responses: None,
+                    openai: Some(chat_upstream),
+                    anthropic: None,
+                }),
+                ..ProviderCapabilityOverrides::default()
+            }),
+        )
+        .await
+        .expect("create provider");
+        let auth =
+            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+        let state = AppState {
+            db,
+            client: reqwest::Client::new(),
+            admin_token: None,
+        };
+
+        let response = create_chat_completion(
+            State(state),
+            auth.headers,
+            axum::Json(json!({
+                "model": "deepseek-chat",
+                "messages": [
+                    { "role": "user", "content": "hello" }
+                ]
+            })),
+        )
+        .await
+        .expect("create chat completion");
+        let body = response_json(response).await;
+
+        assert_eq!(
+            body["choices"][0]["message"]["content"],
+            "chat upstream hello"
+        );
+    }
+
+    #[tokio::test]
     async fn records_successful_chat_completion_upstream_request_id() {
         let upstream = spawn_request_id_chat_upstream().await;
         let db = SqlitePoolOptions::new()
@@ -513,7 +533,7 @@ mod tests {
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        db::create_config(
+        let provider = db::create_config(
             &db,
             "deepseek-chat",
             "openai_compatible",
@@ -522,6 +542,8 @@ mod tests {
         )
         .await
         .expect("create provider");
+        let auth =
+            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             db: db.clone(),
             client: reqwest::Client::new(),
@@ -530,6 +552,7 @@ mod tests {
 
         let _response = create_chat_completion(
             State(state),
+            auth.headers,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "messages": [
@@ -558,7 +581,7 @@ mod tests {
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        db::create_config(
+        let provider = db::create_config(
             &db,
             "deepseek-chat",
             "openai_compatible",
@@ -567,6 +590,8 @@ mod tests {
         )
         .await
         .expect("create provider");
+        let auth =
+            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             db: db.clone(),
             client: reqwest::Client::new(),
@@ -575,6 +600,7 @@ mod tests {
 
         let error = create_chat_completion(
             State(state),
+            auth.headers,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "messages": [
@@ -605,7 +631,7 @@ mod tests {
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        db::create_config(
+        let provider = db::create_config(
             &db,
             "deepseek-chat",
             "openai_compatible",
@@ -614,6 +640,8 @@ mod tests {
         )
         .await
         .expect("create provider");
+        let auth =
+            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             db: db.clone(),
             client: reqwest::Client::new(),
@@ -631,6 +659,7 @@ mod tests {
         let started = std::time::Instant::now();
         let response = reqwest::Client::new()
             .post(format!("http://{addr}/v1/chat/completions"))
+            .bearer_auth(&auth.token)
             .json(&json!({
                 "model": "deepseek-chat",
                 "stream": true,
@@ -704,6 +733,28 @@ mod tests {
                     "completion_tokens": 4
                 }
             }))
+        }
+
+        let app = Router::new().route("/chat/completions", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_unexpected_chat_upstream() -> String {
+        async fn handler() -> axum::response::Response {
+            use axum::{http::StatusCode, response::IntoResponse};
+
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "default base url should not be used" })),
+            )
+                .into_response()
         }
 
         let app = Router::new().route("/chat/completions", post(handler));

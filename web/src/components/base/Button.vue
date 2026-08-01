@@ -1,23 +1,17 @@
 <template>
   <button
     :type="type"
-    class="inline-flex items-center justify-center gap-2 font-medium rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+    class="inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
     :class="[variantClass, sizeClass, { 'w-full': block }]"
     :disabled="disabled || loading"
   >
-    <svg v-if="loading" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-      <path
-        class="opacity-75"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-      />
-    </svg>
+    <LoaderCircle v-if="loading" class="h-4 w-4 animate-spin" aria-hidden="true" />
     <slot />
   </button>
 </template>
 
 <script setup lang="ts">
+import { LoaderCircle } from 'lucide-vue-next';
 import { computed } from 'vue';
 
 const props = withDefaults(
@@ -42,13 +36,13 @@ const props = withDefaults(
 const variantClass = computed(() => {
   switch (props.variant) {
     case 'primary':
-      return 'bg-[#1a5c5c] hover:bg-[#134848] text-white';
+      return 'bg-[var(--pr-color-brand)] text-white hover:bg-[#12564b]';
     case 'secondary':
-      return 'border border-stone-200 hover:bg-stone-50 text-stone-600';
+      return 'border border-stone-200 bg-white text-stone-600 hover:bg-stone-50';
     case 'danger':
-      return 'bg-[#a83232] hover:bg-[#8c2828] text-white';
+      return 'bg-[var(--pr-color-danger)] text-white hover:bg-red-700';
     case 'teal':
-      return 'border border-[#93bfbf] hover:bg-[#f0f8f8] text-[#1a5c5c]';
+      return 'border border-[var(--pr-color-brand)] text-[var(--pr-color-brand)] hover:bg-[var(--pr-color-brand-panel)]';
     case 'ghost':
       return 'text-stone-500 hover:text-stone-700 hover:bg-stone-100';
     default:

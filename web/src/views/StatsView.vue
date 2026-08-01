@@ -1,386 +1,379 @@
 <template>
-  <div class="min-h-screen bg-[#f0ede8]">
-    <AppHeader />
-    <main class="max-w-5xl mx-auto px-6 py-10 space-y-4">
-      <section class="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
-        <div class="px-6 py-5 border-b border-stone-100 flex items-center justify-between gap-4">
-          <div>
-            <h2 class="text-base font-semibold text-stone-800">请求统计</h2>
-            <p class="text-xs text-stone-400 mt-1">汇总代理请求和最近请求明细</p>
-          </div>
-          <button
-            class="shrink-0 rounded-lg border border-stone-200 px-3 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-            :disabled="loading"
-            @click="loadStats"
+  <PageShell>
+    <PageHeader title="统计" description="查看请求总览、最近明细、模型和供应商消耗。">
+      <template #actions>
+        <Button variant="secondary" size="sm" :disabled="loading" @click="loadStats">
+          {{ loading ? '刷新中…' : '刷新' }}
+        </Button>
+      </template>
+    </PageHeader>
+
+    <SurfacePanel>
+      <div class="min-h-0 flex-1 space-y-5 overflow-auto px-6 py-5">
+        <Alert v-if="error" type="error">
+          {{ error }}
+        </Alert>
+
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div
+            v-for="metric in metrics"
+            :key="metric.label"
+            class="rounded-xl border border-stone-100 bg-stone-50/70 px-4 py-3"
           >
-            {{ loading ? '刷新中…' : '刷新' }}
-          </button>
+            <p class="text-xs font-medium text-stone-400">{{ metric.label }}</p>
+            <p class="text-2xl font-semibold text-stone-800 mt-2 tabular-nums">
+              {{ metric.value }}
+            </p>
+          </div>
         </div>
 
-        <div class="px-6 py-5 space-y-5">
-          <Alert v-if="error" type="error">
-            {{ error }}
-          </Alert>
-
-          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            <div
-              v-for="metric in metrics"
-              :key="metric.label"
-              class="rounded-xl border border-stone-100 bg-stone-50/70 px-4 py-3"
-            >
-              <p class="text-xs font-medium text-stone-400">{{ metric.label }}</p>
-              <p class="text-2xl font-semibold text-stone-800 mt-2 tabular-nums">
-                {{ metric.value }}
-              </p>
-            </div>
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-stone-700">最近请求</h3>
+            <span class="text-xs text-stone-400">最多 50 条</span>
           </div>
 
+          <div class="overflow-x-auto rounded-xl border border-stone-100">
+            <table class="min-w-full divide-y divide-stone-100 text-sm">
+              <thead class="bg-stone-50 text-xs font-medium text-stone-400">
+                <tr>
+                  <th class="px-4 py-3 text-left whitespace-nowrap">时间</th>
+                  <th class="px-4 py-3 text-left whitespace-nowrap">状态</th>
+                  <th class="px-4 py-3 text-left whitespace-nowrap">提供商</th>
+                  <th class="px-4 py-3 text-left whitespace-nowrap">模型</th>
+                  <th class="px-4 py-3 text-left whitespace-nowrap">协议</th>
+                  <th class="px-4 py-3 text-right whitespace-nowrap">HTTP</th>
+                  <th class="px-4 py-3 text-left whitespace-nowrap">上游 ID</th>
+                  <th class="px-4 py-3 text-left whitespace-nowrap">错误</th>
+                  <th class="px-4 py-3 text-left whitespace-nowrap">诊断</th>
+                  <th class="px-4 py-3 text-right whitespace-nowrap">Token</th>
+                  <th class="px-4 py-3 text-right whitespace-nowrap">耗时</th>
+                  <th class="px-4 py-3 text-right whitespace-nowrap">详情</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-stone-100 bg-white">
+                <tr v-if="!loading && requestLogs.length === 0">
+                  <td colspan="12" class="px-4 py-8 text-center text-stone-400">暂无请求记录</td>
+                </tr>
+                <template
+                  v-for="{ request, metadata, diagnostics } in requestRows"
+                  :key="request.id"
+                >
+                  <tr class="text-stone-600 hover:bg-stone-50/60">
+                    <td class="px-4 py-3 whitespace-nowrap text-xs text-stone-500">
+                      {{ formatDate(request.created_at) }}
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap">
+                      <span
+                        class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium"
+                        :class="statusClass(request.status)"
+                      >
+                        {{ statusLabel(request.status) }}
+                      </span>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap">
+                      {{ request.provider_name || '—' }}
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap font-mono text-xs">
+                      {{ request.model_requested || '—' }}
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap text-xs">
+                      {{ protocolLabel(request) }}
+                    </td>
+                    <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                      {{ request.http_status ?? '—' }}
+                    </td>
+                    <td class="px-4 py-3 max-w-[180px]">
+                      <span
+                        class="block truncate font-mono text-xs"
+                        :title="upstreamRequestId(request)"
+                      >
+                        {{ upstreamRequestId(request) }}
+                      </span>
+                    </td>
+                    <td class="px-4 py-3 max-w-[220px]">
+                      <span class="block truncate text-xs" :title="errorTitle(request)">
+                        {{ errorLabel(request) }}
+                      </span>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap">
+                      <span
+                        class="inline-flex rounded-full border px-2 py-0.5 text-xs font-medium"
+                        :class="diagnosticsClass(diagnostics.tone)"
+                        :title="diagnostics.title"
+                      >
+                        {{ diagnostics.label }}
+                      </span>
+                    </td>
+                    <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                      {{ formatTokens(request) }}
+                    </td>
+                    <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                      {{ formatLatency(request.latency_ms) }}
+                    </td>
+                    <td class="px-4 py-3 text-right whitespace-nowrap">
+                      <button
+                        class="rounded-lg border border-stone-200 px-2 py-1 text-xs font-medium text-stone-500 hover:bg-stone-50"
+                        type="button"
+                        @click="toggleRequestDetails(request.id)"
+                      >
+                        {{ expandedRequestId === request.id ? '收起' : '查看' }}
+                      </button>
+                    </td>
+                  </tr>
+                  <tr v-if="expandedRequestId === request.id" class="bg-stone-50/70">
+                    <td colspan="12" class="px-4 py-4">
+                      <div class="grid gap-3 text-xs text-stone-600 lg:grid-cols-4">
+                        <div class="rounded-xl border border-stone-100 bg-white px-4 py-3">
+                          <p class="font-semibold text-stone-700">桥接</p>
+                          <dl class="mt-2 space-y-1">
+                            <div class="flex justify-between gap-3">
+                              <dt class="text-stone-400">协议</dt>
+                              <dd class="font-mono text-right">
+                                {{ metadataBridgeProtocol(metadata, request) }}
+                              </dd>
+                            </div>
+                            <div class="flex justify-between gap-3">
+                              <dt class="text-stone-400">请求模型</dt>
+                              <dd class="font-mono text-right">
+                                {{ metadataBridgeValue(metadata, 'model_requested') }}
+                              </dd>
+                            </div>
+                            <div class="flex justify-between gap-3">
+                              <dt class="text-stone-400">上游模型</dt>
+                              <dd class="font-mono text-right">
+                                {{ metadataBridgeValue(metadata, 'model_upstream') }}
+                              </dd>
+                            </div>
+                          </dl>
+                        </div>
+
+                        <div class="rounded-xl border border-stone-100 bg-white px-4 py-3">
+                          <p class="font-semibold text-stone-700">流式</p>
+                          <dl class="mt-2 space-y-1">
+                            <div
+                              v-for="item in streamMetadataItems(metadata)"
+                              :key="item.label"
+                              class="flex justify-between gap-3"
+                            >
+                              <dt class="text-stone-400">{{ item.label }}</dt>
+                              <dd class="font-mono text-right">{{ item.value }}</dd>
+                            </div>
+                          </dl>
+                        </div>
+
+                        <div class="rounded-xl border border-stone-100 bg-white px-4 py-3">
+                          <p class="font-semibold text-stone-700">上游</p>
+                          <dl class="mt-2 space-y-1">
+                            <div class="flex justify-between gap-3">
+                              <dt class="text-stone-400">request_id</dt>
+                              <dd class="max-w-[180px] truncate font-mono text-right">
+                                {{ metadataUpstreamRequestId(metadata, request) }}
+                              </dd>
+                            </div>
+                            <div class="space-y-1">
+                              <dt class="text-stone-400">error_body_excerpt</dt>
+                              <dd class="break-words font-mono text-[11px] leading-5">
+                                {{ metadataUpstreamErrorExcerpt(metadata) }}
+                              </dd>
+                            </div>
+                          </dl>
+                        </div>
+
+                        <div class="rounded-xl border border-stone-100 bg-white px-4 py-3">
+                          <div class="flex items-center justify-between gap-3">
+                            <p class="font-semibold text-stone-700">Metadata</p>
+                            <span
+                              class="rounded-full border px-2 py-0.5 font-medium"
+                              :class="metadataStatusClass(metadata.status)"
+                            >
+                              {{ metadataStatusLabel(metadata) }}
+                            </span>
+                          </div>
+                          <p class="mt-2 break-words text-stone-400">
+                            {{ metadataStatusDetail(metadata) }}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div class="mt-3 rounded-xl border border-stone-100 bg-white px-4 py-3">
+                        <div class="flex items-center justify-between gap-3">
+                          <p class="text-xs font-semibold text-stone-700">诊断明细</p>
+                          <span class="text-xs text-stone-400">
+                            {{ metadataDiagnostics(metadata).length }} 条
+                          </span>
+                        </div>
+                        <div
+                          v-if="metadataDiagnostics(metadata).length === 0"
+                          class="mt-3 text-xs text-stone-400"
+                        >
+                          无 diagnostics 明细
+                        </div>
+                        <div v-else class="mt-3 overflow-x-auto">
+                          <table class="min-w-full divide-y divide-stone-100 text-xs">
+                            <thead class="text-stone-400">
+                              <tr>
+                                <th class="py-2 pr-3 text-left font-medium">级别</th>
+                                <th class="px-3 py-2 text-left font-medium">阶段</th>
+                                <th class="px-3 py-2 text-left font-medium">动作</th>
+                                <th class="px-3 py-2 text-left font-medium">协议</th>
+                                <th class="px-3 py-2 text-left font-medium">路径</th>
+                                <th class="px-3 py-2 text-left font-medium">代码</th>
+                                <th class="py-2 pl-3 text-left font-medium">摘要</th>
+                              </tr>
+                            </thead>
+                            <tbody class="divide-y divide-stone-100">
+                              <tr
+                                v-for="(diagnostic, index) in metadataDiagnostics(metadata)"
+                                :key="`${request.id}-diagnostic-${index}`"
+                              >
+                                <td class="py-2 pr-3">
+                                  <span
+                                    class="rounded-full border px-2 py-0.5 font-medium"
+                                    :class="diagnosticSeverityClass(diagnostic.severity)"
+                                  >
+                                    {{ diagnosticValue(diagnostic.severity) }}
+                                  </span>
+                                </td>
+                                <td class="px-3 py-2 font-mono">
+                                  {{ diagnosticValue(diagnostic.phase) }}
+                                </td>
+                                <td class="px-3 py-2 font-mono">
+                                  {{ diagnosticValue(diagnostic.action) }}
+                                </td>
+                                <td class="px-3 py-2 font-mono">
+                                  {{ diagnosticValue(diagnostic.protocol) }}
+                                </td>
+                                <td class="px-3 py-2 font-mono">
+                                  {{ diagnosticValue(diagnostic.path) }}
+                                </td>
+                                <td class="px-3 py-2 font-mono">
+                                  {{ diagnosticValue(diagnostic.code) }}
+                                </td>
+                                <td class="py-2 pl-3">
+                                  {{ diagnosticMessage(diagnostic) }}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="grid gap-4 lg:grid-cols-2">
           <div class="space-y-3">
             <div class="flex items-center justify-between">
-              <h3 class="text-sm font-semibold text-stone-700">最近请求</h3>
-              <span class="text-xs text-stone-400">最多 50 条</span>
+              <h3 class="text-sm font-semibold text-stone-700">模型统计</h3>
+              <span class="text-xs text-stone-400">按请求模型聚合</span>
             </div>
 
             <div class="overflow-x-auto rounded-xl border border-stone-100">
               <table class="min-w-full divide-y divide-stone-100 text-sm">
                 <thead class="bg-stone-50 text-xs font-medium text-stone-400">
                   <tr>
-                    <th class="px-4 py-3 text-left whitespace-nowrap">时间</th>
-                    <th class="px-4 py-3 text-left whitespace-nowrap">状态</th>
-                    <th class="px-4 py-3 text-left whitespace-nowrap">提供商</th>
                     <th class="px-4 py-3 text-left whitespace-nowrap">模型</th>
-                    <th class="px-4 py-3 text-left whitespace-nowrap">协议</th>
-                    <th class="px-4 py-3 text-right whitespace-nowrap">HTTP</th>
-                    <th class="px-4 py-3 text-left whitespace-nowrap">上游 ID</th>
-                    <th class="px-4 py-3 text-left whitespace-nowrap">错误</th>
-                    <th class="px-4 py-3 text-left whitespace-nowrap">诊断</th>
+                    <th class="px-4 py-3 text-right whitespace-nowrap">请求</th>
+                    <th class="px-4 py-3 text-right whitespace-nowrap">失败</th>
                     <th class="px-4 py-3 text-right whitespace-nowrap">Token</th>
-                    <th class="px-4 py-3 text-right whitespace-nowrap">耗时</th>
-                    <th class="px-4 py-3 text-right whitespace-nowrap">详情</th>
+                    <th class="px-4 py-3 text-right whitespace-nowrap">均耗时</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-stone-100 bg-white">
-                  <tr v-if="!loading && requestLogs.length === 0">
-                    <td colspan="12" class="px-4 py-8 text-center text-stone-400">暂无请求记录</td>
+                  <tr v-if="!loading && modelStats.length === 0">
+                    <td colspan="5" class="px-4 py-8 text-center text-stone-400">暂无模型统计</td>
                   </tr>
-                  <template
-                    v-for="{ request, metadata, diagnostics } in requestRows"
-                    :key="request.id"
+                  <tr
+                    v-for="model in modelStats"
+                    :key="model.model_requested || 'unknown-model'"
+                    class="text-stone-600 hover:bg-stone-50/60"
                   >
-                    <tr class="text-stone-600 hover:bg-stone-50/60">
-                      <td class="px-4 py-3 whitespace-nowrap text-xs text-stone-500">
-                        {{ formatDate(request.created_at) }}
-                      </td>
-                      <td class="px-4 py-3 whitespace-nowrap">
-                        <span
-                          class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium"
-                          :class="statusClass(request.status)"
-                        >
-                          {{ statusLabel(request.status) }}
-                        </span>
-                      </td>
-                      <td class="px-4 py-3 whitespace-nowrap">
-                        {{ request.provider_name || '—' }}
-                      </td>
-                      <td class="px-4 py-3 whitespace-nowrap font-mono text-xs">
-                        {{ request.model_requested || '—' }}
-                      </td>
-                      <td class="px-4 py-3 whitespace-nowrap text-xs">
-                        {{ protocolLabel(request) }}
-                      </td>
-                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
-                        {{ request.http_status ?? '—' }}
-                      </td>
-                      <td class="px-4 py-3 max-w-[180px]">
-                        <span
-                          class="block truncate font-mono text-xs"
-                          :title="upstreamRequestId(request)"
-                        >
-                          {{ upstreamRequestId(request) }}
-                        </span>
-                      </td>
-                      <td class="px-4 py-3 max-w-[220px]">
-                        <span class="block truncate text-xs" :title="errorTitle(request)">
-                          {{ errorLabel(request) }}
-                        </span>
-                      </td>
-                      <td class="px-4 py-3 whitespace-nowrap">
-                        <span
-                          class="inline-flex rounded-full border px-2 py-0.5 text-xs font-medium"
-                          :class="diagnosticsClass(diagnostics.tone)"
-                          :title="diagnostics.title"
-                        >
-                          {{ diagnostics.label }}
-                        </span>
-                      </td>
-                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
-                        {{ formatTokens(request) }}
-                      </td>
-                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
-                        {{ formatLatency(request.latency_ms) }}
-                      </td>
-                      <td class="px-4 py-3 text-right whitespace-nowrap">
-                        <button
-                          class="rounded-lg border border-stone-200 px-2 py-1 text-xs font-medium text-stone-500 hover:bg-stone-50"
-                          type="button"
-                          @click="toggleRequestDetails(request.id)"
-                        >
-                          {{ expandedRequestId === request.id ? '收起' : '查看' }}
-                        </button>
-                      </td>
-                    </tr>
-                    <tr v-if="expandedRequestId === request.id" class="bg-stone-50/70">
-                      <td colspan="12" class="px-4 py-4">
-                        <div class="grid gap-3 text-xs text-stone-600 lg:grid-cols-4">
-                          <div class="rounded-xl border border-stone-100 bg-white px-4 py-3">
-                            <p class="font-semibold text-stone-700">桥接</p>
-                            <dl class="mt-2 space-y-1">
-                              <div class="flex justify-between gap-3">
-                                <dt class="text-stone-400">协议</dt>
-                                <dd class="font-mono text-right">
-                                  {{ metadataBridgeProtocol(metadata, request) }}
-                                </dd>
-                              </div>
-                              <div class="flex justify-between gap-3">
-                                <dt class="text-stone-400">请求模型</dt>
-                                <dd class="font-mono text-right">
-                                  {{ metadataBridgeValue(metadata, 'model_requested') }}
-                                </dd>
-                              </div>
-                              <div class="flex justify-between gap-3">
-                                <dt class="text-stone-400">上游模型</dt>
-                                <dd class="font-mono text-right">
-                                  {{ metadataBridgeValue(metadata, 'model_upstream') }}
-                                </dd>
-                              </div>
-                            </dl>
-                          </div>
-
-                          <div class="rounded-xl border border-stone-100 bg-white px-4 py-3">
-                            <p class="font-semibold text-stone-700">流式</p>
-                            <dl class="mt-2 space-y-1">
-                              <div
-                                v-for="item in streamMetadataItems(metadata)"
-                                :key="item.label"
-                                class="flex justify-between gap-3"
-                              >
-                                <dt class="text-stone-400">{{ item.label }}</dt>
-                                <dd class="font-mono text-right">{{ item.value }}</dd>
-                              </div>
-                            </dl>
-                          </div>
-
-                          <div class="rounded-xl border border-stone-100 bg-white px-4 py-3">
-                            <p class="font-semibold text-stone-700">上游</p>
-                            <dl class="mt-2 space-y-1">
-                              <div class="flex justify-between gap-3">
-                                <dt class="text-stone-400">request_id</dt>
-                                <dd class="max-w-[180px] truncate font-mono text-right">
-                                  {{ metadataUpstreamRequestId(metadata, request) }}
-                                </dd>
-                              </div>
-                              <div class="space-y-1">
-                                <dt class="text-stone-400">error_body_excerpt</dt>
-                                <dd class="break-words font-mono text-[11px] leading-5">
-                                  {{ metadataUpstreamErrorExcerpt(metadata) }}
-                                </dd>
-                              </div>
-                            </dl>
-                          </div>
-
-                          <div class="rounded-xl border border-stone-100 bg-white px-4 py-3">
-                            <div class="flex items-center justify-between gap-3">
-                              <p class="font-semibold text-stone-700">Metadata</p>
-                              <span
-                                class="rounded-full border px-2 py-0.5 font-medium"
-                                :class="metadataStatusClass(metadata.status)"
-                              >
-                                {{ metadataStatusLabel(metadata) }}
-                              </span>
-                            </div>
-                            <p class="mt-2 break-words text-stone-400">
-                              {{ metadataStatusDetail(metadata) }}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div class="mt-3 rounded-xl border border-stone-100 bg-white px-4 py-3">
-                          <div class="flex items-center justify-between gap-3">
-                            <p class="text-xs font-semibold text-stone-700">诊断明细</p>
-                            <span class="text-xs text-stone-400">
-                              {{ metadataDiagnostics(metadata).length }} 条
-                            </span>
-                          </div>
-                          <div
-                            v-if="metadataDiagnostics(metadata).length === 0"
-                            class="mt-3 text-xs text-stone-400"
-                          >
-                            无 diagnostics 明细
-                          </div>
-                          <div v-else class="mt-3 overflow-x-auto">
-                            <table class="min-w-full divide-y divide-stone-100 text-xs">
-                              <thead class="text-stone-400">
-                                <tr>
-                                  <th class="py-2 pr-3 text-left font-medium">级别</th>
-                                  <th class="px-3 py-2 text-left font-medium">阶段</th>
-                                  <th class="px-3 py-2 text-left font-medium">动作</th>
-                                  <th class="px-3 py-2 text-left font-medium">协议</th>
-                                  <th class="px-3 py-2 text-left font-medium">路径</th>
-                                  <th class="px-3 py-2 text-left font-medium">代码</th>
-                                  <th class="py-2 pl-3 text-left font-medium">摘要</th>
-                                </tr>
-                              </thead>
-                              <tbody class="divide-y divide-stone-100">
-                                <tr
-                                  v-for="(diagnostic, index) in metadataDiagnostics(metadata)"
-                                  :key="`${request.id}-diagnostic-${index}`"
-                                >
-                                  <td class="py-2 pr-3">
-                                    <span
-                                      class="rounded-full border px-2 py-0.5 font-medium"
-                                      :class="diagnosticSeverityClass(diagnostic.severity)"
-                                    >
-                                      {{ diagnosticValue(diagnostic.severity) }}
-                                    </span>
-                                  </td>
-                                  <td class="px-3 py-2 font-mono">
-                                    {{ diagnosticValue(diagnostic.phase) }}
-                                  </td>
-                                  <td class="px-3 py-2 font-mono">
-                                    {{ diagnosticValue(diagnostic.action) }}
-                                  </td>
-                                  <td class="px-3 py-2 font-mono">
-                                    {{ diagnosticValue(diagnostic.protocol) }}
-                                  </td>
-                                  <td class="px-3 py-2 font-mono">
-                                    {{ diagnosticValue(diagnostic.path) }}
-                                  </td>
-                                  <td class="px-3 py-2 font-mono">
-                                    {{ diagnosticValue(diagnostic.code) }}
-                                  </td>
-                                  <td class="py-2 pl-3">
-                                    {{ diagnosticMessage(diagnostic) }}
-                                  </td>
-                                </tr>
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  </template>
+                    <td class="px-4 py-3 whitespace-nowrap font-mono text-xs">
+                      {{ model.model_requested || '—' }}
+                    </td>
+                    <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                      {{ formatNumber(model.total_requests) }}
+                    </td>
+                    <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                      {{ formatNumber(model.failed_requests) }}
+                    </td>
+                    <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                      {{ formatTokenPair(model.input_tokens, model.output_tokens) }}
+                    </td>
+                    <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                      {{ formatLatency(model.average_latency_ms) }}
+                    </td>
+                  </tr>
                 </tbody>
               </table>
             </div>
           </div>
 
-          <div class="grid gap-4 lg:grid-cols-2">
-            <div class="space-y-3">
-              <div class="flex items-center justify-between">
-                <h3 class="text-sm font-semibold text-stone-700">模型统计</h3>
-                <span class="text-xs text-stone-400">按请求模型聚合</span>
-              </div>
-
-              <div class="overflow-x-auto rounded-xl border border-stone-100">
-                <table class="min-w-full divide-y divide-stone-100 text-sm">
-                  <thead class="bg-stone-50 text-xs font-medium text-stone-400">
-                    <tr>
-                      <th class="px-4 py-3 text-left whitespace-nowrap">模型</th>
-                      <th class="px-4 py-3 text-right whitespace-nowrap">请求</th>
-                      <th class="px-4 py-3 text-right whitespace-nowrap">失败</th>
-                      <th class="px-4 py-3 text-right whitespace-nowrap">Token</th>
-                      <th class="px-4 py-3 text-right whitespace-nowrap">均耗时</th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-stone-100 bg-white">
-                    <tr v-if="!loading && modelStats.length === 0">
-                      <td colspan="5" class="px-4 py-8 text-center text-stone-400">暂无模型统计</td>
-                    </tr>
-                    <tr
-                      v-for="model in modelStats"
-                      :key="model.model_requested || 'unknown-model'"
-                      class="text-stone-600 hover:bg-stone-50/60"
-                    >
-                      <td class="px-4 py-3 whitespace-nowrap font-mono text-xs">
-                        {{ model.model_requested || '—' }}
-                      </td>
-                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
-                        {{ formatNumber(model.total_requests) }}
-                      </td>
-                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
-                        {{ formatNumber(model.failed_requests) }}
-                      </td>
-                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
-                        {{ formatTokenPair(model.input_tokens, model.output_tokens) }}
-                      </td>
-                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
-                        {{ formatLatency(model.average_latency_ms) }}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-semibold text-stone-700">Provider 统计</h3>
+              <span class="text-xs text-stone-400">按上游聚合</span>
             </div>
 
-            <div class="space-y-3">
-              <div class="flex items-center justify-between">
-                <h3 class="text-sm font-semibold text-stone-700">Provider 统计</h3>
-                <span class="text-xs text-stone-400">按上游聚合</span>
-              </div>
-
-              <div class="overflow-x-auto rounded-xl border border-stone-100">
-                <table class="min-w-full divide-y divide-stone-100 text-sm">
-                  <thead class="bg-stone-50 text-xs font-medium text-stone-400">
-                    <tr>
-                      <th class="px-4 py-3 text-left whitespace-nowrap">Provider</th>
-                      <th class="px-4 py-3 text-right whitespace-nowrap">请求</th>
-                      <th class="px-4 py-3 text-right whitespace-nowrap">失败</th>
-                      <th class="px-4 py-3 text-right whitespace-nowrap">均耗时</th>
-                      <th class="px-4 py-3 text-right whitespace-nowrap">首 Token</th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-stone-100 bg-white">
-                    <tr v-if="!loading && providerStats.length === 0">
-                      <td colspan="5" class="px-4 py-8 text-center text-stone-400">
-                        暂无 Provider 统计
-                      </td>
-                    </tr>
-                    <tr
-                      v-for="provider in providerStats"
-                      :key="provider.provider_id || provider.provider_name || 'unknown-provider'"
-                      class="text-stone-600 hover:bg-stone-50/60"
-                    >
-                      <td class="px-4 py-3 whitespace-nowrap">
-                        {{ provider.provider_name || provider.provider_id || '—' }}
-                      </td>
-                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
-                        {{ formatNumber(provider.total_requests) }}
-                      </td>
-                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
-                        {{ formatNumber(provider.failed_requests) }}
-                      </td>
-                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
-                        {{ formatLatency(provider.average_latency_ms) }}
-                      </td>
-                      <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
-                        {{ formatLatency(provider.average_first_token_ms) }}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+            <div class="overflow-x-auto rounded-xl border border-stone-100">
+              <table class="min-w-full divide-y divide-stone-100 text-sm">
+                <thead class="bg-stone-50 text-xs font-medium text-stone-400">
+                  <tr>
+                    <th class="px-4 py-3 text-left whitespace-nowrap">Provider</th>
+                    <th class="px-4 py-3 text-right whitespace-nowrap">请求</th>
+                    <th class="px-4 py-3 text-right whitespace-nowrap">失败</th>
+                    <th class="px-4 py-3 text-right whitespace-nowrap">均耗时</th>
+                    <th class="px-4 py-3 text-right whitespace-nowrap">首 Token</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-stone-100 bg-white">
+                  <tr v-if="!loading && providerStats.length === 0">
+                    <td colspan="5" class="px-4 py-8 text-center text-stone-400">
+                      暂无 Provider 统计
+                    </td>
+                  </tr>
+                  <tr
+                    v-for="provider in providerStats"
+                    :key="provider.provider_id || provider.provider_name || 'unknown-provider'"
+                    class="text-stone-600 hover:bg-stone-50/60"
+                  >
+                    <td class="px-4 py-3 whitespace-nowrap">
+                      {{ provider.provider_name || provider.provider_id || '—' }}
+                    </td>
+                    <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                      {{ formatNumber(provider.total_requests) }}
+                    </td>
+                    <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                      {{ formatNumber(provider.failed_requests) }}
+                    </td>
+                    <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                      {{ formatLatency(provider.average_latency_ms) }}
+                    </td>
+                    <td class="px-4 py-3 text-right whitespace-nowrap tabular-nums">
+                      {{ formatLatency(provider.average_first_token_ms) }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
-      </section>
-    </main>
-  </div>
+      </div>
+    </SurfacePanel>
+  </PageShell>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import AppHeader from '../components/AppHeader.vue';
-import { Alert } from '../components/base';
+import { Alert, Button } from '../components/base';
+import PageHeader from '../components/base/PageHeader.vue';
+import PageShell from '../components/base/PageShell.vue';
+import SurfacePanel from '../components/base/SurfacePanel.vue';
 import {
   statsApi,
   type BridgeDiagnostic,
@@ -390,6 +383,15 @@ import {
   type RequestLogSummary,
   type StatsOverview,
 } from '../api';
+
+const props = withDefaults(
+  defineProps<{
+    searchQuery?: string;
+  }>(),
+  {
+    searchQuery: '',
+  },
+);
 
 const emptyOverview: StatsOverview = {
   total_requests: 0,
@@ -434,7 +436,7 @@ const metrics = computed(() => [
 ]);
 
 const requestRows = computed(() =>
-  requestLogs.value.map((request) => {
+  requestLogs.value.filter(requestMatchesSearch).map((request) => {
     const metadata = parseRequestMetadata(request);
 
     return {
@@ -772,6 +774,27 @@ function metadataText(value: unknown) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function requestMatchesSearch(request: RequestLogSummary) {
+  const query = props.searchQuery.trim().toLowerCase();
+  if (!query) {
+    return true;
+  }
+
+  return [
+    request.provider_name,
+    request.model_requested,
+    request.protocol_in,
+    request.protocol_upstream,
+    request.upstream_request_id,
+    request.error_code,
+    request.error_message,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+    .includes(query);
 }
 
 function formatTokenPair(inputTokens: number, outputTokens: number) {

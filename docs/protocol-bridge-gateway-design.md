@@ -2,9 +2,9 @@
 
 ## 背景
 
-`provider-relay` 当前是一个轻量的上游密钥管理和透明代理服务：管理页创建 provider 配置，后端按 token 查到上游 `base_url` 和 `api_key`，再把请求转发到上游接口。
+`provider-relay` 定位为面向 AI 编程工具的小型协议桥接网关。管理端维护 Provider、Provider 模型、Interface 及 Interface 模型映射；协议入口使用 Interface token 确定可访问的客户端模型，再解析到上游 Provider 和模型。
 
-后续目标不是继续扩展透明代理，而是把它做成面向 AI 编程工具的协议桥接网关。用户侧主要使用三类协议：
+用户侧支持三类协议：
 
 - OpenAI Responses API：面向 Codex。
 - OpenAI Chat Completions API：面向普通 OpenAI-compatible 客户端。
@@ -20,12 +20,12 @@
 
 ## 参考项目结论
 
-`.refs` 下当前有五个参考项目：
+仓库 `.refs` 包含五个参考项目：
 
 - `codex-bridge`：最直接参考。它专注于 Codex Responses API 与 Chat Completions 的桥接，覆盖流式 SSE、tool calls、`previous_response_id`、DeepSeek thinking/reasoning 回放、入站鉴权和模型目录。
 - `GodeX`：适合作为结构参考。它使用 `ProviderSpec`、能力声明、兼容性规划和 Responses 到 Chat Completions 的桥接内核，适合借鉴边界设计。
 - `litellm`：适合作为网关形态参考。它把 `/v1/chat/completions`、`/v1/responses`、`/v1/messages` 做成独立入口，并把 provider transformation 放到独立模块。
-- `aura-llm-gateway`：适合作为生产化参考。它包含 provider、router、metrics、cost tracking、cache、multi-tenancy 等完整网关能力，但当前项目不应直接照搬其复杂度。
+- `aura-llm-gateway`：适合作为生产化参考。它包含 provider、router、metrics、cost tracking、cache、multi-tenancy 等完整网关能力，但本项目不应直接照搬其复杂度。
 - `cc-switch`：适合作为客户端生态参考。它说明用户会同时管理 Claude Code、Codex、Gemini CLI 等工具，也说明 `chat_completions`、`anthropic_messages`、`codex_responses` 这类协议分类是实际产品概念。
 
 本项目应借鉴 `codex-bridge` 的桥接细节、`GodeX` 的 provider 规约、`litellm` 的入口分层，以及 `cc-switch` 的客户端接入形态，但保持 Rust 服务的小型化实现。
@@ -103,7 +103,7 @@ anthropic_messages -> chat_completions
 - 账单结算。
 - 默认保存完整 prompt 和响应正文。
 - 复杂组织、多租户和企业审计。
-- Gemini Native 和 Bedrock Converse 首期支持。
+- Gemini Native 和 Bedrock Converse。
 
 ## 总体架构
 
@@ -143,7 +143,7 @@ src/bridge/responses_decode.rs
 src/bridge/anthropic_decode.rs
 ```
 
-首期只需要 `responses_decode` 和 `chat_decode`。`anthropic_decode` 在支持 `/v1/messages` 时补齐。
+每种用户侧协议使用独立 decoder。路由只负责鉴权、生命周期和错误响应，不承担协议字段转换。
 
 ### Internal Bridge Model
 
@@ -209,7 +209,7 @@ src/bridge/responses_encode.rs
 src/bridge/anthropic_encode.rs
 ```
 
-首期优先实现 `responses_encode` 和 `chat_encode`。`anthropic_encode` 在支持 `/v1/messages` 时实现。
+每种用户侧协议使用独立 encoder。encoder 只消费内部模型，不直接依赖上游响应结构。
 
 ## 请求流程
 
@@ -257,8 +257,6 @@ OpenAI-compatible client
 
 ### Anthropic Messages 入口调用 Chat Completions 上游
 
-第二阶段实现：
-
 ```text
 Claude Code
   POST /v1/messages
@@ -303,7 +301,7 @@ Codex 和 Claude Code 的工具调用不是普通单轮聊天。必须支持会�
 
 ### 工具调用循环保护
 
-统计连续 tool-call-only 响应次数，用于观测和调试。首期只记录，不做强制限流。必要时可以在响应中注入兼容性诊断，但不做预算或限额管控。
+统计连续 tool-call-only 响应次数，用于观测和调试。该指标不触发强制限流；必要时可以在响应中注入兼容性诊断，但不做预算或限额管控。
 
 ## 统计观测
 
@@ -388,68 +386,45 @@ GET /api/stats/providers
 
 ## 配置模型
 
-现有 `provider_configs` 只适合透明代理，需要扩展。
-
-建议新增或迁移为：
+配置关系以 Provider 和 Interface 为中心：
 
 ```text
-providers
-  id
-  name
-  upstream_protocol
-  base_url
-  api_key
-  auth_scheme
-  enabled
-  created_at
-  updated_at
-
-provider_models
-  id
-  provider_id
-  model
-  display_name
-  enabled
-  capabilities_json
-
 provider_configs
-  capabilities_json
+  -> provider_models
 
-model_aliases
-  id
-  alias
-  provider_id
-  upstream_model
-  downstream_protocols_json
-  enabled
+interfaces
+  -> interface_models
+       -> provider_configs + provider_models
 ```
 
-首期可以先用兼容现有表的轻量扩展，不必一次性迁移成完整模型。设计上应避免继续把 provider 类型写死在前端枚举中。
+Provider 保存请求中的 `models` 表示保存后的完整模型集合，不是增量命令。创建请求必须携带该集合；更新请求传入 `models` 时替换完整集合，缺省时保留原集合以兼容已有调用方。服务端统一去除模型名首尾空白，并拒绝空名称和规范化后的重复名称。
+
+Interface 保存请求中的 `models` 表示保存后的完整映射集合。每项包含 `provider_id`、`upstream_model` 和可选 `model_name`；`model_name` 为空时使用 `upstream_model`。同一 Interface 内的客户端模型名必须唯一，且每项都必须引用已存在的 Provider 模型。
+
+Provider 配置及完整模型集合在同一 SQLite 事务中保存。Interface 配置及完整映射集合也在同一事务中保存。校验、删除或写入任一步骤失败时，整笔保存回滚。删除 Provider 模型时，同时清理引用该 Provider 和上游模型组合的 Interface 映射。模型 CRUD 接口可以为兼容调用方保留，但必须复用相同的校验、父资源和引用清理规则。
 
 ## 鉴权
 
-现有代理 token 可以继续作为入站 key。后续需要区分：
+系统区分三类凭据：
 
-- 管理 API 鉴权。
-- 用户侧协议入口鉴权。
-- 上游 provider API key。
+- `ADMIN_TOKEN`：保护 `/api/*` 管理接口。配置后支持 `Authorization: Bearer` 和 `x-api-key`；未配置时管理接口以兼容模式开放，因此服务只能部署在本机或受控网络。单一管理令牌不承担用户、角色、登录、会话或多租户职责。
+- Interface token：保护 `/v1/*`、`/models` 等协议入口。请求必须使用 Interface token，服务按该 Interface 的完整模型映射集合解析客户端模型名；Provider token 不能替代 Interface token。
+- Provider API key：仅由服务端用于访问上游，不作为用户侧或管理侧凭据。
 
-首期协议入口支持：
+管理凭据和 Interface token 均支持以下请求头形式：
 
 ```text
-Authorization: Bearer <proxy token>
-x-api-key: <proxy token>
+Authorization: Bearer <token>
+x-api-key: <token>
 ```
 
-管理 API 当前没有独立鉴权，作为后续安全任务处理。协议桥接上线前，如果服务可能暴露到非本机网络，必须先补管理鉴权。
+Interface token 只授予该 Interface 已配置模型的协议访问能力。模型不在该 Interface 的完整集合中时，请求失败，不回退到其他 Interface、Provider token 或旧 alias。
 
-## 实施阶段
+## 协议能力契约
 
 ### Chat Completions 到 Responses
 
-目标：DeepSeek Chat Completions 上游可被 Codex 通过 Responses API 使用。
-
-范围：
+该方向用于让 Codex 通过 Responses 入口调用 DeepSeek 或其他 OpenAI-compatible Chat Completions 上游，契约包括：
 
 - `/v1/models`
 - `/v1/responses`
@@ -462,7 +437,7 @@ x-api-key: <proxy token>
 - DeepSeek thinking 安全处理
 - `request_logs` 基础埋点
 
-验收：
+验收必须覆盖：
 
 - Codex 配置 `wire_api = "responses"` 后能通过本服务调用 DeepSeek。
 - 普通文本请求可用。
@@ -472,9 +447,7 @@ x-api-key: <proxy token>
 
 ### 统计页面
 
-目标：形成完整观测闭环。
-
-范围：
+统计形成请求观测闭环，范围包括：
 
 - 统计 API。
 - 管理页统计总览。
@@ -482,7 +455,7 @@ x-api-key: <proxy token>
 - 模型/provider 聚合。
 - 价格表配置和成本估算。
 
-验收：
+验收必须覆盖：
 
 - 能按日查看请求数、token、成本、成功率、延迟。
 - 能定位失败请求的 provider、模型、协议和错误类型。
@@ -490,18 +463,16 @@ x-api-key: <proxy token>
 
 ### 原生 Responses 与 Anthropic Messages 上游接入
 
-目标：支持供给侧直接接入 OpenAI Responses 和 Anthropic Messages 原生协议。
-
-范围：
+原生协议上游保持同协议语义，范围包括：
 
 - `src/providers/responses.rs`。
 - `src/providers/anthropic_messages.rs`。
 - Responses 上游直通服务 `/v1/responses`。
 - Anthropic Messages 上游直通服务 `/v1/messages`。
 - 原生上游返回的 usage、stream event、request id、错误结构归一化到统计模型。
-- 支持同协议直通和后续 agent 协议互转的内部响应模型。
+- 支持同协议直通和 agent 协议互转的内部响应模型。
 
-验收：
+验收必须覆盖：
 
 - OpenAI Responses 原生上游可被 Codex 通过本服务调用。
 - Anthropic Messages 原生上游可被 Claude Code / Anthropic-compatible 客户端通过本服务调用。
@@ -510,9 +481,7 @@ x-api-key: <proxy token>
 
 ### Chat Completions 到 Anthropic Messages
 
-目标：Chat Completions 上游可被 Claude Code / Anthropic-compatible 客户端使用。
-
-范围：
+该方向用于让 Claude Code / Anthropic-compatible 客户端调用 Chat Completions 上游，范围包括：
 
 - `/v1/messages`
 - Anthropic Messages decoder / encoder
@@ -521,23 +490,21 @@ x-api-key: <proxy token>
 - Anthropic SSE 事件输出
 - 统计复用。
 
-验收：
+验收必须覆盖：
 
 - Claude Code 类客户端能通过本服务调用 DeepSeek / OpenAI-compatible 上游。
 - 工具调用结构正确，不降级成纯文本。
 
 ### Responses 与 Anthropic Messages 互转
 
-目标：仅在明确需求出现时支持 `responses <-> anthropic_messages`。
-
-范围：
+`responses <-> anthropic_messages` 只承载可以明确映射的 agent 语义，范围包括：
 
 - Responses decoder 到 Internal。
 - Anthropic decoder 到 Internal。
 - 两端 encoder 复用。
 - 严格禁止输出到 Chat Completions。
 
-验收：
+验收必须覆盖：
 
 - Codex 协议与 Claude Code 协议可互相复用部分 agent 语义。
 - 对无法映射的字段产生兼容性诊断。
@@ -558,7 +525,7 @@ Responses SSE 和 Anthropic SSE 都有状态机语义。流式桥接应由 `Inte
 
 ### 会话链膨胀
 
-`previous_response_id` 重建历史会导致上下文增长。首期采用 LRU + TTL + 简单截断策略，后续再考虑摘要或持久化策略。
+`previous_response_id` 重建历史会导致上下文增长。会话存储采用 LRU、TTL 和简单截断策略；摘要或持久化需要独立的生命周期与隐私设计，不在本契约中预设。
 
 ### 隐私和数据膨胀
 
@@ -566,11 +533,11 @@ Responses SSE 和 Anthropic SSE 都有状态机语义。流式桥接应由 `Inte
 
 ### 参考项目复杂度
 
-LiteLLM 和 Aura 的企业能力不应直接带入。当前项目优先保持小型、可理解、可本地部署。
+LiteLLM 和 Aura 的企业能力不应直接带入。本项目保持小型、可理解、可本地部署；新增平台能力必须对应已确认的运行约束。
 
-## 首期文件规划
+## 组件职责
 
-阶段一预计新增或修改：
+后端模块按路由、桥接模型、协议编解码、上游适配、统计和持久化分工：
 
 ```text
 src/routes/models.rs
@@ -589,7 +556,7 @@ src/models.rs
 src/main.rs
 ```
 
-前端统计页面在阶段二处理：
+前端统计视图及其 API 类型集中在：
 
 ```text
 web/src/views/StatsView.vue
@@ -601,16 +568,20 @@ web/src/components/stats/*
 
 Rust 代码修改后执行：
 
-```powershell
+```text
 cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
 ```
 
 Node.js / 前端命令使用 bun：
 
-```powershell
-bun run build
+```text
+bun test
+bun run format:check
 bun run lint
+bun run typecheck
+bun run build
 ```
 
 协议桥接需要补充集成测试或 smoke 测试：
@@ -629,6 +600,6 @@ bun run lint
 
 ## 结论
 
-`provider-relay` 应演进为小型协议桥接网关：用户侧支持 Chat Completions、Responses、Anthropic Messages，供给侧支持 Chat Completions、Responses、Anthropic Messages。核心转换通过内部模型承载，不做任意协议互转，明确禁止将入站 `responses` 和 `anthropic_messages` 降格输出到 `chat_completions`。
+`provider-relay` 是小型协议桥接网关：用户侧和供给侧均围绕 Chat Completions、Responses、Anthropic Messages 建立明确入口和适配器。核心转换通过内部模型承载，不做任意协议互转，禁止将入站 `responses` 和 `anthropic_messages` 降格输出到 `chat_completions`。
 
-首期先做 `chat_completions -> responses`，以 DeepSeek 让 Codex 可用为验收目标，并同时埋入统计观测字段。统计只做观测，不做限额、预算和扣费。后续再补 Anthropic Messages 和管理页统计。
+Interface token 和完整模型映射集合共同构成协议入口的授权与解析边界；Provider 与 Interface 保存均使用事务提交完整目标状态。统计只做观测，不做限额、预算和扣费。真实供应商与客户端兼容性必须通过单独的端到端记录确认。

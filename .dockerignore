@@ -6,3 +6,7 @@ data/
 *.db
 .git/
 .gitignore
+.env
+.env.*
+web/.env
+web/.env.*
