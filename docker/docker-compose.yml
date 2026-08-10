@@ -4,10 +4,10 @@ services:
     container_name: provider-relay
     restart: always
     ports:
-      - 3000:3000
+      - 18080:18080
     environment:
       - TZ=Asia/Shanghai
-      - LISTEN_PORT=3000
+      - LISTEN_PORT=18080
       - ADMIN_TOKEN=${ADMIN_TOKEN:-}
     volumes:
       - ./data:/app/data

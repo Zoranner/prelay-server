@@ -24,13 +24,13 @@ Cargo 构建不会安装前端依赖。`web/node_modules` 不存在时，`build.
 cargo run
 ```
 
-服务固定使用 `data/relay.db`，首次运行会创建 `data/`。管理台和 API 默认监听 `0.0.0.0:3000`。
+服务固定使用 `data/relay.db`，首次运行会创建 `data/`。管理台和 API 默认监听 `0.0.0.0:18080`。
 
 运行时读取以下环境变量：
 
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
-| `LISTEN_PORT` | `3000` | HTTP 监听端口 |
+| `LISTEN_PORT` | `18080` | HTTP 监听端口 |
 | `ADMIN_TOKEN` | 未设置 | `/api/*` 管理接口的 Bearer 或 `x-api-key` 凭据 |
 | `MODEL_PRICES_PATH` | `data/model_prices.json` | 本地模型价格文件；文件不存在时不计算成本 |
 | `RUST_LOG` | `provider_relay=info,tower_http=info` | tracing 日志过滤规则 |
@@ -54,7 +54,7 @@ x-api-key: <interface-token>
 例如：
 
 ```text
-curl http://127.0.0.1:3000/v1/models -H "Authorization: Bearer <interface-token>"
+curl http://127.0.0.1:18080/v1/models -H "Authorization: Bearer <interface-token>"
 ```
 
 ## 验证

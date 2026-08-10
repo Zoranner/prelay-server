@@ -10,9 +10,9 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': 'http://localhost:3000',
-      '/proxy': 'http://localhost:3000',
-      '/v1': 'http://localhost:3000',
+      '/api': 'http://localhost:18080',
+      '/proxy': 'http://localhost:18080',
+      '/v1': 'http://localhost:18080',
     },
   },
 });

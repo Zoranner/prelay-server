@@ -40,7 +40,7 @@ COPY --from=backend-builder /app/target/release/provider-relay .
 COPY --from=web-builder /app/static ./static
 RUN mkdir -p /app/data && chown relay:relay /app/data
 VOLUME ["/app/data"]
-EXPOSE 3000
-ENV LISTEN_PORT=3000
+EXPOSE 18080
+ENV LISTEN_PORT=18080
 USER relay
 CMD ["./provider-relay"]
