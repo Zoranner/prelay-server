@@ -1,4 +1,4 @@
-use sqlx::SqlitePool;
+use sqlx::{Sqlite, SqlitePool, Transaction};
 
 use super::StorageError;
 
@@ -6,8 +6,18 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
     sqlx::query("PRAGMA foreign_keys = ON")
         .execute(pool)
         .await?;
-    discard_unscoped_legacy_schema(pool).await?;
-    sqlx::query(
+    let mut transaction = pool.begin().await?;
+    discard_unscoped_legacy_schema(&mut transaction).await?;
+    create_identity_schema(&mut transaction).await?;
+    upgrade_response_sessions_primary_key(&mut transaction).await?;
+    transaction.commit().await?;
+    Ok(())
+}
+
+async fn create_identity_schema(
+    transaction: &mut Transaction<'_, Sqlite>,
+) -> Result<(), StorageError> {
+    for statement in [
         "CREATE TABLE IF NOT EXISTS identities (\
             id TEXT PRIMARY KEY,\
             machine_id TEXT NOT NULL,\
@@ -17,10 +27,6 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
             last_active_at TEXT NOT NULL,\
             UNIQUE(machine_id, account_sid)\
         )",
-    )
-    .execute(pool)
-    .await?;
-    sqlx::query(
         "CREATE TABLE IF NOT EXISTS identity_provider_configs (\
             id TEXT PRIMARY KEY,\
             identity_id TEXT NOT NULL REFERENCES identities(id),\
@@ -31,10 +37,6 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
             capabilities_json TEXT,\
             created_at TEXT NOT NULL\
         )",
-    )
-    .execute(pool)
-    .await?;
-    sqlx::query(
         "CREATE TABLE IF NOT EXISTS identity_provider_models (\
             id TEXT PRIMARY KEY,\
             provider_id TEXT NOT NULL REFERENCES identity_provider_configs(id),\
@@ -42,10 +44,6 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
             created_at TEXT NOT NULL,\
             UNIQUE(provider_id, model_name)\
         )",
-    )
-    .execute(pool)
-    .await?;
-    sqlx::query(
         "CREATE TABLE IF NOT EXISTS identity_interface_configs (\
             id TEXT PRIMARY KEY,\
             identity_id TEXT NOT NULL REFERENCES identities(id),\
@@ -54,10 +52,6 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
             token TEXT NOT NULL UNIQUE,\
             created_at TEXT NOT NULL\
         )",
-    )
-    .execute(pool)
-    .await?;
-    sqlx::query(
         "CREATE TABLE IF NOT EXISTS identity_interface_models (\
             id TEXT PRIMARY KEY,\
             interface_id TEXT NOT NULL REFERENCES identity_interface_configs(id),\
@@ -67,10 +61,6 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
             created_at TEXT NOT NULL,\
             UNIQUE(interface_id, model_name)\
         )",
-    )
-    .execute(pool)
-    .await?;
-    sqlx::query(
         "CREATE TABLE IF NOT EXISTS identity_response_sessions (\
             response_id TEXT NOT NULL,\
             identity_id TEXT NOT NULL REFERENCES identities(id),\
@@ -82,11 +72,6 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
             created_at TEXT NOT NULL,\
             PRIMARY KEY(response_id, identity_id)\
         )",
-    )
-    .execute(pool)
-    .await?;
-    upgrade_response_sessions_primary_key(pool).await?;
-    sqlx::query(
         "CREATE TABLE IF NOT EXISTS identity_request_logs (\
             id TEXT PRIMARY KEY,\
             identity_id TEXT NOT NULL REFERENCES identities(id),\
@@ -99,10 +84,6 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
             estimated_cost REAL, currency TEXT, latency_ms INTEGER, upstream_latency_ms INTEGER,\
             first_token_ms INTEGER, tool_call_count INTEGER, upstream_request_id TEXT, metadata_json TEXT\
         )",
-    )
-    .execute(pool)
-    .await?;
-    sqlx::query(
         "CREATE TABLE IF NOT EXISTS identity_model_aliases (\
             id TEXT PRIMARY KEY,\
             identity_id TEXT NOT NULL REFERENCES identities(id),\
@@ -114,13 +95,15 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
             created_at TEXT NOT NULL,\
             UNIQUE(identity_id, alias)\
         )",
-    )
-    .execute(pool)
-    .await?;
+    ] {
+        sqlx::query(statement).execute(&mut **transaction).await?;
+    }
     Ok(())
 }
 
-async fn discard_unscoped_legacy_schema(pool: &SqlitePool) -> Result<(), StorageError> {
+async fn discard_unscoped_legacy_schema(
+    transaction: &mut Transaction<'_, Sqlite>,
+) -> Result<(), StorageError> {
     #[derive(sqlx::FromRow)]
     struct Column {
         name: String,
@@ -129,14 +112,14 @@ async fn discard_unscoped_legacy_schema(pool: &SqlitePool) -> Result<(), Storage
     let table_exists = sqlx::query_scalar::<_, i64>(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'provider_configs')",
     )
-    .fetch_one(pool)
+    .fetch_one(&mut **transaction)
     .await?;
     if table_exists == 0 {
         return Ok(());
     }
 
     let columns = sqlx::query_as::<_, Column>("PRAGMA table_info(provider_configs)")
-        .fetch_all(pool)
+        .fetch_all(&mut **transaction)
         .await?;
     if columns.iter().any(|column| column.name == "identity_id") {
         return Ok(());
@@ -145,7 +128,6 @@ async fn discard_unscoped_legacy_schema(pool: &SqlitePool) -> Result<(), Storage
     tracing::warn!(
         "discarding incompatible unscoped legacy database; existing providers, interfaces, sessions, logs, and secrets will not be migrated"
     );
-    let mut transaction = pool.begin().await?;
     for table in [
         "request_logs",
         "response_sessions",
@@ -156,14 +138,15 @@ async fn discard_unscoped_legacy_schema(pool: &SqlitePool) -> Result<(), Storage
         "provider_configs",
     ] {
         sqlx::query(&format!("DROP TABLE IF EXISTS {table}"))
-            .execute(&mut *transaction)
+            .execute(&mut **transaction)
             .await?;
     }
-    transaction.commit().await?;
     Ok(())
 }
 
-async fn upgrade_response_sessions_primary_key(pool: &SqlitePool) -> Result<(), StorageError> {
+async fn upgrade_response_sessions_primary_key(
+    transaction: &mut Transaction<'_, Sqlite>,
+) -> Result<(), StorageError> {
     #[derive(sqlx::FromRow)]
     struct Column {
         name: String,
@@ -171,7 +154,7 @@ async fn upgrade_response_sessions_primary_key(pool: &SqlitePool) -> Result<(), 
     }
 
     let columns = sqlx::query_as::<_, Column>("PRAGMA table_info(identity_response_sessions)")
-        .fetch_all(pool)
+        .fetch_all(&mut **transaction)
         .await?;
     let has_legacy_primary_key = columns
         .iter()
@@ -183,7 +166,6 @@ async fn upgrade_response_sessions_primary_key(pool: &SqlitePool) -> Result<(), 
         return Ok(());
     }
 
-    let mut transaction = pool.begin().await?;
     sqlx::query(
         "CREATE TABLE identity_response_sessions_replacement (\
             response_id TEXT NOT NULL,\
@@ -197,7 +179,7 @@ async fn upgrade_response_sessions_primary_key(pool: &SqlitePool) -> Result<(), 
             PRIMARY KEY(response_id, identity_id)\
         )",
     )
-    .execute(&mut *transaction)
+    .execute(&mut **transaction)
     .await?;
     sqlx::query(
         "INSERT INTO identity_response_sessions_replacement (\
@@ -207,17 +189,16 @@ async fn upgrade_response_sessions_primary_key(pool: &SqlitePool) -> Result<(), 
             input_messages_json, output_items_json, created_at \
         FROM identity_response_sessions",
     )
-    .execute(&mut *transaction)
+    .execute(&mut **transaction)
     .await?;
     sqlx::query("DROP TABLE identity_response_sessions")
-        .execute(&mut *transaction)
+        .execute(&mut **transaction)
         .await?;
     sqlx::query(
         "ALTER TABLE identity_response_sessions_replacement \
          RENAME TO identity_response_sessions",
     )
-    .execute(&mut *transaction)
+    .execute(&mut **transaction)
     .await?;
-    transaction.commit().await?;
     Ok(())
 }

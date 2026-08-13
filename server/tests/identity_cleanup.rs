@@ -43,7 +43,7 @@ async fn seed_owned_resources(
                 protocol: None,
                 models: vec![InterfaceModelInput {
                     model_name: Some(format!("model-{resource_suffix}")),
-                    provider_id,
+                    provider_id: provider_id.clone(),
                     upstream_model: format!("upstream-model-{resource_suffix}"),
                 }],
             },
@@ -60,6 +60,36 @@ async fn seed_owned_resources(
     .execute(pool)
     .await
     .expect("create request log");
+    sqlx::query(
+        "INSERT INTO identity_response_sessions (response_id, identity_id, previous_response_id, provider_id, \
+         model, input_messages_json, output_items_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(format!("response-{resource_suffix}"))
+    .bind(identity_id)
+    .bind(Option::<String>::None)
+    .bind(&provider_id)
+    .bind(format!("model-{resource_suffix}"))
+    .bind("[]")
+    .bind("[]")
+    .bind(Utc::now().to_rfc3339())
+    .execute(pool)
+    .await
+    .expect("create response session");
+    sqlx::query(
+        "INSERT INTO identity_model_aliases (id, identity_id, alias, provider_id, upstream_model, \
+         downstream_protocols_json, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(format!("alias-{resource_suffix}"))
+    .bind(identity_id)
+    .bind(format!("alias-{resource_suffix}"))
+    .bind(&provider_id)
+    .bind(format!("upstream-model-{resource_suffix}"))
+    .bind("[\"responses\"]")
+    .bind(1)
+    .bind(Utc::now().to_rfc3339())
+    .execute(pool)
+    .await
+    .expect("create model alias");
 }
 
 async fn owned_resource_count(pool: &SqlitePool, identity_id: &str) -> i64 {
@@ -73,8 +103,12 @@ async fn owned_resource_count(pool: &SqlitePool, identity_id: &str) -> i64 {
              (SELECT COUNT(*) FROM identity_interface_models WHERE interface_id IN (\
                  SELECT id FROM identity_interface_configs WHERE identity_id = ?\
              )) + \
-             (SELECT COUNT(*) FROM identity_request_logs WHERE identity_id = ?)",
+             (SELECT COUNT(*) FROM identity_response_sessions WHERE identity_id = ?) + \
+             (SELECT COUNT(*) FROM identity_request_logs WHERE identity_id = ?) + \
+             (SELECT COUNT(*) FROM identity_model_aliases WHERE identity_id = ?)",
     )
+    .bind(identity_id)
+    .bind(identity_id)
     .bind(identity_id)
     .bind(identity_id)
     .bind(identity_id)
@@ -241,7 +275,7 @@ async fn cleanup_removes_identity_at_retention_cutoff_only() {
     );
     assert_eq!(
         owned_resource_count(&pool, &remains_active.identity_id).await,
-        5,
+        7,
         "the newer identity must retain its child resources"
     );
     assert_eq!(
@@ -273,10 +307,24 @@ async fn initialization_discards_unscoped_legacy_database() {
         .execute(&pool)
         .await
         .expect("create legacy provider table");
-    sqlx::query("CREATE TABLE provider_models (id TEXT PRIMARY KEY, provider_id TEXT NOT NULL)")
-        .execute(&pool)
-        .await
-        .expect("create legacy provider model table");
+    for table in [
+        "provider_models",
+        "interface_configs",
+        "interface_models",
+        "response_sessions",
+        "request_logs",
+        "model_aliases",
+    ] {
+        sqlx::query(&format!("CREATE TABLE {table} (id TEXT PRIMARY KEY)"))
+            .execute(&pool)
+            .await
+            .expect("create legacy business table");
+        sqlx::query(&format!("INSERT INTO {table} (id) VALUES (?)"))
+            .bind(format!("legacy-{table}"))
+            .execute(&pool)
+            .await
+            .expect("store legacy business data");
+    }
     sqlx::query("INSERT INTO provider_configs (id, api_key) VALUES (?, ?)")
         .bind("legacy-provider")
         .bind("sk-legacy")
@@ -289,12 +337,24 @@ async fn initialization_discards_unscoped_legacy_database() {
         .expect("replace legacy schema");
 
     let legacy_table_count = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('provider_configs', 'provider_models')",
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (\
+         'provider_configs', 'provider_models', 'interface_configs', 'interface_models', \
+         'response_sessions', 'request_logs', 'model_aliases')",
     )
     .fetch_one(&pool)
     .await
     .expect("inspect legacy tables");
     assert_eq!(legacy_table_count, 0);
+    let identity_table_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (\
+         'identities', 'identity_provider_configs', 'identity_provider_models', \
+         'identity_interface_configs', 'identity_interface_models', \
+         'identity_response_sessions', 'identity_request_logs', 'identity_model_aliases')",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("inspect replacement identity tables");
+    assert_eq!(identity_table_count, 8);
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM identities")
             .fetch_one(&pool)
