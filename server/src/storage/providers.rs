@@ -29,7 +29,7 @@ pub(crate) async fn create(
         return Err(StorageError::IdentityNotFound);
     }
     sqlx::query(
-        "INSERT INTO provider_configs (\
+        "INSERT INTO identity_provider_configs (\
             id, identity_id, name, provider_type, base_url, api_key_ciphertext, capabilities_json, created_at\
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
@@ -49,7 +49,7 @@ pub(crate) async fn create(
             continue;
         }
         sqlx::query(
-            "INSERT INTO provider_models (id, provider_id, model_name, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO identity_provider_models (id, provider_id, model_name, created_at) VALUES (?, ?, ?, ?)",
         )
         .bind(Uuid::new_v4().to_string())
         .bind(&provider_id)
@@ -66,7 +66,7 @@ pub(crate) async fn raw_key_ciphertext(
     pool: &SqlitePool,
     provider_id: &str,
 ) -> Result<String, StorageError> {
-    sqlx::query_scalar("SELECT api_key_ciphertext FROM provider_configs WHERE id = ?")
+    sqlx::query_scalar("SELECT api_key_ciphertext FROM identity_provider_configs WHERE id = ?")
         .bind(provider_id)
         .fetch_one(pool)
         .await

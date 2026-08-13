@@ -1,5 +1,13 @@
 use provider_relay_protocol::{CreateProviderRequest, ProtocolErrorCode};
-use provider_relay_server::storage::{MasterKey, Storage, StorageError};
+use provider_relay_server::{
+    db,
+    storage::{MasterKey, Storage, StorageError},
+};
+use sqlx::sqlite::SqlitePoolOptions;
+use std::{
+    ffi::OsString,
+    sync::{Mutex, OnceLock},
+};
 
 const TEST_MASTER_KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
@@ -33,6 +41,11 @@ async fn identity_credentials_are_hashed_and_provider_keys_are_encrypted() {
         .await
         .expect("authenticate credential")
         .is_some());
+    assert!(storage
+        .authenticate_identity("wrong-device-credential")
+        .await
+        .expect("reject wrong credential")
+        .is_none());
     assert_ne!(
         storage
             .identity_credential_hash(&registered.identity_id)
@@ -109,4 +122,101 @@ fn master_key_requires_base64_encoded_32_bytes() {
     assert!(MasterKey::from_base64(TEST_MASTER_KEY).is_ok());
     assert!(MasterKey::from_base64("not base64").is_err());
     assert!(MasterKey::from_base64("AAAA").is_err());
+}
+
+#[test]
+fn master_key_environment_requires_a_valid_base64_encoded_32_byte_value() {
+    let _lock = master_key_environment_lock()
+        .lock()
+        .expect("lock master key environment");
+    let _restore = MasterKeyEnvironmentRestore::capture();
+
+    std::env::remove_var("PROVIDER_RELAY_MASTER_KEY");
+    assert!(MasterKey::from_environment().is_err());
+
+    std::env::set_var("PROVIDER_RELAY_MASTER_KEY", "not base64");
+    assert!(MasterKey::from_environment().is_err());
+
+    std::env::set_var("PROVIDER_RELAY_MASTER_KEY", "AAAA");
+    assert!(MasterKey::from_environment().is_err());
+}
+
+#[tokio::test]
+async fn identity_storage_schema_is_separate_from_legacy_v1_schema() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("create sqlite pool");
+    let storage = Storage::initialize(pool.clone(), MasterKey::from_bytes([0; 32]))
+        .await
+        .expect("initialize identity storage");
+
+    db::init_schema(&pool)
+        .await
+        .expect("initialize legacy v1 schema");
+    sqlx::query(
+        "INSERT INTO provider_configs (id, name, provider_type, base_url, api_key, token, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("legacy-provider")
+    .bind("Legacy provider")
+    .bind("openai_compatible")
+    .bind("https://legacy.example")
+    .bind("sk-legacy")
+    .bind("legacy-token")
+    .bind("2026-08-13T00:00:00Z")
+    .execute(&pool)
+    .await
+    .expect("create legacy v1 provider");
+
+    let identity = storage
+        .register_identity("machine-a", "S-1-5-21-100")
+        .await
+        .expect("register identity");
+    let secure_provider_id = storage
+        .create_provider(&identity.identity_id, provider_input("sk-secure"))
+        .await
+        .expect("create encrypted provider");
+
+    let legacy_api_key = sqlx::query_scalar::<_, String>(
+        "SELECT api_key FROM provider_configs WHERE id = 'legacy-provider'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read legacy v1 provider key");
+    assert_eq!(legacy_api_key, "sk-legacy");
+    assert_eq!(
+        storage
+            .decrypt_provider_key(&secure_provider_id)
+            .await
+            .expect("decrypt encrypted provider key"),
+        "sk-secure"
+    );
+}
+
+fn master_key_environment_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+struct MasterKeyEnvironmentRestore {
+    original: Option<OsString>,
+}
+
+impl MasterKeyEnvironmentRestore {
+    fn capture() -> Self {
+        Self {
+            original: std::env::var_os("PROVIDER_RELAY_MASTER_KEY"),
+        }
+    }
+}
+
+impl Drop for MasterKeyEnvironmentRestore {
+    fn drop(&mut self) {
+        match &self.original {
+            Some(value) => std::env::set_var("PROVIDER_RELAY_MASTER_KEY", value),
+            None => std::env::remove_var("PROVIDER_RELAY_MASTER_KEY"),
+        }
+    }
 }

@@ -20,7 +20,7 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
     .execute(pool)
     .await?;
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS provider_configs (\
+        "CREATE TABLE IF NOT EXISTS identity_provider_configs (\
             id TEXT PRIMARY KEY,\
             identity_id TEXT NOT NULL REFERENCES identities(id),\
             name TEXT NOT NULL,\
@@ -34,9 +34,9 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
     .execute(pool)
     .await?;
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS provider_models (\
+        "CREATE TABLE IF NOT EXISTS identity_provider_models (\
             id TEXT PRIMARY KEY,\
-            provider_id TEXT NOT NULL REFERENCES provider_configs(id),\
+            provider_id TEXT NOT NULL REFERENCES identity_provider_configs(id),\
             model_name TEXT NOT NULL,\
             created_at TEXT NOT NULL,\
             UNIQUE(provider_id, model_name)\
@@ -45,7 +45,7 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
     .execute(pool)
     .await?;
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS interface_configs (\
+        "CREATE TABLE IF NOT EXISTS identity_interface_configs (\
             id TEXT PRIMARY KEY,\
             identity_id TEXT NOT NULL REFERENCES identities(id),\
             name TEXT NOT NULL,\
@@ -57,11 +57,11 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
     .execute(pool)
     .await?;
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS interface_models (\
+        "CREATE TABLE IF NOT EXISTS identity_interface_models (\
             id TEXT PRIMARY KEY,\
-            interface_id TEXT NOT NULL REFERENCES interface_configs(id),\
+            interface_id TEXT NOT NULL REFERENCES identity_interface_configs(id),\
             model_name TEXT NOT NULL,\
-            provider_id TEXT NOT NULL REFERENCES provider_configs(id),\
+            provider_id TEXT NOT NULL REFERENCES identity_provider_configs(id),\
             upstream_model TEXT NOT NULL,\
             created_at TEXT NOT NULL,\
             UNIQUE(interface_id, model_name)\
@@ -70,11 +70,11 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
     .execute(pool)
     .await?;
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS response_sessions (\
+        "CREATE TABLE IF NOT EXISTS identity_response_sessions (\
             response_id TEXT PRIMARY KEY,\
             identity_id TEXT NOT NULL REFERENCES identities(id),\
             previous_response_id TEXT,\
-            provider_id TEXT NOT NULL REFERENCES provider_configs(id),\
+            provider_id TEXT NOT NULL REFERENCES identity_provider_configs(id),\
             model TEXT NOT NULL,\
             input_messages_json TEXT NOT NULL,\
             output_items_json TEXT NOT NULL,\
@@ -84,7 +84,7 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
     .execute(pool)
     .await?;
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS request_logs (\
+        "CREATE TABLE IF NOT EXISTS identity_request_logs (\
             id TEXT PRIMARY KEY,\
             identity_id TEXT NOT NULL REFERENCES identities(id),\
             created_at TEXT NOT NULL,\
@@ -100,11 +100,11 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
     .execute(pool)
     .await?;
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS model_aliases (\
+        "CREATE TABLE IF NOT EXISTS identity_model_aliases (\
             id TEXT PRIMARY KEY,\
             identity_id TEXT NOT NULL REFERENCES identities(id),\
             alias TEXT NOT NULL,\
-            provider_id TEXT NOT NULL REFERENCES provider_configs(id),\
+            provider_id TEXT NOT NULL REFERENCES identity_provider_configs(id),\
             upstream_model TEXT NOT NULL,\
             downstream_protocols_json TEXT NOT NULL,\
             enabled INTEGER NOT NULL DEFAULT 1,\
