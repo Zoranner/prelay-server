@@ -15,6 +15,76 @@ async fn test_storage() -> (Storage, SqlitePool) {
     (storage, pool)
 }
 
+async fn seed_owned_resources(
+    storage: &Storage,
+    pool: &SqlitePool,
+    identity_id: &str,
+    resource_suffix: &str,
+) {
+    let provider_id = storage
+        .create_provider(
+            identity_id,
+            CreateProviderRequest {
+                name: format!("Provider {resource_suffix}"),
+                provider_type: "openai_compatible".to_string(),
+                base_url: "https://provider.example".to_string(),
+                api_key: "sk-secret".to_string(),
+                capabilities: None,
+                models: vec![format!("upstream-model-{resource_suffix}")],
+            },
+        )
+        .await
+        .expect("create provider");
+    storage
+        .create_interface(
+            identity_id,
+            CreateInterfaceRequest {
+                name: format!("Interface {resource_suffix}"),
+                protocol: None,
+                models: vec![InterfaceModelInput {
+                    model_name: Some(format!("model-{resource_suffix}")),
+                    provider_id,
+                    upstream_model: format!("upstream-model-{resource_suffix}"),
+                }],
+            },
+        )
+        .await
+        .expect("create interface");
+    sqlx::query(
+        "INSERT INTO identity_request_logs (id, identity_id, created_at, status) VALUES (?, ?, ?, ?)",
+    )
+    .bind(format!("log-{resource_suffix}"))
+    .bind(identity_id)
+    .bind(Utc::now().to_rfc3339())
+    .bind("success")
+    .execute(pool)
+    .await
+    .expect("create request log");
+}
+
+async fn owned_resource_count(pool: &SqlitePool, identity_id: &str) -> i64 {
+    sqlx::query_scalar(
+        "SELECT \
+             (SELECT COUNT(*) FROM identity_provider_configs WHERE identity_id = ?) + \
+             (SELECT COUNT(*) FROM identity_provider_models WHERE provider_id IN (\
+                 SELECT id FROM identity_provider_configs WHERE identity_id = ?\
+             )) + \
+             (SELECT COUNT(*) FROM identity_interface_configs WHERE identity_id = ?) + \
+             (SELECT COUNT(*) FROM identity_interface_models WHERE interface_id IN (\
+                 SELECT id FROM identity_interface_configs WHERE identity_id = ?\
+             )) + \
+             (SELECT COUNT(*) FROM identity_request_logs WHERE identity_id = ?)",
+    )
+    .bind(identity_id)
+    .bind(identity_id)
+    .bind(identity_id)
+    .bind(identity_id)
+    .bind(identity_id)
+    .fetch_one(pool)
+    .await
+    .expect("count identity owned resources")
+}
+
 #[tokio::test]
 async fn cleanup_removes_inactive_identity_and_all_owned_data() {
     let (storage, pool) = test_storage().await;
@@ -142,6 +212,9 @@ async fn cleanup_removes_identity_at_retention_cutoff_only() {
         .expect("construct fixed current time");
     let cutoff = now - Duration::days(90);
 
+    seed_owned_resources(&storage, &pool, &expires_at_cutoff.identity_id, "at-cutoff").await;
+    seed_owned_resources(&storage, &pool, &remains_active.identity_id, "newer").await;
+
     for (identity_id, last_active_at) in [
         (&expires_at_cutoff.identity_id, cutoff),
         (&remains_active.identity_id, cutoff + Duration::seconds(1)),
@@ -160,6 +233,16 @@ async fn cleanup_removes_identity_at_retention_cutoff_only() {
             .await
             .expect("clean identities at retention boundary"),
         1
+    );
+    assert_eq!(
+        owned_resource_count(&pool, &expires_at_cutoff.identity_id).await,
+        0,
+        "the cutoff identity must not retain child resources that block deletion"
+    );
+    assert_eq!(
+        owned_resource_count(&pool, &remains_active.identity_id).await,
+        5,
+        "the newer identity must retain its child resources"
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM identities WHERE id = ?")
