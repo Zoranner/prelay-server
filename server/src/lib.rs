@@ -1,5 +1,6 @@
 pub mod app;
 pub mod bridge;
+#[cfg(test)]
 pub mod db;
 pub mod error;
 pub mod identity;
@@ -22,7 +23,6 @@ pub mod test_support {
     use std::str::FromStr;
 
     use crate::{
-        db,
         storage::{MasterKey, Storage},
         AppState,
     };
@@ -37,9 +37,6 @@ pub mod test_support {
             )
             .await
             .expect("create sqlite pool");
-        db::init_schema(&db)
-            .await
-            .expect("initialize legacy schema");
         let storage = Storage::initialize(db.clone(), MasterKey::from_bytes([0; 32]))
             .await
             .expect("initialize identity storage");

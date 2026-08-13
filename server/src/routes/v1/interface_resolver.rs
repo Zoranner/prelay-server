@@ -1,8 +1,14 @@
 use crate::storage::ProtocolAccess;
 use crate::{
-    db::ResolvedInterfaceProvider, error::AppError, routes::v1::auth::CurrentProtocolAccess,
-    AppState,
+    error::AppError, models::ProviderConfig, providers::spec::UpstreamProtocol,
+    routes::v1::auth::CurrentProtocolAccess, AppState,
 };
+
+pub(crate) struct ResolvedInterfaceProvider {
+    pub provider: ProviderConfig,
+    pub model_upstream: String,
+    pub upstream_protocol: UpstreamProtocol,
+}
 
 pub async fn resolve_interface_model(
     state: &AppState,

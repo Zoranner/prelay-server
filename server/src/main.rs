@@ -1,7 +1,10 @@
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::{net::SocketAddr, str::FromStr};
 
-use provider_relay_server::{app, storage::MasterKey, storage::Storage, AppState};
+use provider_relay_server::{
+    app, identity::cleanup::delete_expired_identities, storage::MasterKey, storage::Storage,
+    AppState,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -20,6 +23,25 @@ async fn main() -> anyhow::Result<()> {
         )
         .await?;
     let storage = Storage::initialize(db.clone(), MasterKey::from_environment()?).await?;
+    let deleted = delete_expired_identities(&storage).await?;
+    if deleted > 0 {
+        tracing::info!(deleted, "deleted inactive identities at startup");
+    }
+    let cleanup_storage = storage.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(24 * 60 * 60));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            match delete_expired_identities(&cleanup_storage).await {
+                Ok(deleted) if deleted > 0 => {
+                    tracing::info!(deleted, "deleted inactive identities");
+                }
+                Ok(_) => {}
+                Err(error) => tracing::warn!(%error, "failed to delete inactive identities"),
+            }
+        }
+    });
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))

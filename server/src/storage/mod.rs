@@ -9,6 +9,8 @@ pub mod stats;
 
 use std::fmt;
 
+use chrono::{DateTime, Duration, Utc};
+
 use provider_relay_protocol::{
     CreateIdentityResponse, CreateInterfaceRequest, CreateProviderRequest, InterfaceResponse,
     ProtocolErrorCode, ProviderResponse, RotateCredentialResponse,
@@ -160,6 +162,14 @@ impl Storage {
         identity_id: &str,
     ) -> Result<String, StorageError> {
         identities::credential_hash(&self.pool, identity_id).await
+    }
+
+    pub async fn delete_inactive_identities(
+        &self,
+        now: DateTime<Utc>,
+        retention: Duration,
+    ) -> Result<u64, StorageError> {
+        identities::delete_inactive(&self.pool, now, retention).await
     }
 
     pub async fn create_provider(

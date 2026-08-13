@@ -6,6 +6,7 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
     sqlx::query("PRAGMA foreign_keys = ON")
         .execute(pool)
         .await?;
+    discard_unscoped_legacy_schema(pool).await?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS identities (\
             id TEXT PRIMARY KEY,\
@@ -116,6 +117,49 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
     )
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+async fn discard_unscoped_legacy_schema(pool: &SqlitePool) -> Result<(), StorageError> {
+    #[derive(sqlx::FromRow)]
+    struct Column {
+        name: String,
+    }
+
+    let table_exists = sqlx::query_scalar::<_, i64>(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'provider_configs')",
+    )
+    .fetch_one(pool)
+    .await?;
+    if table_exists == 0 {
+        return Ok(());
+    }
+
+    let columns = sqlx::query_as::<_, Column>("PRAGMA table_info(provider_configs)")
+        .fetch_all(pool)
+        .await?;
+    if columns.iter().any(|column| column.name == "identity_id") {
+        return Ok(());
+    }
+
+    tracing::warn!(
+        "discarding incompatible unscoped legacy database; existing providers, interfaces, sessions, logs, and secrets will not be migrated"
+    );
+    let mut transaction = pool.begin().await?;
+    for table in [
+        "request_logs",
+        "response_sessions",
+        "interface_models",
+        "interface_configs",
+        "provider_models",
+        "model_aliases",
+        "provider_configs",
+    ] {
+        sqlx::query(&format!("DROP TABLE IF EXISTS {table}"))
+            .execute(&mut *transaction)
+            .await?;
+    }
+    transaction.commit().await?;
     Ok(())
 }
 

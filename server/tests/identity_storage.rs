@@ -1,7 +1,6 @@
 use provider_relay_protocol::{CreateProviderRequest, ProtocolErrorCode};
 use provider_relay_server::{
     bridge::internal::{InternalContentPart, InternalMessage, InternalOutputItem, InternalRole},
-    db,
     storage::{sessions::load_response_session_messages, MasterKey, Storage, StorageError},
 };
 use sqlx::sqlite::SqlitePoolOptions;
@@ -249,60 +248,6 @@ fn master_key_environment_requires_a_valid_base64_encoded_32_byte_value() {
 
     std::env::set_var("PROVIDER_RELAY_MASTER_KEY", "AAAA");
     assert!(MasterKey::from_environment().is_err());
-}
-
-#[tokio::test]
-async fn identity_storage_schema_is_separate_from_legacy_v1_schema() {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
-        .await
-        .expect("create sqlite pool");
-    let storage = Storage::initialize(pool.clone(), MasterKey::from_bytes([0; 32]))
-        .await
-        .expect("initialize identity storage");
-
-    db::init_schema(&pool)
-        .await
-        .expect("initialize legacy v1 schema");
-    sqlx::query(
-        "INSERT INTO provider_configs (id, name, provider_type, base_url, api_key, token, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind("legacy-provider")
-    .bind("Legacy provider")
-    .bind("openai_compatible")
-    .bind("https://legacy.example")
-    .bind("sk-legacy")
-    .bind("legacy-token")
-    .bind("2026-08-13T00:00:00Z")
-    .execute(&pool)
-    .await
-    .expect("create legacy v1 provider");
-
-    let identity = storage
-        .register_identity("machine-a", "S-1-5-21-100")
-        .await
-        .expect("register identity");
-    let secure_provider_id = storage
-        .create_provider(&identity.identity_id, provider_input("sk-secure"))
-        .await
-        .expect("create encrypted provider");
-
-    let legacy_api_key = sqlx::query_scalar::<_, String>(
-        "SELECT api_key FROM provider_configs WHERE id = 'legacy-provider'",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("read legacy v1 provider key");
-    assert_eq!(legacy_api_key, "sk-legacy");
-    assert_eq!(
-        storage
-            .decrypt_provider_key(&identity.identity_id, &secure_provider_id)
-            .await
-            .expect("decrypt encrypted provider key"),
-        "sk-secure"
-    );
 }
 
 #[tokio::test]
