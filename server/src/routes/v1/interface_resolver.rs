@@ -1,6 +1,3 @@
-#[cfg(test)]
-use crate::db;
-#[cfg(not(test))]
 use crate::storage::ProtocolAccess;
 use crate::{
     db::ResolvedInterfaceProvider, error::AppError, routes::v1::auth::CurrentProtocolAccess,
@@ -13,60 +10,31 @@ pub async fn resolve_interface_model(
     model: &str,
     downstream_protocol: &str,
 ) -> Result<ResolvedInterfaceProvider, AppError> {
-    #[cfg(test)]
-    {
-        let interface_model =
-            crate::db::get_interface_model(&state.db, &access.interface_id, model)
-                .await?
-                .ok_or_else(|| {
-                    AppError::BadRequest(format!("接口 Test Interface 未配置模型 {model}"))
-                })?;
-        let provider = crate::db::get_config_by_id(&state.db, &interface_model.provider_id)
-            .await?
-            .ok_or_else(|| AppError::BadRequest("模型关联的供应商不存在".to_string()))?;
-        let provider_spec = crate::providers::spec::ProviderSpec::from_provider_config(&provider);
-        let upstream_protocol = provider_spec
-            .upstream_for_downstream(downstream_protocol)
-            .ok_or_else(|| {
-                AppError::BadRequest(format!(
-                    "供应商 {} 不支持接口协议 {}",
-                    provider.name, downstream_protocol
-                ))
-            })?;
-        Ok(ResolvedInterfaceProvider {
-            provider,
-            model_upstream: interface_model.upstream_model,
-            upstream_protocol,
-        })
-    }
-    #[cfg(not(test))]
-    {
-        let access = ProtocolAccess {
-            identity_id: access.identity_id.clone(),
-            interface_id: access.interface_id.clone(),
-        };
-        let resolved = state
-            .storage
-            .resolve_protocol_model(&access, model)
-            .await?
-            .ok_or_else(|| AppError::BadRequest(format!("接口未配置模型 {model}")))?;
-        let provider_spec =
-            crate::providers::spec::ProviderSpec::from_provider_config(&resolved.provider);
-        let upstream_protocol = provider_spec
-            .upstream_for_downstream(downstream_protocol)
-            .ok_or_else(|| {
-                AppError::BadRequest(format!(
-                    "供应商 {} 不支持接口协议 {}",
-                    resolved.provider.name, downstream_protocol
-                ))
-            })?;
+    let access = ProtocolAccess {
+        identity_id: access.identity_id.clone(),
+        interface_id: access.interface_id.clone(),
+    };
+    let resolved = state
+        .storage
+        .resolve_protocol_model(&access, model)
+        .await?
+        .ok_or_else(|| AppError::BadRequest(format!("接口未配置模型 {model}")))?;
+    let provider_spec =
+        crate::providers::spec::ProviderSpec::from_provider_config(&resolved.provider);
+    let upstream_protocol = provider_spec
+        .upstream_for_downstream(downstream_protocol)
+        .ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "供应商 {} 不支持接口协议 {}",
+                resolved.provider.name, downstream_protocol
+            ))
+        })?;
 
-        Ok(ResolvedInterfaceProvider {
-            provider: resolved.provider,
-            model_upstream: resolved.model.upstream_model,
-            upstream_protocol,
-        })
-    }
+    Ok(ResolvedInterfaceProvider {
+        provider: resolved.provider,
+        model_upstream: resolved.model.upstream_model,
+        upstream_protocol,
+    })
 }
 
 #[cfg(test)]
@@ -82,31 +50,82 @@ pub(crate) async fn create_test_interface_auth(
     model_name: &str,
     upstream_model: &str,
 ) -> TestInterfaceAuth {
-    db::create_provider_model(db, &provider.id, upstream_model)
+    let storage = test_storage(db).await;
+    let identity = storage
+        .register_identity("test-machine", &uuid::Uuid::new_v4().to_string())
         .await
-        .expect("create provider model");
-    let interface = db::create_interface(db, "Test Interface", "test")
+        .expect("register identity");
+    let provider_id = storage
+        .create_provider(
+            &identity.identity_id,
+            provider_relay_protocol::CreateProviderRequest {
+                name: provider.name.clone(),
+                provider_type: provider.provider_type.clone(),
+                base_url: provider.base_url.clone(),
+                api_key: provider.api_key.clone(),
+                capabilities: provider
+                    .capabilities_json
+                    .as_deref()
+                    .and_then(|value| serde_json::from_str(value).ok()),
+                models: vec![upstream_model.to_string()],
+            },
+        )
         .await
-        .expect("create interface");
-    db::create_interface_model(db, &interface.id, model_name, &provider.id, upstream_model)
+        .expect("create identity provider");
+    let interface = storage
+        .create_interface(
+            &identity.identity_id,
+            provider_relay_protocol::CreateInterfaceRequest {
+                name: "Test Interface".to_string(),
+                protocol: Some("test".to_string()),
+                models: vec![provider_relay_protocol::InterfaceModelInput {
+                    provider_id,
+                    upstream_model: upstream_model.to_string(),
+                    model_name: Some(model_name.to_string()),
+                }],
+            },
+        )
         .await
-        .expect("create interface model");
-    test_interface_auth(interface)
+        .expect("create identity interface");
+    test_interface_auth(identity.identity_id, interface)
 }
 
 #[cfg(test)]
 pub(crate) async fn create_empty_test_interface_auth(db: &sqlx::SqlitePool) -> TestInterfaceAuth {
-    let interface = db::create_interface(db, "Test Interface", "test")
+    let storage = test_storage(db).await;
+    let identity = storage
+        .register_identity("test-machine", &uuid::Uuid::new_v4().to_string())
         .await
-        .expect("create interface");
-    test_interface_auth(interface)
+        .expect("register identity");
+    let interface = storage
+        .create_interface(
+            &identity.identity_id,
+            provider_relay_protocol::CreateInterfaceRequest {
+                name: "Test Interface".to_string(),
+                protocol: Some("test".to_string()),
+                models: Vec::new(),
+            },
+        )
+        .await
+        .expect("create identity interface");
+    test_interface_auth(identity.identity_id, interface)
 }
 
 #[cfg(test)]
-fn test_interface_auth(interface: crate::models::InterfaceConfig) -> TestInterfaceAuth {
+async fn test_storage(db: &sqlx::SqlitePool) -> crate::storage::Storage {
+    crate::storage::Storage::initialize(db.clone(), crate::storage::MasterKey::from_bytes([0; 32]))
+        .await
+        .expect("initialize identity storage")
+}
+
+#[cfg(test)]
+fn test_interface_auth(
+    identity_id: String,
+    interface: provider_relay_protocol::InterfaceResponse,
+) -> TestInterfaceAuth {
     TestInterfaceAuth {
         access: axum::extract::Extension(CurrentProtocolAccess {
-            identity_id: "test-identity".to_string(),
+            identity_id,
             interface_id: interface.id,
         }),
         token: interface.token,

@@ -6,10 +6,6 @@ use axum::{
 use serde::Serialize;
 use std::collections::HashMap;
 
-#[cfg(test)]
-use crate::db;
-#[cfg(test)]
-use crate::models::{ModelAlias, ProviderConfig};
 use crate::{
     error::AppError,
     models::InterfaceModel,
@@ -75,10 +71,6 @@ async fn list_models(
     State(state): State<AppState>,
     Extension(access): Extension<CurrentProtocolAccess>,
 ) -> Result<Json<ModelsResponse>, AppError> {
-    #[cfg(test)]
-    if access.identity_id == "test-identity" {
-        return list_legacy_test_models(&state).await;
-    }
     let models = state
         .storage
         .list_protocol_models(&crate::storage::ProtocolAccess {
@@ -105,76 +97,6 @@ async fn list_models(
         object: "list",
         data,
     }))
-}
-
-#[cfg(test)]
-async fn list_legacy_test_models(state: &AppState) -> Result<Json<ModelsResponse>, AppError> {
-    let configs = db::list_configs(&state.db).await?;
-    let aliases = db::list_model_aliases(&state.db).await?;
-    let providers_by_id = configs
-        .iter()
-        .map(|provider| {
-            (
-                provider.id.clone(),
-                (
-                    provider.name.clone(),
-                    ProviderSpec::from_provider_config(provider),
-                ),
-            )
-        })
-        .collect::<HashMap<_, _>>();
-    let mut data = configs
-        .into_iter()
-        .map(model_entry_for_provider)
-        .collect::<Vec<_>>();
-    data.extend(
-        aliases
-            .into_iter()
-            .map(|alias| model_entry_for_alias(alias, &providers_by_id)),
-    );
-    Ok(Json(ModelsResponse {
-        object: "list",
-        data,
-    }))
-}
-
-#[cfg(test)]
-fn model_entry_for_alias(
-    alias: ModelAlias,
-    providers_by_id: &HashMap<String, (String, ProviderSpec)>,
-) -> ModelEntry {
-    let provider = providers_by_id.get(&alias.provider_id);
-    let downstream_protocols = provider
-        .map(|(_, spec)| {
-            alias
-                .downstream_protocols
-                .iter()
-                .filter(|protocol| spec.supports_downstream(protocol))
-                .cloned()
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_else(|| alias.downstream_protocols.clone());
-
-    ModelEntry {
-        id: alias.alias,
-        object: "model",
-        entry_type: "alias",
-        owned_by: "provider-relay",
-        provider_id: alias.provider_id,
-        provider_name: provider
-            .map(|(name, _)| name.clone())
-            .unwrap_or_else(|| alias.upstream_model.clone()),
-        upstream_protocol: provider
-            .map(|(_, spec)| spec)
-            .map(|spec| protocol_name(spec.protocol))
-            .unwrap_or("alias"),
-        upstream_model: alias.upstream_model,
-        downstream_protocols,
-        capabilities: provider
-            .map(|(_, spec)| spec)
-            .map(|spec| spec.capabilities.into())
-            .unwrap_or_else(|| ProviderCapabilities::limited().into()),
-    }
 }
 
 fn model_entry_for_interface_model(
@@ -216,24 +138,6 @@ fn protocol_name(protocol: UpstreamProtocol) -> &'static str {
     }
 }
 
-#[cfg(test)]
-fn model_entry_for_provider(provider: ProviderConfig) -> ModelEntry {
-    let spec = ProviderSpec::from_provider_config(&provider);
-
-    ModelEntry {
-        id: provider.name.clone(),
-        object: "model",
-        entry_type: "provider",
-        owned_by: "provider-relay",
-        provider_id: provider.id,
-        provider_name: provider.name.clone(),
-        upstream_protocol: protocol_name(spec.protocol),
-        upstream_model: provider.name,
-        downstream_protocols: downstream_protocols_for_spec(&spec),
-        capabilities: spec.capabilities.into(),
-    }
-}
-
 fn downstream_protocols_for_spec(spec: &ProviderSpec) -> Vec<String> {
     let mut values = Vec::new();
     for upstream_protocol in &spec.supported_protocols {
@@ -252,17 +156,10 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     use super::list_models;
-    use crate::{db, routes::v1::auth::CurrentProtocolAccess, AppState};
-
-    fn test_protocol_access() -> axum::extract::Extension<CurrentProtocolAccess> {
-        axum::extract::Extension(CurrentProtocolAccess {
-            identity_id: "test-identity".to_string(),
-            interface_id: "test-interface".to_string(),
-        })
-    }
+    use crate::{db, routes::v1::interface_resolver::create_test_interface_auth, AppState};
 
     #[tokio::test]
-    async fn lists_chat_completion_providers_as_openai_models() {
+    async fn lists_identity_interface_models_only() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -277,7 +174,8 @@ mod tests {
             "sk-test",
         )
         .await
-        .expect("create provider");
+        .expect("create legacy provider source");
+        let auth = create_test_interface_auth(&db, &provider, "coder", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -287,199 +185,23 @@ mod tests {
             client: reqwest::Client::new(),
         };
 
-        let response = list_models(State(state), test_protocol_access())
+        let response = list_models(State(state), auth.access)
             .await
             .expect("list models");
+        let model = response.0.data.first().expect("identity model listed");
 
         assert_eq!(response.0.object, "list");
         assert_eq!(response.0.data.len(), 1);
-        assert_eq!(response.0.data[0].id, provider.name);
-        assert_eq!(response.0.data[0].object, "model");
-        assert_eq!(response.0.data[0].entry_type, "provider");
-        assert_eq!(response.0.data[0].owned_by, "provider-relay");
-        assert_eq!(response.0.data[0].provider_id, provider.id);
-        assert_eq!(response.0.data[0].provider_name, provider.name);
-        assert_eq!(response.0.data[0].upstream_protocol, "chat_completions");
+        assert_eq!(model.id, "coder");
+        assert_eq!(model.object, "model");
+        assert_eq!(model.entry_type, "interface_model");
+        assert_eq!(model.owned_by, "provider-relay");
+        assert_eq!(model.provider_name, "DeepSeek");
+        assert_eq!(model.upstream_protocol, "chat_completions");
+        assert_eq!(model.upstream_model, "deepseek-chat");
         assert_eq!(
-            response.0.data[0].downstream_protocols,
+            model.downstream_protocols,
             ["responses", "chat_completions", "anthropic_messages"]
-        );
-        assert!(response.0.data[0].capabilities.tool_calls);
-        assert_eq!(response.0.data[0].upstream_model, response.0.data[0].id);
-        assert!(response.0.data[0].capabilities.tool_choice);
-        assert!(response.0.data[0].capabilities.system_messages);
-        assert!(!response.0.data[0].capabilities.structured_outputs);
-    }
-
-    #[tokio::test]
-    async fn lists_model_aliases_as_openai_models() {
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
-            "DeepSeek Provider",
-            "openai_compatible",
-            "https://api.deepseek.com",
-            "sk-test",
-        )
-        .await
-        .expect("create provider");
-        db::create_model_alias(&db, "coder", &provider.id, "deepseek-chat", &["responses"])
-            .await
-            .expect("create alias");
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
-
-        let response = list_models(State(state), test_protocol_access())
-            .await
-            .expect("list models");
-
-        assert!(response.0.data.iter().any(|model| model.id == "coder"
-            && model.provider_id == provider.id
-            && model.entry_type == "alias"
-            && model.provider_name == provider.name
-            && model.upstream_protocol == "chat_completions"
-            && model.upstream_model == "deepseek-chat"
-            && model.downstream_protocols == ["responses"]));
-    }
-
-    #[tokio::test]
-    async fn clips_alias_downstream_protocols_to_provider_supported_protocols() {
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider =
-            db::create_config(&db, "OpenAI", "openai", "https://api.openai.com", "sk-test")
-                .await
-                .expect("create provider");
-        db::create_model_alias(
-            &db,
-            "coder",
-            &provider.id,
-            "gpt-4.1",
-            &["responses", "chat_completions"],
-        )
-        .await
-        .expect("create alias");
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
-
-        let response = list_models(State(state), test_protocol_access())
-            .await
-            .expect("list models");
-        let alias = response
-            .0
-            .data
-            .iter()
-            .find(|model| model.id == "coder")
-            .expect("alias listed");
-
-        assert_eq!(alias.upstream_protocol, "responses");
-        assert_eq!(alias.downstream_protocols, ["responses"]);
-    }
-
-    #[tokio::test]
-    async fn lists_native_responses_providers_as_openai_models() {
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider =
-            db::create_config(&db, "OpenAI", "openai", "https://api.openai.com", "sk-test")
-                .await
-                .expect("create provider");
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
-
-        let response = list_models(State(state), test_protocol_access())
-            .await
-            .expect("list models");
-        let model = response
-            .0
-            .data
-            .iter()
-            .find(|model| model.provider_id == provider.id)
-            .expect("provider model listed");
-
-        assert_eq!(model.id, provider.name);
-        assert_eq!(model.upstream_protocol, "responses");
-        assert_eq!(
-            model.downstream_protocols,
-            ["responses", "anthropic_messages"]
-        );
-        assert!(model.capabilities.tool_calls);
-        assert!(model.capabilities.structured_outputs);
-        assert!(model.capabilities.streaming_usage);
-    }
-
-    #[tokio::test]
-    async fn lists_anthropic_compatible_providers_as_openai_models() {
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
-            "Claude Relay",
-            "anthropic_compatible",
-            "https://anthropic.example.com",
-            "sk-test",
-        )
-        .await
-        .expect("create provider");
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
-
-        let response = list_models(State(state), test_protocol_access())
-            .await
-            .expect("list models");
-        let model = response
-            .0
-            .data
-            .iter()
-            .find(|model| model.provider_id == provider.id)
-            .expect("provider model listed");
-
-        assert_eq!(model.id, provider.name);
-        assert_eq!(model.upstream_protocol, "anthropic_messages");
-        assert_eq!(
-            model.downstream_protocols,
-            ["responses", "anthropic_messages"]
         );
         assert!(model.capabilities.tool_calls);
     }

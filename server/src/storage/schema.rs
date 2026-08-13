@@ -71,14 +71,15 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
     .await?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS identity_response_sessions (\
-            response_id TEXT PRIMARY KEY,\
+            response_id TEXT NOT NULL,\
             identity_id TEXT NOT NULL REFERENCES identities(id),\
             previous_response_id TEXT,\
             provider_id TEXT NOT NULL REFERENCES identity_provider_configs(id),\
             model TEXT NOT NULL,\
             input_messages_json TEXT NOT NULL,\
             output_items_json TEXT NOT NULL,\
-            created_at TEXT NOT NULL\
+            created_at TEXT NOT NULL,\
+            PRIMARY KEY(response_id, identity_id)\
         )",
     )
     .execute(pool)

@@ -110,6 +110,11 @@ impl Storage {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
     pub async fn initialize(pool: SqlitePool, master_key: MasterKey) -> Result<Self, StorageError> {
         schema::initialize(&pool).await?;
         Ok(Self::from_pool(pool, master_key))

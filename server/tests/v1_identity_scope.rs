@@ -7,6 +7,8 @@ use provider_relay_protocol::{
 };
 use provider_relay_server::{app, test_support::test_state};
 use serde_json::Value;
+use sqlx::Row;
+use tokio::net::TcpListener;
 use tower::ServiceExt;
 
 async fn request(app: &axum::Router, request: Request<Body>) -> (StatusCode, Value) {
@@ -51,6 +53,23 @@ async fn create_interface_for(
     account_sid: &str,
     provider_name: &str,
 ) -> Value {
+    create_interface_for_url(
+        app,
+        machine_id,
+        account_sid,
+        provider_name,
+        &format!("https://{provider_name}.example"),
+    )
+    .await
+}
+
+async fn create_interface_for_url(
+    app: &axum::Router,
+    machine_id: &str,
+    account_sid: &str,
+    provider_name: &str,
+    base_url: &str,
+) -> Value {
     let identity = management_post(
         app,
         "/api/identities",
@@ -72,7 +91,7 @@ async fn create_interface_for(
         serde_json::to_value(CreateProviderRequest {
             name: provider_name.to_string(),
             provider_type: "openai_compatible".to_string(),
-            base_url: format!("https://{provider_name}.example"),
+            base_url: base_url.to_string(),
             api_key: format!("sk-{provider_name}"),
             capabilities: None,
             models: vec!["upstream-model".to_string()],
@@ -98,6 +117,27 @@ async fn create_interface_for(
     .await
 }
 
+async fn spawn_chat_upstream() -> String {
+    async fn handler() -> axum::Json<Value> {
+        axum::Json(serde_json::json!({
+            "id": "chat_upstream",
+            "model": "upstream-model",
+            "choices": [{ "message": { "role": "assistant", "content": "hello" } }],
+            "usage": { "prompt_tokens": 3, "completion_tokens": 4 }
+        }))
+    }
+
+    let app = axum::Router::new().route("/chat/completions", axum::routing::post(handler));
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind upstream");
+    let address = listener.local_addr().expect("upstream address");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve upstream");
+    });
+    format!("http://{address}")
+}
+
 #[tokio::test]
 async fn interface_token_resolves_only_its_identity_model_mapping() {
     let app = app::router(test_state().await).await.expect("build app");
@@ -119,4 +159,76 @@ async fn interface_token_resolves_only_its_identity_model_mapping() {
     assert_eq!(response["data"][0]["id"], "shared-model");
     assert_eq!(response["data"][0]["provider_name"], "provider-a");
     assert_eq!(response["data"].as_array().expect("models").len(), 1);
+}
+
+#[tokio::test]
+async fn protocol_request_writes_identity_scoped_log_and_response_session() {
+    let state = test_state().await;
+    let db = state.db.clone();
+    let app = app::router(state).await.expect("build app");
+    let upstream = spawn_chat_upstream().await;
+    let interface_a =
+        create_interface_for_url(&app, "machine-a", "S-1-5-21-100", "provider-a", &upstream).await;
+    let identity_b = management_post(
+        &app,
+        "/api/identities",
+        None,
+        serde_json::to_value(CreateIdentityRequest {
+            machine_id: "machine-b".to_string(),
+            account_sid: "S-1-5-21-200".to_string(),
+        })
+        .expect("serialize identity B"),
+    )
+    .await;
+    let token = interface_a["token"].as_str().expect("interface token");
+    let (status, response) = request(
+        &app,
+        Request::builder()
+            .method("POST")
+            .uri("/v1/responses")
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({ "model": "shared-model", "input": "hello" }).to_string(),
+            ))
+            .expect("build protocol request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+
+    let identity_id = sqlx::query_scalar::<_, String>(
+        "SELECT identity_id FROM identity_interface_configs WHERE token = ?",
+    )
+    .bind(token)
+    .fetch_one(&db)
+    .await
+    .expect("load protocol identity");
+    let log_identity = sqlx::query("SELECT identity_id FROM identity_request_logs")
+        .fetch_one(&db)
+        .await
+        .expect("load identity log")
+        .get::<String, _>("identity_id");
+    let session_identity = sqlx::query("SELECT identity_id FROM identity_response_sessions")
+        .fetch_one(&db)
+        .await
+        .expect("load identity session")
+        .get::<String, _>("identity_id");
+    assert_eq!(log_identity, identity_id);
+    assert_eq!(session_identity, identity_id);
+
+    let credential_b = identity_b["credential"]
+        .as_str()
+        .expect("identity B credential");
+    let (status, stats) = request(
+        &app,
+        Request::builder()
+            .uri("/api/stats/overview")
+            .header("authorization", format!("Bearer {credential_b}"))
+            .body(Body::empty())
+            .expect("build stats request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(stats["total_requests"], 0);
+    assert!(response["id"].as_str().is_some());
 }

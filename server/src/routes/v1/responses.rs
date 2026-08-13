@@ -15,7 +15,6 @@ use crate::{
         internal::InternalRequest,
         responses_decode::decode_responses_request_with_diagnostics,
         responses_encode::encode_responses_response,
-        sessions::{load_response_session_messages, save_response_session},
         stream::{
             anthropic_messages_sse_response_to_responses_sse_with_stats,
             chat_sse_response_to_responses_sse_with_stats,
@@ -33,7 +32,11 @@ use crate::{
     providers::spec::{provider_upstream_base_url, UpstreamProtocol},
     routes::v1::auth::CurrentProtocolAccess,
     routes::v1::interface_resolver::resolve_interface_model,
-    stats::{insert_request_log, RequestLogInsert},
+    stats::RequestLogInsert,
+    storage::{
+        sessions::{load_response_session_messages, save_response_session, ResponseSessionInsert},
+        stats::insert as insert_request_log,
+    },
     AppState,
 };
 
@@ -75,10 +78,13 @@ async fn create_response(
             &state,
             upstream_payload,
             provider,
-            model_requested,
-            is_streaming,
-            metadata_json,
-            started_at,
+            ResponseBridgeContext {
+                identity_id: access.identity_id.clone(),
+                model_requested,
+                is_streaming,
+                metadata_json,
+                started_at,
+            },
         )
         .await;
     }
@@ -89,6 +95,7 @@ async fn create_response(
             provider,
             previous_response_id,
             ResponseBridgeContext {
+                identity_id: access.identity_id.clone(),
                 model_requested,
                 is_streaming,
                 metadata_json,
@@ -98,7 +105,7 @@ async fn create_response(
         .await;
     }
 
-    let request = request_with_session_history(&state.db, request).await?;
+    let request = request_with_session_history(&state.db, &access.identity_id, request).await?;
     let upstream_base_url = provider_upstream_base_url(&provider, upstream_protocol);
     let upstream_url = format!(
         "{}/chat/completions",
@@ -119,6 +126,7 @@ async fn create_response(
         let status = upstream_response.status();
         insert_request_log(
             &state.db,
+            &access.identity_id,
             RequestLogInsert {
                 protocol_in: "responses".to_string(),
                 protocol_out: "responses".to_string(),
@@ -175,6 +183,7 @@ async fn create_response(
             chat_sse_response_to_responses_sse_with_stats(upstream_response);
         let body = Body::from_stream(record_stream(
             state.db.clone(),
+            access.identity_id.clone(),
             stream,
             log,
             started_at,
@@ -200,16 +209,20 @@ async fn create_response(
     let tool_call_count = count_tool_calls(&response);
     save_response_session(
         &state.db,
-        &response.id,
-        previous_response_id.as_deref(),
-        &provider.id,
-        &response.model,
-        &request.messages,
-        &response,
+        ResponseSessionInsert {
+            identity_id: &access.identity_id,
+            response_id: &response.id,
+            previous_response_id: previous_response_id.as_deref(),
+            provider_id: &provider.id,
+            model: &response.model,
+            input_messages: &request.messages,
+            response: &response,
+        },
     )
     .await?;
     insert_request_log(
         &state.db,
+        &access.identity_id,
         RequestLogInsert {
             protocol_in: "responses".to_string(),
             protocol_out: "responses".to_string(),
@@ -249,7 +262,7 @@ async fn create_anthropic_messages_response(
     previous_response_id: Option<String>,
     context: ResponseBridgeContext,
 ) -> Result<Response, AppError> {
-    request = request_with_session_history(&state.db, request).await?;
+    request = request_with_session_history(&state.db, &context.identity_id, request).await?;
     let upstream_base_url =
         provider_upstream_base_url(&provider, UpstreamProtocol::AnthropicMessages);
     let upstream_url = format!("{}/messages", upstream_base_url.trim_end_matches('/'));
@@ -269,6 +282,7 @@ async fn create_anthropic_messages_response(
         let status = upstream_response.status();
         insert_request_log(
             &state.db,
+            &context.identity_id,
             RequestLogInsert {
                 protocol_in: "responses".to_string(),
                 protocol_out: "responses".to_string(),
@@ -325,6 +339,7 @@ async fn create_anthropic_messages_response(
             anthropic_messages_sse_response_to_responses_sse_with_stats(upstream_response);
         let body = Body::from_stream(record_stream(
             state.db.clone(),
+            context.identity_id.clone(),
             stream,
             log,
             context.started_at,
@@ -346,16 +361,20 @@ async fn create_anthropic_messages_response(
     let tool_call_count = count_tool_calls(&response);
     save_response_session(
         &state.db,
-        &response.id,
-        previous_response_id.as_deref(),
-        &provider.id,
-        &response.model,
-        &request.messages,
-        &response,
+        ResponseSessionInsert {
+            identity_id: &context.identity_id,
+            response_id: &response.id,
+            previous_response_id: previous_response_id.as_deref(),
+            provider_id: &provider.id,
+            model: &response.model,
+            input_messages: &request.messages,
+            response: &response,
+        },
     )
     .await?;
     insert_request_log(
         &state.db,
+        &context.identity_id,
         RequestLogInsert {
             protocol_in: "responses".to_string(),
             protocol_out: "responses".to_string(),
@@ -389,6 +408,7 @@ async fn create_anthropic_messages_response(
 }
 
 struct ResponseBridgeContext {
+    identity_id: String,
     model_requested: String,
     is_streaming: bool,
     metadata_json: String,
@@ -399,10 +419,7 @@ async fn create_native_response(
     state: &AppState,
     payload: Value,
     provider: crate::models::ProviderConfig,
-    model_requested: String,
-    is_streaming: bool,
-    metadata_json: String,
-    started_at: std::time::Instant,
+    context: ResponseBridgeContext,
 ) -> Result<Response, AppError> {
     let upstream_base_url = provider_upstream_base_url(&provider, UpstreamProtocol::Responses);
     let upstream_url = format!("{}/responses", upstream_base_url.trim_end_matches('/'));
@@ -421,42 +438,43 @@ async fn create_native_response(
         let status = upstream_response.status();
         insert_request_log(
             &state.db,
+            &context.identity_id,
             RequestLogInsert {
                 protocol_in: "responses".to_string(),
                 protocol_out: "responses".to_string(),
                 protocol_upstream: "responses".to_string(),
                 provider_id: provider.id,
                 provider_name: provider.name,
-                model_requested,
+                model_requested: context.model_requested,
                 model_upstream: "unknown".to_string(),
                 status: "failed".to_string(),
                 http_status: status.as_u16() as i64,
                 error_code: None,
                 error_message: None,
-                is_streaming,
+                is_streaming: context.is_streaming,
                 input_tokens: None,
                 output_tokens: None,
                 reasoning_tokens: None,
-                latency_ms: started_at.elapsed().as_millis() as i64,
+                latency_ms: context.started_at.elapsed().as_millis() as i64,
                 upstream_latency_ms: None,
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
-                metadata_json: Some(metadata_json.clone()),
+                metadata_json: Some(context.metadata_json.clone()),
             },
         )
         .await?;
         return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
     }
 
-    if is_streaming {
+    if context.is_streaming {
         let log = RequestLogInsert {
             protocol_in: "responses".to_string(),
             protocol_out: "responses".to_string(),
             protocol_upstream: "responses".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
-            model_requested,
+            model_requested: context.model_requested,
             model_upstream: payload
                 .get("model")
                 .and_then(Value::as_str)
@@ -466,24 +484,25 @@ async fn create_native_response(
             http_status: 200,
             error_code: None,
             error_message: None,
-            is_streaming,
+            is_streaming: context.is_streaming,
             input_tokens: None,
             output_tokens: None,
             reasoning_tokens: None,
-            latency_ms: started_at.elapsed().as_millis() as i64,
+            latency_ms: context.started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: Some(metadata_json.clone()),
+            metadata_json: Some(context.metadata_json.clone()),
         };
         let body = Body::from_stream(record_first_chunk(
             state.db.clone(),
+            context.identity_id.clone(),
             upstream_response
                 .bytes_stream()
                 .map_err(std::io::Error::other),
             log,
-            started_at,
+            context.started_at,
         ));
         return Ok((
             [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
@@ -498,13 +517,14 @@ async fn create_native_response(
         .map_err(|error| AppError::Internal(error.into()))?;
     insert_request_log(
         &state.db,
+        &context.identity_id,
         RequestLogInsert {
             protocol_in: "responses".to_string(),
             protocol_out: "responses".to_string(),
             protocol_upstream: "responses".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
-            model_requested,
+            model_requested: context.model_requested,
             model_upstream: response
                 .get("model")
                 .and_then(Value::as_str)
@@ -514,7 +534,7 @@ async fn create_native_response(
             http_status: 200,
             error_code: None,
             error_message: None,
-            is_streaming,
+            is_streaming: context.is_streaming,
             input_tokens: response
                 .get("usage")
                 .and_then(|usage| usage.get("input_tokens"))
@@ -524,12 +544,12 @@ async fn create_native_response(
                 .and_then(|usage| usage.get("output_tokens"))
                 .and_then(Value::as_i64),
             reasoning_tokens: None,
-            latency_ms: started_at.elapsed().as_millis() as i64,
+            latency_ms: context.started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: Some(metadata_json),
+            metadata_json: Some(context.metadata_json),
         },
     )
     .await?;
@@ -539,12 +559,15 @@ async fn create_native_response(
 
 async fn request_with_session_history(
     db: &sqlx::SqlitePool,
+    identity_id: &str,
     mut request: InternalRequest,
 ) -> Result<InternalRequest, AppError> {
     let Some(previous_response_id) = request.previous_response_id.as_deref() else {
         return Ok(request);
     };
-    let Some(mut history) = load_response_session_messages(db, previous_response_id).await? else {
+    let Some(mut history) =
+        load_response_session_messages(db, identity_id, previous_response_id).await?
+    else {
         return Err(AppError::BadRequest(format!(
             "previous_response_id {previous_response_id} 不存在"
         )));
@@ -676,7 +699,7 @@ mod tests {
         .await
         .expect_err("missing interface model should fail");
 
-        assert!(format!("{error:?}").contains("接口 Test Interface 未配置模型 deepseek-chat"));
+        assert!(format!("{error:?}").contains("接口未配置模型 deepseek-chat"));
     }
 
     #[tokio::test]
@@ -932,7 +955,8 @@ mod tests {
         assert!(body.contains("event: response.completed"));
 
         let row: (String, String, i64, Option<String>, Option<String>) = sqlx::query_as(
-            "SELECT protocol_upstream, status, http_status, error_code, error_message FROM request_logs LIMIT 1",
+            "SELECT protocol_upstream, status, http_status, error_code, error_message \
+             FROM identity_request_logs LIMIT 1",
         )
         .fetch_one(&state.db)
         .await
@@ -984,15 +1008,15 @@ mod tests {
         )
         .await
         .expect("create response");
-        let overview = crate::stats::overview(&state.db)
-            .await
-            .expect("stats overview");
+        let row: (i64, i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*), SUM(status = 'success'), SUM(status = 'failed'), \
+             SUM(input_tokens), SUM(output_tokens) FROM identity_request_logs",
+        )
+        .fetch_one(&state.db)
+        .await
+        .expect("load identity request log totals");
 
-        assert_eq!(overview.total_requests, 1);
-        assert_eq!(overview.successful_requests, 1);
-        assert_eq!(overview.failed_requests, 0);
-        assert_eq!(overview.input_tokens, 3);
-        assert_eq!(overview.output_tokens, 4);
+        assert_eq!(row, (1, 1, 0, 3, 4));
     }
 
     #[tokio::test]
@@ -1040,7 +1064,7 @@ mod tests {
         .await
         .expect("create response");
         let metadata_json: Option<String> =
-            sqlx::query_scalar("SELECT metadata_json FROM request_logs LIMIT 1")
+            sqlx::query_scalar("SELECT metadata_json FROM identity_request_logs LIMIT 1")
                 .fetch_one(&state.db)
                 .await
                 .expect("load metadata");
@@ -1096,13 +1120,13 @@ mod tests {
         )
         .await
         .expect_err("upstream failure should fail");
-        let overview = crate::stats::overview(&state.db)
-            .await
-            .expect("stats overview");
+        let row: (i64, i64) =
+            sqlx::query_as("SELECT COUNT(*), SUM(status = 'failed') FROM identity_request_logs")
+                .fetch_one(&state.db)
+                .await
+                .expect("load identity request log totals");
 
-        assert_eq!(overview.total_requests, 1);
-        assert_eq!(overview.successful_requests, 0);
-        assert_eq!(overview.failed_requests, 1);
+        assert_eq!(row, (1, 1));
     }
 
     #[tokio::test]
@@ -1458,7 +1482,8 @@ mod tests {
         assert_eq!(second["output"][0]["content"][0]["text"], "tool accepted");
 
         let tool_call_count: Option<i64> = sqlx::query_scalar(
-            "SELECT tool_call_count FROM request_logs WHERE model_requested = 'deepseek-chat' ORDER BY created_at ASC LIMIT 1",
+            "SELECT tool_call_count FROM identity_request_logs \
+             WHERE model_requested = 'deepseek-chat' ORDER BY created_at ASC LIMIT 1",
         )
         .fetch_one(&state.db)
         .await

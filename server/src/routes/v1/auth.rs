@@ -29,13 +29,6 @@ pub async fn authenticate_protocol_request(
     headers: &HeaderMap,
 ) -> Result<CurrentProtocolAccess, AppError> {
     let token = extract_token(headers).ok_or(AppError::Unauthorized)?;
-    #[cfg(test)]
-    if let Some(interface) = crate::db::get_interface_by_token(&state.db, &token).await? {
-        return Ok(CurrentProtocolAccess {
-            identity_id: "test-identity".to_string(),
-            interface_id: interface.id,
-        });
-    }
     state
         .storage
         .authenticate_protocol_access(&token)

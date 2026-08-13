@@ -18,7 +18,8 @@ use crate::{
     providers::spec::provider_upstream_base_url,
     routes::v1::auth::CurrentProtocolAccess,
     routes::v1::interface_resolver::resolve_interface_model,
-    stats::{insert_request_log, RequestLogInsert},
+    stats::RequestLogInsert,
+    storage::stats::insert as insert_request_log,
     AppState,
 };
 
@@ -77,6 +78,7 @@ async fn create_chat_completion(
         let observability = upstream_observability(&observability_headers, error_body.as_deref());
         insert_request_log(
             &state.db,
+            &access.identity_id,
             RequestLogInsert {
                 protocol_in: "chat_completions".to_string(),
                 protocol_out: "chat_completions".to_string(),
@@ -133,6 +135,7 @@ async fn create_chat_completion(
         };
         let body = Body::from_stream(record_first_chunk(
             state.db.clone(),
+            access.identity_id.clone(),
             upstream_response
                 .bytes_stream()
                 .map_err(std::io::Error::other),
@@ -149,6 +152,7 @@ async fn create_chat_completion(
         .map_err(|error| AppError::Internal(error.into()))?;
     insert_request_log(
         &state.db,
+        &access.identity_id,
         RequestLogInsert {
             protocol_in: "chat_completions".to_string(),
             protocol_out: "chat_completions".to_string(),
@@ -485,14 +489,15 @@ mod tests {
         )
         .await
         .expect("create chat completion");
-        let overview = crate::stats::overview(&state.db)
-            .await
-            .expect("stats overview");
+        let row: (i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*), SUM(status = 'success'), SUM(input_tokens), SUM(output_tokens) \
+             FROM identity_request_logs",
+        )
+        .fetch_one(&state.db)
+        .await
+        .expect("load identity request log totals");
 
-        assert_eq!(overview.total_requests, 1);
-        assert_eq!(overview.successful_requests, 1);
-        assert_eq!(overview.input_tokens, 3);
-        assert_eq!(overview.output_tokens, 4);
+        assert_eq!(row, (1, 1, 3, 4));
     }
 
     #[tokio::test]
@@ -596,7 +601,7 @@ mod tests {
         .expect("create chat completion");
 
         let upstream_request_id: Option<String> =
-            sqlx::query_scalar("SELECT upstream_request_id FROM request_logs LIMIT 1")
+            sqlx::query_scalar("SELECT upstream_request_id FROM identity_request_logs LIMIT 1")
                 .fetch_one(&db)
                 .await
                 .expect("load upstream request id");
@@ -647,11 +652,12 @@ mod tests {
         .expect_err("upstream error should fail");
 
         assert!(format!("{error:?}").contains("上游请求失败"));
-        let row: (Option<String>, Option<String>) =
-            sqlx::query_as("SELECT upstream_request_id, error_message FROM request_logs LIMIT 1")
-                .fetch_one(&db)
-                .await
-                .expect("load failed request log");
+        let row: (Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT upstream_request_id, error_message FROM identity_request_logs LIMIT 1",
+        )
+        .fetch_one(&db)
+        .await
+        .expect("load failed request log");
 
         assert_eq!(row.0.as_deref(), Some("cf-ray-123"));
         assert_eq!(row.1.as_deref(), Some("provider overloaded"));
@@ -742,11 +748,13 @@ mod tests {
         );
         assert!(first.contains("data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}"));
 
-        let overview = crate::stats::overview(&db).await.expect("stats overview");
-        assert_eq!(overview.total_requests, 1);
-        assert_eq!(overview.successful_requests, 1);
+        let log_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM identity_request_logs")
+            .fetch_one(&db)
+            .await
+            .expect("count identity request logs");
+        assert_eq!(log_count, 1);
         let first_token_ms: Option<i64> =
-            sqlx::query_scalar("SELECT first_token_ms FROM request_logs LIMIT 1")
+            sqlx::query_scalar("SELECT first_token_ms FROM identity_request_logs LIMIT 1")
                 .fetch_one(&db)
                 .await
                 .expect("load first token metric");

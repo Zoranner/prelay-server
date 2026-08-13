@@ -1,7 +1,7 @@
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::{net::SocketAddr, str::FromStr};
 
-use provider_relay_server::{app, db, storage::MasterKey, storage::Storage, AppState};
+use provider_relay_server::{app, storage::MasterKey, storage::Storage, AppState};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -19,7 +19,6 @@ async fn main() -> anyhow::Result<()> {
             SqliteConnectOptions::from_str("sqlite:data/relay.db?mode=rwc")?.foreign_keys(true),
         )
         .await?;
-    db::init_schema(&db).await?;
     let storage = Storage::initialize(db.clone(), MasterKey::from_environment()?).await?;
 
     let client = reqwest::Client::builder()

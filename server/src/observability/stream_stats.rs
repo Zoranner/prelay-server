@@ -8,14 +8,13 @@ use uuid::Uuid;
 use crate::{
     bridge::stream::{SharedStreamStats, StreamStatsSnapshot},
     observability::request_metadata::{update_stream_metadata, StreamMetadataUpdate},
-    stats::{
-        insert_request_log_with_id, update_stream_request_log, RequestLogInsert,
-        StreamRequestLogUpdate,
-    },
+    stats::{RequestLogInsert, StreamRequestLogUpdate},
+    storage::stats::{insert_with_id, update_stream},
 };
 
 pub fn record_first_chunk<S>(
     db: SqlitePool,
+    identity_id: String,
     stream: S,
     log: RequestLogInsert,
     started_at: Instant,
@@ -23,11 +22,12 @@ pub fn record_first_chunk<S>(
 where
     S: Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
 {
-    record_stream_with_optional_stats(db, stream, log, started_at, None)
+    record_stream_with_optional_stats(db, identity_id, stream, log, started_at, None)
 }
 
 pub fn record_stream<S>(
     db: SqlitePool,
+    identity_id: String,
     stream: S,
     log: RequestLogInsert,
     started_at: Instant,
@@ -36,11 +36,12 @@ pub fn record_stream<S>(
 where
     S: Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
 {
-    record_stream_with_optional_stats(db, stream, log, started_at, Some(stats))
+    record_stream_with_optional_stats(db, identity_id, stream, log, started_at, Some(stats))
 }
 
 fn record_stream_with_optional_stats<S>(
     db: SqlitePool,
+    identity_id: String,
     stream: S,
     log: RequestLogInsert,
     started_at: Instant,
@@ -51,6 +52,7 @@ where
 {
     record_stream_with_log_id(
         db,
+        identity_id,
         stream,
         log,
         started_at,
@@ -61,6 +63,7 @@ where
 
 fn record_stream_with_log_id<S>(
     db: SqlitePool,
+    identity_id: String,
     stream: S,
     log: RequestLogInsert,
     started_at: Instant,
@@ -74,6 +77,7 @@ where
     let upstream_request_id = log.upstream_request_id.clone();
     let state = StreamRecordState {
         db,
+        identity_id,
         stream: Box::pin(stream),
         log: Some(log),
         log_id,
@@ -103,6 +107,7 @@ where
 
 struct StreamRecordState {
     db: SqlitePool,
+    identity_id: String,
     stream: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
     log: Option<RequestLogInsert>,
     log_id: String,
@@ -150,7 +155,7 @@ impl StreamRecordState {
                 });
             }
         }
-        self.inserted = insert_stream_log_with_id(&self.db, &self.log_id, log)
+        self.inserted = insert_stream_log_with_id(&self.db, &self.identity_id, &self.log_id, log)
             .await
             .is_ok();
     }
@@ -188,7 +193,7 @@ impl StreamRecordState {
             upstream_request_id: self.upstream_request_id.clone(),
             metadata_json,
         };
-        update_stream_log(&self.db, &self.log_id, update).await;
+        update_stream_log(&self.db, &self.identity_id, &self.log_id, update).await;
     }
 
     async fn record_empty_stream(&mut self, latency_ms: i64) {
@@ -208,7 +213,7 @@ impl StreamRecordState {
             upstream_request_id: self.upstream_request_id.clone(),
             upstream_error_body_excerpt: None,
         });
-        if insert_stream_log_with_id(&self.db, &self.log_id, log)
+        if insert_stream_log_with_id(&self.db, &self.identity_id, &self.log_id, log)
             .await
             .is_ok()
         {
@@ -242,7 +247,7 @@ impl StreamRecordState {
             upstream_request_id: self.upstream_request_id.clone(),
             metadata_json,
         };
-        update_stream_log(&self.db, &self.log_id, update).await;
+        update_stream_log(&self.db, &self.identity_id, &self.log_id, update).await;
     }
 
     fn stats_snapshot(&self) -> StreamStatsSnapshot {
@@ -259,18 +264,24 @@ impl StreamRecordState {
 
 async fn insert_stream_log_with_id(
     db: &SqlitePool,
+    identity_id: &str,
     id: &str,
     log: RequestLogInsert,
 ) -> anyhow::Result<()> {
-    if let Err(error) = insert_request_log_with_id(db, id.to_string(), log).await {
+    if let Err(error) = insert_with_id(db, identity_id, id.to_string(), log).await {
         tracing::error!("failed to write streaming request log: {error:?}");
         return Err(error);
     }
     Ok(())
 }
 
-async fn update_stream_log(db: &SqlitePool, id: &str, update: StreamRequestLogUpdate) {
-    if let Err(error) = update_stream_request_log(db, id, update).await {
+async fn update_stream_log(
+    db: &SqlitePool,
+    identity_id: &str,
+    id: &str,
+    update: StreamRequestLogUpdate,
+) {
+    if let Err(error) = update_stream(db, identity_id, id, update).await {
         tracing::error!("failed to update streaming request log: {error:?}");
     }
 }
@@ -286,19 +297,20 @@ mod tests {
     use super::{record_first_chunk, record_stream};
     use crate::{
         bridge::stream::StreamStatsSnapshot,
-        db,
         observability::request_metadata::build_request_metadata,
-        stats::{insert_request_log_with_id, RequestLogInsert},
+        stats::RequestLogInsert,
+        storage::{stats::insert_with_id, MasterKey, Storage},
     };
 
     #[tokio::test]
     async fn record_first_chunk_updates_completed_metadata_on_eof() {
-        let db = test_db().await;
+        let (db, identity_id) = test_db().await;
         let metadata_json = test_metadata();
         let stream = stream::iter([Ok::<_, std::io::Error>(Bytes::from_static(b"hello"))]);
 
         let chunks = record_first_chunk(
             db.clone(),
+            identity_id,
             stream,
             test_log(metadata_json),
             std::time::Instant::now(),
@@ -310,7 +322,7 @@ mod tests {
         assert_eq!(chunks, vec![Bytes::from_static(b"hello")]);
 
         let row: (i64, Option<String>) =
-            sqlx::query_as("SELECT COUNT(*), metadata_json FROM request_logs")
+            sqlx::query_as("SELECT COUNT(*), metadata_json FROM identity_request_logs")
                 .fetch_one(&db)
                 .await
                 .expect("load stream log");
@@ -325,7 +337,7 @@ mod tests {
 
     #[tokio::test]
     async fn record_stream_updates_usage_and_tool_count_on_eof() {
-        let db = test_db().await;
+        let (db, identity_id) = test_db().await;
         let metadata_json = test_metadata();
         let stats = Arc::new(Mutex::new(StreamStatsSnapshot {
             input_tokens: Some(11),
@@ -339,6 +351,7 @@ mod tests {
 
         record_stream(
             db.clone(),
+            identity_id,
             stream,
             test_log(metadata_json),
             std::time::Instant::now(),
@@ -349,7 +362,7 @@ mod tests {
         .expect("collect stream");
 
         let row: (i64, Option<i64>, Option<i64>, Option<i64>, Option<String>) = sqlx::query_as(
-            "SELECT COUNT(*), input_tokens, output_tokens, tool_call_count, metadata_json FROM request_logs",
+            "SELECT COUNT(*), input_tokens, output_tokens, tool_call_count, metadata_json FROM identity_request_logs",
         )
         .fetch_one(&db)
         .await
@@ -367,9 +380,10 @@ mod tests {
 
     #[tokio::test]
     async fn record_stream_does_not_update_existing_row_when_first_insert_fails() {
-        let db = test_db().await;
-        insert_request_log_with_id(
+        let (db, identity_id) = test_db().await;
+        insert_with_id(
             &db,
+            &identity_id,
             "duplicate-stream-log".to_string(),
             test_log(test_metadata()),
         )
@@ -379,6 +393,7 @@ mod tests {
 
         super::record_stream_with_log_id(
             db.clone(),
+            identity_id,
             stream,
             test_log(test_metadata()),
             std::time::Instant::now(),
@@ -390,7 +405,7 @@ mod tests {
         .expect("collect stream");
 
         let row: (i64, Option<i64>, Option<String>) = sqlx::query_as(
-            "SELECT COUNT(*), tool_call_count, metadata_json FROM request_logs WHERE id = 'duplicate-stream-log'",
+            "SELECT COUNT(*), tool_call_count, metadata_json FROM identity_request_logs WHERE id = 'duplicate-stream-log'",
         )
         .fetch_one(&db)
         .await
@@ -403,14 +418,22 @@ mod tests {
         assert_eq!(metadata["stream"]["completed"], serde_json::Value::Null);
     }
 
-    async fn test_db() -> sqlx::SqlitePool {
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
+    async fn test_db() -> (sqlx::SqlitePool, String) {
+        let storage = Storage::initialize(
+            SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect("sqlite::memory:")
+                .await
+                .expect("create sqlite pool"),
+            MasterKey::from_bytes([0; 32]),
+        )
+        .await
+        .expect("initialize storage");
+        let identity = storage
+            .register_identity("machine-1", "S-1-5-21-1")
             .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        db
+            .expect("register identity");
+        (storage.pool().clone(), identity.identity_id)
     }
 
     fn test_metadata() -> String {

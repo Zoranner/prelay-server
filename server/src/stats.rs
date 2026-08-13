@@ -309,12 +309,15 @@ async fn estimate_cost_for_existing_log(
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct EstimatedCost {
-    estimated_cost: f64,
-    currency: String,
+pub(crate) struct EstimatedCost {
+    pub(crate) estimated_cost: f64,
+    pub(crate) currency: String,
 }
 
-fn estimate_cost(log: &RequestLogInsert, prices: &[ModelPrice]) -> Option<EstimatedCost> {
+pub(crate) fn estimate_cost(
+    log: &RequestLogInsert,
+    prices: &[ModelPrice],
+) -> Option<EstimatedCost> {
     let price = prices.iter().find(|price| {
         price.provider == log.provider_name
             && (price.model == log.model_upstream || price.model == log.model_requested)
@@ -336,7 +339,7 @@ fn estimate_cost(log: &RequestLogInsert, prices: &[ModelPrice]) -> Option<Estima
     })
 }
 
-fn load_model_prices() -> Result<Vec<ModelPrice>> {
+pub(crate) fn load_model_prices() -> Result<Vec<ModelPrice>> {
     let path =
         std::env::var("MODEL_PRICES_PATH").unwrap_or_else(|_| "data/model_prices.json".to_string());
     if !std::path::Path::new(&path).exists() {
