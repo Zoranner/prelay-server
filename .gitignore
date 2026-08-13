@@ -21,3 +21,4 @@
 .vscode/settings.json
 *.swp
 .refs/
+.worktrees/
