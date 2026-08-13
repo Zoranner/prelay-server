@@ -1,4 +1,4 @@
-use chrono::{Duration, Utc};
+use chrono::{Duration, TimeZone, Utc};
 use provider_relay_protocol::{CreateInterfaceRequest, CreateProviderRequest, InterfaceModelInput};
 use provider_relay_server::storage::{MasterKey, Storage};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
@@ -123,6 +123,60 @@ async fn cleanup_removes_inactive_identity_and_all_owned_data() {
         assert_eq!(count, 0, "{table} still has an inactive identity resource");
     }
     assert_eq!(interface.models.len(), 1);
+}
+
+#[tokio::test]
+async fn cleanup_removes_identity_at_retention_cutoff_only() {
+    let (storage, pool) = test_storage().await;
+    let expires_at_cutoff = storage
+        .register_identity("machine-at-cutoff", "S-1-5-21-101")
+        .await
+        .expect("register identity at cutoff");
+    let remains_active = storage
+        .register_identity("machine-newer", "S-1-5-21-102")
+        .await
+        .expect("register newer identity");
+    let now = Utc
+        .with_ymd_and_hms(2026, 4, 1, 0, 0, 0)
+        .single()
+        .expect("construct fixed current time");
+    let cutoff = now - Duration::days(90);
+
+    for (identity_id, last_active_at) in [
+        (&expires_at_cutoff.identity_id, cutoff),
+        (&remains_active.identity_id, cutoff + Duration::seconds(1)),
+    ] {
+        sqlx::query("UPDATE identities SET last_active_at = ? WHERE id = ?")
+            .bind(last_active_at.to_rfc3339())
+            .bind(identity_id)
+            .execute(&pool)
+            .await
+            .expect("set fixed last active time");
+    }
+
+    assert_eq!(
+        storage
+            .delete_inactive_identities(now, Duration::days(90))
+            .await
+            .expect("clean identities at retention boundary"),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM identities WHERE id = ?")
+            .bind(&expires_at_cutoff.identity_id)
+            .fetch_one(&pool)
+            .await
+            .expect("check identity at cutoff"),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM identities WHERE id = ?")
+            .bind(&remains_active.identity_id)
+            .fetch_one(&pool)
+            .await
+            .expect("check newer identity"),
+        1
+    );
 }
 
 #[tokio::test]

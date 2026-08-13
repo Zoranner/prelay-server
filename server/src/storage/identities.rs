@@ -119,7 +119,7 @@ pub(crate) async fn delete_inactive(
 ) -> Result<u64, StorageError> {
     let cutoff = (now - retention).to_rfc3339();
     let mut transaction = pool.begin().await?;
-    let inactive_identities = "SELECT id FROM identities WHERE last_active_at < ?";
+    let inactive_identities = "SELECT id FROM identities WHERE last_active_at <= ?";
 
     for statement in [
         format!(
@@ -151,7 +151,7 @@ pub(crate) async fn delete_inactive(
             .execute(&mut *transaction)
             .await?;
     }
-    let deleted = sqlx::query("DELETE FROM identities WHERE last_active_at < ?")
+    let deleted = sqlx::query("DELETE FROM identities WHERE last_active_at <= ?")
         .bind(cutoff)
         .execute(&mut *transaction)
         .await?
