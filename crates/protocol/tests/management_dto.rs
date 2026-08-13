@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use provider_relay_protocol::{
-    interfaces::InterfaceModelResponse,
+    interfaces::{InterfaceModelResponse, UpdateInterfaceRequest},
     providers::ProviderModelResponse,
     stats::{ModelStatsSummary, ProviderStatsSummary, RequestLogSummary, StatsOverview},
 };
@@ -61,11 +61,23 @@ fn management_requests_round_trip_without_client_identity_id() {
             model_name: Some("assistant".into()),
         }],
     };
+    let interface_update = UpdateInterfaceRequest {
+        name: Some("OpenAI tools production".into()),
+        protocol: Some("responses".into()),
+        models: Some(vec![InterfaceModelInput {
+            provider_id: "provider-a".into(),
+            upstream_model: "deepseek-reasoner".into(),
+            model_name: Some("reasoner".into()),
+        }]),
+    };
+    let empty_interface_update = UpdateInterfaceRequest::default();
 
     assert_json_round_trip(register.clone());
     assert_json_round_trip(provider.clone());
     assert_json_round_trip(update.clone());
     assert_json_round_trip(interface);
+    assert_json_round_trip(interface_update);
+    assert_json_round_trip(empty_interface_update.clone());
 
     assert!(serde_json::to_value(register)
         .unwrap()
@@ -81,6 +93,10 @@ fn management_requests_round_trip_without_client_identity_id() {
     );
     assert_eq!(
         serde_json::to_value(update).unwrap()["api_key"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        serde_json::to_value(empty_interface_update).unwrap()["models"],
         serde_json::Value::Null
     );
     assert_eq!(
