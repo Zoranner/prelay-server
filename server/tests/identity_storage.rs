@@ -90,6 +90,66 @@ async fn identity_credentials_are_hashed_and_provider_keys_are_encrypted() {
 }
 
 #[tokio::test]
+async fn credential_rotation_rejects_a_stale_authenticated_credential_hash() {
+    let storage = test_storage().await;
+    let registered = storage
+        .register_identity("machine-a", "S-1-5-21-100")
+        .await
+        .expect("register identity");
+    let credential_hash = storage
+        .identity_credential_hash(&registered.identity_id)
+        .await
+        .expect("load authenticated credential hash");
+
+    let rotated = storage
+        .rotate_identity_credential(&registered.identity_id, &credential_hash)
+        .await
+        .expect("rotate with the authenticated credential hash");
+    let stale_rotation = storage
+        .rotate_identity_credential(&registered.identity_id, &credential_hash)
+        .await
+        .expect_err("reject stale authenticated credential hash");
+
+    assert_eq!(stale_rotation.code(), ProtocolErrorCode::InvalidCredential);
+    assert!(storage
+        .authenticate_identity(&rotated.credential)
+        .await
+        .expect("authenticate rotated credential")
+        .is_some());
+}
+
+#[tokio::test]
+async fn foreign_keys_are_enforced_after_multiple_pool_checkouts() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(2)
+        .min_connections(2)
+        .connect("sqlite:file:identity-storage-foreign-keys?mode=memory&cache=shared")
+        .await
+        .expect("create sqlite pool");
+    let _storage = Storage::initialize(pool.clone(), MasterKey::from_bytes([0; 32]))
+        .await
+        .expect("initialize identity storage");
+
+    let first_connection = pool.acquire().await.expect("checkout first connection");
+    let second_connection = pool.acquire().await.expect("checkout second connection");
+    drop(first_connection);
+    drop(second_connection);
+
+    let error = sqlx::query(
+        "INSERT INTO identity_provider_models (id, provider_id, model_name, created_at) \\
+         VALUES (?, ?, ?, ?)",
+    )
+    .bind("orphan-model")
+    .bind("missing-provider")
+    .bind("model-a")
+    .bind("2026-08-13T00:00:00Z")
+    .execute(&pool)
+    .await
+    .expect_err("reject orphan provider model from pooled connection");
+    assert!(matches!(error, sqlx::Error::Database(_)));
+}
+
+#[tokio::test]
 async fn provider_key_reads_are_scoped_to_the_identity() {
     let storage = test_storage().await;
     let identity_a = storage

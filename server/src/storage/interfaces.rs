@@ -4,6 +4,7 @@ use provider_relay_protocol::{
     UpdateInterfaceRequest,
 };
 use sqlx::SqlitePool;
+use std::collections::HashSet;
 use uuid::Uuid;
 
 use crate::identity::credential::generate_credential;
@@ -15,6 +16,7 @@ pub(crate) async fn create(
     identity_id: &str,
     input: CreateInterfaceRequest,
 ) -> Result<InterfaceResponse, StorageError> {
+    validate_model_names(&input.models)?;
     let interface_id = Uuid::new_v4().to_string();
     let created_at = Utc::now().to_rfc3339();
     let protocol = input.protocol.unwrap_or_else(|| "all".to_string());
@@ -102,6 +104,9 @@ pub(crate) async fn update(
     input: UpdateInterfaceRequest,
 ) -> Result<InterfaceResponse, StorageError> {
     let current = get(pool, identity_id, interface_id).await?;
+    if let Some(models) = input.models.as_ref() {
+        validate_model_names(models)?;
+    }
     let mut transaction = pool.begin().await?;
     sqlx::query(
         "UPDATE identity_interface_configs SET name = ?, protocol = ? WHERE id = ? AND identity_id = ?",
@@ -130,6 +135,24 @@ pub(crate) async fn update(
     }
     transaction.commit().await?;
     get(pool, identity_id, interface_id).await
+}
+
+fn validate_model_names(models: &[InterfaceModelInput]) -> Result<(), StorageError> {
+    let mut names = HashSet::with_capacity(models.len());
+    for model in models {
+        let model_name = model
+            .model_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| model.upstream_model.trim());
+        if !names.insert(model_name) {
+            return Err(StorageError::ValidationFailed(
+                "interface model names must be unique".to_string(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) async fn delete(

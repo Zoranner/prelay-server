@@ -13,9 +13,14 @@ use provider_relay_protocol::{
     CreateIdentityResponse, CreateInterfaceRequest, CreateProviderRequest, InterfaceResponse,
     ProtocolErrorCode, ProviderResponse, RotateCredentialResponse,
 };
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    SqlitePool,
+};
+use std::str::FromStr;
 
 pub use crypto::MasterKey;
+pub use identities::AuthenticatedIdentity;
 
 #[derive(Clone)]
 pub struct Storage {
@@ -27,8 +32,10 @@ pub struct Storage {
 pub enum StorageError {
     IdentityAlreadyRegistered,
     IdentityNotFound,
+    InvalidCredential,
     ProviderNotFound,
     InterfaceNotFound,
+    ValidationFailed(String),
     InvalidMasterKey(String),
     Crypto(String),
     Database(sqlx::Error),
@@ -38,10 +45,13 @@ impl StorageError {
     pub const fn code(&self) -> ProtocolErrorCode {
         match self {
             Self::IdentityAlreadyRegistered => ProtocolErrorCode::IdentityAlreadyRegistered,
+            Self::InvalidCredential => ProtocolErrorCode::InvalidCredential,
             Self::IdentityNotFound | Self::ProviderNotFound | Self::InterfaceNotFound => {
                 ProtocolErrorCode::NotFound
             }
-            Self::InvalidMasterKey(_) | Self::Crypto(_) => ProtocolErrorCode::ValidationFailed,
+            Self::InvalidMasterKey(_) | Self::Crypto(_) | Self::ValidationFailed(_) => {
+                ProtocolErrorCode::ValidationFailed
+            }
             Self::Database(_) => ProtocolErrorCode::Internal,
         }
     }
@@ -54,8 +64,10 @@ impl fmt::Display for StorageError {
                 formatter.write_str("identity is already registered")
             }
             Self::IdentityNotFound => formatter.write_str("identity does not exist"),
+            Self::InvalidCredential => formatter.write_str("device credential is no longer valid"),
             Self::ProviderNotFound => formatter.write_str("provider does not exist for identity"),
             Self::InterfaceNotFound => formatter.write_str("interface does not exist for identity"),
+            Self::ValidationFailed(message) => formatter.write_str(message),
             Self::InvalidMasterKey(message) => write!(formatter, "invalid master key: {message}"),
             Self::Crypto(message) => write!(formatter, "key encryption failed: {message}"),
             Self::Database(error) => error.fmt(formatter),
@@ -94,7 +106,11 @@ impl Storage {
     pub async fn in_memory_from_base64(master_key: &str) -> Result<Self, StorageError> {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
-            .connect("sqlite::memory:")
+            .connect_with(
+                SqliteConnectOptions::from_str("sqlite::memory:")
+                    .expect("valid in-memory SQLite URL")
+                    .foreign_keys(true),
+            )
             .await?;
         Self::initialize(pool, MasterKey::from_base64(master_key)?).await
     }
@@ -110,15 +126,16 @@ impl Storage {
     pub async fn authenticate_identity(
         &self,
         credential: &str,
-    ) -> Result<Option<String>, StorageError> {
+    ) -> Result<Option<AuthenticatedIdentity>, StorageError> {
         identities::authenticate(&self.pool, credential).await
     }
 
     pub async fn rotate_identity_credential(
         &self,
         identity_id: &str,
+        authenticated_credential_hash: &str,
     ) -> Result<RotateCredentialResponse, StorageError> {
-        identities::rotate_credential(&self.pool, identity_id).await
+        identities::rotate_credential(&self.pool, identity_id, authenticated_credential_hash).await
     }
 
     pub async fn identity_credential_hash(

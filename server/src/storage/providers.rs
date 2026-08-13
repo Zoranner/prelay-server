@@ -3,6 +3,7 @@ use provider_relay_protocol::{
     CreateProviderRequest, ProviderModelResponse, ProviderResponse, UpdateProviderRequest,
 };
 use sqlx::SqlitePool;
+use std::collections::HashSet;
 use uuid::Uuid;
 
 use super::{crypto::KeyCipher, StorageError};
@@ -13,6 +14,7 @@ pub(crate) async fn create(
     identity_id: &str,
     input: CreateProviderRequest,
 ) -> Result<String, StorageError> {
+    validate_model_names(&input.models)?;
     let provider_id = Uuid::new_v4().to_string();
     let created_at = Utc::now().to_rfc3339();
     let api_key_ciphertext = crypto.encrypt(&input.api_key)?;
@@ -165,6 +167,9 @@ pub(crate) async fn update(
         .map(|key| crypto.encrypt(key))
         .transpose()?
         .unwrap_or(existing.api_key_ciphertext);
+    if let Some(models) = input.models.as_ref() {
+        validate_model_names(models)?;
+    }
     let mut transaction = pool.begin().await?;
     sqlx::query(
         "UPDATE identity_provider_configs SET name = ?, provider_type = ?, base_url = ?, \
@@ -222,6 +227,19 @@ pub(crate) async fn update(
     }
     transaction.commit().await?;
     get(pool, identity_id, provider_id).await
+}
+
+fn validate_model_names(models: &[String]) -> Result<(), StorageError> {
+    let mut names = HashSet::with_capacity(models.len());
+    for model_name in models {
+        let model_name = model_name.trim();
+        if !model_name.is_empty() && !names.insert(model_name) {
+            return Err(StorageError::ValidationFailed(
+                "provider model names must be unique".to_string(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) async fn delete(

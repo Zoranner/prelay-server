@@ -18,7 +18,8 @@ pub struct AppState {
 }
 
 pub mod test_support {
-    use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
 
     use crate::{
         db,
@@ -29,7 +30,11 @@ pub mod test_support {
     pub async fn test_state() -> AppState {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
-            .connect("sqlite::memory:")
+            .connect_with(
+                SqliteConnectOptions::from_str("sqlite::memory:")
+                    .expect("valid in-memory SQLite URL")
+                    .foreign_keys(true),
+            )
             .await
             .expect("create sqlite pool");
         db::init_schema(&db)

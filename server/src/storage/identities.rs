@@ -7,6 +7,12 @@ use crate::identity::credential::{credential_hashes_match, generate_credential, 
 
 use super::StorageError;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthenticatedIdentity {
+    pub id: String,
+    pub credential_hash: String,
+}
+
 pub(crate) async fn register(
     pool: &SqlitePool,
     machine_id: &str,
@@ -43,38 +49,45 @@ pub(crate) async fn register(
 pub(crate) async fn authenticate(
     pool: &SqlitePool,
     credential: &str,
-) -> Result<Option<String>, StorageError> {
+) -> Result<Option<AuthenticatedIdentity>, StorageError> {
     let supplied_hash = hash_credential(credential);
     let rows = sqlx::query_as::<_, (String, String)>("SELECT id, credential_hash FROM identities")
         .fetch_all(pool)
         .await?;
-    let identity_id = rows.into_iter().find_map(|(id, expected_hash)| {
-        credential_hashes_match(&expected_hash, &supplied_hash).then_some(id)
+    let identity = rows.into_iter().find_map(|(id, credential_hash)| {
+        credential_hashes_match(&credential_hash, &supplied_hash).then_some(AuthenticatedIdentity {
+            id,
+            credential_hash,
+        })
     });
-    if let Some(identity_id) = &identity_id {
+    if let Some(identity) = &identity {
         sqlx::query("UPDATE identities SET last_active_at = ? WHERE id = ?")
             .bind(Utc::now().to_rfc3339())
-            .bind(identity_id)
+            .bind(&identity.id)
             .execute(pool)
             .await?;
     }
-    Ok(identity_id)
+    Ok(identity)
 }
 
 pub(crate) async fn rotate_credential(
     pool: &SqlitePool,
     identity_id: &str,
+    authenticated_credential_hash: &str,
 ) -> Result<RotateCredentialResponse, StorageError> {
     let credential = generate_credential();
-    let result =
-        sqlx::query("UPDATE identities SET credential_hash = ?, last_active_at = ? WHERE id = ?")
-            .bind(hash_credential(&credential))
-            .bind(Utc::now().to_rfc3339())
-            .bind(identity_id)
-            .execute(pool)
-            .await?;
+    let result = sqlx::query(
+        "UPDATE identities SET credential_hash = ?, last_active_at = ? \
+             WHERE id = ? AND credential_hash = ?",
+    )
+    .bind(hash_credential(&credential))
+    .bind(Utc::now().to_rfc3339())
+    .bind(identity_id)
+    .bind(authenticated_credential_hash)
+    .execute(pool)
+    .await?;
     if result.rows_affected() == 0 {
-        return Err(StorageError::IdentityNotFound);
+        return Err(StorageError::InvalidCredential);
     }
     Ok(RotateCredentialResponse { credential })
 }

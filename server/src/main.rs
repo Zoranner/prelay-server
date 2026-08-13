@@ -1,5 +1,5 @@
-use sqlx::sqlite::SqlitePoolOptions;
-use std::net::SocketAddr;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use std::{net::SocketAddr, str::FromStr};
 
 use provider_relay_server::{app, db, storage::MasterKey, storage::Storage, AppState};
 
@@ -15,7 +15,9 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all("data")?;
     let db = SqlitePoolOptions::new()
         .max_connections(5)
-        .connect("sqlite:data/relay.db?mode=rwc")
+        .connect_with(
+            SqliteConnectOptions::from_str("sqlite:data/relay.db?mode=rwc")?.foreign_keys(true),
+        )
         .await?;
     db::init_schema(&db).await?;
     let storage = Storage::initialize(db.clone(), MasterKey::from_environment()?).await?;

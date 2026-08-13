@@ -181,6 +181,16 @@ async fn management_credential_rotation_invalidates_the_previous_credential() {
     let new_credential = rotated["credential"].as_str().expect("new credential");
     assert_ne!(credential, new_credential);
 
+    let (status, _): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/identity/credential/rotate",
+        Some(credential),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
     let (status, _): (StatusCode, serde_json::Value) =
         request_json(&app, "GET", "/api/providers", Some(credential), None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -188,6 +198,88 @@ async fn management_credential_rotation_invalidates_the_previous_credential() {
         request_json(&app, "GET", "/api/providers", Some(new_credential), None).await;
     assert_eq!(status, StatusCode::OK);
     assert!(providers.is_empty());
+}
+
+#[tokio::test]
+async fn management_provider_rejects_duplicate_model_names_without_creating_a_provider() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let identity = register(&app, "machine-a", "S-1-5-21-100").await;
+    let credential = identity["credential"].as_str().expect("credential");
+
+    let (status, error): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Provider A",
+            "provider_type": "openai_compatible",
+            "base_url": "https://provider-a.example",
+            "api_key": "sk-a",
+            "models": ["model-a", " model-a "]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error["error"]["code"], "validation_failed");
+
+    let (status, providers): (StatusCode, Vec<serde_json::Value>) =
+        request_json(&app, "GET", "/api/providers", Some(credential), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(providers.is_empty());
+}
+
+#[tokio::test]
+async fn management_interface_rejects_duplicate_model_names_without_creating_an_interface() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let identity = register(&app, "machine-a", "S-1-5-21-100").await;
+    let credential = identity["credential"].as_str().expect("credential");
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Provider A",
+            "provider_type": "openai_compatible",
+            "base_url": "https://provider-a.example",
+            "api_key": "sk-a",
+            "models": ["model-a"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let provider_id = provider["id"].as_str().expect("provider id");
+
+    let (status, error): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/interfaces",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Interface A",
+            "models": [
+                {
+                    "provider_id": provider_id,
+                    "upstream_model": "model-a",
+                    "model_name": "public-model"
+                },
+                {
+                    "provider_id": provider_id,
+                    "upstream_model": "model-a",
+                    "model_name": " public-model "
+                }
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error["error"]["code"], "validation_failed");
+
+    let (status, interfaces): (StatusCode, Vec<serde_json::Value>) =
+        request_json(&app, "GET", "/api/interfaces", Some(credential), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(interfaces.is_empty());
 }
 
 #[tokio::test]

@@ -29,7 +29,7 @@ pub async fn rotate_credential(
     Ok(Json(
         state
             .storage
-            .rotate_identity_credential(&identity.id)
+            .rotate_identity_credential(&identity.id, &identity.credential_hash)
             .await?,
     ))
 }
