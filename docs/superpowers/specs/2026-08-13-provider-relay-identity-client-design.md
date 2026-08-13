@@ -30,6 +30,66 @@
 - 不提供 `/proxy` 透明转发入口，不允许协议请求绕过 Interface Token 与模型解析。
 - HTTPS、域名、证书、端口和内网网络策略由部署环境负责，不属于应用协议契约。
 
+## 仓库结构
+
+仓库是 Cargo workspace，成员为 `server`、`client/src-tauri` 和 `crates/protocol`。服务端、桌面客户端与共享管理协议显式分离：
+
+```text
+provider-relay/
+├─ Cargo.toml
+├─ server/
+│  ├─ Cargo.toml
+│  ├─ Dockerfile
+│  └─ src/
+│     ├─ main.rs
+│     ├─ app.rs
+│     ├─ identity/
+│     ├─ storage/
+│     ├─ routes/
+│     │  ├─ management/
+│     │  └─ v1/
+│     ├─ bridge/
+│     ├─ providers/
+│     └─ observability/
+├─ client/
+│  ├─ app/
+│  │  ├─ pages/
+│  │  ├─ components/
+│  │  ├─ composables/
+│  │  ├─ stores/
+│  │  └─ utils/
+│  └─ src-tauri/
+│     └─ src/
+│        ├─ commands/
+│        ├─ api_client.rs
+│        ├─ identity.rs
+│        ├─ credential_store.rs
+│        ├─ autostart.rs
+│        └─ tray.rs
+├─ crates/
+│  └─ protocol/
+│     └─ src/
+│        ├─ identity.rs
+│        ├─ providers.rs
+│        ├─ interfaces.rs
+│        ├─ stats.rs
+│        ├─ error.rs
+│        └─ lib.rs
+├─ docs/
+│  └─ protocol/
+│     ├─ management/
+│     ├─ v1/
+│     ├─ environments/
+│     └─ bruno.json
+└─ docker/
+```
+
+`server/src/main.rs` 只负责启动，`app.rs` 负责运行时状态和路由装配。`identity/` 管理注册、凭据认证、轮换和失活清理；`storage/` 管理 SQLite 事务与密钥密文；`routes/management/` 提供桌面客户端的 `/api/*`；`routes/v1/` 提供 AI 工具的 `/v1/*`。
+
+现有协议桥接内核迁入 `server/src/bridge/`，上游协议适配迁入 `server/src/providers/`，不因目录迁移改变其协议职责。请求记录与统计聚合位于 `server/src/observability/`。
+
+Nuxt 页面只通过 Tauri command 调用客户端原生层。`client/src-tauri/src/api_client.rs` 是唯一持有服务端请求与设备凭据的位置；凭据不暴露给 Nuxt 运行时。`crates/protocol` 仅定义客户端与服务端之间的管理 API 请求、响应和稳定错误码，不包含 HTTP 路由、SQLite、密钥加密、上游供应商适配或协议桥接实现。`docs/protocol/` 保存协议说明和 Bruno 验证集合及无密钥环境模板。
+
 ## 身份与认证
 
 ### 身份键
