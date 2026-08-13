@@ -609,6 +609,10 @@ mod tests {
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -654,6 +658,10 @@ mod tests {
         db::init_schema(&db).await.expect("init schema");
         let auth = create_empty_test_interface_auth(&db).await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -693,6 +701,10 @@ mod tests {
         let auth =
             create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -742,6 +754,10 @@ mod tests {
         let auth =
             create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -780,6 +796,10 @@ mod tests {
             .expect("create provider");
         let auth = create_test_interface_auth(&db, &provider, "gpt-4.1", "gpt-4.1").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -826,6 +846,10 @@ mod tests {
         let auth =
             create_test_interface_auth(&db, &provider, "claude-sonnet", "claude-sonnet").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -873,6 +897,10 @@ mod tests {
         let auth =
             create_test_interface_auth(&db, &provider, "claude-sonnet", "claude-sonnet").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -939,6 +967,10 @@ mod tests {
         let auth =
             create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -985,6 +1017,10 @@ mod tests {
         let auth =
             create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -1043,6 +1079,10 @@ mod tests {
         let auth =
             create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -1087,6 +1127,10 @@ mod tests {
         let auth =
             create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -1142,6 +1186,10 @@ mod tests {
         let auth =
             create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -1199,6 +1247,10 @@ mod tests {
             .expect("create provider");
         let auth = create_test_interface_auth(&db, &provider, "gpt-4.1", "gpt-4.1").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -1265,6 +1317,10 @@ mod tests {
         let auth =
             create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -1341,6 +1397,10 @@ mod tests {
         let auth =
             create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -1413,6 +1473,10 @@ mod tests {
         let auth =
             create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };

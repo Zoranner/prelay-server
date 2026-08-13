@@ -268,6 +268,10 @@ mod tests {
         .await
         .expect("create provider");
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -317,6 +321,10 @@ mod tests {
             .await
             .expect("create alias");
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -356,6 +364,10 @@ mod tests {
         .await
         .expect("create alias");
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -387,6 +399,10 @@ mod tests {
                 .await
                 .expect("create provider");
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -430,6 +446,10 @@ mod tests {
         .await
         .expect("create provider");
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -462,6 +482,10 @@ mod tests {
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };

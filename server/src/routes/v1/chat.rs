@@ -218,6 +218,10 @@ mod tests {
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -276,6 +280,10 @@ mod tests {
         let auth =
             create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -322,6 +330,10 @@ mod tests {
         .expect("create provider");
         let auth = create_test_interface_auth(&db, &provider, "coder", "deepseek-chat").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -363,6 +375,10 @@ mod tests {
         .expect("create provider");
         let auth = create_test_interface_auth(&db, &provider, "coder", "deepseek-chat").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -403,6 +419,10 @@ mod tests {
         .expect("create provider");
         let auth = create_test_interface_auth(&db, &provider, "Claude", "claude-sonnet-4").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -444,6 +464,10 @@ mod tests {
         let auth =
             create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -500,6 +524,10 @@ mod tests {
         let auth =
             create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db,
             client: reqwest::Client::new(),
         };
@@ -545,6 +573,10 @@ mod tests {
         let auth =
             create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db: db.clone(),
             client: reqwest::Client::new(),
         };
@@ -592,6 +624,10 @@ mod tests {
         let auth =
             create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db: db.clone(),
             client: reqwest::Client::new(),
         };
@@ -641,6 +677,10 @@ mod tests {
         let auth =
             create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
             db: db.clone(),
             client: reqwest::Client::new(),
         };
