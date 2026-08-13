@@ -7,4 +7,7 @@ pub mod stats;
 pub use error::ProtocolErrorCode;
 pub use identity::{CreateIdentityRequest, CreateIdentityResponse, RotateCredentialResponse};
 pub use interfaces::{CreateInterfaceRequest, InterfaceModelInput, InterfaceResponse};
-pub use providers::{CreateProviderRequest, ProviderResponse, UpdateProviderRequest};
+pub use providers::{
+    CreateProviderRequest, ProviderCapabilityOverrides, ProviderProtocolBaseUrls, ProviderResponse,
+    UpdateProviderRequest,
+};

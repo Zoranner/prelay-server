@@ -28,6 +28,7 @@ pub struct CreateProviderRequest {
     pub provider_type: String,
     pub base_url: String,
     pub api_key: String,
+    pub capabilities: Option<ProviderCapabilityOverrides>,
     pub models: Vec<String>,
 }
 
@@ -37,6 +38,7 @@ pub struct UpdateProviderRequest {
     pub provider_type: Option<String>,
     pub base_url: Option<String>,
     pub api_key: Option<String>,
+    pub capabilities: Option<ProviderCapabilityOverrides>,
     pub models: Option<Vec<String>>,
 }
 
