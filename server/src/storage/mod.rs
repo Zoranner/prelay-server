@@ -24,6 +24,7 @@ pub struct Storage {
 pub enum StorageError {
     IdentityAlreadyRegistered,
     IdentityNotFound,
+    ProviderNotFound,
     InvalidMasterKey(String),
     Crypto(String),
     Database(sqlx::Error),
@@ -33,7 +34,7 @@ impl StorageError {
     pub const fn code(&self) -> ProtocolErrorCode {
         match self {
             Self::IdentityAlreadyRegistered => ProtocolErrorCode::IdentityAlreadyRegistered,
-            Self::IdentityNotFound => ProtocolErrorCode::NotFound,
+            Self::IdentityNotFound | Self::ProviderNotFound => ProtocolErrorCode::NotFound,
             Self::InvalidMasterKey(_) | Self::Crypto(_) => ProtocolErrorCode::ValidationFailed,
             Self::Database(_) => ProtocolErrorCode::Internal,
         }
@@ -47,6 +48,7 @@ impl fmt::Display for StorageError {
                 formatter.write_str("identity is already registered")
             }
             Self::IdentityNotFound => formatter.write_str("identity does not exist"),
+            Self::ProviderNotFound => formatter.write_str("provider does not exist for identity"),
             Self::InvalidMasterKey(message) => write!(formatter, "invalid master key: {message}"),
             Self::Crypto(message) => write!(formatter, "key encryption failed: {message}"),
             Self::Database(error) => error.fmt(formatter),
@@ -122,13 +124,20 @@ impl Storage {
 
     pub async fn raw_provider_key_ciphertext(
         &self,
+        identity_id: &str,
         provider_id: &str,
     ) -> Result<String, StorageError> {
-        providers::raw_key_ciphertext(&self.pool, provider_id).await
+        providers::raw_key_ciphertext(&self.pool, identity_id, provider_id).await
     }
 
-    pub async fn decrypt_provider_key(&self, provider_id: &str) -> Result<String, StorageError> {
-        let ciphertext = self.raw_provider_key_ciphertext(provider_id).await?;
+    pub async fn decrypt_provider_key(
+        &self,
+        identity_id: &str,
+        provider_id: &str,
+    ) -> Result<String, StorageError> {
+        let ciphertext = self
+            .raw_provider_key_ciphertext(identity_id, provider_id)
+            .await?;
         self.crypto.decrypt(&ciphertext)
     }
 }

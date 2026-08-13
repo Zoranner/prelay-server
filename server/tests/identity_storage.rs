@@ -60,14 +60,14 @@ async fn identity_credentials_are_hashed_and_provider_keys_are_encrypted() {
         .expect("create provider");
     assert_ne!(
         storage
-            .raw_provider_key_ciphertext(&provider_id)
+            .raw_provider_key_ciphertext(&registered.identity_id, &provider_id)
             .await
             .expect("load provider ciphertext"),
         "sk-secret"
     );
     assert_eq!(
         storage
-            .decrypt_provider_key(&provider_id)
+            .decrypt_provider_key(&registered.identity_id, &provider_id)
             .await
             .expect("decrypt provider key"),
         "sk-secret"
@@ -79,14 +79,63 @@ async fn identity_credentials_are_hashed_and_provider_keys_are_encrypted() {
         .expect("create second provider");
     assert_ne!(
         storage
-            .raw_provider_key_ciphertext(&provider_id)
+            .raw_provider_key_ciphertext(&registered.identity_id, &provider_id)
             .await
             .expect("load first provider ciphertext"),
         storage
-            .raw_provider_key_ciphertext(&second_provider_id)
+            .raw_provider_key_ciphertext(&registered.identity_id, &second_provider_id)
             .await
             .expect("load second provider ciphertext")
     );
+}
+
+#[tokio::test]
+async fn provider_key_reads_are_scoped_to_the_identity() {
+    let storage = test_storage().await;
+    let identity_a = storage
+        .register_identity("machine-a", "S-1-5-21-100")
+        .await
+        .expect("register identity A");
+    let identity_b = storage
+        .register_identity("machine-b", "S-1-5-21-200")
+        .await
+        .expect("register identity B");
+    let provider_a = storage
+        .create_provider(&identity_a.identity_id, provider_input("sk-a"))
+        .await
+        .expect("create provider A");
+    let provider_b = storage
+        .create_provider(&identity_b.identity_id, provider_input("sk-b"))
+        .await
+        .expect("create provider B");
+
+    assert_ne!(
+        storage
+            .raw_provider_key_ciphertext(&identity_a.identity_id, &provider_a)
+            .await
+            .expect("read A ciphertext"),
+        "sk-a"
+    );
+    assert_eq!(
+        storage
+            .decrypt_provider_key(&identity_a.identity_id, &provider_a)
+            .await
+            .expect("decrypt A key"),
+        "sk-a"
+    );
+
+    for result in [
+        storage
+            .raw_provider_key_ciphertext(&identity_a.identity_id, &provider_b)
+            .await,
+        storage
+            .decrypt_provider_key(&identity_a.identity_id, &provider_b)
+            .await,
+    ] {
+        let error = result.expect_err("identity A cannot read identity B provider key");
+        assert!(matches!(error, StorageError::ProviderNotFound));
+        assert_eq!(error.code(), ProtocolErrorCode::NotFound);
+    }
 }
 
 #[tokio::test]
@@ -188,7 +237,7 @@ async fn identity_storage_schema_is_separate_from_legacy_v1_schema() {
     assert_eq!(legacy_api_key, "sk-legacy");
     assert_eq!(
         storage
-            .decrypt_provider_key(&secure_provider_id)
+            .decrypt_provider_key(&identity.identity_id, &secure_provider_id)
             .await
             .expect("decrypt encrypted provider key"),
         "sk-secure"

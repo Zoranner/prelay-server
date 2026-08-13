@@ -64,11 +64,15 @@ pub(crate) async fn create(
 
 pub(crate) async fn raw_key_ciphertext(
     pool: &SqlitePool,
+    identity_id: &str,
     provider_id: &str,
 ) -> Result<String, StorageError> {
-    sqlx::query_scalar("SELECT api_key_ciphertext FROM identity_provider_configs WHERE id = ?")
-        .bind(provider_id)
-        .fetch_one(pool)
-        .await
-        .map_err(Into::into)
+    sqlx::query_scalar(
+        "SELECT api_key_ciphertext FROM identity_provider_configs WHERE id = ? AND identity_id = ?",
+    )
+    .bind(provider_id)
+    .bind(identity_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(StorageError::ProviderNotFound)
 }
