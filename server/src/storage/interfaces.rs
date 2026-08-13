@@ -137,15 +137,32 @@ pub(crate) async fn delete(
     identity_id: &str,
     interface_id: &str,
 ) -> Result<(), StorageError> {
-    let result =
-        sqlx::query("DELETE FROM identity_interface_configs WHERE id = ? AND identity_id = ?")
-            .bind(interface_id)
-            .bind(identity_id)
-            .execute(pool)
-            .await?;
-    if result.rows_affected() == 0 {
+    let mut transaction = pool.begin().await?;
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT EXISTS(SELECT 1 FROM identity_interface_configs WHERE id = ? AND identity_id = ?)",
+    )
+    .bind(interface_id)
+    .bind(identity_id)
+    .fetch_one(&mut *transaction)
+    .await?;
+    if exists == 0 {
         return Err(StorageError::InterfaceNotFound);
     }
+    sqlx::query(
+        "DELETE FROM identity_interface_models WHERE interface_id = ? \
+         AND EXISTS (SELECT 1 FROM identity_interface_configs WHERE id = ? AND identity_id = ?)",
+    )
+    .bind(interface_id)
+    .bind(interface_id)
+    .bind(identity_id)
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query("DELETE FROM identity_interface_configs WHERE id = ? AND identity_id = ?")
+        .bind(interface_id)
+        .bind(identity_id)
+        .execute(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
     Ok(())
 }
 

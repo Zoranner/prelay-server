@@ -35,6 +35,23 @@ async fn request_json<T: DeserializeOwned>(
     )
 }
 
+async fn request_status(
+    app: &axum::Router,
+    method: &str,
+    path: &str,
+    credential: Option<&str>,
+) -> StatusCode {
+    let mut builder = Request::builder().method(method).uri(path);
+    if let Some(credential) = credential {
+        builder = builder.header("authorization", format!("Bearer {credential}"));
+    }
+    app.clone()
+        .oneshot(builder.body(Body::empty()).expect("build request"))
+        .await
+        .expect("route request")
+        .status()
+}
+
 async fn register(app: &axum::Router, machine_id: &str, account_sid: &str) -> serde_json::Value {
     let request = CreateIdentityRequest {
         machine_id: machine_id.to_string(),
@@ -160,4 +177,92 @@ async fn management_credential_cannot_read_another_identity_interface() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn management_credential_deletes_own_interface_with_model_mapping() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let identity_a = register(&app, "machine-a", "S-1-5-21-100").await;
+    let credential_a = identity_a["credential"].as_str().expect("credential A");
+    let provider_request = CreateProviderRequest {
+        name: "Provider A".to_string(),
+        provider_type: "openai_compatible".to_string(),
+        base_url: "https://provider-a.example".to_string(),
+        api_key: "sk-a".to_string(),
+        capabilities: None,
+        models: vec!["model-a".to_string()],
+    };
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(credential_a),
+        Some(serde_json::to_value(provider_request).expect("serialize provider request")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let provider_id = provider["id"].as_str().expect("provider id");
+
+    let (status, interface): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/interfaces",
+        Some(credential_a),
+        Some(serde_json::json!({
+            "name": "Interface A",
+            "models": [{
+                "model_name": "public-model",
+                "provider_id": provider_id,
+                "upstream_model": "model-a"
+            }]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(
+        interface["models"]
+            .as_array()
+            .expect("interface models")
+            .len(),
+        1
+    );
+    let interface_id = interface["id"].as_str().expect("interface id");
+
+    let identity_b = register(&app, "machine-b", "S-1-5-21-200").await;
+    let credential_b = identity_b["credential"].as_str().expect("credential B");
+    assert_eq!(
+        request_status(
+            &app,
+            "DELETE",
+            &format!("/api/interfaces/{interface_id}"),
+            Some(credential_b),
+        )
+        .await,
+        StatusCode::NOT_FOUND
+    );
+
+    assert_eq!(
+        request_status(
+            &app,
+            "DELETE",
+            &format!("/api/interfaces/{interface_id}"),
+            Some(credential_a),
+        )
+        .await,
+        StatusCode::NO_CONTENT
+    );
+
+    let (status, _): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "GET",
+        &format!("/api/interfaces/{interface_id}"),
+        Some(credential_a),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, interfaces): (StatusCode, Vec<serde_json::Value>) =
+        request_json(&app, "GET", "/api/interfaces", Some(credential_a), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(interfaces.is_empty());
 }
