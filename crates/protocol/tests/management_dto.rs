@@ -95,8 +95,14 @@ fn management_requests_round_trip_without_client_identity_id() {
         serde_json::to_value(update).unwrap()["api_key"],
         serde_json::Value::Null
     );
+    let empty_interface_update_json = serde_json::to_value(empty_interface_update).unwrap();
+    assert_eq!(empty_interface_update_json["name"], serde_json::Value::Null);
     assert_eq!(
-        serde_json::to_value(empty_interface_update).unwrap()["models"],
+        empty_interface_update_json["protocol"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        empty_interface_update_json["models"],
         serde_json::Value::Null
     );
     assert_eq!(
