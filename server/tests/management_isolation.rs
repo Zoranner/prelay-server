@@ -2,9 +2,13 @@ use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
 };
-use provider_relay_protocol::{CreateIdentityRequest, CreateProviderRequest};
+use provider_relay_protocol::{
+    CreateIdentityRequest, CreateProviderRequest, ModelStatsSummary, ProviderStatsSummary,
+    RequestLogSummary, StatsOverview,
+};
 use provider_relay_server::{app, test_support::test_state};
 use serde::de::DeserializeOwned;
+use sqlx::SqlitePool;
 use tower::ServiceExt;
 
 async fn request_json<T: DeserializeOwned>(
@@ -67,6 +71,42 @@ async fn register(app: &axum::Router, machine_id: &str, account_sid: &str) -> se
     .await;
     assert_eq!(status, StatusCode::CREATED);
     response
+}
+
+struct RequestLogSeed<'a> {
+    id: &'a str,
+    identity_id: &'a str,
+    provider_id: &'a str,
+    provider_name: &'a str,
+    model_requested: &'a str,
+    status: &'a str,
+    input_tokens: i64,
+    output_tokens: i64,
+}
+
+async fn seed_request_log(db: &SqlitePool, seed: RequestLogSeed<'_>) {
+    sqlx::query(
+        "INSERT INTO identity_request_logs (\
+            id, identity_id, created_at, protocol_in, protocol_upstream, provider_id, provider_name, \
+            model_requested, status, http_status, input_tokens, output_tokens, latency_ms\
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(seed.id)
+    .bind(seed.identity_id)
+    .bind("2026-08-13T00:00:00Z")
+    .bind("chat_completions")
+    .bind("openai")
+    .bind(seed.provider_id)
+    .bind(seed.provider_name)
+    .bind(seed.model_requested)
+    .bind(seed.status)
+    .bind(200_i64)
+    .bind(seed.input_tokens)
+    .bind(seed.output_tokens)
+    .bind(120_i64)
+    .execute(db)
+    .await
+    .expect("seed request log");
 }
 
 #[tokio::test]
@@ -151,7 +191,7 @@ async fn management_credential_rotation_invalidates_the_previous_credential() {
 }
 
 #[tokio::test]
-async fn management_credential_cannot_read_another_identity_interface() {
+async fn management_credential_cannot_read_mutate_or_delete_another_identity_interface() {
     let app = app::router(test_state().await).await.expect("build app");
     let identity_a = register(&app, "machine-a", "S-1-5-21-100").await;
     let credential_a = identity_a["credential"].as_str().expect("credential A");
@@ -168,6 +208,38 @@ async fn management_credential_cannot_read_another_identity_interface() {
 
     let identity_b = register(&app, "machine-b", "S-1-5-21-200").await;
     let credential_b = identity_b["credential"].as_str().expect("credential B");
+
+    let (status, _): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "GET",
+        &format!("/api/interfaces/{interface_id}"),
+        Some(credential_b),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, _): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "PATCH",
+        &format!("/api/interfaces/{interface_id}"),
+        Some(credential_b),
+        Some(serde_json::json!({ "name": "Interface B" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    assert_eq!(
+        request_status(
+            &app,
+            "DELETE",
+            &format!("/api/interfaces/{interface_id}"),
+            Some(credential_b),
+        )
+        .await,
+        StatusCode::NOT_FOUND
+    );
+
     let (status, _): (StatusCode, serde_json::Value) = request_json(
         &app,
         "POST",
@@ -177,6 +249,179 @@ async fn management_credential_cannot_read_another_identity_interface() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, interface): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "GET",
+        &format!("/api/interfaces/{interface_id}"),
+        Some(credential_a),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(interface["name"], "Interface A");
+}
+
+#[tokio::test]
+async fn management_stats_only_return_the_current_identity_request_data() {
+    let state = test_state().await;
+    let db = state.db.clone();
+    let app = app::router(state).await.expect("build app");
+
+    let identity_a = register(&app, "machine-a", "S-1-5-21-100").await;
+    let identity_a_id = identity_a["identity_id"].as_str().expect("identity A id");
+    let credential_a = identity_a["credential"].as_str().expect("credential A");
+    let (status, provider_a): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(credential_a),
+        Some(
+            serde_json::to_value(CreateProviderRequest {
+                name: "Provider A".to_string(),
+                provider_type: "openai_compatible".to_string(),
+                base_url: "https://provider-a.example".to_string(),
+                api_key: "sk-a".to_string(),
+                capabilities: None,
+                models: vec!["model-a".to_string()],
+            })
+            .expect("serialize provider A"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let provider_a_id = provider_a["id"].as_str().expect("provider A id");
+
+    let identity_b = register(&app, "machine-b", "S-1-5-21-200").await;
+    let identity_b_id = identity_b["identity_id"].as_str().expect("identity B id");
+    let credential_b = identity_b["credential"].as_str().expect("credential B");
+    let (status, provider_b): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(credential_b),
+        Some(
+            serde_json::to_value(CreateProviderRequest {
+                name: "Provider B".to_string(),
+                provider_type: "openai_compatible".to_string(),
+                base_url: "https://provider-b.example".to_string(),
+                api_key: "sk-b".to_string(),
+                capabilities: None,
+                models: vec!["model-b".to_string()],
+            })
+            .expect("serialize provider B"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let provider_b_id = provider_b["id"].as_str().expect("provider B id");
+
+    seed_request_log(
+        &db,
+        RequestLogSeed {
+            id: "request-a",
+            identity_id: identity_a_id,
+            provider_id: provider_a_id,
+            provider_name: "Provider A",
+            model_requested: "model-a",
+            status: "success",
+            input_tokens: 3,
+            output_tokens: 4,
+        },
+    )
+    .await;
+    seed_request_log(
+        &db,
+        RequestLogSeed {
+            id: "request-b",
+            identity_id: identity_b_id,
+            provider_id: provider_b_id,
+            provider_name: "Provider B",
+            model_requested: "model-b",
+            status: "failed",
+            input_tokens: 5,
+            output_tokens: 6,
+        },
+    )
+    .await;
+
+    let (status, overview_a): (StatusCode, StatsOverview) =
+        request_json(&app, "GET", "/api/stats/overview", Some(credential_a), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(overview_a.total_requests, 1);
+    assert_eq!(overview_a.successful_requests, 1);
+    assert_eq!(overview_a.failed_requests, 0);
+    assert_eq!(overview_a.input_tokens, 3);
+    assert_eq!(overview_a.output_tokens, 4);
+
+    let (status, requests_a): (StatusCode, Vec<RequestLogSummary>) =
+        request_json(&app, "GET", "/api/stats/requests", Some(credential_a), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(requests_a.len(), 1);
+    assert_eq!(requests_a[0].id, "request-a");
+    assert_eq!(requests_a[0].provider_name.as_deref(), Some("Provider A"));
+
+    let (status, models_a): (StatusCode, Vec<ModelStatsSummary>) =
+        request_json(&app, "GET", "/api/stats/models", Some(credential_a), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(models_a.len(), 1);
+    assert_eq!(models_a[0].model_requested.as_deref(), Some("model-a"));
+    assert_eq!(models_a[0].total_requests, 1);
+    assert_eq!(models_a[0].input_tokens, 3);
+    assert_eq!(models_a[0].output_tokens, 4);
+
+    let (status, providers_a): (StatusCode, Vec<ProviderStatsSummary>) = request_json(
+        &app,
+        "GET",
+        "/api/stats/providers",
+        Some(credential_a),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(providers_a.len(), 1);
+    assert_eq!(providers_a[0].provider_id.as_deref(), Some(provider_a_id));
+    assert_eq!(providers_a[0].provider_name.as_deref(), Some("Provider A"));
+    assert_eq!(providers_a[0].total_requests, 1);
+
+    let (status, overview_b): (StatusCode, StatsOverview) =
+        request_json(&app, "GET", "/api/stats/overview", Some(credential_b), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(overview_b.total_requests, 1);
+    assert_eq!(overview_b.successful_requests, 0);
+    assert_eq!(overview_b.failed_requests, 1);
+    assert_eq!(overview_b.input_tokens, 5);
+    assert_eq!(overview_b.output_tokens, 6);
+
+    let (status, requests_b): (StatusCode, Vec<RequestLogSummary>) =
+        request_json(&app, "GET", "/api/stats/requests", Some(credential_b), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(requests_b.len(), 1);
+    assert_eq!(requests_b[0].id, "request-b");
+    assert_eq!(requests_b[0].provider_name.as_deref(), Some("Provider B"));
+
+    let (status, models_b): (StatusCode, Vec<ModelStatsSummary>) =
+        request_json(&app, "GET", "/api/stats/models", Some(credential_b), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(models_b.len(), 1);
+    assert_eq!(models_b[0].model_requested.as_deref(), Some("model-b"));
+    assert_eq!(models_b[0].total_requests, 1);
+    assert_eq!(models_b[0].input_tokens, 5);
+    assert_eq!(models_b[0].output_tokens, 6);
+
+    let (status, providers_b): (StatusCode, Vec<ProviderStatsSummary>) = request_json(
+        &app,
+        "GET",
+        "/api/stats/providers",
+        Some(credential_b),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(providers_b.len(), 1);
+    assert_eq!(providers_b[0].provider_id.as_deref(), Some(provider_b_id));
+    assert_eq!(providers_b[0].provider_name.as_deref(), Some("Provider B"));
+    assert_eq!(providers_b[0].total_requests, 1);
 }
 
 #[tokio::test]
