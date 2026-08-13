@@ -26,7 +26,13 @@ impl IntoResponse for AppError {
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, json!("Invalid or missing token")),
             AppError::BadRequest(message) => (StatusCode::BAD_REQUEST, json!(message)),
             AppError::Protocol { code, message } => (
-                StatusCode::BAD_REQUEST,
+                match code {
+                    ProtocolErrorCode::NotFound => StatusCode::NOT_FOUND,
+                    ProtocolErrorCode::InvalidCredential => StatusCode::UNAUTHORIZED,
+                    ProtocolErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+                    ProtocolErrorCode::IdentityAlreadyRegistered
+                    | ProtocolErrorCode::ValidationFailed => StatusCode::BAD_REQUEST,
+                },
                 json!({ "code": code.as_str(), "message": message }),
             ),
             AppError::Internal(e) => {

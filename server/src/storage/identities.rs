@@ -1,5 +1,5 @@
 use chrono::Utc;
-use provider_relay_protocol::CreateIdentityResponse;
+use provider_relay_protocol::{CreateIdentityResponse, RotateCredentialResponse};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -48,9 +48,35 @@ pub(crate) async fn authenticate(
     let rows = sqlx::query_as::<_, (String, String)>("SELECT id, credential_hash FROM identities")
         .fetch_all(pool)
         .await?;
-    Ok(rows.into_iter().find_map(|(id, expected_hash)| {
+    let identity_id = rows.into_iter().find_map(|(id, expected_hash)| {
         credential_hashes_match(&expected_hash, &supplied_hash).then_some(id)
-    }))
+    });
+    if let Some(identity_id) = &identity_id {
+        sqlx::query("UPDATE identities SET last_active_at = ? WHERE id = ?")
+            .bind(Utc::now().to_rfc3339())
+            .bind(identity_id)
+            .execute(pool)
+            .await?;
+    }
+    Ok(identity_id)
+}
+
+pub(crate) async fn rotate_credential(
+    pool: &SqlitePool,
+    identity_id: &str,
+) -> Result<RotateCredentialResponse, StorageError> {
+    let credential = generate_credential();
+    let result =
+        sqlx::query("UPDATE identities SET credential_hash = ?, last_active_at = ? WHERE id = ?")
+            .bind(hash_credential(&credential))
+            .bind(Utc::now().to_rfc3339())
+            .bind(identity_id)
+            .execute(pool)
+            .await?;
+    if result.rows_affected() == 0 {
+        return Err(StorageError::IdentityNotFound);
+    }
+    Ok(RotateCredentialResponse { credential })
 }
 
 pub(crate) async fn credential_hash(

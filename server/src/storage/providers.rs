@@ -1,5 +1,7 @@
 use chrono::Utc;
-use provider_relay_protocol::CreateProviderRequest;
+use provider_relay_protocol::{
+    CreateProviderRequest, ProviderModelResponse, ProviderResponse, UpdateProviderRequest,
+};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -75,4 +77,224 @@ pub(crate) async fn raw_key_ciphertext(
     .fetch_optional(pool)
     .await?
     .ok_or(StorageError::ProviderNotFound)
+}
+
+pub(crate) async fn list(
+    pool: &SqlitePool,
+    identity_id: &str,
+) -> Result<Vec<ProviderResponse>, StorageError> {
+    let ids = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM identity_provider_configs WHERE identity_id = ? ORDER BY created_at",
+    )
+    .bind(identity_id)
+    .fetch_all(pool)
+    .await?;
+    let mut providers = Vec::with_capacity(ids.len());
+    for id in ids {
+        providers.push(get(pool, identity_id, &id).await?);
+    }
+    Ok(providers)
+}
+
+pub(crate) async fn get(
+    pool: &SqlitePool,
+    identity_id: &str,
+    provider_id: &str,
+) -> Result<ProviderResponse, StorageError> {
+    let row = sqlx::query_as::<_, ProviderRow>(
+        "SELECT id, name, provider_type, base_url, api_key_ciphertext, capabilities_json, created_at \
+         FROM identity_provider_configs WHERE id = ? AND identity_id = ?",
+    )
+    .bind(provider_id)
+    .bind(identity_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(StorageError::ProviderNotFound)?;
+    let models = sqlx::query_as::<_, ProviderModelRow>(
+        "SELECT id, provider_id, model_name, created_at FROM identity_provider_models \
+         WHERE provider_id = ? ORDER BY created_at",
+    )
+    .bind(provider_id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(Into::into)
+    .collect();
+    Ok(ProviderResponse {
+        id: row.id,
+        name: row.name,
+        provider_type: row.provider_type,
+        base_url: row.base_url,
+        api_key_masked: mask_ciphertext(&row.api_key_ciphertext),
+        capabilities: row
+            .capabilities_json
+            .as_deref()
+            .and_then(|value| serde_json::from_str(value).ok())
+            .unwrap_or_default(),
+        models,
+        created_at: row.created_at,
+    })
+}
+
+pub(crate) async fn update(
+    pool: &SqlitePool,
+    crypto: &KeyCipher,
+    identity_id: &str,
+    provider_id: &str,
+    input: UpdateProviderRequest,
+) -> Result<ProviderResponse, StorageError> {
+    let existing = sqlx::query_as::<_, ProviderRow>(
+        "SELECT id, name, provider_type, base_url, api_key_ciphertext, capabilities_json, created_at \
+         FROM identity_provider_configs WHERE id = ? AND identity_id = ?",
+    )
+    .bind(provider_id)
+    .bind(identity_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(StorageError::ProviderNotFound)?;
+    let capabilities_json = match input.capabilities {
+        Some(capabilities) => Some(
+            serde_json::to_string(&capabilities)
+                .map_err(|error| StorageError::Crypto(error.to_string()))?,
+        ),
+        None => existing.capabilities_json,
+    };
+    let api_key_ciphertext = input
+        .api_key
+        .as_deref()
+        .map(|key| crypto.encrypt(key))
+        .transpose()?
+        .unwrap_or(existing.api_key_ciphertext);
+    let mut transaction = pool.begin().await?;
+    sqlx::query(
+        "UPDATE identity_provider_configs SET name = ?, provider_type = ?, base_url = ?, \
+         api_key_ciphertext = ?, capabilities_json = ? WHERE id = ? AND identity_id = ?",
+    )
+    .bind(
+        input
+            .name
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or(&existing.name),
+    )
+    .bind(
+        input
+            .provider_type
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or(&existing.provider_type),
+    )
+    .bind(
+        input
+            .base_url
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or(&existing.base_url),
+    )
+    .bind(api_key_ciphertext)
+    .bind(capabilities_json)
+    .bind(provider_id)
+    .bind(identity_id)
+    .execute(&mut *transaction)
+    .await?;
+    if let Some(models) = input.models {
+        sqlx::query("DELETE FROM identity_provider_models WHERE provider_id = ?")
+            .bind(provider_id)
+            .execute(&mut *transaction)
+            .await?;
+        let created_at = Utc::now().to_rfc3339();
+        for model_name in models {
+            let model_name = model_name.trim();
+            if model_name.is_empty() {
+                continue;
+            }
+            sqlx::query(
+                "INSERT INTO identity_provider_models (id, provider_id, model_name, created_at) \
+                 VALUES (?, ?, ?, ?)",
+            )
+            .bind(Uuid::new_v4().to_string())
+            .bind(provider_id)
+            .bind(model_name)
+            .bind(&created_at)
+            .execute(&mut *transaction)
+            .await?;
+        }
+    }
+    transaction.commit().await?;
+    get(pool, identity_id, provider_id).await
+}
+
+pub(crate) async fn delete(
+    pool: &SqlitePool,
+    identity_id: &str,
+    provider_id: &str,
+) -> Result<(), StorageError> {
+    let mut transaction = pool.begin().await?;
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT EXISTS(SELECT 1 FROM identity_provider_configs WHERE id = ? AND identity_id = ?)",
+    )
+    .bind(provider_id)
+    .bind(identity_id)
+    .fetch_one(&mut *transaction)
+    .await?;
+    if exists == 0 {
+        return Err(StorageError::ProviderNotFound);
+    }
+    sqlx::query("DELETE FROM identity_interface_models WHERE provider_id = ?")
+        .bind(provider_id)
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query("DELETE FROM identity_provider_models WHERE provider_id = ?")
+        .bind(provider_id)
+        .execute(&mut *transaction)
+        .await?;
+    let result =
+        sqlx::query("DELETE FROM identity_provider_configs WHERE id = ? AND identity_id = ?")
+            .bind(provider_id)
+            .bind(identity_id)
+            .execute(&mut *transaction)
+            .await?;
+    if result.rows_affected() == 0 {
+        return Err(StorageError::ProviderNotFound);
+    }
+    transaction.commit().await?;
+    Ok(())
+}
+
+#[derive(sqlx::FromRow)]
+struct ProviderRow {
+    id: String,
+    name: String,
+    provider_type: String,
+    base_url: String,
+    api_key_ciphertext: String,
+    capabilities_json: Option<String>,
+    created_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct ProviderModelRow {
+    id: String,
+    provider_id: String,
+    model_name: String,
+    created_at: String,
+}
+
+impl From<ProviderModelRow> for ProviderModelResponse {
+    fn from(value: ProviderModelRow) -> Self {
+        Self {
+            id: value.id,
+            provider_id: value.provider_id,
+            model_name: value.model_name,
+            created_at: value.created_at,
+        }
+    }
+}
+
+fn mask_ciphertext(ciphertext: &str) -> String {
+    if ciphertext.is_empty() {
+        String::new()
+    } else {
+        "********".to_string()
+    }
 }

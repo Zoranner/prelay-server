@@ -20,7 +20,11 @@ pub struct AppState {
 pub mod test_support {
     use sqlx::sqlite::SqlitePoolOptions;
 
-    use crate::{db, storage::MasterKey, storage::Storage, AppState};
+    use crate::{
+        db,
+        storage::{MasterKey, Storage},
+        AppState,
+    };
 
     pub async fn test_state() -> AppState {
         let db = SqlitePoolOptions::new()
@@ -28,10 +32,15 @@ pub mod test_support {
             .connect("sqlite::memory:")
             .await
             .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("initialize schema");
+        db::init_schema(&db)
+            .await
+            .expect("initialize legacy schema");
+        let storage = Storage::initialize(db.clone(), MasterKey::from_bytes([0; 32]))
+            .await
+            .expect("initialize identity storage");
 
         AppState {
-            storage: Storage::from_pool(db.clone(), MasterKey::from_bytes([0; 32])),
+            storage,
             db,
             client: reqwest::Client::new(),
         }
