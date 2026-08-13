@@ -1,8 +1,7 @@
 use axum::{
     body::Body,
-    extract::State,
+    extract::{Extension, State},
     http::header,
-    http::HeaderMap,
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
@@ -32,6 +31,7 @@ use crate::{
     },
     providers::chat_completions::{decode_chat_response, encode_chat_request},
     providers::spec::{provider_upstream_base_url, UpstreamProtocol},
+    routes::v1::auth::CurrentProtocolAccess,
     routes::v1::interface_resolver::resolve_interface_model,
     stats::{insert_request_log, RequestLogInsert},
     AppState,
@@ -43,7 +43,7 @@ pub fn router() -> Router<AppState> {
 
 async fn create_response(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(access): Extension<CurrentProtocolAccess>,
     Json(payload): Json<Value>,
 ) -> Result<Response, AppError> {
     let started_at = std::time::Instant::now();
@@ -54,8 +54,7 @@ async fn create_response(
     let model_requested = request.model.clone();
     let is_streaming = request.stream;
     let previous_response_id = request.previous_response_id.clone();
-    let resolved =
-        resolve_interface_model(&state.db, &headers, &request.model, "responses").await?;
+    let resolved = resolve_interface_model(&state, &access, &request.model, "responses").await?;
     let provider = resolved.provider;
     let upstream_protocol = resolved.upstream_protocol;
     let model_upstream = resolved.model_upstream;
@@ -668,7 +667,7 @@ mod tests {
 
         let error = create_response(
             State(state),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": "hello"
@@ -711,7 +710,7 @@ mod tests {
 
         let response = create_response(
             State(state),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": "hello"
@@ -764,7 +763,7 @@ mod tests {
 
         let response = create_response(
             State(state),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": "hello"
@@ -806,7 +805,7 @@ mod tests {
 
         let response = create_response(
             State(state),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "gpt-4.1",
                 "input": "hello"
@@ -856,7 +855,7 @@ mod tests {
 
         let response = create_response(
             State(state),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "claude-sonnet",
                 "input": "hello"
@@ -907,7 +906,7 @@ mod tests {
 
         let response = create_response(
             State(state.clone()),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "claude-sonnet",
                 "input": "hello",
@@ -977,7 +976,7 @@ mod tests {
 
         let _response = create_response(
             State(state.clone()),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": "hello"
@@ -1027,7 +1026,7 @@ mod tests {
 
         let _response = create_response(
             State(state.clone()),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": [
@@ -1089,7 +1088,7 @@ mod tests {
 
         create_response(
             State(state.clone()),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": "hello"
@@ -1137,7 +1136,7 @@ mod tests {
 
         let response = create_response(
             State(state),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": "hello",
@@ -1193,7 +1192,15 @@ mod tests {
             db,
             client: reqwest::Client::new(),
         };
-        let app = Router::new().nest("/v1", super::router().with_state(state));
+        let app = Router::new().nest(
+            "/v1",
+            super::router()
+                .with_state(state.clone())
+                .layer(middleware::from_fn_with_state(
+                    state,
+                    crate::routes::v1::auth::require_protocol_auth,
+                )),
+        );
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test server");
@@ -1254,7 +1261,15 @@ mod tests {
             db,
             client: reqwest::Client::new(),
         };
-        let app = Router::new().nest("/v1", super::router().with_state(state));
+        let app = Router::new().nest(
+            "/v1",
+            super::router()
+                .with_state(state.clone())
+                .layer(middleware::from_fn_with_state(
+                    state,
+                    crate::routes::v1::auth::require_protocol_auth,
+                )),
+        );
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test server");
@@ -1327,7 +1342,7 @@ mod tests {
 
         let first = create_response(
             State(state.clone()),
-            auth.headers.clone(),
+            auth.access.clone(),
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": "first user"
@@ -1340,7 +1355,7 @@ mod tests {
 
         let second = create_response(
             State(state.clone()),
-            auth.headers.clone(),
+            auth.access.clone(),
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "previous_response_id": first_id,
@@ -1359,7 +1374,7 @@ mod tests {
 
         let third = create_response(
             State(state.clone()),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "previous_response_id": second_id,
@@ -1407,7 +1422,7 @@ mod tests {
 
         let first = create_response(
             State(state.clone()),
-            auth.headers.clone(),
+            auth.access.clone(),
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": "please read"
@@ -1423,7 +1438,7 @@ mod tests {
 
         let second = create_response(
             State(state.clone()),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "previous_response_id": first_id,
@@ -1483,7 +1498,7 @@ mod tests {
 
         let error = create_response(
             State(state),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "previous_response_id": "resp_missing",

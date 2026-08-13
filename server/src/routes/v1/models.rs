@@ -1,14 +1,20 @@
-use axum::{extract::State, http::HeaderMap, routing::get, Json, Router};
+use axum::{
+    extract::{Extension, State},
+    routing::get,
+    Json, Router,
+};
 use serde::Serialize;
 use std::collections::HashMap;
 
 #[cfg(test)]
+use crate::db;
+#[cfg(test)]
 use crate::models::{ModelAlias, ProviderConfig};
 use crate::{
-    db,
     error::AppError,
     models::InterfaceModel,
     providers::spec::{ProviderCapabilities, ProviderSpec, UpstreamProtocol},
+    routes::v1::auth::CurrentProtocolAccess,
     AppState,
 };
 
@@ -67,34 +73,32 @@ impl From<ProviderCapabilities> for ModelCapabilities {
 
 async fn list_models(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(access): Extension<CurrentProtocolAccess>,
 ) -> Result<Json<ModelsResponse>, AppError> {
     #[cfg(test)]
-    if crate::routes::v1::auth::extract_token(&headers).is_none() {
+    if access.identity_id == "test-identity" {
         return list_legacy_test_models(&state).await;
     }
-
-    let token = crate::routes::v1::auth::extract_token(&headers).ok_or(AppError::Unauthorized)?;
-    let interface = db::get_interface_by_token(&state.db, &token)
-        .await?
-        .ok_or(AppError::Unauthorized)?;
-    let configs = db::list_configs(&state.db).await?;
-    let models = db::list_interface_models_by_interface(&state.db, &interface.id).await?;
-    let providers_by_id = configs
-        .iter()
-        .map(|provider| {
-            (
-                provider.id.clone(),
-                (
-                    provider.name.clone(),
-                    ProviderSpec::from_provider_config(provider),
-                ),
-            )
+    let models = state
+        .storage
+        .list_protocol_models(&crate::storage::ProtocolAccess {
+            identity_id: access.identity_id,
+            interface_id: access.interface_id,
         })
-        .collect::<HashMap<_, _>>();
+        .await?;
     let data = models
         .into_iter()
-        .map(|model| model_entry_for_interface_model(model, &providers_by_id))
+        .map(|model| {
+            let mut providers = HashMap::new();
+            providers.insert(
+                model.provider.id.clone(),
+                (
+                    model.provider.name.clone(),
+                    ProviderSpec::from_provider_config(&model.provider),
+                ),
+            );
+            model_entry_for_interface_model(model.model, &providers)
+        })
         .collect::<Vec<_>>();
 
     Ok(Json(ModelsResponse {
@@ -248,7 +252,14 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     use super::list_models;
-    use crate::{db, AppState};
+    use crate::{db, routes::v1::auth::CurrentProtocolAccess, AppState};
+
+    fn test_protocol_access() -> axum::extract::Extension<CurrentProtocolAccess> {
+        axum::extract::Extension(CurrentProtocolAccess {
+            identity_id: "test-identity".to_string(),
+            interface_id: "test-interface".to_string(),
+        })
+    }
 
     #[tokio::test]
     async fn lists_chat_completion_providers_as_openai_models() {
@@ -276,7 +287,7 @@ mod tests {
             client: reqwest::Client::new(),
         };
 
-        let response = list_models(State(state), axum::http::HeaderMap::new())
+        let response = list_models(State(state), test_protocol_access())
             .await
             .expect("list models");
 
@@ -329,7 +340,7 @@ mod tests {
             client: reqwest::Client::new(),
         };
 
-        let response = list_models(State(state), axum::http::HeaderMap::new())
+        let response = list_models(State(state), test_protocol_access())
             .await
             .expect("list models");
 
@@ -372,7 +383,7 @@ mod tests {
             client: reqwest::Client::new(),
         };
 
-        let response = list_models(State(state), axum::http::HeaderMap::new())
+        let response = list_models(State(state), test_protocol_access())
             .await
             .expect("list models");
         let alias = response
@@ -407,7 +418,7 @@ mod tests {
             client: reqwest::Client::new(),
         };
 
-        let response = list_models(State(state), axum::http::HeaderMap::new())
+        let response = list_models(State(state), test_protocol_access())
             .await
             .expect("list models");
         let model = response
@@ -454,7 +465,7 @@ mod tests {
             client: reqwest::Client::new(),
         };
 
-        let response = list_models(State(state), axum::http::HeaderMap::new())
+        let response = list_models(State(state), test_protocol_access())
             .await
             .expect("list models");
         let model = response

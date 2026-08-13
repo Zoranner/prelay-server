@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
-    extract::State,
-    http::{header, HeaderMap},
+    extract::{Extension, State},
+    http::header,
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
@@ -16,6 +16,7 @@ use crate::{
         upstream_observability::upstream_observability,
     },
     providers::spec::provider_upstream_base_url,
+    routes::v1::auth::CurrentProtocolAccess,
     routes::v1::interface_resolver::resolve_interface_model,
     stats::{insert_request_log, RequestLogInsert},
     AppState,
@@ -27,7 +28,7 @@ pub fn router() -> Router<AppState> {
 
 async fn create_chat_completion(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(access): Extension<CurrentProtocolAccess>,
     Json(mut payload): Json<Value>,
 ) -> Result<Response, AppError> {
     let started_at = std::time::Instant::now();
@@ -40,7 +41,7 @@ async fn create_chat_completion(
         .get("stream")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let resolved = resolve_interface_model(&state.db, &headers, &model, "chat_completions").await?;
+    let resolved = resolve_interface_model(&state, &access, &model, "chat_completions").await?;
     let provider = resolved.provider;
     let model_upstream = resolved.model_upstream;
     let metadata_json = build_request_metadata(
@@ -290,7 +291,7 @@ mod tests {
 
         let response = create_chat_completion(
             State(state),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "messages": [
@@ -340,7 +341,7 @@ mod tests {
 
         let response = create_chat_completion(
             State(state),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "coder",
                 "messages": [
@@ -385,7 +386,7 @@ mod tests {
 
         let error = create_chat_completion(
             State(state),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "coder",
                 "messages": [
@@ -429,7 +430,7 @@ mod tests {
 
         let error = create_chat_completion(
             State(state),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "Claude",
                 "messages": [
@@ -474,7 +475,7 @@ mod tests {
 
         let _response = create_chat_completion(
             State(state.clone()),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "messages": [
@@ -534,7 +535,7 @@ mod tests {
 
         let response = create_chat_completion(
             State(state),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "messages": [
@@ -583,7 +584,7 @@ mod tests {
 
         let _response = create_chat_completion(
             State(state),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "messages": [
@@ -634,7 +635,7 @@ mod tests {
 
         let error = create_chat_completion(
             State(state),
-            auth.headers,
+            auth.access,
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "messages": [
@@ -684,7 +685,15 @@ mod tests {
             db: db.clone(),
             client: reqwest::Client::new(),
         };
-        let app = Router::new().nest("/v1", super::router().with_state(state));
+        let app = Router::new().nest(
+            "/v1",
+            super::router()
+                .with_state(state.clone())
+                .layer(middleware::from_fn_with_state(
+                    state,
+                    crate::routes::v1::auth::require_protocol_auth,
+                )),
+        );
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test server");

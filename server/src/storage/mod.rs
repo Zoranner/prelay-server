@@ -22,6 +22,18 @@ use std::str::FromStr;
 pub use crypto::MasterKey;
 pub use identities::AuthenticatedIdentity;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProtocolAccess {
+    pub identity_id: String,
+    pub interface_id: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProtocolModel {
+    pub model: crate::models::InterfaceModel,
+    pub provider: crate::models::ProviderConfig,
+}
+
 #[derive(Clone)]
 pub struct Storage {
     pool: SqlitePool,
@@ -250,5 +262,152 @@ impl Storage {
         interface_id: &str,
     ) -> Result<InterfaceResponse, StorageError> {
         interfaces::regenerate_token(&self.pool, identity_id, interface_id).await
+    }
+
+    pub async fn authenticate_protocol_access(
+        &self,
+        token: &str,
+    ) -> Result<Option<ProtocolAccess>, StorageError> {
+        let access = sqlx::query_as::<_, (String, String)>(
+            "SELECT identity_id, id FROM identity_interface_configs WHERE token = ?",
+        )
+        .bind(token)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(|(identity_id, interface_id)| ProtocolAccess {
+            identity_id,
+            interface_id,
+        });
+        if let Some(access) = &access {
+            identities::touch(&self.pool, &access.identity_id).await?;
+        }
+        Ok(access)
+    }
+
+    pub async fn resolve_protocol_model(
+        &self,
+        access: &ProtocolAccess,
+        model_name: &str,
+    ) -> Result<Option<ProtocolModel>, StorageError> {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            model_id: String,
+            interface_id: String,
+            model_name: String,
+            provider_id: String,
+            upstream_model: String,
+            model_created_at: String,
+            provider_name: String,
+            provider_type: String,
+            base_url: String,
+            api_key_ciphertext: String,
+            capabilities_json: Option<String>,
+            provider_created_at: String,
+        }
+        let row = sqlx::query_as::<_, Row>(
+            "SELECT im.id AS model_id, im.interface_id, im.model_name, im.provider_id, \
+             im.upstream_model, im.created_at AS model_created_at, p.name AS provider_name, \
+             p.provider_type, p.base_url, p.api_key_ciphertext, p.capabilities_json, \
+             p.created_at AS provider_created_at \
+             FROM identity_interface_models im \
+             JOIN identity_interface_configs i ON i.id = im.interface_id \
+                 AND i.identity_id = ? \
+             JOIN identity_provider_configs p ON p.id = im.provider_id \
+                 AND p.identity_id = i.identity_id \
+             JOIN identity_provider_models pm ON pm.provider_id = p.id \
+                 AND pm.model_name = im.upstream_model \
+             WHERE im.interface_id = ? AND im.model_name = ?",
+        )
+        .bind(&access.identity_id)
+        .bind(&access.interface_id)
+        .bind(model_name)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|row| {
+            Ok(ProtocolModel {
+                model: crate::models::InterfaceModel {
+                    id: row.model_id,
+                    interface_id: row.interface_id,
+                    model_name: row.model_name,
+                    provider_id: row.provider_id.clone(),
+                    upstream_model: row.upstream_model,
+                    created_at: row.model_created_at,
+                },
+                provider: crate::models::ProviderConfig {
+                    id: row.provider_id,
+                    name: row.provider_name,
+                    provider_type: row.provider_type,
+                    base_url: row.base_url,
+                    api_key: self.crypto.decrypt(&row.api_key_ciphertext)?,
+                    token: String::new(),
+                    capabilities_json: row.capabilities_json,
+                    created_at: row.provider_created_at,
+                },
+            })
+        })
+        .transpose()
+    }
+
+    pub async fn list_protocol_models(
+        &self,
+        access: &ProtocolAccess,
+    ) -> Result<Vec<ProtocolModel>, StorageError> {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            model_id: String,
+            interface_id: String,
+            model_name: String,
+            provider_id: String,
+            upstream_model: String,
+            model_created_at: String,
+            provider_name: String,
+            provider_type: String,
+            base_url: String,
+            api_key_ciphertext: String,
+            capabilities_json: Option<String>,
+            provider_created_at: String,
+        }
+        let rows = sqlx::query_as::<_, Row>(
+            "SELECT im.id AS model_id, im.interface_id, im.model_name, im.provider_id, \
+             im.upstream_model, im.created_at AS model_created_at, p.name AS provider_name, \
+             p.provider_type, p.base_url, p.api_key_ciphertext, p.capabilities_json, \
+             p.created_at AS provider_created_at \
+             FROM identity_interface_models im \
+             JOIN identity_interface_configs i ON i.id = im.interface_id \
+                 AND i.identity_id = ? \
+             JOIN identity_provider_configs p ON p.id = im.provider_id \
+                 AND p.identity_id = i.identity_id \
+             JOIN identity_provider_models pm ON pm.provider_id = p.id \
+                 AND pm.model_name = im.upstream_model \
+             WHERE im.interface_id = ? ORDER BY im.created_at",
+        )
+        .bind(&access.identity_id)
+        .bind(&access.interface_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(ProtocolModel {
+                    model: crate::models::InterfaceModel {
+                        id: row.model_id,
+                        interface_id: row.interface_id,
+                        model_name: row.model_name,
+                        provider_id: row.provider_id.clone(),
+                        upstream_model: row.upstream_model,
+                        created_at: row.model_created_at,
+                    },
+                    provider: crate::models::ProviderConfig {
+                        id: row.provider_id,
+                        name: row.provider_name,
+                        provider_type: row.provider_type,
+                        base_url: row.base_url,
+                        api_key: self.crypto.decrypt(&row.api_key_ciphertext)?,
+                        token: String::new(),
+                        capabilities_json: row.capabilities_json,
+                        created_at: row.provider_created_at,
+                    },
+                })
+            })
+            .collect()
     }
 }

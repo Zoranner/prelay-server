@@ -4,28 +4,47 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use sqlx::SqlitePool;
 
-use crate::{db, error::AppError, AppState};
+use crate::{error::AppError, AppState};
+
+#[derive(Clone, Debug)]
+pub struct CurrentProtocolAccess {
+    pub identity_id: String,
+    pub interface_id: String,
+}
 
 pub async fn require_protocol_auth(
     State(state): State<AppState>,
     request: Request,
     next: Next,
 ) -> Result<Response, AppError> {
-    authenticate_protocol_request(&state.db, request.headers()).await?;
+    let access = authenticate_protocol_request(&state, request.headers()).await?;
+    let mut request = request;
+    request.extensions_mut().insert(access);
     Ok(next.run(request).await)
 }
 
 pub async fn authenticate_protocol_request(
-    db: &SqlitePool,
+    state: &AppState,
     headers: &HeaderMap,
-) -> Result<(), AppError> {
+) -> Result<CurrentProtocolAccess, AppError> {
     let token = extract_token(headers).ok_or(AppError::Unauthorized)?;
-    db::get_interface_by_token(db, &token)
+    #[cfg(test)]
+    if let Some(interface) = crate::db::get_interface_by_token(&state.db, &token).await? {
+        return Ok(CurrentProtocolAccess {
+            identity_id: "test-identity".to_string(),
+            interface_id: interface.id,
+        });
+    }
+    state
+        .storage
+        .authenticate_protocol_access(&token)
         .await?
-        .ok_or(AppError::Unauthorized)?;
-    Ok(())
+        .map(|access| CurrentProtocolAccess {
+            identity_id: access.identity_id,
+            interface_id: access.interface_id,
+        })
+        .ok_or(AppError::Unauthorized)
 }
 
 pub fn extract_token(headers: &HeaderMap) -> Option<String> {

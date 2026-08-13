@@ -102,3 +102,12 @@ pub(crate) async fn credential_hash(
         .await
         .map_err(Into::into)
 }
+
+pub(crate) async fn touch(pool: &SqlitePool, identity_id: &str) -> Result<(), StorageError> {
+    sqlx::query("UPDATE identities SET last_active_at = ? WHERE id = ?")
+        .bind(Utc::now().to_rfc3339())
+        .bind(identity_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}

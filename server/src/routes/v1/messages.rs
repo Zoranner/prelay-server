@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
-    extract::State,
-    http::{header, HeaderMap},
+    extract::{Extension, State},
+    http::header,
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
@@ -26,6 +26,7 @@ use crate::{
     providers::chat_completions::{decode_chat_response, encode_chat_request},
     providers::responses::{decode_responses_response, encode_responses_request},
     providers::spec::{provider_upstream_base_url, UpstreamProtocol},
+    routes::v1::auth::CurrentProtocolAccess,
     routes::v1::interface_resolver::resolve_interface_model,
     stats::{insert_request_log, RequestLogInsert},
     AppState,
@@ -37,7 +38,7 @@ pub fn router() -> Router<AppState> {
 
 async fn create_message(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(access): Extension<CurrentProtocolAccess>,
     Json(payload): Json<Value>,
 ) -> Result<Response, AppError> {
     let started_at = std::time::Instant::now();
@@ -48,7 +49,7 @@ async fn create_message(
     let model_requested = request.model.clone();
     let is_streaming = request.stream;
     let resolved =
-        resolve_interface_model(&state.db, &headers, &request.model, "anthropic_messages").await?;
+        resolve_interface_model(&state, &access, &request.model, "anthropic_messages").await?;
     let provider = resolved.provider;
     let upstream_protocol = resolved.upstream_protocol;
     let model_upstream = resolved.model_upstream;
@@ -543,7 +544,7 @@ mod tests {
             super::router()
                 .with_state(state.clone())
                 .layer(middleware::from_fn_with_state(
-                    state,
+                    state.clone(),
                     crate::routes::v1::auth::require_protocol_auth,
                 )),
         );
@@ -601,7 +602,15 @@ mod tests {
             db,
             client: reqwest::Client::new(),
         };
-        let app = Router::new().nest("/v1", super::router().with_state(state));
+        let app = Router::new().nest(
+            "/v1",
+            super::router()
+                .with_state(state.clone())
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::routes::v1::auth::require_protocol_auth,
+                )),
+        );
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test server");
@@ -664,7 +673,15 @@ mod tests {
             db,
             client: reqwest::Client::new(),
         };
-        let app = Router::new().nest("/v1", super::router().with_state(state.clone()));
+        let app = Router::new().nest(
+            "/v1",
+            super::router()
+                .with_state(state.clone())
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::routes::v1::auth::require_protocol_auth,
+                )),
+        );
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test server");
@@ -731,7 +748,15 @@ mod tests {
             db,
             client: reqwest::Client::new(),
         };
-        let app = Router::new().nest("/v1", super::router().with_state(state.clone()));
+        let app = Router::new().nest(
+            "/v1",
+            super::router()
+                .with_state(state.clone())
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::routes::v1::auth::require_protocol_auth,
+                )),
+        );
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test server");
@@ -828,7 +853,15 @@ mod tests {
             db,
             client: reqwest::Client::new(),
         };
-        let app = Router::new().nest("/v1", super::router().with_state(state));
+        let app = Router::new().nest(
+            "/v1",
+            super::router()
+                .with_state(state.clone())
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::routes::v1::auth::require_protocol_auth,
+                )),
+        );
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test server");
@@ -888,7 +921,15 @@ mod tests {
             db,
             client: reqwest::Client::new(),
         };
-        let app = Router::new().nest("/v1", super::router().with_state(state.clone()));
+        let app = Router::new().nest(
+            "/v1",
+            super::router()
+                .with_state(state.clone())
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::routes::v1::auth::require_protocol_auth,
+                )),
+        );
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test server");
@@ -951,7 +992,15 @@ mod tests {
             db,
             client: reqwest::Client::new(),
         };
-        let app = Router::new().nest("/v1", super::router().with_state(state.clone()));
+        let app = Router::new().nest(
+            "/v1",
+            super::router()
+                .with_state(state.clone())
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::routes::v1::auth::require_protocol_auth,
+                )),
+        );
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test server");
@@ -1020,7 +1069,15 @@ mod tests {
             db,
             client: reqwest::Client::new(),
         };
-        let app = Router::new().nest("/v1", super::router().with_state(state));
+        let app = Router::new().nest(
+            "/v1",
+            super::router()
+                .with_state(state.clone())
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::routes::v1::auth::require_protocol_auth,
+                )),
+        );
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test server");
@@ -1094,7 +1151,15 @@ mod tests {
             db,
             client: reqwest::Client::new(),
         };
-        let app = Router::new().nest("/v1", super::router().with_state(state));
+        let app = Router::new().nest(
+            "/v1",
+            super::router()
+                .with_state(state.clone())
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::routes::v1::auth::require_protocol_auth,
+                )),
+        );
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test server");
@@ -1162,7 +1227,15 @@ mod tests {
             db,
             client: reqwest::Client::new(),
         };
-        let app = Router::new().nest("/v1", super::router().with_state(state));
+        let app = Router::new().nest(
+            "/v1",
+            super::router()
+                .with_state(state.clone())
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::routes::v1::auth::require_protocol_auth,
+                )),
+        );
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test server");
@@ -1235,7 +1308,15 @@ mod tests {
             db,
             client: reqwest::Client::new(),
         };
-        let app = Router::new().nest("/v1", super::router().with_state(state));
+        let app = Router::new().nest(
+            "/v1",
+            super::router()
+                .with_state(state.clone())
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::routes::v1::auth::require_protocol_auth,
+                )),
+        );
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test server");
