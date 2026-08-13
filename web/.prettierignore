@@ -1,4 +1,0 @@
-../static
-dist
-node_modules
-*.lock

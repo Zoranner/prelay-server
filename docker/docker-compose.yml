@@ -1,6 +1,9 @@
 services:
   provider-relay:
     image: provider-relay:latest
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
     container_name: provider-relay
     restart: always
     ports:
@@ -8,7 +11,6 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - LISTEN_PORT=18080
-      - ADMIN_TOKEN=${ADMIN_TOKEN:-}
     volumes:
       - ./data:/app/data
 networks:

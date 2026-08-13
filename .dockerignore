@@ -1,12 +1,7 @@
 target/
-static/
-web/node_modules/
-web/.vite/
 data/
 *.db
 .git/
 .gitignore
 .env
 .env.*
-web/.env
-web/.env.*
