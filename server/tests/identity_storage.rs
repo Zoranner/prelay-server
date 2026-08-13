@@ -1,7 +1,8 @@
 use provider_relay_protocol::{CreateProviderRequest, ProtocolErrorCode};
 use provider_relay_server::{
+    bridge::internal::{InternalContentPart, InternalMessage, InternalOutputItem, InternalRole},
     db,
-    storage::{MasterKey, Storage, StorageError},
+    storage::{sessions::load_response_session_messages, MasterKey, Storage, StorageError},
 };
 use sqlx::sqlite::SqlitePoolOptions;
 use std::{
@@ -301,6 +302,178 @@ async fn identity_storage_schema_is_separate_from_legacy_v1_schema() {
             .await
             .expect("decrypt encrypted provider key"),
         "sk-secure"
+    );
+}
+
+#[tokio::test]
+async fn response_session_schema_upgrade_preserves_rows_and_scopes_response_ids() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("create sqlite pool");
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&pool)
+        .await
+        .expect("enable foreign keys");
+    sqlx::query(
+        "CREATE TABLE identities (\
+            id TEXT PRIMARY KEY,\
+            machine_id TEXT NOT NULL,\
+            account_sid TEXT NOT NULL,\
+            credential_hash TEXT NOT NULL,\
+            created_at TEXT NOT NULL,\
+            last_active_at TEXT NOT NULL,\
+            UNIQUE(machine_id, account_sid)\
+        )",
+    )
+    .execute(&pool)
+    .await
+    .expect("create identities table");
+    sqlx::query(
+        "CREATE TABLE identity_provider_configs (\
+            id TEXT PRIMARY KEY,\
+            identity_id TEXT NOT NULL REFERENCES identities(id),\
+            name TEXT NOT NULL,\
+            provider_type TEXT NOT NULL,\
+            base_url TEXT NOT NULL,\
+            api_key_ciphertext TEXT NOT NULL,\
+            capabilities_json TEXT,\
+            created_at TEXT NOT NULL\
+        )",
+    )
+    .execute(&pool)
+    .await
+    .expect("create provider table");
+    sqlx::query(
+        "CREATE TABLE identity_response_sessions (\
+            response_id TEXT PRIMARY KEY,\
+            identity_id TEXT NOT NULL REFERENCES identities(id),\
+            previous_response_id TEXT,\
+            provider_id TEXT NOT NULL REFERENCES identity_provider_configs(id),\
+            model TEXT NOT NULL,\
+            input_messages_json TEXT NOT NULL,\
+            output_items_json TEXT NOT NULL,\
+            created_at TEXT NOT NULL\
+        )",
+    )
+    .execute(&pool)
+    .await
+    .expect("create old response sessions table");
+    let identity_a_messages = vec![InternalMessage {
+        role: InternalRole::User,
+        content: vec![InternalContentPart::Text("identity-a input".to_string())],
+        tool_call_id: None,
+        tool_calls: Vec::new(),
+        reasoning_content: None,
+    }];
+    let identity_b_messages = vec![InternalMessage {
+        role: InternalRole::User,
+        content: vec![InternalContentPart::Text("identity-b input".to_string())],
+        tool_call_id: None,
+        tool_calls: Vec::new(),
+        reasoning_content: None,
+    }];
+
+    for identity_id in ["identity-a", "identity-b"] {
+        sqlx::query(
+            "INSERT INTO identities (id, machine_id, account_sid, credential_hash, created_at, last_active_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(identity_id)
+        .bind(format!("machine-{identity_id}"))
+        .bind(format!("sid-{identity_id}"))
+        .bind("credential-hash")
+        .bind("2026-08-13T00:00:00Z")
+        .bind("2026-08-13T00:00:00Z")
+        .execute(&pool)
+        .await
+        .expect("insert identity");
+        sqlx::query(
+            "INSERT INTO identity_provider_configs (id, identity_id, name, provider_type, base_url, \
+             api_key_ciphertext, capabilities_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(format!("provider-{identity_id}"))
+        .bind(identity_id)
+        .bind("Provider")
+        .bind("openai_compatible")
+        .bind("https://provider.example")
+        .bind("ciphertext")
+        .bind(Option::<String>::None)
+        .bind("2026-08-13T00:00:00Z")
+        .execute(&pool)
+        .await
+        .expect("insert provider");
+    }
+    sqlx::query(
+        "INSERT INTO identity_response_sessions (response_id, identity_id, previous_response_id, provider_id, \
+         model, input_messages_json, output_items_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("resp-shared")
+    .bind("identity-a")
+    .bind(Option::<String>::None)
+    .bind("provider-identity-a")
+    .bind("model-a")
+    .bind(serde_json::to_string(&identity_a_messages).expect("serialize identity A messages"))
+    .bind(serde_json::to_string(&Vec::<InternalOutputItem>::new()).expect("serialize output"))
+    .bind("2026-08-13T00:00:00Z")
+    .execute(&pool)
+    .await
+    .expect("insert legacy response session");
+
+    let _storage = Storage::initialize(pool.clone(), MasterKey::from_bytes([0; 32]))
+        .await
+        .expect("upgrade response session schema");
+
+    let preserved = sqlx::query_as::<_, (String, String)>(
+        "SELECT identity_id, provider_id \
+         FROM identity_response_sessions WHERE response_id = ? AND identity_id = ?",
+    )
+    .bind("resp-shared")
+    .bind("identity-a")
+    .fetch_one(&pool)
+    .await
+    .expect("preserve legacy response session");
+    assert_eq!(
+        preserved,
+        ("identity-a".to_string(), "provider-identity-a".to_string(),)
+    );
+
+    sqlx::query(
+        "INSERT INTO identity_response_sessions (response_id, identity_id, previous_response_id, provider_id, \
+         model, input_messages_json, output_items_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("resp-shared")
+    .bind("identity-b")
+    .bind(Option::<String>::None)
+    .bind("provider-identity-b")
+    .bind("model-b")
+    .bind(serde_json::to_string(&identity_b_messages).expect("serialize identity B messages"))
+    .bind(serde_json::to_string(&Vec::<InternalOutputItem>::new()).expect("serialize output"))
+    .bind("2026-08-13T00:00:01Z")
+    .execute(&pool)
+    .await
+    .expect("allow the same response id for another identity");
+
+    let sessions = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM identity_response_sessions WHERE response_id = ?",
+    )
+    .bind("resp-shared")
+    .fetch_one(&pool)
+    .await
+    .expect("count response sessions");
+    assert_eq!(sessions, 2);
+    assert_eq!(
+        load_response_session_messages(&pool, "identity-a", "resp-shared")
+            .await
+            .expect("load identity A response session"),
+        Some(identity_a_messages)
+    );
+    assert_eq!(
+        load_response_session_messages(&pool, "identity-b", "resp-shared")
+            .await
+            .expect("load identity B response session"),
+        Some(identity_b_messages)
     );
 }
 

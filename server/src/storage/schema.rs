@@ -84,6 +84,7 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
     )
     .execute(pool)
     .await?;
+    upgrade_response_sessions_primary_key(pool).await?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS identity_request_logs (\
             id TEXT PRIMARY KEY,\
@@ -115,5 +116,64 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
     )
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+async fn upgrade_response_sessions_primary_key(pool: &SqlitePool) -> Result<(), StorageError> {
+    #[derive(sqlx::FromRow)]
+    struct Column {
+        name: String,
+        pk: i64,
+    }
+
+    let columns = sqlx::query_as::<_, Column>("PRAGMA table_info(identity_response_sessions)")
+        .fetch_all(pool)
+        .await?;
+    let has_legacy_primary_key = columns
+        .iter()
+        .any(|column| column.name == "response_id" && column.pk == 1)
+        && !columns
+            .iter()
+            .any(|column| column.name == "identity_id" && column.pk == 2);
+    if !has_legacy_primary_key {
+        return Ok(());
+    }
+
+    let mut transaction = pool.begin().await?;
+    sqlx::query(
+        "CREATE TABLE identity_response_sessions_replacement (\
+            response_id TEXT NOT NULL,\
+            identity_id TEXT NOT NULL REFERENCES identities(id),\
+            previous_response_id TEXT,\
+            provider_id TEXT NOT NULL REFERENCES identity_provider_configs(id),\
+            model TEXT NOT NULL,\
+            input_messages_json TEXT NOT NULL,\
+            output_items_json TEXT NOT NULL,\
+            created_at TEXT NOT NULL,\
+            PRIMARY KEY(response_id, identity_id)\
+        )",
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO identity_response_sessions_replacement (\
+            response_id, identity_id, previous_response_id, provider_id, model, \
+            input_messages_json, output_items_json, created_at\
+        ) SELECT response_id, identity_id, previous_response_id, provider_id, model, \
+            input_messages_json, output_items_json, created_at \
+        FROM identity_response_sessions",
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query("DROP TABLE identity_response_sessions")
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query(
+        "ALTER TABLE identity_response_sessions_replacement \
+         RENAME TO identity_response_sessions",
+    )
+    .execute(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
     Ok(())
 }
