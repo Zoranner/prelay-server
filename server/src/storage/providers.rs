@@ -279,6 +279,46 @@ pub(crate) async fn delete(
     Ok(())
 }
 
+pub(crate) async fn add_models(
+    pool: &SqlitePool,
+    identity_id: &str,
+    provider_id: &str,
+    model_names: &[String],
+) -> Result<(), StorageError> {
+    validate_model_names(model_names)?;
+    let mut transaction = pool.begin().await?;
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT EXISTS(SELECT 1 FROM identity_provider_configs WHERE id = ? AND identity_id = ?)",
+    )
+    .bind(provider_id)
+    .bind(identity_id)
+    .fetch_one(&mut *transaction)
+    .await?;
+    if exists == 0 {
+        return Err(StorageError::ProviderNotFound);
+    }
+
+    let created_at = Utc::now().to_rfc3339();
+    for model_name in model_names {
+        let model_name = model_name.trim();
+        if model_name.is_empty() {
+            continue;
+        }
+        sqlx::query(
+            "INSERT OR IGNORE INTO identity_provider_models (id, provider_id, model_name, created_at) \
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(provider_id)
+        .bind(model_name)
+        .bind(&created_at)
+        .execute(&mut *transaction)
+        .await?;
+    }
+    transaction.commit().await?;
+    Ok(())
+}
+
 #[derive(sqlx::FromRow)]
 struct ProviderRow {
     id: String,

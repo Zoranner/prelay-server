@@ -10,6 +10,7 @@ pub mod tray;
 pub struct NativeState {
     pub identity: identity::WindowsIdentitySource,
     pub credentials: credential_store::WindowsCredentialStore,
+    pub registration_gate: api_client::RegistrationGate,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

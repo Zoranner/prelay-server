@@ -2,7 +2,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::{
-    api_client::{ApiClient, ClientError},
+    api_client::ClientError,
     credential_store::CredentialStore,
     identity::{IdentitySource, WindowsIdentitySource},
     NativeState,
@@ -36,12 +36,7 @@ pub fn collect_bootstrap(
 
 #[tauri::command]
 pub async fn bootstrap(state: State<'_, NativeState>) -> Result<BootstrapResponse, ClientError> {
-    let identity = state
-        .identity
-        .identity()
-        .map_err(|error| ClientError::new("internal", error))?;
-    let client = ApiClient::from_environment(&state.credentials)?;
-    client.ensure_registered(&identity).await?;
+    crate::commands::authenticated_api(&state).await?;
 
     collect_bootstrap(&state.identity, &state.credentials)
         .map_err(|error| ClientError::new("internal", error))
@@ -51,5 +46,6 @@ pub fn native_state() -> NativeState {
     NativeState {
         identity: WindowsIdentitySource,
         credentials: crate::credential_store::WindowsCredentialStore,
+        registration_gate: crate::api_client::RegistrationGate::default(),
     }
 }

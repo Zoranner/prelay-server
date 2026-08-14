@@ -1,6 +1,8 @@
 use axum::{
     body::{to_bytes, Body},
-    http::{Request, StatusCode},
+    http::{HeaderMap, Request, StatusCode},
+    routing::{get, post},
+    Json, Router,
 };
 use provider_relay_protocol::{
     CreateIdentityRequest, CreateProviderRequest, ModelStatsSummary, ProviderStatsSummary,
@@ -602,4 +604,139 @@ async fn management_credential_deletes_own_interface_with_model_mapping() {
         request_json(&app, "GET", "/api/interfaces", Some(credential_a), None).await;
     assert_eq!(status, StatusCode::OK);
     assert!(interfaces.is_empty());
+}
+
+async fn spawn_provider_actions_upstream(expected_api_key: &'static str) -> String {
+    async fn models(headers: HeaderMap) -> Json<serde_json::Value> {
+        assert_eq!(
+            headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer sk-provider-action-secret")
+        );
+        Json(serde_json::json!({
+            "data": [{ "id": "discovered-model" }]
+        }))
+    }
+
+    async fn chat(headers: HeaderMap) -> (StatusCode, &'static str) {
+        assert_eq!(
+            headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer sk-provider-action-secret")
+        );
+        (StatusCode::OK, "data: {\"choices\":[]}\n\n")
+    }
+
+    assert_eq!(expected_api_key, "sk-provider-action-secret");
+    let upstream = Router::new()
+        .route("/models", get(models))
+        .route("/chat/completions", post(chat));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind upstream");
+    let address = listener.local_addr().expect("read upstream address");
+    tokio::spawn(async move {
+        axum::serve(listener, upstream)
+            .await
+            .expect("serve upstream");
+    });
+    format!("http://{address}")
+}
+
+#[tokio::test]
+async fn management_provider_actions_use_only_the_current_identity_and_keep_key_private() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let credential_a = register(&app, "machine-actions-a", "S-1-5-21-610").await["credential"]
+        .as_str()
+        .expect("credential A")
+        .to_string();
+    let base_url = spawn_provider_actions_upstream("sk-provider-action-secret").await;
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(&credential_a),
+        Some(serde_json::json!({
+            "name": "Action Provider",
+            "provider_type": "openai_compatible",
+            "base_url": base_url,
+            "api_key": "sk-provider-action-secret",
+            "models": ["saved-model"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let provider_id = provider["id"].as_str().expect("provider id");
+    assert!(!provider.to_string().contains("sk-provider-action-secret"));
+
+    assert_eq!(
+        request_status(
+            &app,
+            "POST",
+            &format!("/api/providers/{provider_id}/ping"),
+            Some(&credential_a),
+        )
+        .await,
+        StatusCode::OK
+    );
+
+    let (status, ping): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        &format!("/api/providers/{provider_id}/ping"),
+        Some(&credential_a),
+        Some(serde_json::json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ping["ok"], true);
+    assert!(!ping.to_string().contains("sk-provider-action-secret"));
+
+    let (status, discovered): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        &format!("/api/providers/{provider_id}/discover-models"),
+        Some(&credential_a),
+        Some(serde_json::json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(discovered["ok"], true);
+    assert_eq!(
+        discovered["models"],
+        serde_json::json!(["discovered-model"])
+    );
+    assert!(!discovered.to_string().contains("sk-provider-action-secret"));
+
+    let (status, protocol): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        &format!("/api/providers/{provider_id}/test-protocol"),
+        Some(&credential_a),
+        Some(serde_json::json!({ "protocol": "openai", "model": "discovered-model" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(protocol["ok"], true);
+    assert_eq!(protocol["protocol"], "openai");
+    assert!(!protocol.to_string().contains("sk-provider-action-secret"));
+
+    let credential_b = register(&app, "machine-actions-b", "S-1-5-21-620").await["credential"]
+        .as_str()
+        .expect("credential B")
+        .to_string();
+    for action in ["ping", "discover-models", "test-protocol"] {
+        let (status, response): (StatusCode, serde_json::Value) = request_json(
+            &app,
+            "POST",
+            &format!("/api/providers/{provider_id}/{action}"),
+            Some(&credential_b),
+            Some(serde_json::json!({ "protocol": "openai", "model": "discovered-model" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{action}");
+        assert!(!response.to_string().contains("sk-provider-action-secret"));
+    }
 }

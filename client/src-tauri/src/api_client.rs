@@ -43,6 +43,9 @@ pub struct PreparedRequest {
     authorization: String,
 }
 
+#[derive(Default)]
+pub struct RegistrationGate(tokio::sync::Mutex<()>);
+
 impl PreparedRequest {
     pub fn url(&self) -> &str {
         &self.url
@@ -117,6 +120,15 @@ impl<'a> ApiClient<'a> {
         self.credential_store
             .save(&response.credential)
             .map_err(credential_store_error)
+    }
+
+    pub async fn ensure_registered_once(
+        &self,
+        identity: &WindowsIdentity,
+        gate: &RegistrationGate,
+    ) -> Result<(), ClientError> {
+        let _guard = gate.0.lock().await;
+        self.ensure_registered(identity).await
     }
 
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, ClientError> {

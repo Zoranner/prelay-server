@@ -231,6 +231,15 @@ impl Storage {
         providers::delete(&self.pool, identity_id, provider_id).await
     }
 
+    pub async fn add_provider_models(
+        &self,
+        identity_id: &str,
+        provider_id: &str,
+        model_names: &[String],
+    ) -> Result<(), StorageError> {
+        providers::add_models(&self.pool, identity_id, provider_id, model_names).await
+    }
+
     pub async fn create_interface(
         &self,
         identity_id: &str,

@@ -16,7 +16,9 @@ pub(crate) async fn authenticated_api(state: &NativeState) -> Result<ApiClient<'
         .identity()
         .map_err(|error| ClientError::new("internal", error))?;
     let client = ApiClient::from_environment(&state.credentials)?;
-    client.ensure_registered(&identity).await?;
+    client
+        .ensure_registered_once(&identity, &state.registration_gate)
+        .await?;
     Ok(client)
 }
 
