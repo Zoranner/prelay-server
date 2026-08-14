@@ -3,6 +3,7 @@
 /client/node_modules/
 /client/.nuxt/
 /client/.output/
+/client/src-tauri/gen/
 
 # SQLite database
 /data/
