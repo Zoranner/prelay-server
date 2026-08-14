@@ -1,5 +1,10 @@
 <script setup lang="ts">
 import type { Provider } from "~/stores/relay";
+import {
+  getProviderOperationFeedback,
+  type ProviderOperationFeedback,
+  type ProviderOperationResult,
+} from "~/utils/providerOperations";
 
 type ProviderFormPayload = {
   id?: string;
@@ -14,7 +19,7 @@ const { error, pending, invokeCommand } = useRelayCommand();
 const providers = ref<Provider[]>([]);
 const editingProvider = ref<Provider | null>(null);
 const showForm = ref(false);
-const operationMessage = ref<string | null>(null);
+const operationFeedback = ref<ProviderOperationFeedback | null>(null);
 
 async function loadProviders() {
   try {
@@ -25,7 +30,7 @@ async function loadProviders() {
 }
 
 async function saveProvider(payload: ProviderFormPayload) {
-  operationMessage.value = null;
+  operationFeedback.value = null;
   try {
     await invokeCommand("providers_save", {
       ...(payload.id ? { providerId: payload.id } : {}),
@@ -40,7 +45,7 @@ async function saveProvider(payload: ProviderFormPayload) {
     showForm.value = false;
     editingProvider.value = null;
     await loadProviders();
-    operationMessage.value = "供应商已保存。";
+    operationFeedback.value = { success: true, message: "供应商已保存。", metrics: null };
   } catch {
     // The command composable exposes the error to this view.
   } finally {
@@ -50,11 +55,11 @@ async function saveProvider(payload: ProviderFormPayload) {
 
 async function deleteProvider(provider: Provider) {
   if (!confirm(`删除供应商“${provider.name}”及其模型？`)) return;
-  operationMessage.value = null;
+  operationFeedback.value = null;
   try {
     await invokeCommand("providers_delete", { providerId: provider.id });
     await loadProviders();
-    operationMessage.value = "供应商已删除。";
+    operationFeedback.value = { success: true, message: "供应商已删除。", metrics: null };
   } catch {
     // The command composable exposes the error to this view.
   }
@@ -64,19 +69,15 @@ async function runProviderOperation(
   command: "providers_ping" | "providers_discover_models" | "providers_test_protocol",
   provider: Provider,
 ) {
-  operationMessage.value = null;
+  operationFeedback.value = null;
   try {
-    const result = await invokeCommand<{ message?: string; models?: string[] }>(command, {
+    const result = await invokeCommand<ProviderOperationResult>(command, {
       providerId: provider.id,
       ...(command === "providers_test_protocol"
         ? { protocol: provider.provider_type === "anthropic" ? "anthropic" : "openai" }
         : {}),
     });
-    if (result.models?.length) {
-      operationMessage.value = `发现模型：${result.models.join("、")}`;
-    } else {
-      operationMessage.value = result.message ?? "操作完成。";
-    }
+    operationFeedback.value = getProviderOperationFeedback(result);
   } catch {
     // The command composable exposes the error to this view.
   }
@@ -116,7 +117,16 @@ onMounted(loadProviders);
     </section>
 
     <p v-if="error" class="mt-5 border border-rose-900 bg-rose-950/40 p-3 text-sm text-rose-200">{{ error.message }}</p>
-    <p v-else-if="operationMessage" class="mt-5 border border-emerald-900 bg-emerald-950/30 p-3 text-sm text-emerald-200">{{ operationMessage }}</p>
+    <p
+      v-else-if="operationFeedback"
+      class="mt-5 border p-3 text-sm"
+      :class="operationFeedback.success
+        ? 'border-emerald-900 bg-emerald-950/30 text-emerald-200'
+        : 'border-rose-900 bg-rose-950/40 text-rose-200'"
+    >
+      {{ operationFeedback.message }}
+      <span v-if="operationFeedback.metrics" class="ml-2 text-slate-300">{{ operationFeedback.metrics }}</span>
+    </p>
 
     <section class="mt-6">
       <ProvidersProviderList
