@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { computed, ref, type ComputedRef, type Ref } from "vue";
 
 import { toRelayError, type RelayError } from "~/utils/errors";
 
@@ -21,18 +22,19 @@ export type RelayCommand =
   | "credential_rotate";
 
 export interface CommandState {
-  pending: Ref<boolean>;
+  pending: ComputedRef<boolean>;
   error: Ref<RelayError | null>;
 }
 
 export function useRelayCommand(): CommandState & {
   invokeCommand<T>(command: RelayCommand, payload?: Record<string, unknown>): Promise<T>;
 } {
-  const pending = ref(false);
+  const pendingRequests = ref(0);
+  const pending = computed(() => pendingRequests.value > 0);
   const error = ref<RelayError | null>(null);
 
   async function invokeCommand<T>(command: RelayCommand, payload?: Record<string, unknown>): Promise<T> {
-    pending.value = true;
+    pendingRequests.value += 1;
     error.value = null;
     try {
       return await invoke<T>(command, payload);
@@ -41,7 +43,7 @@ export function useRelayCommand(): CommandState & {
       error.value = relayError;
       throw relayError;
     } finally {
-      pending.value = false;
+      pendingRequests.value = Math.max(0, pendingRequests.value - 1);
     }
   }
 
