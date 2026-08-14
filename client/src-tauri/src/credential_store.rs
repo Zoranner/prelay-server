@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 pub const CREDENTIAL_TARGET: &str = "provider-relay/device-credential";
 
-pub trait CredentialStore {
+pub trait CredentialStore: Send + Sync {
     fn load(&self) -> Result<Option<String>, String>;
     fn save(&self, credential: &str) -> Result<(), String>;
     fn delete(&self) -> Result<(), String>;

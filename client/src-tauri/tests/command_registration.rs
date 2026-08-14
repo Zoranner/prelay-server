@@ -12,6 +12,6 @@ fn registers_the_bootstrap_command_without_a_legacy_alias() {
 
     assert!(library.contains("commands::bootstrap::bootstrap"));
     assert!(!library.contains("bootstrap_client"));
-    assert!(command.contains("#[tauri::command]\npub fn bootstrap("));
+    assert!(command.contains("#[tauri::command]\npub async fn bootstrap("));
     assert!(!command.contains("bootstrap_client"));
 }

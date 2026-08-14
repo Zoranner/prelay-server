@@ -35,6 +35,7 @@ fn bootstrap_uses_windows_identity_and_never_exposes_credential() {
 
     assert_eq!(response.machine_id, "machine-a");
     assert_eq!(response.account_sid, "S-1-5-21-100");
+    assert_eq!(response.relay_url, "https://relay.rd.kim");
     assert!(response.has_device_credential);
     assert!(serde_json::to_value(response)
         .unwrap()

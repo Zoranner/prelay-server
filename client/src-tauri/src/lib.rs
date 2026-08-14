@@ -1,5 +1,6 @@
 //! Provider Relay desktop client crate.
 
+pub mod api_client;
 pub mod autostart;
 pub mod commands;
 pub mod credential_store;
@@ -19,7 +20,24 @@ pub fn run() {
             None,
         ))
         .manage(commands::bootstrap::native_state())
-        .invoke_handler(tauri::generate_handler![commands::bootstrap::bootstrap])
+        .invoke_handler(tauri::generate_handler![
+            commands::bootstrap::bootstrap,
+            commands::providers::providers_list,
+            commands::providers::providers_save,
+            commands::providers::providers_delete,
+            commands::providers::providers_ping,
+            commands::providers::providers_discover_models,
+            commands::providers::providers_test_protocol,
+            commands::interfaces::interfaces_list,
+            commands::interfaces::interfaces_save,
+            commands::interfaces::interfaces_delete,
+            commands::interfaces::interfaces_regenerate_token,
+            commands::stats::stats_overview,
+            commands::stats::stats_requests,
+            commands::stats::stats_models,
+            commands::stats::stats_providers,
+            commands::credential_rotate
+        ])
         .setup(|app| {
             autostart::enable(app.handle()).map_err(std::io::Error::other)?;
             tray::install(app.handle())?;
