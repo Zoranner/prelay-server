@@ -33,7 +33,7 @@ async function saveProvider(payload: ProviderFormPayload) {
         name: payload.name,
         provider_type: payload.provider_type,
         base_url: payload.base_url,
-        ...(payload.api_key ? { api_key: payload.api_key } : {}),
+        api_key: payload.api_key,
         models: payload.models,
       },
     });
@@ -68,7 +68,9 @@ async function runProviderOperation(
   try {
     const result = await invokeCommand<{ message?: string; models?: string[] }>(command, {
       providerId: provider.id,
-      ...(command === "providers_test_protocol" ? { protocol: provider.provider_type } : {}),
+      ...(command === "providers_test_protocol"
+        ? { protocol: provider.provider_type === "anthropic" ? "anthropic" : "openai" }
+        : {}),
     });
     if (result.models?.length) {
       operationMessage.value = `发现模型：${result.models.join("、")}`;
