@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Provider Relay desktop window capability.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "autostart:default"]
 }
