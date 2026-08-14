@@ -15,7 +15,7 @@ pub struct BootstrapResponse {
     pub has_device_credential: bool,
 }
 
-pub fn bootstrap(
+pub fn collect_bootstrap(
     identity_source: &impl IdentitySource,
     credential_store: &impl CredentialStore,
 ) -> Result<BootstrapResponse, String> {
@@ -31,8 +31,8 @@ pub fn bootstrap(
 }
 
 #[tauri::command]
-pub fn bootstrap_client(state: State<'_, NativeState>) -> Result<BootstrapResponse, String> {
-    bootstrap(&state.identity, &state.credentials)
+pub fn bootstrap(state: State<'_, NativeState>) -> Result<BootstrapResponse, String> {
+    collect_bootstrap(&state.identity, &state.credentials)
 }
 
 pub fn native_state() -> NativeState {

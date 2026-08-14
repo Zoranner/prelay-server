@@ -19,9 +19,7 @@ pub fn run() {
             None,
         ))
         .manage(commands::bootstrap::native_state())
-        .invoke_handler(tauri::generate_handler![
-            commands::bootstrap::bootstrap_client
-        ])
+        .invoke_handler(tauri::generate_handler![commands::bootstrap::bootstrap])
         .setup(|app| {
             autostart::enable(app.handle()).map_err(std::io::Error::other)?;
             tray::install(app.handle())?;
