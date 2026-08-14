@@ -1,5 +1,8 @@
 # Rust
 /target
+/client/node_modules/
+/client/.nuxt/
+/client/.output/
 
 # SQLite database
 /data/

@@ -2,6 +2,18 @@
 name = "provider-relay-client"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 
 [lib]
 path = "src/lib.rs"
+
+[[bin]]
+name = "provider-relay-client"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+provider-relay-protocol = { path = "../../crates/protocol" }
+tauri = { version = "2", features = [] }
