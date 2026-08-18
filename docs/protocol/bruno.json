@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "Provider Relay Protocol",
+  "type": "collection",
+  "ignore": [
+    ".git",
+    "node_modules"
+  ]
+}

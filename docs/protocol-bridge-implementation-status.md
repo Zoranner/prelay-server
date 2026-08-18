@@ -31,13 +31,15 @@
 - Provider 配置与模型集合在一个 SQLite 事务中保存；Interface 配置与模型映射集合也在一个事务中保存。校验或写入失败时回滚，不保留部分结果。
 - 删除 Provider 模型时按 Provider 和上游模型组合清理 Interface 引用；删除 Interface 模型时同时匹配父 Interface 和模型 ID。
 
-现有管理路由测试用例覆盖创建、完整集合替换、非法引用回滚、空集合拒绝和跨 Interface 删除边界。这些是源码与本地自动化测试层面的证据，不代表浏览器管理流程已经完成交互验收。
+现有管理路由测试用例覆盖创建、完整集合替换、非法引用回滚、空集合拒绝和跨 Interface 删除边界。这些是源码与本地自动化测试层面的证据；管理界面由桌面客户端通过 Tauri command 调用，Nuxt 不直接请求服务端或读取身份凭据。
 
 ### 鉴权边界
 
 协议入口要求 Interface token，可通过 `Authorization: Bearer` 或 `x-api-key` 传入。解析链先按 token 定位 Interface，再在该 Interface 的完整模型集合中解析客户端模型名；缺少 token、使用 Provider token 或模型只存在于其他 Interface 时均不能通过该链路。
 
-`ADMIN_TOKEN` 只保护 `/api/*` 管理接口。配置后同样支持 Bearer 和 `x-api-key`；未配置或为空时管理 API 以兼容模式开放。该兼容模式和单一管理令牌只适用于本机或受控网络，没有引入用户、角色、登录、会话或多租户系统。
+`POST /api/identities` 是唯一匿名管理入口。桌面客户端使用操作系统 CSPRNG 生成 URL-safe Base64 设备凭据，先原子写入应用数据目录的 `device-credential.json`，再携带 `machine_id`、`account_sid` 和 `credential` 注册。相同稳定键与相同凭据的重复注册返回已有身份，支持请求或响应中断后的确认重试；不同凭据不能覆盖既有身份。除注册外，`/api/*` 只接受 `Authorization: Bearer <device-credential>`，服务端按凭据哈希确定当前身份。
+
+本地凭据记录使用 `{ current, pending? }`。轮换前客户端保留旧值并写入 `pending`，使用旧值请求轮换；调用或响应中断后，客户端优先尝试 `pending`，认证失败时回退 `current` 并清除 `pending`，网络错误时保留记录等待下次请求恢复。凭据不使用 Windows Credential Manager、系统 Keychain 或加密 vault，且绝不返回 Nuxt 运行时或管理响应。
 
 ### 供给侧协议模型
 

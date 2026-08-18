@@ -35,7 +35,9 @@ PROVIDER_RELAY_MASTER_KEY=<Base64-encoded-32-byte-key> docker compose -f docker/
 
 ## 客户端与协议入口
 
-员工在 Windows 桌面客户端中注册当前机器和登录账户，并管理 Provider、Interface 及 Interface Token。设备凭据只保存在 Windows Credential Manager；服务端只保存其哈希。客户端管理 API 位于 `/api/*`，不能用浏览器网页替代。
+员工在 Windows 桌面客户端中注册当前机器和登录账户，并管理 Provider、Interface 及 Interface Token。客户端用操作系统 CSPRNG 生成设备凭据，将其写入应用数据目录的 `device-credential.json`；记录只有 `current` 和可选的 `pending` 两个字段。服务端只保存凭据哈希，Nuxt 运行时绝不接收设备凭据或 Provider API Key。
+
+首次注册先写入本地凭据文件，再提交 `machine_id`、`account_sid` 和凭据。同一机器和账户使用同一凭据重复注册会返回已有身份，支持网络中断后的确认重试。轮换先把新凭据保存为 `pending`，使用旧凭据提交轮换；调用或响应中断后，客户端优先尝试 `pending`，认证失败再回退 `current`。本地凭据文件不使用 Windows Credential Manager、系统 Keychain 或加密 vault，适用于内网桌面客户端的本地使用边界。
 
 客户端位于 `client/`，采用 Tauri 2、Nuxt 4 和 Tailwind 4。安装前端依赖与运行开发环境：
 
@@ -53,6 +55,8 @@ AI 工具将继续使用以下协议入口：
 - `/v1/messages`
 
 这些入口要求对应的 Interface Token。不要使用 `/proxy`；该通用入口已移除。
+
+管理 API 的请求样例和 Bruno 环境模板位于 [`docs/protocol/`](docs/protocol/README.md)。模板只含占位值，不能写入真实设备凭据、Interface Token 或 Provider API Key。
 
 ## 验证
 
