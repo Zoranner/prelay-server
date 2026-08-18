@@ -2,9 +2,18 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::{net::SocketAddr, str::FromStr};
 
 use provider_relay_server::{
-    app, identity::cleanup::delete_expired_identities, storage::MasterKey, storage::Storage,
+    app,
+    identity::cleanup::delete_expired_identities,
+    storage::{MasterKey, Storage, StorageError},
     AppState,
 };
+
+fn log_cleanup_failure(error: &StorageError) {
+    tracing::warn!(
+        error_code = error.code().as_str(),
+        "failed to delete inactive identities"
+    );
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -38,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
                     tracing::info!(deleted, "deleted inactive identities");
                 }
                 Ok(_) => {}
-                Err(error) => tracing::warn!(%error, "failed to delete inactive identities"),
+                Err(error) => log_cleanup_failure(&error),
             }
         }
     });
@@ -64,4 +73,71 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fmt::{self, Write as _},
+        sync::{Arc, Mutex},
+    };
+
+    use provider_relay_server::storage::StorageError;
+    use tracing::{
+        field::{Field, Visit},
+        Event, Subscriber,
+    };
+    use tracing_subscriber::{layer::Context, prelude::*, Layer, Registry};
+
+    #[derive(Clone)]
+    struct EventCapture {
+        events: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl<S> Layer<S> for EventCapture
+    where
+        S: Subscriber,
+    {
+        fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
+            let mut visitor = FieldVisitor(String::new());
+            event.record(&mut visitor);
+            self.events
+                .lock()
+                .expect("lock captured tracing events")
+                .push(format!("{} {}", event.metadata().name(), visitor.0));
+        }
+    }
+
+    struct FieldVisitor(String);
+
+    impl Visit for FieldVisitor {
+        fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+            let _ = write!(self.0, "{}={value:?};", field.name());
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            let _ = write!(self.0, "{}={value};", field.name());
+        }
+    }
+
+    #[test]
+    fn cleanup_failure_log_excludes_storage_error_details() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = Registry::default().with(EventCapture {
+            events: Arc::clone(&events),
+        });
+        let error = StorageError::Database(sqlx::Error::Protocol(
+            "SELECT provider_key, device_credential FROM identities".to_string(),
+        ));
+
+        tracing::subscriber::with_default(subscriber, || {
+            super::log_cleanup_failure(&error);
+        });
+
+        let events = events.lock().expect("lock captured tracing events");
+        assert_eq!(events.len(), 1);
+        assert!(events[0].contains("error_code=internal"));
+        assert!(!events[0].contains("SELECT provider_key"));
+        assert!(!events[0].contains("device_credential"));
+    }
 }

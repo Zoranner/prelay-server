@@ -269,7 +269,7 @@ async fn insert_stream_log_with_id(
     log: RequestLogInsert,
 ) -> anyhow::Result<()> {
     if let Err(error) = insert_with_id(db, identity_id, id.to_string(), log).await {
-        tracing::error!("failed to write streaming request log: {error:?}");
+        log_stream_storage_failure("insert", &error);
         return Err(error);
     }
     Ok(())
@@ -282,17 +282,33 @@ async fn update_stream_log(
     update: StreamRequestLogUpdate,
 ) {
     if let Err(error) = update_stream(db, identity_id, id, update).await {
-        tracing::error!("failed to update streaming request log: {error:?}");
+        log_stream_storage_failure("update", &error);
     }
+}
+
+fn log_stream_storage_failure(operation: &'static str, _error: &anyhow::Error) {
+    tracing::error!(
+        operation,
+        failure_kind = "stream_log_storage",
+        "failed to persist streaming request log"
+    );
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        fmt::{self, Write as _},
+        sync::{Arc, Mutex},
+    };
 
     use bytes::Bytes;
     use futures::{stream, TryStreamExt};
     use sqlx::sqlite::SqlitePoolOptions;
+    use tracing::{
+        field::{Field, Visit},
+        Event, Subscriber,
+    };
+    use tracing_subscriber::{layer::Context, prelude::*, Layer, Registry};
 
     use super::{record_first_chunk, record_stream};
     use crate::{
@@ -472,5 +488,59 @@ mod tests {
             upstream_request_id: Some("req_123".to_string()),
             metadata_json: Some(metadata_json),
         }
+    }
+
+    #[derive(Clone)]
+    struct EventCapture {
+        events: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl<S> Layer<S> for EventCapture
+    where
+        S: Subscriber,
+    {
+        fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
+            let mut visitor = FieldVisitor(String::new());
+            event.record(&mut visitor);
+            self.events
+                .lock()
+                .expect("lock captured tracing events")
+                .push(format!("{} {}", event.metadata().name(), visitor.0));
+        }
+    }
+
+    struct FieldVisitor(String);
+
+    impl Visit for FieldVisitor {
+        fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+            let _ = write!(self.0, "{}={value:?};", field.name());
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            let _ = write!(self.0, "{}={value};", field.name());
+        }
+    }
+
+    #[test]
+    fn stream_log_write_failure_excludes_error_details() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = Registry::default().with(EventCapture {
+            events: Arc::clone(&events),
+        });
+        let error = anyhow::anyhow!(
+            "SQLite error: SELECT provider_key WHERE device_credential = 'device-secret'"
+        );
+
+        tracing::subscriber::with_default(subscriber, || {
+            super::log_stream_storage_failure("insert", &error);
+        });
+
+        let events = events.lock().expect("lock captured tracing events");
+        assert_eq!(events.len(), 1);
+        assert!(events[0].contains("operation=insert"));
+        assert!(events[0].contains("failure_kind=stream_log_storage"));
+        assert!(!events[0].contains("provider_key"));
+        assert!(!events[0].contains("device_credential"));
+        assert!(!events[0].contains("device-secret"));
     }
 }
