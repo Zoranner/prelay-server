@@ -99,6 +99,7 @@ mod tests {
     use tracing_subscriber::{layer::Context, prelude::*, Layer, Registry};
 
     use super::AppError;
+    use crate::storage::StorageError;
     use provider_relay_protocol::ProtocolErrorCode;
 
     #[derive(Clone)]
@@ -204,5 +205,35 @@ mod tests {
         );
         assert!(!String::from_utf8_lossy(&body).contains("provider_keys"));
         assert!(!String::from_utf8_lossy(&body).contains("secret-value"));
+    }
+
+    #[tokio::test]
+    async fn crypto_storage_error_hides_ciphertext_diagnostics() {
+        let response = AppError::from(StorageError::Crypto(
+            "ciphertext=base64-payload; nonce=nonce-value; secret=provider-key".to_string(),
+        ))
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let body = to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("read error response");
+        let payload: serde_json::Value =
+            serde_json::from_slice(&body).expect("error response is JSON");
+
+        assert_eq!(
+            payload,
+            json!({
+                "error": {
+                    "code": "internal",
+                    "message": "Internal server error"
+                }
+            })
+        );
+        let body = String::from_utf8_lossy(&body);
+        assert!(!body.contains("ciphertext"));
+        assert!(!body.contains("nonce-value"));
+        assert!(!body.contains("provider-key"));
     }
 }

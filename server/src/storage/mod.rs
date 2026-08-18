@@ -63,10 +63,10 @@ impl StorageError {
             Self::IdentityNotFound | Self::ProviderNotFound | Self::InterfaceNotFound => {
                 ProtocolErrorCode::NotFound
             }
-            Self::InvalidMasterKey(_) | Self::Crypto(_) | Self::ValidationFailed(_) => {
+            Self::InvalidMasterKey(_) | Self::ValidationFailed(_) => {
                 ProtocolErrorCode::ValidationFailed
             }
-            Self::Database(_) => ProtocolErrorCode::Internal,
+            Self::Crypto(_) | Self::Database(_) => ProtocolErrorCode::Internal,
         }
     }
 }
