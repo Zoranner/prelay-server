@@ -10,8 +10,6 @@ use crate::{
 #[derive(Debug, Serialize)]
 pub struct BootstrapResponse {
     pub relay_url: String,
-    pub machine_id: String,
-    pub account_sid: String,
     pub username: String,
     pub has_device_credential: bool,
 }
@@ -28,8 +26,6 @@ pub fn collect_bootstrap(
 
     Ok(BootstrapResponse {
         relay_url,
-        machine_id: identity.machine_id,
-        account_sid: identity.account_sid,
         username: identity.username,
         has_device_credential,
     })

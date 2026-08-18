@@ -1,7 +1,5 @@
 export interface BootstrapState {
   relay_url?: string;
-  machine_id: string;
-  account_sid: string;
   username: string;
   has_device_credential: boolean;
 }

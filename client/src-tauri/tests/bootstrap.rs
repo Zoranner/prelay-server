@@ -28,7 +28,7 @@ impl IdentitySource for FakeWindowsIdentity {
 }
 
 #[test]
-fn bootstrap_uses_windows_identity_and_never_exposes_credential() {
+fn bootstrap_only_exposes_display_identity_and_credential_status() {
     let identity = FakeWindowsIdentity::new("machine-a", "S-1-5-21-100");
     let credentials = MemoryCredentialStore::with_secret("device-secret");
     let api_client =
@@ -36,12 +36,11 @@ fn bootstrap_uses_windows_identity_and_never_exposes_credential() {
 
     let response = collect_bootstrap(&identity, &api_client).unwrap();
 
-    assert_eq!(response.machine_id, "machine-a");
-    assert_eq!(response.account_sid, "S-1-5-21-100");
+    assert_eq!(response.username, "Ada");
     assert_eq!(response.relay_url, "https://relay.rd.kim");
     assert!(response.has_device_credential);
-    assert!(serde_json::to_value(response)
-        .unwrap()
-        .get("device_credential")
-        .is_none());
+    let response = serde_json::to_value(response).unwrap();
+    assert!(response.get("machine_id").is_none());
+    assert!(response.get("account_sid").is_none());
+    assert!(response.get("device_credential").is_none());
 }
