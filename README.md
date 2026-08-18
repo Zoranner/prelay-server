@@ -27,11 +27,15 @@ cargo run -p provider-relay-server
 
 服务固定使用 `data/relay.db`，首次运行会创建 `data/`，默认监听 `0.0.0.0:18080`。可通过 `LISTEN_PORT` 覆盖端口；`RUST_LOG` 控制日志过滤。启动时及之后每 24 小时会删除连续 90 天未活动身份及其所有配置、会话和日志。旧版没有身份归属的数据库会在首次启动时被直接丢弃，不迁移或保留旧密钥。
 
-Docker Compose 同样要求在环境中提供 `PROVIDER_RELAY_MASTER_KEY`：
+Docker Compose 的部署文件位于 `server/deploy/`。先复制环境模板、填入固定的主密钥，再启动：
 
-```text
-PROVIDER_RELAY_MASTER_KEY=<Base64-encoded-32-byte-key> docker compose -f docker/docker-compose.yml up -d --build
+```powershell
+Copy-Item server/deploy/.env.example server/deploy/.env
+# Edit server/deploy/.env and replace PROVIDER_RELAY_MASTER_KEY.
+docker compose --env-file server/deploy/.env -f server/deploy/docker-compose.yml up -d --build
 ```
+
+Compose 使用仓库根目录的 `data/` 作为容器数据卷，并沿用 `server/Dockerfile` 构建镜像。
 
 ## 客户端与协议入口
 

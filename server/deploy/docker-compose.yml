@@ -2,18 +2,19 @@ services:
   provider-relay:
     image: provider-relay:latest
     build:
-      context: ..
+      context: ../..
       dockerfile: server/Dockerfile
     container_name: provider-relay
     restart: always
     ports:
-      - 18080:18080
+      - ${LISTEN_PORT:-18080}:${LISTEN_PORT:-18080}
     environment:
       - TZ=Asia/Shanghai
-      - LISTEN_PORT=18080
+      - LISTEN_PORT=${LISTEN_PORT:-18080}
+      - RUST_LOG=${RUST_LOG:-provider_relay_server=info,tower_http=info}
       - PROVIDER_RELAY_MASTER_KEY=${PROVIDER_RELAY_MASTER_KEY:?set a Base64-encoded 32-byte master key}
     volumes:
-      - ./data:/app/data
+      - ../../data:/app/data
 networks:
   default:
     external: true
