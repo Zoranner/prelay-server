@@ -147,6 +147,26 @@ fn management_request_preserves_string_server_error() {
 }
 
 #[test]
+fn management_request_hides_structured_server_error_message_on_internal_failure() {
+    let (base_url, server) = one_response_server(
+        "500 Internal Server Error",
+        r#"{"error":{"code":"internal","message":"database error: no such table: identity_provider_configs"}}"#,
+        |request| assert!(request.starts_with("POST /api/providers HTTP/1.1")),
+    );
+    let store = MemoryCredentialStore::with_secret("device-secret");
+    let client = ApiClient::new(base_url, &store).expect("create client");
+
+    let error = tauri::async_runtime::block_on(
+        client.post::<serde_json::Value, _>("/api/providers", &serde_json::json!({})),
+    )
+    .expect_err("server internal failure must be returned safely");
+    server.join().expect("join test relay");
+
+    assert_eq!(error.code(), "internal");
+    assert_eq!(error.message, "relay rejected the management request");
+}
+
+#[test]
 fn management_request_uses_safe_fallback_for_empty_string_server_error() {
     let (base_url, server) =
         one_response_server("400 Bad Request", r#"{"error":"   "}"#, |request| {

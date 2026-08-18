@@ -260,9 +260,16 @@ fn network_error(_: reqwest::Error) -> ClientError {
 
 async fn response_error(response: reqwest::Response) -> ClientError {
     let status = response.status();
-    let body = response.json::<ServerErrorEnvelope>().await.ok();
-    let (server_code, server_message) =
-        body.map(|body| body.error.into_parts()).unwrap_or_default();
+    let (server_code, server_message) = if status.is_client_error() {
+        response
+            .json::<ServerErrorEnvelope>()
+            .await
+            .ok()
+            .map(|body| body.error.into_parts())
+            .unwrap_or_default()
+    } else {
+        (None, None)
+    };
     let code = server_code.unwrap_or_else(|| status_code(status).to_owned());
     let message = server_message.unwrap_or_else(|| {
         if code == "identity_already_registered" {
