@@ -34,7 +34,11 @@ impl IntoResponse for AppError {
                     | ProtocolErrorCode::ValidationFailed => StatusCode::BAD_REQUEST,
                 };
                 let message = if code == ProtocolErrorCode::Internal {
-                    tracing::error!(error = %message, "Internal protocol error");
+                    tracing::error!(
+                        error_code = code.as_str(),
+                        http_status = status.as_u16(),
+                        "Internal protocol error"
+                    );
                     "Internal server error".to_string()
                 } else {
                     message
@@ -42,8 +46,12 @@ impl IntoResponse for AppError {
 
                 (status, json!({ "code": code.as_str(), "message": message }))
             }
-            AppError::Internal(e) => {
-                tracing::error!("Internal error: {:?}", e);
+            AppError::Internal(_error) => {
+                tracing::error!(
+                    error_code = ProtocolErrorCode::Internal.as_str(),
+                    http_status = StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                    "Internal server error"
+                );
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     json!("Internal server error"),
@@ -80,9 +88,93 @@ impl From<crate::storage::StorageError> for AppError {
 mod tests {
     use axum::{body::to_bytes, http::StatusCode, response::IntoResponse};
     use serde_json::json;
+    use std::{
+        fmt::{self, Write as _},
+        sync::{Arc, Mutex},
+    };
+    use tracing::{
+        field::{Field, Visit},
+        Event, Subscriber,
+    };
+    use tracing_subscriber::{layer::Context, prelude::*, Layer, Registry};
 
     use super::AppError;
     use provider_relay_protocol::ProtocolErrorCode;
+
+    #[derive(Clone)]
+    struct EventCapture {
+        events: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl<S> Layer<S> for EventCapture
+    where
+        S: Subscriber,
+    {
+        fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
+            let mut visitor = FieldVisitor(String::new());
+            event.record(&mut visitor);
+            self.events
+                .lock()
+                .expect("lock captured tracing events")
+                .push(format!("{} {}", event.metadata().name(), visitor.0));
+        }
+    }
+
+    struct FieldVisitor(String);
+
+    impl Visit for FieldVisitor {
+        fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+            let _ = write!(self.0, "{}={value:?};", field.name());
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            let _ = write!(self.0, "{}={value};", field.name());
+        }
+    }
+
+    #[test]
+    fn internal_protocol_error_tracing_event_excludes_sensitive_details() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = Registry::default().with(EventCapture {
+            events: Arc::clone(&events),
+        });
+
+        tracing::subscriber::with_default(subscriber, || {
+            let _ = AppError::Protocol {
+                code: ProtocolErrorCode::Internal,
+                message: "provider_key=provider-secret; credential=secret-value".to_string(),
+            }
+            .into_response();
+        });
+
+        let events = events.lock().expect("lock captured tracing events");
+        assert_eq!(events.len(), 1);
+        assert!(!events[0].contains("provider_key"));
+        assert!(!events[0].contains("secret-value"));
+        assert!(events[0].contains("error_code=internal"));
+    }
+
+    #[test]
+    fn internal_error_tracing_event_excludes_sensitive_details() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = Registry::default().with(EventCapture {
+            events: Arc::clone(&events),
+        });
+
+        tracing::subscriber::with_default(subscriber, || {
+            let _ = AppError::Internal(anyhow::anyhow!(
+                "device_credential=device-secret; provider_key=provider-secret"
+            ))
+            .into_response();
+        });
+
+        let events = events.lock().expect("lock captured tracing events");
+        assert_eq!(events.len(), 1);
+        assert!(!events[0].contains("device_credential"));
+        assert!(!events[0].contains("provider_key"));
+        assert!(!events[0].contains("device-secret"));
+        assert!(events[0].contains("error_code=internal"));
+    }
 
     #[tokio::test]
     async fn internal_protocol_error_hides_storage_diagnostics() {
