@@ -8,11 +8,22 @@ use provider_relay_server::{
     AppState,
 };
 
+const STARTUP_CLEANUP_FAILURE: &str = "startup identity cleanup failed";
+
 fn log_cleanup_failure(error: &StorageError) {
     tracing::warn!(
         error_code = error.code().as_str(),
         "failed to delete inactive identities"
     );
+}
+
+fn handle_startup_cleanup_failure(error: StorageError) -> anyhow::Error {
+    tracing::error!(
+        error_code = error.code().as_str(),
+        failure_kind = "startup_identity_cleanup",
+        "failed to delete inactive identities at startup"
+    );
+    anyhow::anyhow!(STARTUP_CLEANUP_FAILURE)
 }
 
 #[tokio::main]
@@ -32,7 +43,9 @@ async fn main() -> anyhow::Result<()> {
         )
         .await?;
     let storage = Storage::initialize(db.clone(), MasterKey::from_environment()?).await?;
-    let deleted = delete_expired_identities(&storage).await?;
+    let deleted = delete_expired_identities(&storage)
+        .await
+        .map_err(handle_startup_cleanup_failure)?;
     if deleted > 0 {
         tracing::info!(deleted, "deleted inactive identities at startup");
     }
@@ -139,5 +152,35 @@ mod tests {
         assert!(events[0].contains("error_code=internal"));
         assert!(!events[0].contains("SELECT provider_key"));
         assert!(!events[0].contains("device_credential"));
+    }
+
+    #[test]
+    fn startup_cleanup_failure_uses_safe_error_and_log() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = Registry::default().with(EventCapture {
+            events: Arc::clone(&events),
+        });
+        let error = StorageError::Database(sqlx::Error::Protocol(
+            "SELECT provider_key WHERE device_credential = 'device-secret'".to_string(),
+        ));
+
+        let startup_error = tracing::subscriber::with_default(subscriber, || {
+            super::handle_startup_cleanup_failure(error)
+        });
+
+        let returned = format!("{startup_error:#}");
+        assert_eq!(returned, "startup identity cleanup failed");
+        assert!(!returned.contains("provider_key"));
+        assert!(!returned.contains("device_credential"));
+        assert!(!returned.contains("device-secret"));
+
+        let events = events.lock().expect("lock captured tracing events");
+        assert_eq!(events.len(), 1);
+        assert!(events[0].contains("error_code=internal"));
+        assert!(events[0].contains("failure_kind=startup_identity_cleanup"));
+        assert!(events[0].contains("failed to delete inactive identities at startup"));
+        assert!(!events[0].contains("provider_key"));
+        assert!(!events[0].contains("device_credential"));
+        assert!(!events[0].contains("device-secret"));
     }
 }
