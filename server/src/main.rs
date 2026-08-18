@@ -133,6 +133,24 @@ mod tests {
         }
     }
 
+    fn assert_excludes_storage_error_details(value: &str) {
+        let normalized = value.to_ascii_lowercase();
+        for detail in [
+            "sql",
+            "database",
+            "db",
+            "crypto",
+            "provider_key",
+            "device_credential",
+            "secret",
+        ] {
+            assert!(
+                !normalized.contains(detail),
+                "value unexpectedly exposed {detail}: {value}"
+            );
+        }
+    }
+
     #[test]
     fn cleanup_failure_log_excludes_storage_error_details() {
         let events = Arc::new(Mutex::new(Vec::new()));
@@ -140,7 +158,7 @@ mod tests {
             events: Arc::clone(&events),
         });
         let error = StorageError::Database(sqlx::Error::Protocol(
-            "SELECT provider_key, device_credential FROM identities".to_string(),
+            "SQL database DB crypto provider_key device_credential secret".to_string(),
         ));
 
         tracing::subscriber::with_default(subscriber, || {
@@ -150,8 +168,7 @@ mod tests {
         let events = events.lock().expect("lock captured tracing events");
         assert_eq!(events.len(), 1);
         assert!(events[0].contains("error_code=internal"));
-        assert!(!events[0].contains("SELECT provider_key"));
-        assert!(!events[0].contains("device_credential"));
+        assert_excludes_storage_error_details(&events[0]);
     }
 
     #[test]
@@ -161,7 +178,7 @@ mod tests {
             events: Arc::clone(&events),
         });
         let error = StorageError::Database(sqlx::Error::Protocol(
-            "SELECT provider_key WHERE device_credential = 'device-secret'".to_string(),
+            "SQL database DB crypto provider_key device_credential secret".to_string(),
         ));
 
         let startup_error = tracing::subscriber::with_default(subscriber, || {
@@ -170,17 +187,13 @@ mod tests {
 
         let returned = format!("{startup_error:#}");
         assert_eq!(returned, "startup identity cleanup failed");
-        assert!(!returned.contains("provider_key"));
-        assert!(!returned.contains("device_credential"));
-        assert!(!returned.contains("device-secret"));
+        assert_excludes_storage_error_details(&returned);
 
         let events = events.lock().expect("lock captured tracing events");
         assert_eq!(events.len(), 1);
         assert!(events[0].contains("error_code=internal"));
         assert!(events[0].contains("failure_kind=startup_identity_cleanup"));
         assert!(events[0].contains("failed to delete inactive identities at startup"));
-        assert!(!events[0].contains("provider_key"));
-        assert!(!events[0].contains("device_credential"));
-        assert!(!events[0].contains("device-secret"));
+        assert_excludes_storage_error_details(&events[0]);
     }
 }
