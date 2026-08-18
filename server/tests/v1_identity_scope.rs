@@ -2,6 +2,7 @@ use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use provider_relay_protocol::{
     CreateIdentityRequest, CreateInterfaceRequest, CreateProviderRequest, InterfaceModelInput,
 };
@@ -70,7 +71,7 @@ async fn create_interface_for_url(
     provider_name: &str,
     base_url: &str,
 ) -> Value {
-    let credential = format!("credential-{machine_id}-{account_sid}");
+    let credential = valid_credential(&format!("{machine_id}-{account_sid}"));
     let identity = management_post(
         app,
         "/api/identities",
@@ -115,6 +116,14 @@ async fn create_interface_for_url(
         .expect("serialize interface"),
     )
     .await
+}
+
+fn valid_credential(seed: &str) -> String {
+    let mut bytes = [0_u8; 32];
+    for (index, byte) in seed.bytes().take(bytes.len()).enumerate() {
+        bytes[index] = byte;
+    }
+    URL_SAFE_NO_PAD.encode(bytes)
 }
 
 async fn spawn_chat_upstream() -> String {
@@ -169,7 +178,7 @@ async fn protocol_request_writes_identity_scoped_log_and_response_session() {
     let upstream = spawn_chat_upstream().await;
     let interface_a =
         create_interface_for_url(&app, "machine-a", "S-1-5-21-100", "provider-a", &upstream).await;
-    let credential_b = "credential-machine-b-S-1-5-21-200";
+    let credential_b = valid_credential("machine-b-S-1-5-21-200");
     let identity_b = management_post(
         &app,
         "/api/identities",
@@ -177,7 +186,7 @@ async fn protocol_request_writes_identity_scoped_log_and_response_session() {
         serde_json::to_value(CreateIdentityRequest {
             machine_id: "machine-b".to_string(),
             account_sid: "S-1-5-21-200".to_string(),
-            credential: credential_b.to_string(),
+            credential: credential_b.clone(),
         })
         .expect("serialize identity B"),
     )

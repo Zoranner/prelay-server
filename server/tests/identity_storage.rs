@@ -1,6 +1,7 @@
 use provider_relay_protocol::{CreateProviderRequest, ProtocolErrorCode};
 use provider_relay_server::{
     bridge::internal::{InternalContentPart, InternalMessage, InternalOutputItem, InternalRole},
+    identity::credential::generate_credential,
     storage::{sessions::load_response_session_messages, MasterKey, Storage, StorageError},
 };
 use sqlx::sqlite::SqlitePoolOptions;
@@ -31,14 +32,14 @@ fn provider_input(api_key: &str) -> CreateProviderRequest {
 #[tokio::test]
 async fn identity_credentials_are_hashed_and_provider_keys_are_encrypted() {
     let storage = test_storage().await;
-    let credential = "credential-a";
+    let credential = generate_credential();
     let registered = storage
-        .register_identity("machine-a", "S-1-5-21-100", credential)
+        .register_identity("machine-a", "S-1-5-21-100", &credential)
         .await
         .expect("register identity");
 
     assert!(storage
-        .authenticate_identity(credential)
+        .authenticate_identity(&credential)
         .await
         .expect("authenticate credential")
         .is_some());
@@ -93,13 +94,15 @@ async fn identity_credentials_are_hashed_and_provider_keys_are_encrypted() {
 #[tokio::test]
 async fn registration_retries_only_when_the_client_credential_matches() {
     let storage = test_storage().await;
+    let credential_a = generate_credential();
+    let credential_b = generate_credential();
 
     let created = storage
-        .register_identity("machine-a", "S-1-5-21-100", "credential-a")
+        .register_identity("machine-a", "S-1-5-21-100", &credential_a)
         .await
         .unwrap();
     let retried = storage
-        .register_identity("machine-a", "S-1-5-21-100", "credential-a")
+        .register_identity("machine-a", "S-1-5-21-100", &credential_a)
         .await
         .unwrap();
 
@@ -108,7 +111,7 @@ async fn registration_retries_only_when_the_client_credential_matches() {
     assert_eq!(created.identity_id, retried.identity_id);
     assert_eq!(
         storage
-            .register_identity("machine-a", "S-1-5-21-100", "credential-b")
+            .register_identity("machine-a", "S-1-5-21-100", &credential_b)
             .await
             .unwrap_err()
             .code(),
@@ -119,10 +122,11 @@ async fn registration_retries_only_when_the_client_credential_matches() {
 #[tokio::test]
 async fn credential_rotation_rejects_a_stale_authenticated_credential_hash() {
     let storage = test_storage().await;
-    let current_credential = "credential-a";
-    let new_credential = "credential-b";
+    let current_credential = generate_credential();
+    let new_credential = generate_credential();
+    let stale_credential = generate_credential();
     let registered = storage
-        .register_identity("machine-a", "S-1-5-21-100", current_credential)
+        .register_identity("machine-a", "S-1-5-21-100", &current_credential)
         .await
         .expect("register identity");
     let credential_hash = storage
@@ -131,23 +135,23 @@ async fn credential_rotation_rejects_a_stale_authenticated_credential_hash() {
         .expect("load authenticated credential hash");
 
     let rotated = storage
-        .rotate_identity_credential(&registered.identity_id, &credential_hash, new_credential)
+        .rotate_identity_credential(&registered.identity_id, &credential_hash, &new_credential)
         .await
         .expect("rotate with the authenticated credential hash");
     let stale_rotation = storage
-        .rotate_identity_credential(&registered.identity_id, &credential_hash, "credential-c")
+        .rotate_identity_credential(&registered.identity_id, &credential_hash, &stale_credential)
         .await
         .expect_err("reject stale authenticated credential hash");
 
     assert_eq!(stale_rotation.code(), ProtocolErrorCode::InvalidCredential);
     assert!(rotated.rotated);
     assert!(storage
-        .authenticate_identity(current_credential)
+        .authenticate_identity(&current_credential)
         .await
         .expect("reject old credential")
         .is_none());
     assert!(storage
-        .authenticate_identity(new_credential)
+        .authenticate_identity(&new_credential)
         .await
         .expect("authenticate rotated credential")
         .is_some());
@@ -187,12 +191,14 @@ async fn foreign_keys_are_enforced_after_multiple_pool_checkouts() {
 #[tokio::test]
 async fn provider_key_reads_are_scoped_to_the_identity() {
     let storage = test_storage().await;
+    let credential_a = generate_credential();
+    let credential_b = generate_credential();
     let identity_a = storage
-        .register_identity("machine-a", "S-1-5-21-100", "credential-a")
+        .register_identity("machine-a", "S-1-5-21-100", &credential_a)
         .await
         .expect("register identity A");
     let identity_b = storage
-        .register_identity("machine-b", "S-1-5-21-200", "credential-b")
+        .register_identity("machine-b", "S-1-5-21-200", &credential_b)
         .await
         .expect("register identity B");
     let provider_a = storage
@@ -236,20 +242,22 @@ async fn provider_key_reads_are_scoped_to_the_identity() {
 #[tokio::test]
 async fn stable_key_rejects_a_different_client_credential() {
     let storage = test_storage().await;
+    let credential_a = generate_credential();
+    let credential_b = generate_credential();
     let created = storage
-        .register_identity("machine-a", "S-1-5-21-100", "credential-a")
+        .register_identity("machine-a", "S-1-5-21-100", &credential_a)
         .await
         .expect("register identity");
 
     let retried = storage
-        .register_identity("machine-a", "S-1-5-21-100", "credential-a")
+        .register_identity("machine-a", "S-1-5-21-100", &credential_a)
         .await
         .expect("retry matching registration");
     assert!(!retried.created);
     assert_eq!(retried.identity_id, created.identity_id);
 
     let error = storage
-        .register_identity("machine-a", "S-1-5-21-100", "credential-b")
+        .register_identity("machine-a", "S-1-5-21-100", &credential_b)
         .await
         .expect_err("reject duplicate stable identity key");
     assert_eq!(error.code(), ProtocolErrorCode::IdentityAlreadyRegistered);

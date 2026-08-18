@@ -3,7 +3,9 @@ use provider_relay_protocol::{CreateIdentityResponse, RotateCredentialResponse};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use crate::identity::credential::{credential_hashes_match, hash_credential};
+use crate::identity::credential::{
+    credential_hashes_match, hash_credential, is_valid_device_credential,
+};
 
 use super::StorageError;
 
@@ -19,6 +21,7 @@ pub(crate) async fn register(
     account_sid: &str,
     credential: &str,
 ) -> Result<CreateIdentityResponse, StorageError> {
+    validate_device_credential(credential)?;
     let identity_id = Uuid::new_v4().to_string();
     let credential_hash = hash_credential(credential);
     let now = Utc::now().to_rfc3339();
@@ -90,6 +93,7 @@ pub(crate) async fn rotate_credential(
     authenticated_credential_hash: &str,
     new_credential: &str,
 ) -> Result<RotateCredentialResponse, StorageError> {
+    validate_device_credential(new_credential)?;
     let result = sqlx::query(
         "UPDATE identities SET credential_hash = ?, last_active_at = ? \
              WHERE id = ? AND credential_hash = ?",
@@ -104,6 +108,15 @@ pub(crate) async fn rotate_credential(
         return Err(StorageError::InvalidCredential);
     }
     Ok(RotateCredentialResponse { rotated: true })
+}
+
+fn validate_device_credential(credential: &str) -> Result<(), StorageError> {
+    if is_valid_device_credential(credential) {
+        return Ok(());
+    }
+    Err(StorageError::ValidationFailed(
+        "device credential must be a 32-byte URL-safe Base64 value".to_string(),
+    ))
 }
 
 pub(crate) async fn credential_hash(

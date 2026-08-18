@@ -4,6 +4,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use provider_relay_protocol::{
     CreateIdentityRequest, CreateProviderRequest, ModelStatsSummary, ProviderStatsSummary,
     RequestLogSummary, StatsOverview,
@@ -59,7 +60,7 @@ async fn request_status(
 }
 
 async fn register(app: &axum::Router, machine_id: &str, account_sid: &str) -> serde_json::Value {
-    let credential = format!("credential-{machine_id}-{account_sid}");
+    let credential = valid_credential(&format!("{machine_id}-{account_sid}"));
     let request = CreateIdentityRequest {
         machine_id: machine_id.to_string(),
         account_sid: account_sid.to_string(),
@@ -77,6 +78,14 @@ async fn register(app: &axum::Router, machine_id: &str, account_sid: &str) -> se
     assert!(response.get("credential").is_none());
     response["credential"] = credential.into();
     response
+}
+
+fn valid_credential(seed: &str) -> String {
+    let mut bytes = [0_u8; 32];
+    for (index, byte) in seed.bytes().take(bytes.len()).enumerate() {
+        bytes[index] = byte;
+    }
+    URL_SAFE_NO_PAD.encode(bytes)
 }
 
 struct RequestLogSeed<'a> {
@@ -184,20 +193,20 @@ async fn management_credential_rotation_invalidates_the_previous_credential() {
         "POST",
         "/api/identity/credential/rotate",
         Some(credential),
-        Some(serde_json::json!({ "new_credential": "credential-rotated" })),
+        Some(serde_json::json!({ "new_credential": valid_credential("rotated") })),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(rotated["rotated"], true);
     assert!(rotated.get("credential").is_none());
-    let new_credential = "credential-rotated";
+    let new_credential = valid_credential("rotated");
 
     let (status, _): (StatusCode, serde_json::Value) = request_json(
         &app,
         "POST",
         "/api/identity/credential/rotate",
         Some(credential),
-        Some(serde_json::json!({ "new_credential": "credential-rotated-again" })),
+        Some(serde_json::json!({ "new_credential": valid_credential("rotated-again") })),
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -206,9 +215,54 @@ async fn management_credential_rotation_invalidates_the_previous_credential() {
         request_json(&app, "GET", "/api/providers", Some(credential), None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     let (status, providers): (StatusCode, Vec<serde_json::Value>) =
-        request_json(&app, "GET", "/api/providers", Some(new_credential), None).await;
+        request_json(&app, "GET", "/api/providers", Some(&new_credential), None).await;
     assert_eq!(status, StatusCode::OK);
     assert!(providers.is_empty());
+}
+
+#[tokio::test]
+async fn management_identity_registration_rejects_blank_or_short_credentials() {
+    let app = app::router(test_state().await).await.expect("build app");
+
+    for credential in ["", "credential-too-short"] {
+        let request = CreateIdentityRequest {
+            machine_id: format!("machine-{credential}"),
+            account_sid: "S-1-5-21-100".to_string(),
+            credential: credential.to_string(),
+        };
+        let (status, error): (StatusCode, serde_json::Value) = request_json(
+            &app,
+            "POST",
+            "/api/identities",
+            None,
+            Some(serde_json::to_value(request).expect("serialize identity request")),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(error["error"]["code"], "validation_failed");
+    }
+}
+
+#[tokio::test]
+async fn management_credential_rotation_rejects_blank_or_short_credentials() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let identity = register(&app, "machine-a", "S-1-5-21-100").await;
+    let credential = identity["credential"].as_str().expect("credential");
+
+    for new_credential in ["", "credential-too-short"] {
+        let (status, error): (StatusCode, serde_json::Value) = request_json(
+            &app,
+            "POST",
+            "/api/identity/credential/rotate",
+            Some(credential),
+            Some(serde_json::json!({ "new_credential": new_credential })),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(error["error"]["code"], "validation_failed");
+    }
 }
 
 #[tokio::test]

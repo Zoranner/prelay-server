@@ -21,7 +21,7 @@ pub async fn create_identity(
         .register_identity(
             request.machine_id.trim(),
             request.account_sid.trim(),
-            request.credential.trim(),
+            &request.credential,
         )
         .await?;
     let status = if response.created {
@@ -43,7 +43,7 @@ pub async fn rotate_credential(
             .rotate_identity_credential(
                 &identity.id,
                 &identity.credential_hash,
-                request.new_credential.trim(),
+                &request.new_credential,
             )
             .await?,
     ))

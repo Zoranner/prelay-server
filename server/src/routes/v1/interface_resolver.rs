@@ -61,7 +61,7 @@ pub(crate) async fn create_test_interface_auth(
         .register_identity(
             "test-machine",
             &uuid::Uuid::new_v4().to_string(),
-            "test-credential",
+            &crate::identity::credential::generate_credential(),
         )
         .await
         .expect("register identity");
@@ -107,7 +107,7 @@ pub(crate) async fn create_empty_test_interface_auth(db: &sqlx::SqlitePool) -> T
         .register_identity(
             "test-machine",
             &uuid::Uuid::new_v4().to_string(),
-            "test-credential",
+            &crate::identity::credential::generate_credential(),
         )
         .await
         .expect("register identity");

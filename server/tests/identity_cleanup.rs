@@ -1,6 +1,9 @@
 use chrono::{Duration, TimeZone, Utc};
 use provider_relay_protocol::{CreateInterfaceRequest, CreateProviderRequest, InterfaceModelInput};
-use provider_relay_server::storage::{MasterKey, Storage};
+use provider_relay_server::{
+    identity::credential::generate_credential,
+    storage::{MasterKey, Storage},
+};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
 async fn test_storage() -> (Storage, SqlitePool) {
@@ -123,7 +126,7 @@ async fn owned_resource_count(pool: &SqlitePool, identity_id: &str) -> i64 {
 async fn cleanup_removes_inactive_identity_and_all_owned_data() {
     let (storage, pool) = test_storage().await;
     let identity = storage
-        .register_identity("machine-a", "S-1-5-21-100", "credential-a")
+        .register_identity("machine-a", "S-1-5-21-100", &generate_credential())
         .await
         .expect("register identity");
     let provider_id = storage
@@ -233,11 +236,11 @@ async fn cleanup_removes_inactive_identity_and_all_owned_data() {
 async fn cleanup_removes_identity_at_retention_cutoff_only() {
     let (storage, pool) = test_storage().await;
     let expires_at_cutoff = storage
-        .register_identity("machine-at-cutoff", "S-1-5-21-101", "credential-at-cutoff")
+        .register_identity("machine-at-cutoff", "S-1-5-21-101", &generate_credential())
         .await
         .expect("register identity at cutoff");
     let remains_active = storage
-        .register_identity("machine-newer", "S-1-5-21-102", "credential-newer")
+        .register_identity("machine-newer", "S-1-5-21-102", &generate_credential())
         .await
         .expect("register newer identity");
     let now = Utc
