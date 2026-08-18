@@ -30,7 +30,7 @@ impl IdentitySource for FakeWindowsIdentity {
 #[test]
 fn bootstrap_only_exposes_display_identity_and_credential_status() {
     let identity = FakeWindowsIdentity::new("machine-a", "S-1-5-21-100");
-    let credentials = MemoryCredentialStore::with_secret("device-secret");
+    let credentials = MemoryCredentialStore::with_record("device-secret", None);
     let api_client =
         ApiClient::new("https://relay.example.test", &credentials).expect("create API client");
 

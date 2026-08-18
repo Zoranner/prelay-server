@@ -36,17 +36,18 @@ pub async fn credential_rotate(
         .credentials
         .load()
         .map_err(|error| ClientError::new("credential_store_error", error))?
-        .filter(|credential| !credential.trim().is_empty())
+        .filter(|record| !record.current.trim().is_empty())
         .ok_or_else(|| {
             ClientError::new(
                 ClientError::MISSING_DEVICE_CREDENTIAL,
                 "device credential is unavailable; identity cannot be restored automatically",
             )
-        })?;
+        })?
+        .current;
     let new_credential = generate_device_credential();
     state
         .credentials
-        .save(&new_credential)
+        .begin_rotation(&new_credential)
         .map_err(|error| ClientError::new("credential_store_error", error))?;
     let response: provider_relay_protocol::RotateCredentialResponse = client
         .post_with_credential(
@@ -56,6 +57,10 @@ pub async fn credential_rotate(
         )
         .await?;
     debug_assert!(response.rotated);
+    state
+        .credentials
+        .confirm_pending()
+        .map_err(|error| ClientError::new("credential_store_error", error))?;
     Ok(OperationStatus {
         message: "device credential rotated".to_string(),
     })

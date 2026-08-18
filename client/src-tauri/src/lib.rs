@@ -1,5 +1,7 @@
 //! Provider Relay desktop client crate.
 
+use tauri::Manager;
+
 pub mod api_client;
 pub mod autostart;
 pub mod commands;
@@ -9,17 +11,27 @@ pub mod tray;
 
 pub struct NativeState {
     pub identity: identity::WindowsIdentitySource,
-    pub credentials: credential_store::WindowsCredentialStore,
+    pub credentials: credential_store::FileCredentialStore,
     pub registration_gate: api_client::RegistrationGate,
+}
+
+impl NativeState {
+    pub fn for_app_data_dir(app_data_dir: std::path::PathBuf) -> Self {
+        Self {
+            identity: identity::WindowsIdentitySource,
+            credentials: credential_store::FileCredentialStore::at(
+                app_data_dir
+                    .join("Provider Relay")
+                    .join("device-credential.json"),
+            ),
+            registration_gate: api_client::RegistrationGate::default(),
+        }
+    }
 }
 
 impl Default for NativeState {
     fn default() -> Self {
-        Self {
-            identity: identity::WindowsIdentitySource,
-            credentials: credential_store::WindowsCredentialStore,
-            registration_gate: api_client::RegistrationGate::default(),
-        }
+        Self::for_app_data_dir(std::env::temp_dir())
     }
 }
 
@@ -30,7 +42,6 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .manage(NativeState::default())
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap::bootstrap,
             commands::providers::providers_list,
@@ -50,6 +61,8 @@ pub fn run() {
             commands::credential_rotate
         ])
         .setup(|app| {
+            let app_data_dir = app.path().app_data_dir()?;
+            app.manage(NativeState::for_app_data_dir(app_data_dir));
             autostart::enable(app.handle()).map_err(std::io::Error::other)?;
             tray::install(app.handle())?;
             Ok(())

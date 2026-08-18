@@ -6,7 +6,10 @@ use rand::RngCore;
 use reqwest::{header::AUTHORIZATION, Method, StatusCode};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::{credential_store::CredentialStore, identity::WindowsIdentity};
+use crate::{
+    credential_store::{CredentialRecord, CredentialStore},
+    identity::WindowsIdentity,
+};
 
 pub const DEFAULT_RELAY_URL: &str = "https://relay.rd.kim";
 
@@ -46,12 +49,7 @@ pub struct PreparedRequest {
 }
 
 #[derive(Default)]
-pub struct RegistrationGate(tokio::sync::Mutex<RegistrationState>);
-
-#[derive(Default)]
-struct RegistrationState {
-    registered: bool,
-}
+pub struct RegistrationGate(tokio::sync::Mutex<()>);
 
 impl PreparedRequest {
     pub fn url(&self) -> &str {
@@ -93,7 +91,7 @@ impl<'a> ApiClient<'a> {
             .credential_store
             .load()
             .map_err(credential_store_error)?
-            .is_some_and(|credential| !credential.trim().is_empty()))
+            .is_some_and(|record| !record.current.trim().is_empty()))
     }
 
     pub fn authenticated_request(
@@ -104,7 +102,7 @@ impl<'a> ApiClient<'a> {
         Method::from_bytes(method.as_bytes()).map_err(|_| {
             ClientError::new("invalid_request", "management request method is invalid")
         })?;
-        let credential = self.load_credential()?;
+        let credential = self.load_credential_record()?.preferred().to_owned();
         Ok(PreparedRequest {
             url: self.url(path)?,
             authorization: format!("Bearer {credential}"),
@@ -112,34 +110,38 @@ impl<'a> ApiClient<'a> {
     }
 
     pub async fn ensure_registered(&self, identity: &WindowsIdentity) -> Result<(), ClientError> {
-        let stored_credential = self
+        let record = match self
             .credential_store
             .load()
             .map_err(credential_store_error)?
-            .filter(|credential| !credential.trim().is_empty());
-        let credential = match stored_credential {
-            Some(credential) => credential,
-            None => {
-                let credential = generate_device_credential();
-                self.credential_store
-                    .save(&credential)
-                    .map_err(credential_store_error)?;
-                credential
-            }
+        {
+            Some(record) => record,
+            None => self
+                .credential_store
+                .save_initial(&generate_device_credential())
+                .map_err(credential_store_error)?,
         };
-        let _: CreateIdentityResponse = self
-            .send_json(
-                Method::POST,
-                "/api/identities",
-                Some(&CreateIdentityRequest {
-                    machine_id: identity.machine_id.clone(),
-                    account_sid: identity.account_sid.clone(),
-                    credential,
-                }),
-                None,
-            )
-            .await?;
-        Ok(())
+
+        if let Some(pending) = record.pending {
+            match self.register_identity(identity, pending).await {
+                Ok(()) => {
+                    self.credential_store
+                        .confirm_pending()
+                        .map_err(credential_store_error)?;
+                    return Ok(());
+                }
+                Err(error) if error.code() == "identity_already_registered" => {
+                    self.register_identity(identity, record.current).await?;
+                    self.credential_store
+                        .discard_pending()
+                        .map_err(credential_store_error)?;
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        self.register_identity(identity, record.current).await
     }
 
     pub async fn ensure_registered_once(
@@ -147,17 +149,12 @@ impl<'a> ApiClient<'a> {
         identity: &WindowsIdentity,
         gate: &RegistrationGate,
     ) -> Result<(), ClientError> {
-        let mut state = gate.0.lock().await;
-        if state.registered {
-            return Ok(());
-        }
-        self.ensure_registered(identity).await?;
-        state.registered = true;
-        Ok(())
+        let _guard = gate.0.lock().await;
+        self.ensure_registered(identity).await
     }
 
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, ClientError> {
-        self.send_json::<T, ()>(Method::GET, path, None, Some(self.load_credential()?))
+        self.send_authenticated_json::<T, ()>(Method::GET, path, None)
             .await
     }
 
@@ -166,13 +163,8 @@ impl<'a> ApiClient<'a> {
         path: &str,
         body: &B,
     ) -> Result<T, ClientError> {
-        self.send_json(
-            Method::POST,
-            path,
-            Some(body),
-            Some(self.load_credential()?),
-        )
-        .await
+        self.send_authenticated_json(Method::POST, path, Some(body))
+            .await
     }
 
     pub async fn post_with_credential<T: DeserializeOwned, B: Serialize + ?Sized>(
@@ -190,20 +182,115 @@ impl<'a> ApiClient<'a> {
         path: &str,
         body: &B,
     ) -> Result<T, ClientError> {
-        self.send_json(
-            Method::PATCH,
-            path,
-            Some(body),
-            Some(self.load_credential()?),
-        )
-        .await
+        self.send_authenticated_json(Method::PATCH, path, Some(body))
+            .await
     }
 
     pub async fn delete(&self, path: &str) -> Result<(), ClientError> {
-        let credential = self.load_credential()?;
+        self.send_authenticated_empty(Method::DELETE, path).await
+    }
+
+    fn load_credential_record(&self) -> Result<CredentialRecord, ClientError> {
+        self.credential_store
+            .load()
+            .map_err(credential_store_error)?
+            .filter(|record| !record.current.trim().is_empty())
+            .ok_or_else(|| {
+                ClientError::new(
+                    ClientError::MISSING_DEVICE_CREDENTIAL,
+                    "device credential is unavailable; identity cannot be restored automatically",
+                )
+            })
+    }
+
+    async fn register_identity(
+        &self,
+        identity: &WindowsIdentity,
+        credential: String,
+    ) -> Result<(), ClientError> {
+        let _: CreateIdentityResponse = self
+            .send_json(
+                Method::POST,
+                "/api/identities",
+                Some(&CreateIdentityRequest {
+                    machine_id: identity.machine_id.clone(),
+                    account_sid: identity.account_sid.clone(),
+                    credential,
+                }),
+                None,
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn send_authenticated_json<T: DeserializeOwned, B: Serialize + ?Sized>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&B>,
+    ) -> Result<T, ClientError> {
+        let record = self.load_credential_record()?;
+        let preferred = record.preferred().to_owned();
+        match self
+            .send_json(method.clone(), path, body, Some(preferred))
+            .await
+        {
+            Ok(value) => {
+                if record.pending.is_some() {
+                    self.credential_store
+                        .confirm_pending()
+                        .map_err(credential_store_error)?;
+                }
+                Ok(value)
+            }
+            Err(error) if record.pending.is_some() && error.code() == "invalid_credential" => {
+                let value = self
+                    .send_json(method, path, body, Some(record.current))
+                    .await?;
+                self.credential_store
+                    .discard_pending()
+                    .map_err(credential_store_error)?;
+                Ok(value)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn send_authenticated_empty(
+        &self,
+        method: Method,
+        path: &str,
+    ) -> Result<(), ClientError> {
+        let record = self.load_credential_record()?;
+        let preferred = record.preferred().to_owned();
+        match self.send_empty(method.clone(), path, preferred).await {
+            Ok(()) => {
+                if record.pending.is_some() {
+                    self.credential_store
+                        .confirm_pending()
+                        .map_err(credential_store_error)?;
+                }
+                Ok(())
+            }
+            Err(error) if record.pending.is_some() && error.code() == "invalid_credential" => {
+                self.send_empty(method, path, record.current).await?;
+                self.credential_store
+                    .discard_pending()
+                    .map_err(credential_store_error)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn send_empty(
+        &self,
+        method: Method,
+        path: &str,
+        credential: String,
+    ) -> Result<(), ClientError> {
         let response = self
             .http
-            .delete(self.url(path)?)
+            .request(method, self.url(path)?)
             .header(AUTHORIZATION, format!("Bearer {credential}"))
             .send()
             .await
@@ -213,19 +300,6 @@ impl<'a> ApiClient<'a> {
         } else {
             Err(response_error(response).await)
         }
-    }
-
-    fn load_credential(&self) -> Result<String, ClientError> {
-        self.credential_store
-            .load()
-            .map_err(credential_store_error)?
-            .filter(|credential| !credential.trim().is_empty())
-            .ok_or_else(|| {
-                ClientError::new(
-                    ClientError::MISSING_DEVICE_CREDENTIAL,
-                    "device credential is unavailable; identity cannot be restored automatically",
-                )
-            })
     }
 
     async fn send_json<T: DeserializeOwned, B: Serialize + ?Sized>(
@@ -262,6 +336,12 @@ impl<'a> ApiClient<'a> {
             ));
         }
         Ok(format!("{}{}", self.base_url, path))
+    }
+}
+
+impl CredentialRecord {
+    fn preferred(&self) -> &str {
+        self.pending.as_deref().unwrap_or(&self.current)
     }
 }
 

@@ -16,7 +16,7 @@ use std::{
 
 #[test]
 fn management_request_reads_credential_store_and_uses_bearer_authorization() {
-    let store = MemoryCredentialStore::with_secret("device-secret");
+    let store = MemoryCredentialStore::with_record("device-secret", None);
     let client = ApiClient::new("https://relay.example.test/", &store).expect("create client");
 
     let request = client
@@ -48,14 +48,14 @@ fn api_client_reports_whether_a_device_credential_is_stored() {
         .has_stored_credential()
         .expect("read empty credential store"));
 
-    let populated_store = MemoryCredentialStore::with_secret("device-secret");
+    let populated_store = MemoryCredentialStore::with_record("device-secret", None);
     let populated_client =
         ApiClient::new("https://relay.example.test", &populated_store).expect("create client");
     assert!(populated_client
         .has_stored_credential()
         .expect("read populated credential store"));
 
-    let empty_value_store = MemoryCredentialStore::with_secret("   ");
+    let empty_value_store = MemoryCredentialStore::with_record("   ", None);
     let empty_value_client =
         ApiClient::new("https://relay.example.test", &empty_value_store).expect("create client");
     assert!(!empty_value_client
@@ -87,7 +87,7 @@ fn first_registration_persists_and_sends_a_client_generated_credential() {
         .load()
         .expect("load credential")
         .expect("client credential is persisted");
-    assert!(credential.len() >= 43);
+    assert!(credential.current.len() >= 43);
 }
 
 #[test]
@@ -110,6 +110,7 @@ fn existing_identity_keeps_the_client_generated_credential_for_a_retry() {
             .load()
             .expect("load credential")
             .expect("persisted credential")
+            .current
             .len()
             >= 43
     );
@@ -119,7 +120,7 @@ fn existing_identity_keeps_the_client_generated_credential_for_a_retry() {
 fn stored_credential_retries_registration_with_the_same_identity() {
     let requests = Arc::new(AtomicUsize::new(0));
     let (base_url, server) = registration_server(requests.clone());
-    let store = MemoryCredentialStore::with_secret("persisted-device-secret");
+    let store = MemoryCredentialStore::with_record("persisted-device-secret", None);
     let client = ApiClient::new(base_url, &store).expect("create client");
 
     tauri::async_runtime::block_on(client.ensure_registered(&identity()))
@@ -129,7 +130,10 @@ fn stored_credential_retries_registration_with_the_same_identity() {
     assert_eq!(requests.load(Ordering::SeqCst), 1);
     assert_eq!(
         store.load().expect("load credential"),
-        Some("persisted-device-secret".into())
+        Some(provider_relay_client::credential_store::CredentialRecord {
+            current: "persisted-device-secret".into(),
+            pending: None,
+        })
     );
     let request = captured_requests
         .first()
@@ -161,8 +165,158 @@ fn failed_registration_retries_with_the_persisted_credential() {
     for request in requests {
         assert!(request.contains("\"machine_id\":\"machine-a\""));
         assert!(request.contains("\"account_sid\":\"S-1-5-21-100\""));
-        assert!(request.contains(&format!("\"credential\":\"{credential}\"")));
+        assert!(request.contains(&format!("\"credential\":\"{}\"", credential.current)));
     }
+}
+
+#[test]
+fn registration_gate_serializes_calls_without_caching_registration_state() {
+    let (base_url, server) = two_registration_response_server();
+    let store = MemoryCredentialStore::with_record("persisted-device-secret", None);
+    let gate = RegistrationGate::default();
+    let client = ApiClient::new(base_url, &store).expect("create client");
+
+    tauri::async_runtime::block_on(client.ensure_registered_once(&identity(), &gate))
+        .expect("first registration confirmation succeeds");
+    tauri::async_runtime::block_on(client.ensure_registered_once(&identity(), &gate))
+        .expect("second registration confirmation succeeds");
+
+    assert_eq!(server.join().expect("join test relay"), 2);
+}
+
+#[test]
+fn pending_credential_registration_confirms_a_rotation_whose_response_was_lost() {
+    let (base_url, server) = two_response_server(
+        [
+            ("200 OK", r#"{"identity_id":"identity-a","created":false}"#),
+            ("200 OK", r#"{}"#),
+        ],
+        |requests| {
+            assert!(requests[0].starts_with("POST /api/identities HTTP/1.1"));
+            assert!(requests[0].contains("\"credential\":\"credential-new\""));
+            assert!(requests[1].contains("Authorization: Bearer credential-new"));
+        },
+    );
+    let store = MemoryCredentialStore::with_record("credential-old", Some("credential-new"));
+    let client = ApiClient::new(base_url, &store).expect("create client");
+
+    tauri::async_runtime::block_on(client.ensure_registered(&identity()))
+        .expect("pending credential confirms existing identity");
+    tauri::async_runtime::block_on(client.get::<serde_json::Value>("/api/providers"))
+        .expect("confirmed credential authenticates requests");
+    server.join().expect("join test relay");
+
+    assert_eq!(
+        store.load().expect("load credential"),
+        Some(provider_relay_client::credential_store::CredentialRecord {
+            current: "credential-new".into(),
+            pending: None,
+        })
+    );
+}
+
+#[test]
+fn rejected_pending_registration_falls_back_to_current_credential() {
+    let (base_url, server) = two_response_server(
+        [
+            (
+                "400 Bad Request",
+                r#"{"error":{"code":"identity_already_registered","message":"already registered"}}"#,
+            ),
+            ("200 OK", r#"{"identity_id":"identity-a","created":false}"#),
+        ],
+        |requests| {
+            assert!(requests[0].contains("\"credential\":\"credential-new\""));
+            assert!(requests[1].contains("\"credential\":\"credential-old\""));
+        },
+    );
+    let store = MemoryCredentialStore::with_record("credential-old", Some("credential-new"));
+    let client = ApiClient::new(base_url, &store).expect("create client");
+
+    tauri::async_runtime::block_on(client.ensure_registered(&identity()))
+        .expect("current credential confirms the unrotated identity");
+    server.join().expect("join test relay");
+
+    assert_eq!(
+        store.load().expect("load credential"),
+        Some(provider_relay_client::credential_store::CredentialRecord {
+            current: "credential-old".into(),
+            pending: None,
+        })
+    );
+}
+
+#[test]
+fn accepted_pending_credential_becomes_current_after_an_authenticated_request() {
+    let (base_url, server) = one_response_server("200 OK", r#"{}"#, |request| {
+        assert!(request.contains("Authorization: Bearer credential-new"));
+    });
+    let store = MemoryCredentialStore::with_record("credential-old", Some("credential-new"));
+    let client = ApiClient::new(base_url, &store).expect("create client");
+
+    tauri::async_runtime::block_on(client.get::<serde_json::Value>("/api/providers"))
+        .expect("pending credential is accepted");
+    server.join().expect("join test relay");
+
+    assert_eq!(
+        store.load().expect("load credential"),
+        Some(provider_relay_client::credential_store::CredentialRecord {
+            current: "credential-new".into(),
+            pending: None,
+        })
+    );
+}
+
+#[test]
+fn rejected_pending_credential_falls_back_to_current_and_is_discarded() {
+    let (base_url, server) = two_response_server(
+        [
+            ("401 Unauthorized", r#"{"error":"invalid credential"}"#),
+            ("200 OK", r#"{}"#),
+        ],
+        |requests| {
+            assert!(requests[0].contains("Authorization: Bearer credential-new"));
+            assert!(requests[1].contains("Authorization: Bearer credential-old"));
+        },
+    );
+    let store = MemoryCredentialStore::with_record("credential-old", Some("credential-new"));
+    let client = ApiClient::new(base_url, &store).expect("create client");
+
+    tauri::async_runtime::block_on(client.get::<serde_json::Value>("/api/providers"))
+        .expect("current credential recovers the request");
+    server.join().expect("join test relay");
+
+    assert_eq!(
+        store.load().expect("load credential"),
+        Some(provider_relay_client::credential_store::CredentialRecord {
+            current: "credential-old".into(),
+            pending: None,
+        })
+    );
+}
+
+#[test]
+fn server_failure_preserves_pending_credential_for_later_recovery() {
+    let (base_url, server) = one_response_server(
+        "500 Internal Server Error",
+        r#"{"error":{"code":"internal","message":"ignored"}}"#,
+        |request| assert!(request.contains("Authorization: Bearer credential-new")),
+    );
+    let store = MemoryCredentialStore::with_record("credential-old", Some("credential-new"));
+    let client = ApiClient::new(base_url, &store).expect("create client");
+
+    let error = tauri::async_runtime::block_on(client.get::<serde_json::Value>("/api/providers"))
+        .expect_err("server failure must fail the request");
+    server.join().expect("join test relay");
+
+    assert_eq!(error.code(), "internal");
+    assert_eq!(
+        store.load().expect("load credential"),
+        Some(provider_relay_client::credential_store::CredentialRecord {
+            current: "credential-old".into(),
+            pending: Some("credential-new".into()),
+        })
+    );
 }
 
 #[test]
@@ -172,7 +326,7 @@ fn management_request_preserves_nested_server_error_message() {
         r#"{"error":{"code":"unsupported_protocol","message":"provider does not support messages"}}"#,
         |request| assert!(request.starts_with("POST /api/providers HTTP/1.1")),
     );
-    let store = MemoryCredentialStore::with_secret("device-secret");
+    let store = MemoryCredentialStore::with_record("device-secret", None);
     let client = ApiClient::new(base_url, &store).expect("create client");
 
     let error = tauri::async_runtime::block_on(
@@ -192,7 +346,7 @@ fn management_request_preserves_string_server_error() {
         r#"{"error":"provider does not have any models"}"#,
         |request| assert!(request.starts_with("POST /api/providers HTTP/1.1")),
     );
-    let store = MemoryCredentialStore::with_secret("device-secret");
+    let store = MemoryCredentialStore::with_record("device-secret", None);
     let client = ApiClient::new(base_url, &store).expect("create client");
 
     let error = tauri::async_runtime::block_on(
@@ -212,7 +366,7 @@ fn management_request_hides_structured_server_error_message_on_internal_failure(
         r#"{"error":{"code":"internal","message":"database error: no such table: identity_provider_configs"}}"#,
         |request| assert!(request.starts_with("POST /api/providers HTTP/1.1")),
     );
-    let store = MemoryCredentialStore::with_secret("device-secret");
+    let store = MemoryCredentialStore::with_record("device-secret", None);
     let client = ApiClient::new(base_url, &store).expect("create client");
 
     let error = tauri::async_runtime::block_on(
@@ -231,7 +385,7 @@ fn management_request_uses_safe_fallback_for_empty_string_server_error() {
         one_response_server("400 Bad Request", r#"{"error":"   "}"#, |request| {
             assert!(request.starts_with("POST /api/providers HTTP/1.1"))
         });
-    let store = MemoryCredentialStore::with_secret("device-secret");
+    let store = MemoryCredentialStore::with_record("device-secret", None);
     let client = ApiClient::new(base_url, &store).expect("create client");
 
     let error = tauri::async_runtime::block_on(
@@ -245,9 +399,8 @@ fn management_request_uses_safe_fallback_for_empty_string_server_error() {
 }
 
 #[test]
-fn concurrent_first_registration_sends_one_request_and_shares_the_client_credential() {
-    let requests = Arc::new(AtomicUsize::new(0));
-    let (base_url, server) = registration_server(requests.clone());
+fn concurrent_registration_confirmation_is_serialized_without_being_cached() {
+    let (base_url, server) = two_registration_response_server();
     let store = Arc::new(MemoryCredentialStore::default());
     let gate = Arc::new(RegistrationGate::default());
     let barrier = Arc::new(Barrier::new(3));
@@ -275,14 +428,13 @@ fn concurrent_first_registration_sends_one_request_and_shares_the_client_credent
             .expect("join registration worker")
             .expect("concurrent registration succeeds");
     }
-    server.join().expect("join test relay");
-
-    assert_eq!(requests.load(Ordering::SeqCst), 1);
+    assert_eq!(server.join().expect("join test relay"), 2);
     assert!(
         store
             .load()
             .expect("load credential")
             .expect("client credential is persisted")
+            .current
             .len()
             >= 43
     );
@@ -368,6 +520,52 @@ fn registration_server(requests: Arc<AtomicUsize>) -> (String, thread::JoinHandl
     (format!("http://{address}"), server)
 }
 
+fn two_registration_response_server() -> (String, thread::JoinHandle<usize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind test relay");
+    let address = listener.local_addr().expect("read test relay address");
+    let server = thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().expect("accept registration request");
+            let request = read_http_request(&mut stream);
+            assert!(request.starts_with("POST /api/identities HTTP/1.1"));
+            let body = r#"{"identity_id":"identity-a","created":false}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write registration response");
+        }
+        2
+    });
+    (format!("http://{address}"), server)
+}
+
+fn two_response_server(
+    responses: [(&'static str, &'static str); 2],
+    assert_requests: impl FnOnce(&[String]) + Send + 'static,
+) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind test relay");
+    let address = listener.local_addr().expect("read test relay address");
+    let server = thread::spawn(move || {
+        let mut requests = Vec::new();
+        for (status, body) in responses {
+            let (mut stream, _) = listener.accept().expect("accept relay request");
+            requests.push(read_http_request(&mut stream));
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write relay response");
+        }
+        assert_requests(&requests);
+    });
+    (format!("http://{address}"), server)
+}
+
 fn retry_registration_server() -> (String, thread::JoinHandle<Vec<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind test relay");
     let address = listener.local_addr().expect("read test relay address");
@@ -412,9 +610,12 @@ fn read_http_request(stream: &mut std::net::TcpStream) -> String {
                 .lines()
                 .find_map(|line| line.strip_prefix("Content-Length: "))
         })
-        .expect("registration request content length")
-        .parse::<usize>()
-        .expect("registration request content length is numeric");
+        .map(|value| {
+            value
+                .parse::<usize>()
+                .expect("registration request content length is numeric")
+        })
+        .unwrap_or_default();
     while request.len() < header_end + content_length {
         let read = stream
             .read(&mut chunk)
