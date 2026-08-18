@@ -1,10 +1,10 @@
 export interface ProviderOperationResult {
   ok: boolean;
-  latency_ms?: number | null;
-  first_token_ms?: number | null;
-  error?: string | null;
-  message?: string | null;
-  models?: string[] | null;
+  protocol: string | null;
+  latency_ms: number | null;
+  first_token_ms: number | null;
+  error: string | null;
+  models: string[] | null;
 }
 
 export interface ProviderOperationFeedback {
@@ -25,7 +25,7 @@ export function getProviderOperationFeedback(
   if (!result.ok) {
     return {
       success: false,
-      message: result.error?.trim() || result.message?.trim() || "操作失败。",
+      message: result.error?.trim() || "操作失败。",
       metrics: metrics.join("；") || null,
     };
   }
@@ -35,7 +35,9 @@ export function getProviderOperationFeedback(
     message:
       models.length > 0
         ? `发现模型：${models.join("、")}`
-        : result.message?.trim() || "操作完成。",
+        : result.protocol
+          ? `${result.protocol} 协议测试完成。`
+          : "操作完成。",
     metrics: metrics.join("；") || null,
   };
 }
