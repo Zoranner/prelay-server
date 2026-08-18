@@ -4,7 +4,8 @@ use axum::{
     Json,
 };
 use provider_relay_protocol::{
-    CreateIdentityRequest, CreateIdentityResponse, RotateCredentialResponse,
+    CreateIdentityRequest, CreateIdentityResponse, RotateCredentialRequest,
+    RotateCredentialResponse,
 };
 
 use crate::{error::AppError, AppState};
@@ -17,19 +18,33 @@ pub async fn create_identity(
 ) -> Result<(StatusCode, Json<CreateIdentityResponse>), AppError> {
     let response = state
         .storage
-        .register_identity(request.machine_id.trim(), request.account_sid.trim())
+        .register_identity(
+            request.machine_id.trim(),
+            request.account_sid.trim(),
+            request.credential.trim(),
+        )
         .await?;
-    Ok((StatusCode::CREATED, Json(response)))
+    let status = if response.created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, Json(response)))
 }
 
 pub async fn rotate_credential(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
+    Json(request): Json<RotateCredentialRequest>,
 ) -> Result<Json<RotateCredentialResponse>, AppError> {
     Ok(Json(
         state
             .storage
-            .rotate_identity_credential(&identity.id, &identity.credential_hash)
+            .rotate_identity_credential(
+                &identity.id,
+                &identity.credential_hash,
+                request.new_credential.trim(),
+            )
             .await?,
     ))
 }

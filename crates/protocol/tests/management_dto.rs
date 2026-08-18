@@ -8,7 +8,7 @@ use provider_relay_protocol::{
 use provider_relay_protocol::{
     CreateIdentityRequest, CreateIdentityResponse, CreateInterfaceRequest, CreateProviderRequest,
     InterfaceModelInput, InterfaceResponse, ProtocolErrorCode, ProviderCapabilityOverrides,
-    ProviderOperationResponse, ProviderProtocolBaseUrls, ProviderResponse,
+    ProviderOperationResponse, ProviderProtocolBaseUrls, ProviderResponse, RotateCredentialRequest,
     RotateCredentialResponse, TestProviderProtocolRequest, UpdateProviderRequest,
 };
 use serde::{de::DeserializeOwned, Serialize};
@@ -39,6 +39,7 @@ fn management_requests_round_trip_without_client_identity_id() {
     let register = CreateIdentityRequest {
         machine_id: "machine-a".into(),
         account_sid: "S-1-5-21-100".into(),
+        credential: "client-generated-credential".into(),
     };
     let provider = CreateProviderRequest {
         name: "DeepSeek".into(),
@@ -116,11 +117,12 @@ fn management_requests_round_trip_without_client_identity_id() {
 fn management_responses_and_stats_round_trip() {
     assert_json_round_trip(CreateIdentityResponse {
         identity_id: "identity-a".into(),
-        credential: "credential-once".into(),
+        created: true,
     });
-    assert_json_round_trip(RotateCredentialResponse {
-        credential: "rotated-credential-once".into(),
+    assert_json_round_trip(RotateCredentialRequest {
+        new_credential: "next-client-credential".into(),
     });
+    assert_json_round_trip(RotateCredentialResponse { rotated: true });
     assert_json_round_trip(ProviderResponse {
         id: "provider-a".into(),
         name: "DeepSeek".into(),
@@ -198,6 +200,34 @@ fn management_responses_and_stats_round_trip() {
         average_latency_ms: Some(789.0),
         average_first_token_ms: None,
     });
+}
+
+#[test]
+fn identity_credential_dtos_round_trip_without_server_issued_secret() {
+    let request = CreateIdentityRequest {
+        machine_id: "machine-a".into(),
+        account_sid: "S-1-5-21-100".into(),
+        credential: "client-generated-credential".into(),
+    };
+    let rotate = RotateCredentialRequest {
+        new_credential: "next-client-credential".into(),
+    };
+
+    assert_eq!(
+        serde_json::to_value(request).unwrap()["credential"],
+        "client-generated-credential"
+    );
+    assert_eq!(
+        serde_json::to_value(rotate).unwrap()["new_credential"],
+        "next-client-credential"
+    );
+    assert!(serde_json::to_value(CreateIdentityResponse {
+        identity_id: "identity-a".into(),
+        created: false,
+    })
+    .unwrap()
+    .get("credential")
+    .is_none());
 }
 
 #[test]

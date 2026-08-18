@@ -4,7 +4,7 @@ pub mod providers;
 pub mod stats;
 
 use crate::{
-    api_client::{ApiClient, ClientError},
+    api_client::{generate_device_credential, ApiClient, ClientError},
     credential_store::CredentialStore,
     identity::IdentitySource,
     NativeState,
@@ -32,13 +32,30 @@ pub async fn credential_rotate(
     state: tauri::State<'_, NativeState>,
 ) -> Result<OperationStatus, ClientError> {
     let client = authenticated_api(&state).await?;
-    let response: provider_relay_protocol::RotateCredentialResponse = client
-        .post("/api/identity/credential/rotate", &serde_json::json!({}))
-        .await?;
+    let current_credential = state
+        .credentials
+        .load()
+        .map_err(|error| ClientError::new("credential_store_error", error))?
+        .filter(|credential| !credential.trim().is_empty())
+        .ok_or_else(|| {
+            ClientError::new(
+                ClientError::MISSING_DEVICE_CREDENTIAL,
+                "device credential is unavailable; identity cannot be restored automatically",
+            )
+        })?;
+    let new_credential = generate_device_credential();
     state
         .credentials
-        .save(&response.credential)
+        .save(&new_credential)
         .map_err(|error| ClientError::new("credential_store_error", error))?;
+    let response: provider_relay_protocol::RotateCredentialResponse = client
+        .post_with_credential(
+            "/api/identity/credential/rotate",
+            &provider_relay_protocol::RotateCredentialRequest { new_credential },
+            &current_credential,
+        )
+        .await?;
+    debug_assert!(response.rotated);
     Ok(OperationStatus {
         message: "device credential rotated".to_string(),
     })

@@ -59,11 +59,13 @@ async fn request_status(
 }
 
 async fn register(app: &axum::Router, machine_id: &str, account_sid: &str) -> serde_json::Value {
+    let credential = format!("credential-{machine_id}-{account_sid}");
     let request = CreateIdentityRequest {
         machine_id: machine_id.to_string(),
         account_sid: account_sid.to_string(),
+        credential: credential.clone(),
     };
-    let (status, response) = request_json(
+    let (status, mut response): (StatusCode, serde_json::Value) = request_json(
         app,
         "POST",
         "/api/identities",
@@ -72,6 +74,8 @@ async fn register(app: &axum::Router, machine_id: &str, account_sid: &str) -> se
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
+    assert!(response.get("credential").is_none());
+    response["credential"] = credential.into();
     response
 }
 
@@ -180,19 +184,20 @@ async fn management_credential_rotation_invalidates_the_previous_credential() {
         "POST",
         "/api/identity/credential/rotate",
         Some(credential),
-        None,
+        Some(serde_json::json!({ "new_credential": "credential-rotated" })),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let new_credential = rotated["credential"].as_str().expect("new credential");
-    assert_ne!(credential, new_credential);
+    assert_eq!(rotated["rotated"], true);
+    assert!(rotated.get("credential").is_none());
+    let new_credential = "credential-rotated";
 
     let (status, _): (StatusCode, serde_json::Value) = request_json(
         &app,
         "POST",
         "/api/identity/credential/rotate",
         Some(credential),
-        None,
+        Some(serde_json::json!({ "new_credential": "credential-rotated-again" })),
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);

@@ -3,7 +3,7 @@ use provider_relay_protocol::{CreateIdentityResponse, RotateCredentialResponse};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use crate::identity::credential::{credential_hashes_match, generate_credential, hash_credential};
+use crate::identity::credential::{credential_hashes_match, hash_credential};
 
 use super::StorageError;
 
@@ -17,10 +17,10 @@ pub(crate) async fn register(
     pool: &SqlitePool,
     machine_id: &str,
     account_sid: &str,
+    credential: &str,
 ) -> Result<CreateIdentityResponse, StorageError> {
     let identity_id = Uuid::new_v4().to_string();
-    let credential = generate_credential();
-    let credential_hash = hash_credential(&credential);
+    let credential_hash = hash_credential(credential);
     let now = Utc::now().to_rfc3339();
     let result = sqlx::query(
         "INSERT INTO identities (id, machine_id, account_sid, credential_hash, created_at, last_active_at)\
@@ -29,7 +29,7 @@ pub(crate) async fn register(
     .bind(&identity_id)
     .bind(machine_id)
     .bind(account_sid)
-    .bind(credential_hash)
+    .bind(&credential_hash)
     .bind(&now)
     .bind(&now)
     .execute(pool)
@@ -37,10 +37,24 @@ pub(crate) async fn register(
     match result {
         Ok(_) => Ok(CreateIdentityResponse {
             identity_id,
-            credential,
+            created: true,
         }),
         Err(sqlx::Error::Database(error)) if error.is_unique_violation() => {
-            Err(StorageError::IdentityAlreadyRegistered)
+            let existing = sqlx::query_as::<_, (String, String)>(
+                "SELECT id, credential_hash FROM identities WHERE machine_id = ? AND account_sid = ?",
+            )
+            .bind(machine_id)
+            .bind(account_sid)
+            .fetch_one(pool)
+            .await?;
+            if credential_hashes_match(&existing.1, &credential_hash) {
+                Ok(CreateIdentityResponse {
+                    identity_id: existing.0,
+                    created: false,
+                })
+            } else {
+                Err(StorageError::IdentityAlreadyRegistered)
+            }
         }
         Err(error) => Err(error.into()),
     }
@@ -74,13 +88,13 @@ pub(crate) async fn rotate_credential(
     pool: &SqlitePool,
     identity_id: &str,
     authenticated_credential_hash: &str,
+    new_credential: &str,
 ) -> Result<RotateCredentialResponse, StorageError> {
-    let credential = generate_credential();
     let result = sqlx::query(
         "UPDATE identities SET credential_hash = ?, last_active_at = ? \
              WHERE id = ? AND credential_hash = ?",
     )
-    .bind(hash_credential(&credential))
+    .bind(hash_credential(new_credential))
     .bind(Utc::now().to_rfc3339())
     .bind(identity_id)
     .bind(authenticated_credential_hash)
@@ -89,7 +103,7 @@ pub(crate) async fn rotate_credential(
     if result.rows_affected() == 0 {
         return Err(StorageError::InvalidCredential);
     }
-    Ok(RotateCredentialResponse { credential })
+    Ok(RotateCredentialResponse { rotated: true })
 }
 
 pub(crate) async fn credential_hash(

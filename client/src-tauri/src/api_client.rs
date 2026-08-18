@@ -1,6 +1,8 @@
 use std::fmt;
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use provider_relay_protocol::{CreateIdentityRequest, CreateIdentityResponse};
+use rand::RngCore;
 use reqwest::{header::AUTHORIZATION, Method, StatusCode};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -109,20 +111,23 @@ impl<'a> ApiClient<'a> {
             return Ok(());
         }
 
-        let response: CreateIdentityResponse = self
+        let credential = generate_device_credential();
+        self.credential_store
+            .save(&credential)
+            .map_err(credential_store_error)?;
+        let _: CreateIdentityResponse = self
             .send_json(
                 Method::POST,
                 "/api/identities",
                 Some(&CreateIdentityRequest {
                     machine_id: identity.machine_id.clone(),
                     account_sid: identity.account_sid.clone(),
+                    credential,
                 }),
                 None,
             )
             .await?;
-        self.credential_store
-            .save(&response.credential)
-            .map_err(credential_store_error)
+        Ok(())
     }
 
     pub async fn ensure_registered_once(
@@ -151,6 +156,16 @@ impl<'a> ApiClient<'a> {
             Some(self.load_credential()?),
         )
         .await
+    }
+
+    pub async fn post_with_credential<T: DeserializeOwned, B: Serialize + ?Sized>(
+        &self,
+        path: &str,
+        body: &B,
+        credential: &str,
+    ) -> Result<T, ClientError> {
+        self.send_json(Method::POST, path, Some(body), Some(credential.to_owned()))
+            .await
     }
 
     pub async fn patch<T: DeserializeOwned, B: Serialize + ?Sized>(
@@ -231,6 +246,12 @@ impl<'a> ApiClient<'a> {
         }
         Ok(format!("{}{}", self.base_url, path))
     }
+}
+
+pub fn generate_device_credential() -> String {
+    let mut bytes = [0_u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    URL_SAFE_NO_PAD.encode(bytes)
 }
 
 pub fn configured_relay_url() -> Result<String, ClientError> {

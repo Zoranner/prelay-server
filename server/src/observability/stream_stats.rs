@@ -446,7 +446,7 @@ mod tests {
         .await
         .expect("initialize storage");
         let identity = storage
-            .register_identity("machine-1", "S-1-5-21-1")
+            .register_identity("machine-1", "S-1-5-21-1", "credential-1")
             .await
             .expect("register identity");
         (storage.pool().clone(), identity.identity_id)

@@ -70,6 +70,7 @@ async fn create_interface_for_url(
     provider_name: &str,
     base_url: &str,
 ) -> Value {
+    let credential = format!("credential-{machine_id}-{account_sid}");
     let identity = management_post(
         app,
         "/api/identities",
@@ -77,17 +78,16 @@ async fn create_interface_for_url(
         serde_json::to_value(CreateIdentityRequest {
             machine_id: machine_id.to_string(),
             account_sid: account_sid.to_string(),
+            credential: credential.clone(),
         })
         .expect("serialize identity"),
     )
     .await;
-    let credential = identity["credential"]
-        .as_str()
-        .expect("identity credential");
+    assert!(identity.get("credential").is_none());
     let provider = management_post(
         app,
         "/api/providers",
-        Some(credential),
+        Some(&credential),
         serde_json::to_value(CreateProviderRequest {
             name: provider_name.to_string(),
             provider_type: "openai_compatible".to_string(),
@@ -102,7 +102,7 @@ async fn create_interface_for_url(
     management_post(
         app,
         "/api/interfaces",
-        Some(credential),
+        Some(&credential),
         serde_json::to_value(CreateInterfaceRequest {
             name: format!("{provider_name} interface"),
             protocol: None,
@@ -169,6 +169,7 @@ async fn protocol_request_writes_identity_scoped_log_and_response_session() {
     let upstream = spawn_chat_upstream().await;
     let interface_a =
         create_interface_for_url(&app, "machine-a", "S-1-5-21-100", "provider-a", &upstream).await;
+    let credential_b = "credential-machine-b-S-1-5-21-200";
     let identity_b = management_post(
         &app,
         "/api/identities",
@@ -176,6 +177,7 @@ async fn protocol_request_writes_identity_scoped_log_and_response_session() {
         serde_json::to_value(CreateIdentityRequest {
             machine_id: "machine-b".to_string(),
             account_sid: "S-1-5-21-200".to_string(),
+            credential: credential_b.to_string(),
         })
         .expect("serialize identity B"),
     )
@@ -216,9 +218,7 @@ async fn protocol_request_writes_identity_scoped_log_and_response_session() {
     assert_eq!(log_identity, identity_id);
     assert_eq!(session_identity, identity_id);
 
-    let credential_b = identity_b["credential"]
-        .as_str()
-        .expect("identity B credential");
+    assert!(identity_b.get("credential").is_none());
     let (status, stats) = request(
         &app,
         Request::builder()

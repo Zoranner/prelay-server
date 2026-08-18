@@ -5,7 +5,10 @@ pub mod providers;
 pub mod stats;
 
 pub use error::ProtocolErrorCode;
-pub use identity::{CreateIdentityRequest, CreateIdentityResponse, RotateCredentialResponse};
+pub use identity::{
+    CreateIdentityRequest, CreateIdentityResponse, RotateCredentialRequest,
+    RotateCredentialResponse,
+};
 pub use interfaces::{
     CreateInterfaceRequest, InterfaceModelInput, InterfaceModelResponse, InterfaceResponse,
     UpdateInterfaceRequest,

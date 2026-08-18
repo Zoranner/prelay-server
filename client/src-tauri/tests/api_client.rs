@@ -64,15 +64,16 @@ fn api_client_reports_whether_a_device_credential_is_stored() {
 }
 
 #[test]
-fn first_registration_is_anonymous_and_persists_only_the_issued_credential() {
+fn first_registration_persists_and_sends_a_client_generated_credential() {
     let (base_url, server) = one_response_server(
         "201 Created",
-        r#"{"identity_id":"identity-a","credential":"issued-secret"}"#,
+        r#"{"identity_id":"identity-a","created":true}"#,
         |request| {
             assert!(request.starts_with("POST /api/identities HTTP/1.1"));
             assert!(!request.contains("Authorization:"));
             assert!(request.contains("\"machine_id\":\"machine-a\""));
             assert!(request.contains("\"account_sid\":\"S-1-5-21-100\""));
+            assert!(request.contains("\"credential\":\""));
         },
     );
     let store = MemoryCredentialStore::default();
@@ -82,14 +83,15 @@ fn first_registration_is_anonymous_and_persists_only_the_issued_credential() {
         .expect("register identity");
     server.join().expect("join test relay");
 
-    assert_eq!(
-        store.load().expect("load credential"),
-        Some("issued-secret".into())
-    );
+    let credential = store
+        .load()
+        .expect("load credential")
+        .expect("client credential is persisted");
+    assert!(credential.len() >= 43);
 }
 
 #[test]
-fn existing_identity_does_not_trigger_a_credential_recovery_retry() {
+fn existing_identity_keeps_the_client_generated_credential_for_a_retry() {
     let (base_url, server) = one_response_server(
         "400 Bad Request",
         r#"{"error":{"code":"identity_already_registered","message":"already registered"}}"#,
@@ -103,7 +105,14 @@ fn existing_identity_does_not_trigger_a_credential_recovery_retry() {
     server.join().expect("join test relay");
 
     assert_eq!(error.code(), "identity_already_registered");
-    assert_eq!(store.load().expect("load credential"), None);
+    assert!(
+        store
+            .load()
+            .expect("load credential")
+            .expect("persisted credential")
+            .len()
+            >= 43
+    );
 }
 
 #[test]
@@ -186,7 +195,7 @@ fn management_request_uses_safe_fallback_for_empty_string_server_error() {
 }
 
 #[test]
-fn concurrent_first_registration_sends_one_request_and_shares_its_credential() {
+fn concurrent_first_registration_sends_one_request_and_shares_the_client_credential() {
     let requests = Arc::new(AtomicUsize::new(0));
     let (base_url, server) = registration_server(requests.clone());
     let store = Arc::new(MemoryCredentialStore::default());
@@ -219,9 +228,13 @@ fn concurrent_first_registration_sends_one_request_and_shares_its_credential() {
     server.join().expect("join test relay");
 
     assert_eq!(requests.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        store.load().expect("load credential"),
-        Some("issued-secret".into())
+    assert!(
+        store
+            .load()
+            .expect("load credential")
+            .expect("client credential is persisted")
+            .len()
+            >= 43
     );
 }
 
@@ -273,7 +286,7 @@ fn registration_server(requests: Arc<AtomicUsize>) -> (String, thread::JoinHandl
                     let (status, body) = if request_number == 0 {
                         (
                             "201 Created",
-                            r#"{"identity_id":"identity-a","credential":"issued-secret"}"#,
+                            r#"{"identity_id":"identity-a","created":true}"#,
                         )
                     } else {
                         (

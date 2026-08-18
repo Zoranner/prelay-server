@@ -123,7 +123,7 @@ async fn owned_resource_count(pool: &SqlitePool, identity_id: &str) -> i64 {
 async fn cleanup_removes_inactive_identity_and_all_owned_data() {
     let (storage, pool) = test_storage().await;
     let identity = storage
-        .register_identity("machine-a", "S-1-5-21-100")
+        .register_identity("machine-a", "S-1-5-21-100", "credential-a")
         .await
         .expect("register identity");
     let provider_id = storage
@@ -233,11 +233,11 @@ async fn cleanup_removes_inactive_identity_and_all_owned_data() {
 async fn cleanup_removes_identity_at_retention_cutoff_only() {
     let (storage, pool) = test_storage().await;
     let expires_at_cutoff = storage
-        .register_identity("machine-at-cutoff", "S-1-5-21-101")
+        .register_identity("machine-at-cutoff", "S-1-5-21-101", "credential-at-cutoff")
         .await
         .expect("register identity at cutoff");
     let remains_active = storage
-        .register_identity("machine-newer", "S-1-5-21-102")
+        .register_identity("machine-newer", "S-1-5-21-102", "credential-newer")
         .await
         .expect("register newer identity");
     let now = Utc

@@ -138,8 +138,9 @@ impl Storage {
         &self,
         machine_id: &str,
         account_sid: &str,
+        credential: &str,
     ) -> Result<CreateIdentityResponse, StorageError> {
-        identities::register(&self.pool, machine_id, account_sid).await
+        identities::register(&self.pool, machine_id, account_sid, credential).await
     }
 
     pub async fn authenticate_identity(
@@ -153,8 +154,15 @@ impl Storage {
         &self,
         identity_id: &str,
         authenticated_credential_hash: &str,
+        new_credential: &str,
     ) -> Result<RotateCredentialResponse, StorageError> {
-        identities::rotate_credential(&self.pool, identity_id, authenticated_credential_hash).await
+        identities::rotate_credential(
+            &self.pool,
+            identity_id,
+            authenticated_credential_hash,
+            new_credential,
+        )
+        .await
     }
 
     pub async fn identity_credential_hash(

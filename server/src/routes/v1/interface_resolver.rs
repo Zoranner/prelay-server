@@ -58,7 +58,11 @@ pub(crate) async fn create_test_interface_auth(
 ) -> TestInterfaceAuth {
     let storage = test_storage(db).await;
     let identity = storage
-        .register_identity("test-machine", &uuid::Uuid::new_v4().to_string())
+        .register_identity(
+            "test-machine",
+            &uuid::Uuid::new_v4().to_string(),
+            "test-credential",
+        )
         .await
         .expect("register identity");
     let provider_id = storage
@@ -100,7 +104,11 @@ pub(crate) async fn create_test_interface_auth(
 pub(crate) async fn create_empty_test_interface_auth(db: &sqlx::SqlitePool) -> TestInterfaceAuth {
     let storage = test_storage(db).await;
     let identity = storage
-        .register_identity("test-machine", &uuid::Uuid::new_v4().to_string())
+        .register_identity(
+            "test-machine",
+            &uuid::Uuid::new_v4().to_string(),
+            "test-credential",
+        )
         .await
         .expect("register identity");
     let interface = storage
