@@ -107,6 +107,65 @@ fn existing_identity_does_not_trigger_a_credential_recovery_retry() {
 }
 
 #[test]
+fn management_request_preserves_nested_server_error_message() {
+    let (base_url, server) = one_response_server(
+        "400 Bad Request",
+        r#"{"error":{"code":"unsupported_protocol","message":"provider does not support messages"}}"#,
+        |request| assert!(request.starts_with("POST /api/providers HTTP/1.1")),
+    );
+    let store = MemoryCredentialStore::with_secret("device-secret");
+    let client = ApiClient::new(base_url, &store).expect("create client");
+
+    let error = tauri::async_runtime::block_on(
+        client.post::<serde_json::Value, _>("/api/providers", &serde_json::json!({})),
+    )
+    .expect_err("server validation failure must be returned");
+    server.join().expect("join test relay");
+
+    assert_eq!(error.code(), "unsupported_protocol");
+    assert_eq!(error.message, "provider does not support messages");
+}
+
+#[test]
+fn management_request_preserves_string_server_error() {
+    let (base_url, server) = one_response_server(
+        "400 Bad Request",
+        r#"{"error":"provider does not have any models"}"#,
+        |request| assert!(request.starts_with("POST /api/providers HTTP/1.1")),
+    );
+    let store = MemoryCredentialStore::with_secret("device-secret");
+    let client = ApiClient::new(base_url, &store).expect("create client");
+
+    let error = tauri::async_runtime::block_on(
+        client.post::<serde_json::Value, _>("/api/providers", &serde_json::json!({})),
+    )
+    .expect_err("server validation failure must be returned");
+    server.join().expect("join test relay");
+
+    assert_eq!(error.code(), "validation_failed");
+    assert_eq!(error.message, "provider does not have any models");
+}
+
+#[test]
+fn management_request_uses_safe_fallback_for_empty_string_server_error() {
+    let (base_url, server) =
+        one_response_server("400 Bad Request", r#"{"error":"   "}"#, |request| {
+            assert!(request.starts_with("POST /api/providers HTTP/1.1"))
+        });
+    let store = MemoryCredentialStore::with_secret("device-secret");
+    let client = ApiClient::new(base_url, &store).expect("create client");
+
+    let error = tauri::async_runtime::block_on(
+        client.post::<serde_json::Value, _>("/api/providers", &serde_json::json!({})),
+    )
+    .expect_err("server validation failure must be returned");
+    server.join().expect("join test relay");
+
+    assert_eq!(error.code(), "validation_failed");
+    assert_eq!(error.message, "relay rejected the management request");
+}
+
+#[test]
 fn concurrent_first_registration_sends_one_request_and_shares_its_credential() {
     let requests = Arc::new(AtomicUsize::new(0));
     let (base_url, server) = registration_server(requests.clone());

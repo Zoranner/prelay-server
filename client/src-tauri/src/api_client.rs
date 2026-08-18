@@ -261,14 +261,17 @@ fn network_error(_: reqwest::Error) -> ClientError {
 async fn response_error(response: reqwest::Response) -> ClientError {
     let status = response.status();
     let body = response.json::<ServerErrorEnvelope>().await.ok();
-    let code = body
-        .and_then(|body| body.error.code)
-        .unwrap_or_else(|| status_code(status).to_owned());
-    let message = if code == "identity_already_registered" {
-        "this Windows identity is already registered and cannot be restored automatically"
-    } else {
-        "relay rejected the management request"
-    };
+    let (server_code, server_message) =
+        body.map(|body| body.error.into_parts()).unwrap_or_default();
+    let code = server_code.unwrap_or_else(|| status_code(status).to_owned());
+    let message = server_message.unwrap_or_else(|| {
+        if code == "identity_already_registered" {
+            "this Windows identity is already registered and cannot be restored automatically"
+                .into()
+        } else {
+            "relay rejected the management request".into()
+        }
+    });
     ClientError::new(code, message)
 }
 
@@ -287,6 +290,22 @@ struct ServerErrorEnvelope {
 }
 
 #[derive(Deserialize)]
-struct ServerErrorBody {
-    code: Option<String>,
+#[serde(untagged)]
+enum ServerErrorBody {
+    Structured {
+        code: Option<String>,
+        message: Option<String>,
+    },
+    Message(String),
+}
+
+impl ServerErrorBody {
+    fn into_parts(self) -> (Option<String>, Option<String>) {
+        match self {
+            Self::Structured { code, message } => {
+                (code, message.filter(|message| !message.trim().is_empty()))
+            }
+            Self::Message(message) => (None, (!message.trim().is_empty()).then_some(message)),
+        }
+    }
 }
