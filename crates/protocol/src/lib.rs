@@ -12,6 +12,7 @@ pub use interfaces::{
 };
 pub use providers::{
     CreateProviderRequest, ProviderCapabilityOverrides, ProviderModelResponse,
-    ProviderProtocolBaseUrls, ProviderResponse, UpdateProviderRequest,
+    ProviderOperationResponse, ProviderProtocolBaseUrls, ProviderResponse,
+    TestProviderProtocolRequest, UpdateProviderRequest,
 };
 pub use stats::{ModelStatsSummary, ProviderStatsSummary, RequestLogSummary, StatsOverview};

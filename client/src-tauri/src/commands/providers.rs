@@ -1,5 +1,6 @@
 use provider_relay_protocol::{
-    CreateProviderRequest, ProviderCapabilityOverrides, ProviderResponse, UpdateProviderRequest,
+    CreateProviderRequest, ProviderCapabilityOverrides, ProviderOperationResponse,
+    ProviderResponse, TestProviderProtocolRequest, UpdateProviderRequest,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -18,22 +19,6 @@ pub struct ProviderSaveInput {
     pub api_key: String,
     pub capabilities: Option<ProviderCapabilityOverrides>,
     pub models: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct ProviderTestProtocolInput {
-    pub protocol: String,
-    pub model: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct ProviderOperationResult {
-    pub ok: bool,
-    pub latency_ms: Option<i64>,
-    pub first_token_ms: Option<i64>,
-    pub error: Option<String>,
-    pub message: Option<String>,
-    pub models: Option<Vec<String>>,
 }
 
 #[tauri::command]
@@ -102,7 +87,7 @@ pub async fn providers_delete(
 pub async fn providers_ping(
     state: State<'_, NativeState>,
     provider_id: String,
-) -> Result<ProviderOperationResult, ClientError> {
+) -> Result<ProviderOperationResponse, ClientError> {
     authenticated_api(&state)
         .await?
         .post(
@@ -116,7 +101,7 @@ pub async fn providers_ping(
 pub async fn providers_discover_models(
     state: State<'_, NativeState>,
     provider_id: String,
-) -> Result<ProviderOperationResult, ClientError> {
+) -> Result<ProviderOperationResponse, ClientError> {
     authenticated_api(&state)
         .await?
         .post(
@@ -132,12 +117,12 @@ pub async fn providers_test_protocol(
     provider_id: String,
     protocol: String,
     model: Option<String>,
-) -> Result<ProviderOperationResult, ClientError> {
+) -> Result<ProviderOperationResponse, ClientError> {
     authenticated_api(&state)
         .await?
         .post(
             &format!("/api/providers/{provider_id}/test-protocol"),
-            &ProviderTestProtocolInput { protocol, model },
+            &TestProviderProtocolRequest { protocol, model },
         )
         .await
 }

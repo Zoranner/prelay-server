@@ -788,6 +788,7 @@ async fn management_provider_protocol_test_uses_protocol_specific_upstream_base_
             "base_url": format!("http://{address}/default"),
             "api_key": "sk-protocol-override-secret",
             "capabilities": {
+                "upstream_protocols": ["openai"],
                 "protocol_base_urls": {
                     "openai": format!("http://{address}/custom/openai")
                 }
@@ -811,4 +812,100 @@ async fn management_provider_protocol_test_uses_protocol_specific_upstream_base_
     assert_eq!(response["ok"], true);
     assert_eq!(response["protocol"], "openai");
     assert!(!response.to_string().contains("sk-protocol-override-secret"));
+}
+
+#[tokio::test]
+async fn management_provider_protocol_test_rejects_a_protocol_not_configured_for_provider() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let credential = register(&app, "machine-protocol-capability", "S-1-5-21-640").await
+        ["credential"]
+        .as_str()
+        .expect("credential")
+        .to_string();
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(&credential),
+        Some(serde_json::json!({
+            "name": "Anthropic Only Provider",
+            "provider_type": "openai_compatible",
+            "base_url": "http://127.0.0.1:0",
+            "api_key": "sk-protocol-capability-secret",
+            "capabilities": { "upstream_protocols": ["anthropic"] },
+            "models": ["capability-model"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let provider_id = provider["id"].as_str().expect("provider id");
+
+    let (status, response): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        &format!("/api/providers/{provider_id}/test-protocol"),
+        Some(&credential),
+        Some(serde_json::json!({ "protocol": "openai", "model": "capability-model" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(response["error"], "协议未配置");
+}
+
+#[tokio::test]
+async fn management_provider_operations_return_success_envelopes_for_upstream_network_failures() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let credential = register(&app, "machine-upstream-failure", "S-1-5-21-650").await["credential"]
+        .as_str()
+        .expect("credential")
+        .to_string();
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(&credential),
+        Some(serde_json::json!({
+            "name": "Unavailable Provider",
+            "provider_type": "openai_compatible",
+            "base_url": "http://127.0.0.1:0",
+            "api_key": "sk-upstream-failure-secret",
+            "capabilities": { "upstream_protocols": ["openai"] },
+            "models": ["unavailable-model"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let provider_id = provider["id"].as_str().expect("provider id");
+
+    for (action, body, expected_error_prefix) in [
+        ("ping", serde_json::json!({}), "模型获取失败，上游"),
+        (
+            "discover-models",
+            serde_json::json!({}),
+            "模型获取失败，上游",
+        ),
+        (
+            "test-protocol",
+            serde_json::json!({ "protocol": "openai", "model": "unavailable-model" }),
+            "上游测试失败",
+        ),
+    ] {
+        let (status, response): (StatusCode, serde_json::Value) = request_json(
+            &app,
+            "POST",
+            &format!("/api/providers/{provider_id}/{action}"),
+            Some(&credential),
+            Some(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{action}");
+        assert_eq!(response["ok"], false, "{action}");
+        assert!(
+            response["error"]
+                .as_str()
+                .expect("operation error")
+                .starts_with(expected_error_prefix),
+            "{action}: {response}"
+        );
+    }
 }

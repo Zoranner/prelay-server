@@ -8,7 +8,8 @@ use provider_relay_protocol::{
 use provider_relay_protocol::{
     CreateIdentityRequest, CreateIdentityResponse, CreateInterfaceRequest, CreateProviderRequest,
     InterfaceModelInput, InterfaceResponse, ProtocolErrorCode, ProviderCapabilityOverrides,
-    ProviderProtocolBaseUrls, ProviderResponse, RotateCredentialResponse, UpdateProviderRequest,
+    ProviderOperationResponse, ProviderProtocolBaseUrls, ProviderResponse,
+    RotateCredentialResponse, TestProviderProtocolRequest, UpdateProviderRequest,
 };
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -196,6 +197,22 @@ fn management_responses_and_stats_round_trip() {
         estimated_cost: Some(0.12),
         average_latency_ms: Some(789.0),
         average_first_token_ms: None,
+    });
+}
+
+#[test]
+fn provider_operation_dtos_round_trip() {
+    assert_json_round_trip(TestProviderProtocolRequest {
+        protocol: "openai".into(),
+        model: Some("deepseek-chat".into()),
+    });
+    assert_json_round_trip(ProviderOperationResponse {
+        ok: false,
+        protocol: Some("openai".into()),
+        latency_ms: Some(42),
+        first_token_ms: None,
+        error: Some("上游连接失败".into()),
+        models: None,
     });
 }
 

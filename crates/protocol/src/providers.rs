@@ -62,3 +62,19 @@ pub struct ProviderResponse {
     pub models: Vec<ProviderModelResponse>,
     pub created_at: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TestProviderProtocolRequest {
+    pub protocol: String,
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderOperationResponse {
+    pub ok: bool,
+    pub protocol: Option<String>,
+    pub latency_ms: Option<i64>,
+    pub first_token_ms: Option<i64>,
+    pub error: Option<String>,
+    pub models: Option<Vec<String>>,
+}
