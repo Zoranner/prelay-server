@@ -8,6 +8,7 @@ use provider_relay_client::credential_store::{
     CredentialRecord, CredentialStore, FileCredentialStore,
 };
 use tempfile::tempdir;
+use tokio::sync::{oneshot, Notify};
 
 #[test]
 fn file_store_keeps_current_credential_until_pending_rotation_is_confirmed() {
@@ -85,6 +86,39 @@ fn file_store_completes_the_expected_rotation_after_pending_is_discarded() {
             pending: None,
         })
     );
+}
+
+#[test]
+fn file_store_lifecycle_lock_waits_until_the_other_store_releases_it() {
+    tauri::async_runtime::block_on(async {
+        let directory = tempdir().unwrap();
+        let credential_path = directory.path().join("device-credential.json");
+        let first = FileCredentialStore::at(&credential_path);
+        let second = FileCredentialStore::at(&credential_path);
+        let first_guard = first.acquire_lifecycle_lock().await.unwrap();
+        let second_attempted = Arc::new(Notify::new());
+        let (second_acquired, mut second_acquired_rx) = oneshot::channel();
+
+        let second_task = tauri::async_runtime::spawn({
+            let second_attempted = second_attempted.clone();
+            async move {
+                second_attempted.notify_one();
+                let guard = second.acquire_lifecycle_lock().await.unwrap();
+                second_acquired.send(()).unwrap();
+                drop(guard);
+            }
+        });
+        second_attempted.notified().await;
+        tokio::task::yield_now().await;
+
+        assert!(matches!(
+            second_acquired_rx.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        drop(first_guard);
+        second_task.await.unwrap();
+        second_acquired_rx.await.unwrap();
+    });
 }
 
 #[test]

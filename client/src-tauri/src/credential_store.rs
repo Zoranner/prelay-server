@@ -1,8 +1,9 @@
 use std::{
-    fs::{self, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use atomic_write_file::AtomicWriteFile;
@@ -30,6 +31,18 @@ pub trait CredentialStore: Send + Sync {
 pub struct FileCredentialStore {
     path: PathBuf,
     lock_path: PathBuf,
+    lifecycle_lock_path: PathBuf,
+}
+
+#[derive(Debug)]
+pub struct FileCredentialLifecycleGuard {
+    file: File,
+}
+
+impl Drop for FileCredentialLifecycleGuard {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.file);
+    }
 }
 
 impl FileCredentialStore {
@@ -42,16 +55,21 @@ impl FileCredentialStore {
                 .unwrap_or("device-credential.json")
         );
         let lock_path = path.with_file_name(lock_name);
-        Self { path, lock_path }
+        let lifecycle_lock_path = path.with_file_name(format!(
+            "{}.lifecycle.lock",
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("device-credential.json")
+        ));
+        Self {
+            path,
+            lock_path,
+            lifecycle_lock_path,
+        }
     }
 
     fn with_lock<T>(&self, operation: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-        let parent = self
-            .path
-            .parent()
-            .filter(|path| !path.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        fs::create_dir_all(parent).map_err(store_error)?;
+        self.ensure_parent_dir()?;
         let lock = OpenOptions::new()
             .create(true)
             .read(true)
@@ -66,6 +84,36 @@ impl FileCredentialStore {
             (Err(error), _) | (_, Err(error)) => Err(error),
             (Ok(value), Ok(())) => Ok(value),
         }
+    }
+
+    pub async fn acquire_lifecycle_lock(&self) -> Result<FileCredentialLifecycleGuard, String> {
+        self.ensure_parent_dir()?;
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&self.lifecycle_lock_path)
+            .map_err(store_error)?;
+
+        loop {
+            match file.try_lock_exclusive() {
+                Ok(()) => return Ok(FileCredentialLifecycleGuard { file }),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                Err(error) => return Err(store_error(error)),
+            }
+        }
+    }
+
+    fn ensure_parent_dir(&self) -> Result<(), String> {
+        let parent = self
+            .path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent).map_err(store_error)
     }
 
     fn read_record(&self) -> Result<Option<CredentialRecord>, String> {
