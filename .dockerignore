@@ -1,7 +1,13 @@
 target/
-data/
-*.db
+server/target/
+server/data/
+server/config/model_prices.json
+server/deploy/.env
+client/
+web/
+static/
+.refs/
+.worktrees/
 .git/
-.gitignore
 .env
 .env.*

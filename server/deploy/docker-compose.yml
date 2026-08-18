@@ -12,9 +12,11 @@ services:
       - TZ=Asia/Shanghai
       - LISTEN_PORT=${LISTEN_PORT:-18080}
       - RUST_LOG=${RUST_LOG:-provider_relay_server=info,tower_http=info}
+      - MODEL_PRICES_PATH=${MODEL_PRICES_PATH:-config/model_prices.json}
       - PROVIDER_RELAY_MASTER_KEY=${PROVIDER_RELAY_MASTER_KEY:?set a Base64-encoded 32-byte master key}
     volumes:
-      - ../../data:/app/data
+      - ../data:/app/data
+      - ../config:/app/config:ro
 networks:
   default:
     external: true

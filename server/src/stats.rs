@@ -340,8 +340,8 @@ pub(crate) fn estimate_cost(
 }
 
 pub(crate) fn load_model_prices() -> Result<Vec<ModelPrice>> {
-    let path =
-        std::env::var("MODEL_PRICES_PATH").unwrap_or_else(|_| "data/model_prices.json".to_string());
+    let path = std::env::var("MODEL_PRICES_PATH")
+        .unwrap_or_else(|_| "config/model_prices.json".to_string());
     if !std::path::Path::new(&path).exists() {
         return Ok(Vec::new());
     }

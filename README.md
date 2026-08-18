@@ -20,12 +20,13 @@ Windows PowerShell 也可生成：
 
 本地开发运行：
 
-```text
+```powershell
+Set-Location server
 $env:PROVIDER_RELAY_MASTER_KEY = "<Base64-encoded-32-byte-key>"
-cargo run -p provider-relay-server
+cargo run
 ```
 
-服务固定使用 `data/relay.db`，首次运行会创建 `data/`，默认监听 `0.0.0.0:18080`。可通过 `LISTEN_PORT` 覆盖端口；`RUST_LOG` 控制日志过滤。启动时及之后每 24 小时会删除连续 90 天未活动身份及其所有配置、会话和日志。旧版没有身份归属的数据库会在首次启动时被直接丢弃，不迁移或保留旧密钥。
+服务固定使用 `server/data/relay.db`，首次运行会创建 `server/data/`，默认监听 `0.0.0.0:18080`。可通过 `LISTEN_PORT` 覆盖端口；`RUST_LOG` 控制日志过滤。模型价格可放入 `server/config/model_prices.json`，或通过 `MODEL_PRICES_PATH` 指定其他文件。启动时及之后每 24 小时会删除连续 90 天未活动身份及其所有配置、会话和日志。旧版没有身份归属的数据库会在首次启动时被直接丢弃，不迁移或保留旧密钥。
 
 Docker Compose 的部署文件位于 `server/deploy/`。先复制环境模板、填入固定的主密钥，再启动：
 
@@ -35,7 +36,7 @@ Copy-Item server/deploy/.env.example server/deploy/.env
 docker compose --env-file server/deploy/.env -f server/deploy/docker-compose.yml up -d --build
 ```
 
-Compose 使用仓库根目录的 `data/` 作为容器数据卷，并沿用 `server/Dockerfile` 构建镜像。
+Compose 使用 `server/data/` 作为数据库卷、以只读方式挂载 `server/config/`，并沿用 `server/Dockerfile` 构建镜像。模型价格为可选配置，可复制 `server/config/model_prices.example.json` 为 `server/config/model_prices.json` 后再调整内容。
 
 ## 客户端与协议入口
 
@@ -64,13 +65,15 @@ AI 工具将继续使用以下协议入口：
 
 ## 验证
 
-Rust 代码修改后执行：
+服务端 Rust 代码修改后在 `server/` 执行：
 
 ```text
 cargo fmt --all
-cargo clippy -p provider-relay-server --all-targets --all-features -- -D warnings
-cargo test -p provider-relay-server --all-targets --all-features
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
 ```
+
+共享协议与客户端原生代码分别在 `crates/protocol/` 和 `client/src-tauri/` 目录执行各自的 Cargo 检查；根目录不再是 Cargo workspace。
 
 提交前在仓库根目录执行：
 

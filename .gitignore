@@ -1,29 +1,8 @@
-# Rust
-/target
-/client/node_modules/
-/client/.nuxt/
-/client/.output/
-/client/dist/
-/client/src-tauri/gen/
+# Local reference workspaces
+.refs/
+.worktrees/
 
-# SQLite database
-/data/
-
-# Frontend build output (rebuilt from source)
-/static/*
-!/static/.gitkeep
-
-# App dependencies
-/web/node_modules
-/web/dist
-
-# Environment
-.env
-.env.local
-
-# IDE
+# Editor metadata
 .idea/
 .vscode/settings.json
 *.swp
-.refs/
-.worktrees/

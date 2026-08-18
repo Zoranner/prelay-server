@@ -1,0 +1,4 @@
+/target/
+/data/
+/config/model_prices.json
+/deploy/.env
