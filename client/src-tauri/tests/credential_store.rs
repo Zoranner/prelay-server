@@ -1,7 +1,10 @@
 use std::{
     fs,
+    io::{BufRead, BufReader, Read, Write},
+    process::{Command, Stdio},
     sync::{Arc, Barrier},
     thread,
+    time::Duration,
 };
 
 use provider_relay_client::credential_store::{
@@ -9,6 +12,25 @@ use provider_relay_client::credential_store::{
 };
 use tempfile::tempdir;
 use tokio::sync::{oneshot, Notify};
+
+const LIFECYCLE_LOCK_CHILD_PATH_ENV: &str =
+    "PROVIDER_RELAY_CREDENTIAL_STORE_LIFECYCLE_LOCK_CHILD_PATH";
+const LIFECYCLE_LOCK_CHILD_READY: &str = "credential-store-lifecycle-lock-acquired";
+const LIFECYCLE_LOCK_CHILD_TEST_NAME: &str = "file_store_lifecycle_lock_child_process";
+
+#[test]
+fn file_store_lifecycle_lock_child_process() {
+    let Ok(credential_path) = std::env::var(LIFECYCLE_LOCK_CHILD_PATH_ENV) else {
+        return;
+    };
+    let store = FileCredentialStore::at(credential_path);
+    let guard = tauri::async_runtime::block_on(store.acquire_lifecycle_lock()).unwrap();
+
+    println!("{LIFECYCLE_LOCK_CHILD_READY}");
+    std::io::stdout().flush().unwrap();
+    std::io::stdin().read_exact(&mut [0]).unwrap();
+    drop(guard);
+}
 
 #[test]
 fn file_store_keeps_current_credential_until_pending_rotation_is_confirmed() {
@@ -117,6 +139,81 @@ fn file_store_lifecycle_lock_waits_until_the_other_store_releases_it() {
         ));
         drop(first_guard);
         second_task.await.unwrap();
+        second_acquired_rx.await.unwrap();
+    });
+}
+
+#[test]
+fn file_store_lifecycle_lock_waits_for_an_independent_process_to_release_it() {
+    let directory = tempdir().unwrap();
+    let credential_path = directory.path().join("device-credential.json");
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg(LIFECYCLE_LOCK_CHILD_TEST_NAME)
+        .arg("--nocapture")
+        .env(LIFECYCLE_LOCK_CHILD_PATH_ENV, &credential_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("lifecycle lock child process must start");
+    let child_stdout = child.stdout.take().unwrap();
+    let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+    let stdout_reader = thread::spawn(move || -> Result<(), String> {
+        let mut reader = BufReader::new(child_stdout);
+        let mut line = String::new();
+        let mut ready_reported = false;
+        loop {
+            line.clear();
+            let bytes_read = reader
+                .read_line(&mut line)
+                .map_err(|error| error.to_string())?;
+            if bytes_read == 0 {
+                return ready_reported.then_some(()).ok_or_else(|| {
+                    "lifecycle lock child ended before reporting that it held the lock".into()
+                });
+            }
+            if !ready_reported && line.trim() == LIFECYCLE_LOCK_CHILD_READY {
+                ready_tx.send(()).map_err(|_| {
+                    "lifecycle lock child readiness receiver was dropped".to_owned()
+                })?;
+                ready_reported = true;
+            }
+        }
+    });
+
+    ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("lifecycle lock child must report that it acquired the lock");
+
+    let second = FileCredentialStore::at(&credential_path);
+    let second_attempted = Arc::new(Notify::new());
+    let (second_acquired, mut second_acquired_rx) = oneshot::channel();
+    tauri::async_runtime::block_on(async {
+        let task_started = second_attempted.clone();
+        tauri::async_runtime::spawn(async move {
+            task_started.notify_one();
+            let guard = second.acquire_lifecycle_lock().await.unwrap();
+            second_acquired.send(()).unwrap();
+            drop(guard);
+        });
+        second_attempted.notified().await;
+        tokio::task::yield_now().await;
+
+        assert!(matches!(
+            second_acquired_rx.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+    });
+
+    let mut child_stdin = child.stdin.take().unwrap();
+    child_stdin.write_all(&[1]).unwrap();
+    child_stdin.flush().unwrap();
+    drop(child_stdin);
+    assert!(child.wait().unwrap().success());
+    stdout_reader.join().unwrap().unwrap();
+
+    tauri::async_runtime::block_on(async {
         second_acquired_rx.await.unwrap();
     });
 }
