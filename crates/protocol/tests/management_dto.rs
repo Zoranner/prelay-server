@@ -127,6 +127,7 @@ fn management_responses_and_stats_round_trip() {
         base_url: "https://api.deepseek.com".into(),
         api_key_masked: "sk-t...test".into(),
         capabilities: capabilities(),
+        upstream_protocols: vec!["openai".into(), "anthropic".into()],
         models: vec![ProviderModelResponse {
             id: "model-a".into(),
             provider_id: "provider-a".into(),

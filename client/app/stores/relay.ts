@@ -42,6 +42,7 @@ export interface Provider {
   base_url: string;
   api_key_masked: string;
   capabilities: ProviderCapabilities;
+  upstream_protocols: string[];
   models: ProviderModel[];
   created_at: string;
 }

@@ -133,6 +133,10 @@ async fn management_credential_cannot_read_or_mutate_another_identity_provider()
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(
+        provider["upstream_protocols"],
+        serde_json::json!(["openai"])
+    );
     let provider_a = provider["id"].as_str().expect("provider id");
 
     let identity_b = register(&app, "machine-b", "S-1-5-21-200").await;
@@ -739,4 +743,72 @@ async fn management_provider_actions_use_only_the_current_identity_and_keep_key_
         assert_eq!(status, StatusCode::NOT_FOUND, "{action}");
         assert!(!response.to_string().contains("sk-provider-action-secret"));
     }
+}
+
+#[tokio::test]
+async fn management_provider_protocol_test_uses_protocol_specific_upstream_base_url() {
+    async fn custom_openai_endpoint(headers: HeaderMap) -> (StatusCode, &'static str) {
+        assert_eq!(
+            headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer sk-protocol-override-secret")
+        );
+        (StatusCode::OK, "data: {\"choices\":[]}\n\n")
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind upstream");
+    let address = listener.local_addr().expect("read upstream address");
+    let upstream = Router::new().route(
+        "/custom/openai/chat/completions",
+        post(custom_openai_endpoint),
+    );
+    tokio::spawn(async move {
+        axum::serve(listener, upstream)
+            .await
+            .expect("serve upstream");
+    });
+
+    let app = app::router(test_state().await).await.expect("build app");
+    let credential = register(&app, "machine-protocol-override", "S-1-5-21-630").await
+        ["credential"]
+        .as_str()
+        .expect("credential")
+        .to_string();
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(&credential),
+        Some(serde_json::json!({
+            "name": "Protocol Override Provider",
+            "provider_type": "openai_compatible",
+            "base_url": format!("http://{address}/default"),
+            "api_key": "sk-protocol-override-secret",
+            "capabilities": {
+                "protocol_base_urls": {
+                    "openai": format!("http://{address}/custom/openai")
+                }
+            },
+            "models": ["override-model"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let provider_id = provider["id"].as_str().expect("provider id");
+
+    let (status, response): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        &format!("/api/providers/{provider_id}/test-protocol"),
+        Some(&credential),
+        Some(serde_json::json!({ "protocol": "openai", "model": "override-model" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["protocol"], "openai");
+    assert!(!response.to_string().contains("sk-protocol-override-secret"));
 }

@@ -1,4 +1,5 @@
 use crate::models::{ProviderCapabilityOverrides, ProviderConfig};
+use provider_relay_protocol::ProviderResponse;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpstreamProtocol {
@@ -28,6 +29,14 @@ impl UpstreamProtocol {
             "openai" => Some(UpstreamProtocol::ChatCompletions),
             "anthropic" => Some(UpstreamProtocol::AnthropicMessages),
             _ => None,
+        }
+    }
+
+    fn capability_value(self) -> &'static str {
+        match self {
+            UpstreamProtocol::Responses => "responses",
+            UpstreamProtocol::ChatCompletions => "openai",
+            UpstreamProtocol::AnthropicMessages => "anthropic",
         }
     }
 }
@@ -66,8 +75,7 @@ impl ProviderCapabilities {
         }
     }
 
-    fn with_overrides(self, provider: &ProviderConfig) -> Self {
-        let overrides = provider.capability_overrides();
+    fn with_overrides(self, overrides: &ProviderCapabilityOverrides) -> Self {
         Self {
             tool_calls: overrides.tool_calls.unwrap_or(self.tool_calls),
             reasoning: overrides.reasoning.unwrap_or(self.reasoning),
@@ -96,11 +104,21 @@ pub struct ProviderSpec {
 
 impl ProviderSpec {
     pub fn from_provider_config(provider: &ProviderConfig) -> Self {
-        let mut spec = match provider.provider_type.as_str() {
+        Self::from_provider_type_and_overrides(
+            &provider.provider_type,
+            &provider.capability_overrides(),
+        )
+    }
+
+    fn from_provider_type_and_overrides(
+        provider_type: &str,
+        overrides: &ProviderCapabilityOverrides,
+    ) -> Self {
+        let mut spec = match provider_type {
             "openai" | "responses_compatible" | "qwen_responses" | "minimax_responses" => Self {
                 protocol: UpstreamProtocol::Responses,
                 supported_protocols: provider_supported_protocols(
-                    &provider.provider_type,
+                    provider_type,
                     UpstreamProtocol::Responses,
                 ),
                 auth_scheme: AuthScheme::Bearer,
@@ -128,7 +146,7 @@ impl ProviderSpec {
             | "bailian_token_openai" => Self {
                 protocol: UpstreamProtocol::ChatCompletions,
                 supported_protocols: provider_supported_protocols(
-                    &provider.provider_type,
+                    provider_type,
                     UpstreamProtocol::ChatCompletions,
                 ),
                 auth_scheme: AuthScheme::Bearer,
@@ -158,7 +176,7 @@ impl ProviderSpec {
             | "bailian_token_anthropic" => Self {
                 protocol: UpstreamProtocol::AnthropicMessages,
                 supported_protocols: provider_supported_protocols(
-                    &provider.provider_type,
+                    provider_type,
                     UpstreamProtocol::AnthropicMessages,
                 ),
                 auth_scheme: AuthScheme::Anthropic,
@@ -181,10 +199,8 @@ impl ProviderSpec {
                 capabilities: ProviderCapabilities::limited(),
             },
         };
-        spec.capabilities = spec.capabilities.with_overrides(provider);
-        if let Some(protocols) =
-            supported_protocols_from_overrides(&provider.capability_overrides())
-        {
+        spec.capabilities = spec.capabilities.with_overrides(overrides);
+        if let Some(protocols) = supported_protocols_from_overrides(overrides) {
             spec.supported_protocols = protocols;
         }
         spec
@@ -218,26 +234,81 @@ impl ProviderSpec {
     }
 }
 
+pub fn resolved_upstream_protocols(
+    provider_type: &str,
+    configured_protocols: Option<&[String]>,
+) -> Vec<String> {
+    let overrides = ProviderCapabilityOverrides {
+        upstream_protocols: configured_protocols.map(<[String]>::to_vec),
+        ..ProviderCapabilityOverrides::default()
+    };
+    ProviderSpec::from_provider_type_and_overrides(provider_type, &overrides)
+        .supported_protocols
+        .into_iter()
+        .map(UpstreamProtocol::capability_value)
+        .map(str::to_owned)
+        .collect()
+}
+
 pub fn provider_upstream_base_url(
     provider: &ProviderConfig,
     upstream_protocol: UpstreamProtocol,
 ) -> String {
     let overrides = provider.capability_overrides();
-    let protocol_base_url = overrides
-        .protocol_base_urls
-        .as_ref()
-        .and_then(|base_urls| match upstream_protocol {
-            UpstreamProtocol::Responses => base_urls.responses.as_deref(),
-            UpstreamProtocol::ChatCompletions => base_urls.openai.as_deref(),
-            UpstreamProtocol::AnthropicMessages => base_urls.anthropic.as_deref(),
-        })
+    let protocol_base_url =
+        overrides
+            .protocol_base_urls
+            .as_ref()
+            .and_then(|base_urls| match upstream_protocol {
+                UpstreamProtocol::Responses => base_urls.responses.as_deref(),
+                UpstreamProtocol::ChatCompletions => base_urls.openai.as_deref(),
+                UpstreamProtocol::AnthropicMessages => base_urls.anthropic.as_deref(),
+            });
+
+    resolve_provider_upstream_base_url(
+        &provider.provider_type,
+        &provider.base_url,
+        protocol_base_url,
+        upstream_protocol,
+    )
+}
+
+pub fn provider_response_upstream_base_url(
+    provider: &ProviderResponse,
+    upstream_protocol: UpstreamProtocol,
+) -> String {
+    let protocol_base_url =
+        provider
+            .capabilities
+            .protocol_base_urls
+            .as_ref()
+            .and_then(|base_urls| match upstream_protocol {
+                UpstreamProtocol::Responses => base_urls.responses.as_deref(),
+                UpstreamProtocol::ChatCompletions => base_urls.openai.as_deref(),
+                UpstreamProtocol::AnthropicMessages => base_urls.anthropic.as_deref(),
+            });
+
+    resolve_provider_upstream_base_url(
+        &provider.provider_type,
+        &provider.base_url,
+        protocol_base_url,
+        upstream_protocol,
+    )
+}
+
+fn resolve_provider_upstream_base_url(
+    provider_type: &str,
+    base_url: &str,
+    protocol_base_url: Option<&str>,
+    upstream_protocol: UpstreamProtocol,
+) -> String {
+    let protocol_base_url = protocol_base_url
         .map(str::trim)
         .filter(|base_url| !base_url.is_empty());
-
     normalize_upstream_base_url(
-        &provider.provider_type,
+        provider_type,
         upstream_protocol,
-        protocol_base_url.unwrap_or(provider.base_url.trim()),
+        protocol_base_url.unwrap_or(base_url.trim()),
     )
 }
 
@@ -304,7 +375,10 @@ fn provider_supported_protocols(
 
 #[cfg(test)]
 mod tests {
-    use super::{provider_upstream_base_url, AuthScheme, ProviderSpec, UpstreamProtocol};
+    use super::{
+        provider_upstream_base_url, resolved_upstream_protocols, AuthScheme, ProviderSpec,
+        UpstreamProtocol,
+    };
     use crate::models::{ProviderCapabilityOverrides, ProviderConfig};
 
     #[test]
@@ -473,6 +547,18 @@ mod tests {
         assert!(spec.supports_downstream("responses"));
         assert!(spec.supports_downstream("anthropic_messages"));
         assert!(!spec.supports_downstream("chat_completions"));
+    }
+
+    #[test]
+    fn resolves_protocol_values_from_provider_type_and_capability_overrides() {
+        let default_protocols = resolved_upstream_protocols("kimi_coding_anthropic", None);
+        assert_eq!(default_protocols, ["openai", "anthropic"]);
+
+        let overridden_protocols = resolved_upstream_protocols(
+            "openai_compatible",
+            Some(&["anthropic".to_string(), "unknown".to_string()]),
+        );
+        assert_eq!(overridden_protocols, ["anthropic"]);
     }
 
     #[test]

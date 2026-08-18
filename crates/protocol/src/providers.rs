@@ -58,6 +58,7 @@ pub struct ProviderResponse {
     pub base_url: String,
     pub api_key_masked: String,
     pub capabilities: ProviderCapabilityOverrides,
+    pub upstream_protocols: Vec<String>,
     pub models: Vec<ProviderModelResponse>,
     pub created_at: String,
 }

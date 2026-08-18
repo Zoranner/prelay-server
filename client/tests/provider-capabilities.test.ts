@@ -9,6 +9,7 @@ const provider = (overrides: Partial<Provider> = {}): Provider => ({
   provider_type: "openai_compatible",
   base_url: "https://api.example.com/v1",
   api_key_masked: "sk-***",
+  upstream_protocols: ["responses", "anthropic"],
   capabilities: {
     upstream_protocols: ["responses", "anthropic"],
     protocol_base_urls: {
@@ -31,11 +32,12 @@ const provider = (overrides: Partial<Provider> = {}): Provider => ({
   ...overrides,
 });
 
-test("协议测试优先使用供应商保存的上游协议能力", () => {
+test("协议测试使用服务端解析的上游协议能力", () => {
   expect(providerProtocolOptions(provider())).toEqual(["responses", "anthropic"]);
 });
 
-test("未覆盖协议时按供应商类型选择默认上游协议", () => {
-  expect(providerProtocolOptions(provider({ provider_type: "anthropic", capabilities: {} }))).toEqual(["anthropic"]);
-  expect(providerProtocolOptions(provider({ capabilities: {} }))).toEqual(["openai"]);
+test("协议测试不再自行从供应商类型推导默认协议", () => {
+  expect(providerProtocolOptions(provider({ provider_type: "anthropic", upstream_protocols: ["openai"] }))).toEqual([
+    "openai",
+  ]);
 });

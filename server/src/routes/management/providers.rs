@@ -11,7 +11,7 @@ use crate::{
     error::AppError,
     providers::{
         model_discovery,
-        spec::{normalize_upstream_base_url, UpstreamProtocol},
+        spec::{provider_response_upstream_base_url, UpstreamProtocol},
     },
     AppState,
 };
@@ -219,11 +219,7 @@ async fn test_protocol(
     let protocol = input.protocol.trim();
     let upstream_protocol = UpstreamProtocol::from_capability_value(protocol)
         .ok_or_else(|| AppError::BadRequest("协议不支持".to_string()))?;
-    let base_url = normalize_upstream_base_url(
-        &provider.provider_type,
-        upstream_protocol,
-        &provider.base_url,
-    );
+    let base_url = provider_response_upstream_base_url(&provider, upstream_protocol);
     let started_at = std::time::Instant::now();
     let response = send_protocol_test_request(
         &state.client,

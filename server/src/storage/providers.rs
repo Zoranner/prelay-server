@@ -1,12 +1,14 @@
 use chrono::Utc;
 use provider_relay_protocol::{
-    CreateProviderRequest, ProviderModelResponse, ProviderResponse, UpdateProviderRequest,
+    CreateProviderRequest, ProviderCapabilityOverrides, ProviderModelResponse, ProviderResponse,
+    UpdateProviderRequest,
 };
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 use uuid::Uuid;
 
 use super::{crypto::KeyCipher, StorageError};
+use crate::providers::spec::resolved_upstream_protocols;
 
 pub(crate) async fn create(
     pool: &SqlitePool,
@@ -122,17 +124,23 @@ pub(crate) async fn get(
     .into_iter()
     .map(Into::into)
     .collect();
+    let capabilities: ProviderCapabilityOverrides = row
+        .capabilities_json
+        .as_deref()
+        .and_then(|value| serde_json::from_str(value).ok())
+        .unwrap_or_default();
+    let upstream_protocols = resolved_upstream_protocols(
+        &row.provider_type,
+        capabilities.upstream_protocols.as_deref(),
+    );
     Ok(ProviderResponse {
         id: row.id,
         name: row.name,
         provider_type: row.provider_type,
         base_url: row.base_url,
         api_key_masked: mask_ciphertext(&row.api_key_ciphertext),
-        capabilities: row
-            .capabilities_json
-            .as_deref()
-            .and_then(|value| serde_json::from_str(value).ok())
-            .unwrap_or_default(),
+        capabilities,
+        upstream_protocols,
         models,
         created_at: row.created_at,
     })
