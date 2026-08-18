@@ -1,4 +1,5 @@
 use provider_relay_client::{
+    api_client::ApiClient,
     commands::bootstrap::collect_bootstrap,
     credential_store::MemoryCredentialStore,
     identity::{IdentitySource, WindowsIdentity},
@@ -30,8 +31,10 @@ impl IdentitySource for FakeWindowsIdentity {
 fn bootstrap_uses_windows_identity_and_never_exposes_credential() {
     let identity = FakeWindowsIdentity::new("machine-a", "S-1-5-21-100");
     let credentials = MemoryCredentialStore::with_secret("device-secret");
+    let api_client =
+        ApiClient::new("https://relay.example.test", &credentials).expect("create API client");
 
-    let response = collect_bootstrap(&identity, &credentials).unwrap();
+    let response = collect_bootstrap(&identity, &api_client).unwrap();
 
     assert_eq!(response.machine_id, "machine-a");
     assert_eq!(response.account_sid, "S-1-5-21-100");

@@ -2,9 +2,8 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::{
-    api_client::ClientError,
-    credential_store::CredentialStore,
-    identity::{IdentitySource, WindowsIdentitySource},
+    api_client::{ApiClient, ClientError},
+    identity::IdentitySource,
     NativeState,
 };
 
@@ -19,11 +18,13 @@ pub struct BootstrapResponse {
 
 pub fn collect_bootstrap(
     identity_source: &impl IdentitySource,
-    credential_store: &impl CredentialStore,
-) -> Result<BootstrapResponse, String> {
-    let identity = identity_source.identity()?;
-    let has_device_credential = credential_store.load()?.is_some();
-    let relay_url = crate::api_client::configured_relay_url().map_err(|error| error.to_string())?;
+    api_client: &ApiClient<'_>,
+) -> Result<BootstrapResponse, ClientError> {
+    let identity = identity_source
+        .identity()
+        .map_err(|error| ClientError::new("internal", error))?;
+    let has_device_credential = api_client.has_stored_credential()?;
+    let relay_url = crate::api_client::configured_relay_url()?;
 
     Ok(BootstrapResponse {
         relay_url,
@@ -36,16 +37,6 @@ pub fn collect_bootstrap(
 
 #[tauri::command]
 pub async fn bootstrap(state: State<'_, NativeState>) -> Result<BootstrapResponse, ClientError> {
-    crate::commands::authenticated_api(&state).await?;
-
-    collect_bootstrap(&state.identity, &state.credentials)
-        .map_err(|error| ClientError::new("internal", error))
-}
-
-pub fn native_state() -> NativeState {
-    NativeState {
-        identity: WindowsIdentitySource,
-        credentials: crate::credential_store::WindowsCredentialStore,
-        registration_gate: crate::api_client::RegistrationGate::default(),
-    }
+    let api_client = crate::commands::authenticated_api(&state).await?;
+    collect_bootstrap(&state.identity, &api_client)
 }

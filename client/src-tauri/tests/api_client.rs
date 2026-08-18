@@ -40,6 +40,30 @@ fn management_request_without_credential_returns_stable_error_code() {
 }
 
 #[test]
+fn api_client_reports_whether_a_device_credential_is_stored() {
+    let empty_store = MemoryCredentialStore::default();
+    let empty_client =
+        ApiClient::new("https://relay.example.test", &empty_store).expect("create client");
+    assert!(!empty_client
+        .has_stored_credential()
+        .expect("read empty credential store"));
+
+    let populated_store = MemoryCredentialStore::with_secret("device-secret");
+    let populated_client =
+        ApiClient::new("https://relay.example.test", &populated_store).expect("create client");
+    assert!(populated_client
+        .has_stored_credential()
+        .expect("read populated credential store"));
+
+    let empty_value_store = MemoryCredentialStore::with_secret("   ");
+    let empty_value_client =
+        ApiClient::new("https://relay.example.test", &empty_value_store).expect("create client");
+    assert!(!empty_value_client
+        .has_stored_credential()
+        .expect("empty credential value is unavailable"));
+}
+
+#[test]
 fn first_registration_is_anonymous_and_persists_only_the_issued_credential() {
     let (base_url, server) = one_response_server(
         "201 Created",

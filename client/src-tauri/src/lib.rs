@@ -13,6 +13,16 @@ pub struct NativeState {
     pub registration_gate: api_client::RegistrationGate,
 }
 
+impl Default for NativeState {
+    fn default() -> Self {
+        Self {
+            identity: identity::WindowsIdentitySource,
+            credentials: credential_store::WindowsCredentialStore,
+            registration_gate: api_client::RegistrationGate::default(),
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -20,7 +30,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .manage(commands::bootstrap::native_state())
+        .manage(NativeState::default())
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap::bootstrap,
             commands::providers::providers_list,

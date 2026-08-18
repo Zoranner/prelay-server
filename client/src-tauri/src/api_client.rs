@@ -81,6 +81,14 @@ impl<'a> ApiClient<'a> {
         Self::new(configured_relay_url()?, credential_store)
     }
 
+    pub fn has_stored_credential(&self) -> Result<bool, ClientError> {
+        Ok(self
+            .credential_store
+            .load()
+            .map_err(credential_store_error)?
+            .is_some_and(|credential| !credential.trim().is_empty()))
+    }
+
     pub fn authenticated_request(
         &self,
         method: &str,
@@ -97,12 +105,7 @@ impl<'a> ApiClient<'a> {
     }
 
     pub async fn ensure_registered(&self, identity: &WindowsIdentity) -> Result<(), ClientError> {
-        if self
-            .credential_store
-            .load()
-            .map_err(credential_store_error)?
-            .is_some()
-        {
+        if self.has_stored_credential()? {
             return Ok(());
         }
 
