@@ -13,6 +13,7 @@ pub struct NativeState {
     pub identity: identity::WindowsIdentitySource,
     pub credentials: credential_store::FileCredentialStore,
     pub registration_gate: api_client::RegistrationGate,
+    pub credential_lifecycle_gate: tokio::sync::Mutex<()>,
 }
 
 impl NativeState {
@@ -25,6 +26,7 @@ impl NativeState {
                     .join("device-credential.json"),
             ),
             registration_gate: api_client::RegistrationGate::default(),
+            credential_lifecycle_gate: tokio::sync::Mutex::new(()),
         }
     }
 }
