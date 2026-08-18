@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import type { Provider } from "~/stores/relay";
+import type { Provider, ProviderCapabilities, UpstreamProtocol } from "~/stores/relay";
 import {
   getProviderOperationFeedback,
   type ProviderOperationFeedback,
   type ProviderOperationResult,
 } from "~/utils/providerOperations";
+import { providerProtocolOptions } from "~/utils/providerCapabilities";
 
 type ProviderFormPayload = {
   id?: string;
@@ -12,6 +13,7 @@ type ProviderFormPayload = {
   provider_type: string;
   base_url: string;
   api_key: string;
+  capabilities: ProviderCapabilities;
   models: string[];
 };
 
@@ -39,6 +41,7 @@ async function saveProvider(payload: ProviderFormPayload) {
         provider_type: payload.provider_type,
         base_url: payload.base_url,
         api_key: payload.api_key,
+        capabilities: payload.capabilities,
         models: payload.models,
       },
     });
@@ -68,16 +71,18 @@ async function deleteProvider(provider: Provider) {
 async function runProviderOperation(
   command: "providers_ping" | "providers_discover_models" | "providers_test_protocol",
   provider: Provider,
+  protocol?: UpstreamProtocol,
 ) {
   operationFeedback.value = null;
   try {
     const result = await invokeCommand<ProviderOperationResult>(command, {
       providerId: provider.id,
       ...(command === "providers_test_protocol"
-        ? { protocol: provider.provider_type === "anthropic" ? "anthropic" : "openai" }
+        ? { protocol: protocol ?? providerProtocolOptions(provider)[0] }
         : {}),
     });
     operationFeedback.value = getProviderOperationFeedback(result);
+    if (command === "providers_discover_models" && result.ok) await loadProviders();
   } catch {
     // The command composable exposes the error to this view.
   }
@@ -136,7 +141,7 @@ onMounted(loadProviders);
         @remove="deleteProvider"
         @ping="runProviderOperation('providers_ping', $event)"
         @discover="runProviderOperation('providers_discover_models', $event)"
-        @test-protocol="runProviderOperation('providers_test_protocol', $event)"
+        @test-protocol="runProviderOperation('providers_test_protocol', $event.provider, $event.protocol)"
       />
     </section>
   </main>

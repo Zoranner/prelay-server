@@ -13,12 +13,35 @@ export interface ProviderModel {
   created_at: string;
 }
 
+export type UpstreamProtocol = "responses" | "openai" | "anthropic";
+
+export interface ProviderProtocolBaseUrls {
+  responses?: string | null;
+  openai?: string | null;
+  anthropic?: string | null;
+}
+
+export interface ProviderCapabilities {
+  upstream_protocols?: string[] | null;
+  protocol_base_urls?: ProviderProtocolBaseUrls | null;
+  tool_calls?: boolean | null;
+  reasoning?: boolean | null;
+  tool_choice?: boolean | null;
+  parallel_tool_calls?: boolean | null;
+  system_messages?: boolean | null;
+  structured_outputs?: boolean | null;
+  streaming_usage?: boolean | null;
+  max_context_tokens?: number | null;
+  max_output_tokens?: number | null;
+}
+
 export interface Provider {
   id: string;
   name: string;
   provider_type: string;
   base_url: string;
   api_key_masked: string;
+  capabilities: ProviderCapabilities;
   models: ProviderModel[];
   created_at: string;
 }

@@ -16,4 +16,7 @@ test("诊断页读取请求明细并呈现错误和延迟", () => {
   expect(diagnostics).toContain('"stats_requests"');
   expect(diagnostics).toContain("error_message");
   expect(diagnostics).toContain("latency_ms");
+  expect(diagnostics).toContain("upstream_request_id");
+  expect(diagnostics).toContain("metadataDetail");
+  expect(diagnostics).toContain("<details");
 });

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { RequestLog } from "~/stores/relay";
+import { formatDiagnosticMetadata } from "~/utils/diagnosticMetadata";
 
 const { error, pending, invokeCommand } = useRelayCommand();
 const requests = ref<RequestLog[]>([]);
@@ -10,6 +11,10 @@ const statusOptions: Array<"all" | "success" | "failed"> = ["all", "success", "f
 const visibleRequests = computed(() =>
   statusFilter.value === "all" ? requests.value : requests.value.filter((row) => row.status === statusFilter.value),
 );
+
+function metadataDetail(metadata: string | null): string | null {
+  return formatDiagnosticMetadata(metadata);
+}
 
 async function load() {
   try {
@@ -41,8 +46,8 @@ onMounted(load);
     </div>
     <p v-if="error" class="mt-5 border border-rose-900 bg-rose-950/40 p-3 text-sm text-rose-200">{{ error.message }}</p>
     <div v-else-if="visibleRequests.length" class="mt-6 overflow-x-auto border border-slate-800">
-      <table class="w-full min-w-[55rem] text-left text-sm">
-        <thead class="bg-slate-900 text-slate-400"><tr><th>时间</th><th>协议</th><th>供应商 / 模型</th><th>状态</th><th>延迟</th><th>错误</th></tr></thead>
+      <table class="w-full min-w-[65rem] text-left text-sm">
+        <thead class="bg-slate-900 text-slate-400"><tr><th>时间</th><th>协议</th><th>供应商 / 模型</th><th>状态</th><th>延迟</th><th>错误</th><th>上游请求</th><th>元数据</th></tr></thead>
         <tbody>
           <tr v-for="row in visibleRequests" :key="row.id" class="border-t border-slate-800 align-top">
             <td>{{ new Date(row.created_at).toLocaleString() }}</td>
@@ -51,6 +56,14 @@ onMounted(load);
             <td :class="row.status === 'failed' ? 'text-rose-300' : 'text-emerald-300'">{{ row.http_status ?? row.status }}</td>
             <td>{{ row.latency_ms ?? "-" }} ms</td>
             <td><span class="text-rose-300">{{ row.error_code ?? "" }}</span><br />{{ row.error_message ?? "" }}</td>
+            <td class="font-mono text-xs text-slate-400">{{ row.upstream_request_id ?? "-" }}</td>
+            <td class="max-w-sm">
+              <details v-if="metadataDetail(row.metadata_json)" class="text-xs">
+                <summary class="cursor-pointer text-cyan-300">查看元数据</summary>
+                <pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all text-slate-400">{{ metadataDetail(row.metadata_json) }}</pre>
+              </details>
+              <span v-else>-</span>
+            </td>
           </tr>
         </tbody>
       </table>

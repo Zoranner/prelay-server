@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import type { Provider } from "~/stores/relay";
+import type { UpstreamProtocol } from "~/stores/relay";
+import { providerProtocolOptions } from "~/utils/providerCapabilities";
 
 defineProps<{ providers: Provider[]; pending?: boolean }>();
 const emit = defineEmits<{
@@ -7,8 +9,14 @@ const emit = defineEmits<{
   remove: [provider: Provider];
   ping: [provider: Provider];
   discover: [provider: Provider];
-  testProtocol: [provider: Provider];
+  testProtocol: [payload: { provider: Provider; protocol: UpstreamProtocol }];
 }>();
+
+const protocolSelections = reactive<Record<string, UpstreamProtocol>>({});
+
+function protocolFor(provider: Provider): UpstreamProtocol {
+  return protocolSelections[provider.id] ?? providerProtocolOptions(provider)[0] ?? "openai";
+}
 </script>
 
 <template>
@@ -23,7 +31,10 @@ const emit = defineEmits<{
         <div class="flex flex-wrap gap-2">
           <button class="button-secondary" :disabled="pending" @click="emit('ping', provider)">连通性</button>
           <button class="button-secondary" :disabled="pending" @click="emit('discover', provider)">发现模型</button>
-          <button class="button-secondary" :disabled="pending" @click="emit('testProtocol', provider)">协议测试</button>
+          <select v-model="protocolSelections[provider.id]" :aria-label="`${provider.name} 上游协议`" class="min-w-24">
+            <option v-for="protocol in providerProtocolOptions(provider)" :key="protocol" :value="protocol">{{ protocol }}</option>
+          </select>
+          <button class="button-secondary" :disabled="pending" @click="emit('testProtocol', { provider, protocol: protocolFor(provider) })">协议测试</button>
           <button class="button-secondary" :disabled="pending" @click="emit('edit', provider)">编辑</button>
           <button class="button-danger" :disabled="pending" @click="emit('remove', provider)">删除</button>
         </div>

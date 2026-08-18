@@ -22,6 +22,20 @@ test("供应商管理覆盖模型发现、协议测试和连通性状态", () =>
   expect(page).toContain('"providers_discover_models"');
   expect(page).toContain('"providers_test_protocol"');
   expect(page).toContain('"providers_ping"');
-  expect(page).toContain('provider.provider_type === "anthropic" ? "anthropic" : "openai"');
+  expect(page).toContain("providerProtocolOptions(provider)");
+  expect(page).toContain("await loadProviders()");
   expect(list).toContain("api_key_masked");
 });
+
+test("供应商表单回显并保存全部能力覆盖", () => {
+  expect(providerSource).toContain("capabilities: ProviderCapabilities");
+  expect(providerSource).toContain("protocolBaseUrls");
+  expect(providerSource).toContain("tool_calls");
+  expect(providerSource).toContain("max_context_tokens");
+  expect(providerSource).toContain("ref<boolean | null>(null)");
+  expect(pageSource()).toContain("capabilities: payload.capabilities");
+});
+
+function pageSource() {
+  return readFileSync(new URL("../app/pages/providers.vue", import.meta.url), "utf8");
+}
