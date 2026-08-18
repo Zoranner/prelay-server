@@ -25,16 +25,23 @@ impl IntoResponse for AppError {
             AppError::NotFound(message) => (StatusCode::NOT_FOUND, json!(message)),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, json!("Invalid or missing token")),
             AppError::BadRequest(message) => (StatusCode::BAD_REQUEST, json!(message)),
-            AppError::Protocol { code, message } => (
-                match code {
+            AppError::Protocol { code, message } => {
+                let status = match code {
                     ProtocolErrorCode::NotFound => StatusCode::NOT_FOUND,
                     ProtocolErrorCode::InvalidCredential => StatusCode::UNAUTHORIZED,
                     ProtocolErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
                     ProtocolErrorCode::IdentityAlreadyRegistered
                     | ProtocolErrorCode::ValidationFailed => StatusCode::BAD_REQUEST,
-                },
-                json!({ "code": code.as_str(), "message": message }),
-            ),
+                };
+                let message = if code == ProtocolErrorCode::Internal {
+                    tracing::error!(error = %message, "Internal protocol error");
+                    "Internal server error".to_string()
+                } else {
+                    message
+                };
+
+                (status, json!({ "code": code.as_str(), "message": message }))
+            }
             AppError::Internal(e) => {
                 tracing::error!("Internal error: {:?}", e);
                 (
@@ -66,5 +73,44 @@ impl From<crate::storage::StorageError> for AppError {
             code: error.code(),
             message: error.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{body::to_bytes, http::StatusCode, response::IntoResponse};
+    use serde_json::json;
+
+    use super::AppError;
+    use provider_relay_protocol::ProtocolErrorCode;
+
+    #[tokio::test]
+    async fn internal_protocol_error_hides_storage_diagnostics() {
+        let response = AppError::Protocol {
+            code: ProtocolErrorCode::Internal,
+            message: "SQLite error: no such table: provider_keys; credential=secret-value"
+                .to_string(),
+        }
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let body = to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("read error response");
+        let payload: serde_json::Value =
+            serde_json::from_slice(&body).expect("error response is JSON");
+
+        assert_eq!(
+            payload,
+            json!({
+                "error": {
+                    "code": "internal",
+                    "message": "Internal server error"
+                }
+            })
+        );
+        assert!(!String::from_utf8_lossy(&body).contains("provider_keys"));
+        assert!(!String::from_utf8_lossy(&body).contains("secret-value"));
     }
 }
