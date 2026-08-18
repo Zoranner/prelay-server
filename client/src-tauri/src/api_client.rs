@@ -46,7 +46,12 @@ pub struct PreparedRequest {
 }
 
 #[derive(Default)]
-pub struct RegistrationGate(tokio::sync::Mutex<()>);
+pub struct RegistrationGate(tokio::sync::Mutex<RegistrationState>);
+
+#[derive(Default)]
+struct RegistrationState {
+    registered: bool,
+}
 
 impl PreparedRequest {
     pub fn url(&self) -> &str {
@@ -107,14 +112,21 @@ impl<'a> ApiClient<'a> {
     }
 
     pub async fn ensure_registered(&self, identity: &WindowsIdentity) -> Result<(), ClientError> {
-        if self.has_stored_credential()? {
-            return Ok(());
-        }
-
-        let credential = generate_device_credential();
-        self.credential_store
-            .save(&credential)
-            .map_err(credential_store_error)?;
+        let stored_credential = self
+            .credential_store
+            .load()
+            .map_err(credential_store_error)?
+            .filter(|credential| !credential.trim().is_empty());
+        let credential = match stored_credential {
+            Some(credential) => credential,
+            None => {
+                let credential = generate_device_credential();
+                self.credential_store
+                    .save(&credential)
+                    .map_err(credential_store_error)?;
+                credential
+            }
+        };
         let _: CreateIdentityResponse = self
             .send_json(
                 Method::POST,
@@ -135,8 +147,13 @@ impl<'a> ApiClient<'a> {
         identity: &WindowsIdentity,
         gate: &RegistrationGate,
     ) -> Result<(), ClientError> {
-        let _guard = gate.0.lock().await;
-        self.ensure_registered(identity).await
+        let mut state = gate.0.lock().await;
+        if state.registered {
+            return Ok(());
+        }
+        self.ensure_registered(identity).await?;
+        state.registered = true;
+        Ok(())
     }
 
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, ClientError> {

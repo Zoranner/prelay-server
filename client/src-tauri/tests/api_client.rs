@@ -116,6 +116,56 @@ fn existing_identity_keeps_the_client_generated_credential_for_a_retry() {
 }
 
 #[test]
+fn stored_credential_retries_registration_with_the_same_identity() {
+    let requests = Arc::new(AtomicUsize::new(0));
+    let (base_url, server) = registration_server(requests.clone());
+    let store = MemoryCredentialStore::with_secret("persisted-device-secret");
+    let client = ApiClient::new(base_url, &store).expect("create client");
+
+    tauri::async_runtime::block_on(client.ensure_registered(&identity()))
+        .expect("stored credential registration retry succeeds");
+    let captured_requests = server.join().expect("join test relay");
+
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        store.load().expect("load credential"),
+        Some("persisted-device-secret".into())
+    );
+    let request = captured_requests
+        .first()
+        .expect("registration request is captured");
+    assert!(request.contains("\"machine_id\":\"machine-a\""));
+    assert!(request.contains("\"account_sid\":\"S-1-5-21-100\""));
+    assert!(request.contains("\"credential\":\"persisted-device-secret\""));
+}
+
+#[test]
+fn failed_registration_retries_with_the_persisted_credential() {
+    let (base_url, server) = retry_registration_server();
+    let store = MemoryCredentialStore::default();
+    let gate = RegistrationGate::default();
+    let client = ApiClient::new(base_url, &store).expect("create client");
+
+    tauri::async_runtime::block_on(client.ensure_registered_once(&identity(), &gate))
+        .expect_err("dropped registration response must fail");
+
+    tauri::async_runtime::block_on(client.ensure_registered_once(&identity(), &gate))
+        .expect("persisted credential registration retry succeeds");
+    let requests = server.join().expect("join test relay");
+    let credential = store
+        .load()
+        .expect("load credential")
+        .expect("client credential is persisted");
+
+    assert_eq!(requests.len(), 2);
+    for request in requests {
+        assert!(request.contains("\"machine_id\":\"machine-a\""));
+        assert!(request.contains("\"account_sid\":\"S-1-5-21-100\""));
+        assert!(request.contains(&format!("\"credential\":\"{credential}\"")));
+    }
+}
+
+#[test]
 fn management_request_preserves_nested_server_error_message() {
     let (base_url, server) = one_response_server(
         "400 Bad Request",
@@ -269,7 +319,7 @@ fn one_response_server(
     (format!("http://{address}"), server)
 }
 
-fn registration_server(requests: Arc<AtomicUsize>) -> (String, thread::JoinHandle<()>) {
+fn registration_server(requests: Arc<AtomicUsize>) -> (String, thread::JoinHandle<Vec<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind test relay");
     listener
         .set_nonblocking(true)
@@ -277,11 +327,16 @@ fn registration_server(requests: Arc<AtomicUsize>) -> (String, thread::JoinHandl
     let address = listener.local_addr().expect("read test relay address");
     let server = thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_millis(300);
+        let mut captured_requests = Vec::new();
         while Instant::now() < deadline {
             match listener.accept() {
                 Ok((mut stream, _)) => {
+                    stream
+                        .set_nonblocking(false)
+                        .expect("configure accepted relay connection");
                     let request = read_http_request(&mut stream);
                     assert!(request.starts_with("POST /api/identities HTTP/1.1"));
+                    captured_requests.push(request);
                     let request_number = requests.fetch_add(1, Ordering::SeqCst);
                     let (status, body) = if request_number == 0 {
                         (
@@ -308,6 +363,31 @@ fn registration_server(requests: Arc<AtomicUsize>) -> (String, thread::JoinHandl
                 Err(error) => panic!("accept registration request: {error}"),
             }
         }
+        captured_requests
+    });
+    (format!("http://{address}"), server)
+}
+
+fn retry_registration_server() -> (String, thread::JoinHandle<Vec<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind test relay");
+    let address = listener.local_addr().expect("read test relay address");
+    let server = thread::spawn(move || {
+        let mut requests = Vec::new();
+        for attempt in 0..2 {
+            let (mut stream, _) = listener.accept().expect("accept registration request");
+            requests.push(read_http_request(&mut stream));
+            if attempt == 1 {
+                let body = r#"{"identity_id":"identity-a","created":true}"#;
+                let response = format!(
+                    "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("write registration response");
+            }
+        }
+        requests
     });
     (format!("http://{address}"), server)
 }
