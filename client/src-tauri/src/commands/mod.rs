@@ -52,14 +52,16 @@ pub async fn credential_rotate(
     let response: provider_relay_protocol::RotateCredentialResponse = client
         .post_with_credential(
             "/api/identity/credential/rotate",
-            &provider_relay_protocol::RotateCredentialRequest { new_credential },
+            &provider_relay_protocol::RotateCredentialRequest {
+                new_credential: new_credential.clone(),
+            },
             &current_credential,
         )
         .await?;
     debug_assert!(response.rotated);
     state
         .credentials
-        .confirm_pending()
+        .complete_rotation(&new_credential)
         .map_err(|error| ClientError::new("credential_store_error", error))?;
     Ok(OperationStatus {
         message: "device credential rotated".to_string(),

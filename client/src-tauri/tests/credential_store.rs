@@ -48,6 +48,46 @@ fn file_store_discards_pending_credential_without_replacing_current_credential()
 }
 
 #[test]
+fn file_store_rejects_a_second_rotation_while_a_credential_is_pending() {
+    let directory = tempdir().unwrap();
+    let store = FileCredentialStore::at(directory.path().join("device-credential.json"));
+
+    store.save_initial("credential-old").unwrap();
+    store.begin_rotation("credential-new").unwrap();
+    let error = store
+        .begin_rotation("credential-replacement")
+        .expect_err("a pending credential must not be replaced");
+
+    assert_eq!(error, "credential record already has a pending credential");
+    assert_eq!(
+        store.load().unwrap(),
+        Some(CredentialRecord {
+            current: "credential-old".into(),
+            pending: Some("credential-new".into()),
+        })
+    );
+}
+
+#[test]
+fn file_store_completes_the_expected_rotation_after_pending_is_discarded() {
+    let directory = tempdir().unwrap();
+    let store = FileCredentialStore::at(directory.path().join("device-credential.json"));
+
+    store.save_initial("credential-old").unwrap();
+    store.begin_rotation("credential-new").unwrap();
+    store.discard_pending().unwrap();
+    store.complete_rotation("credential-new").unwrap();
+
+    assert_eq!(
+        store.load().unwrap(),
+        Some(CredentialRecord {
+            current: "credential-new".into(),
+            pending: None,
+        })
+    );
+}
+
+#[test]
 fn file_store_writes_complete_json_without_leaving_temporary_files() {
     let directory = tempdir().unwrap();
     let credential_path = directory.path().join("device-credential.json");

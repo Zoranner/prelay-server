@@ -20,6 +20,7 @@ pub trait CredentialStore: Send + Sync {
     fn load(&self) -> Result<Option<CredentialRecord>, String>;
     fn save_initial(&self, credential: &str) -> Result<CredentialRecord, String>;
     fn begin_rotation(&self, credential: &str) -> Result<(), String>;
+    fn complete_rotation(&self, expected_credential: &str) -> Result<(), String>;
     fn confirm_pending(&self) -> Result<(), String>;
     fn discard_pending(&self) -> Result<(), String>;
     fn delete(&self) -> Result<(), String>;
@@ -120,6 +121,9 @@ impl CredentialStore for FileCredentialStore {
             let mut record = self
                 .read_record()?
                 .ok_or_else(|| "credential record does not exist".to_owned())?;
+            if record.pending.is_some() {
+                return Err("credential record already has a pending credential".into());
+            }
             record.pending = Some(credential.into());
             self.write_record(&record)
         })
@@ -135,6 +139,25 @@ impl CredentialStore for FileCredentialStore {
                 .take()
                 .ok_or_else(|| "credential record has no pending credential".to_owned())?;
             record.current = pending;
+            self.write_record(&record)
+        })
+    }
+
+    fn complete_rotation(&self, expected_credential: &str) -> Result<(), String> {
+        validate_credential(expected_credential, "expected")?;
+        self.with_lock(|| {
+            let mut record = self
+                .read_record()?
+                .ok_or_else(|| "credential record does not exist".to_owned())?;
+            if record
+                .pending
+                .as_deref()
+                .is_some_and(|pending| pending != expected_credential)
+            {
+                return Err("credential record pending credential does not match rotation".into());
+            }
+            record.current = expected_credential.into();
+            record.pending = None;
             self.write_record(&record)
         })
     }
@@ -200,10 +223,13 @@ impl CredentialStore for MemoryCredentialStore {
             .0
             .lock()
             .map_err(|_| "in-memory credential store lock is poisoned".to_owned())?;
-        record
+        let record = record
             .as_mut()
-            .ok_or_else(|| "credential record does not exist".to_owned())?
-            .pending = Some(credential.into());
+            .ok_or_else(|| "credential record does not exist".to_owned())?;
+        if record.pending.is_some() {
+            return Err("credential record already has a pending credential".into());
+        }
+        record.pending = Some(credential.into());
         Ok(())
     }
 
@@ -219,6 +245,27 @@ impl CredentialStore for MemoryCredentialStore {
             .pending
             .take()
             .ok_or_else(|| "credential record has no pending credential".to_owned())?;
+        Ok(())
+    }
+
+    fn complete_rotation(&self, expected_credential: &str) -> Result<(), String> {
+        validate_credential(expected_credential, "expected")?;
+        let mut record = self
+            .0
+            .lock()
+            .map_err(|_| "in-memory credential store lock is poisoned".to_owned())?;
+        let record = record
+            .as_mut()
+            .ok_or_else(|| "credential record does not exist".to_owned())?;
+        if record
+            .pending
+            .as_deref()
+            .is_some_and(|pending| pending != expected_credential)
+        {
+            return Err("credential record pending credential does not match rotation".into());
+        }
+        record.current = expected_credential.into();
+        record.pending = None;
         Ok(())
     }
 
