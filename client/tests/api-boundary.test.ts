@@ -38,7 +38,6 @@ test("Nuxt 页面不直连服务端或读取认证凭据", () => {
     "pages/providers.vue",
     "pages/interfaces.vue",
     "pages/stats.vue",
-    "pages/diagnostics.vue",
   ]) {
     const content = source(page);
     expect(content).not.toContain("fetch(");

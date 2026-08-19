@@ -4,19 +4,16 @@ import { readFileSync } from "node:fs";
 const page = (name: string) =>
   readFileSync(new URL(`../app/pages/${name}.vue`, import.meta.url), "utf8");
 
-test("统计页读取总览、模型与供应商聚合", () => {
+test("统计页读取总览、聚合和请求明细", () => {
   const stats = page("stats");
   expect(stats).toContain('"stats_overview"');
   expect(stats).toContain('"stats_models"');
   expect(stats).toContain('"stats_providers"');
-});
-
-test("诊断页读取请求明细并呈现错误和延迟", () => {
-  const diagnostics = page("diagnostics");
-  expect(diagnostics).toContain('"stats_requests"');
-  expect(diagnostics).toContain("error_message");
-  expect(diagnostics).toContain("latency_ms");
-  expect(diagnostics).toContain("upstream_request_id");
-  expect(diagnostics).toContain("metadataDetail");
-  expect(diagnostics).toContain("<details");
+  expect(stats).toContain('"stats_requests"');
+  expect(stats).toContain("请求明细");
+  expect(stats).toContain("error_message");
+  expect(stats).toContain("latency_ms");
+  expect(stats).toContain("upstream_request_id");
+  expect(stats).toContain("metadataDetail");
+  expect(stats).toContain("<details");
 });

@@ -12,6 +12,8 @@ test("desktop client preserves the legacy management shell", () => {
   expect(app).toContain("app-header");
   expect(app).toContain("app-frame");
   expect(app).toContain("大模型服务透传代理");
+  expect(app).not.toContain('label: "诊断"');
+  expect(app).not.toContain('path: "/diagnostics"');
   expect(css).toContain("--pr-color-page");
   expect(css).toContain(".page-shell");
   expect(css).toContain(".surface-panel");
@@ -38,11 +40,8 @@ test("management pages use the legacy page, table, and drawer primitives", () =>
     expect(content).toContain("DataTableShell");
   }
 
-  for (const page of ["pages/stats.vue", "pages/diagnostics.vue"]) {
-    const content = source(page);
-
-    expect(content).toContain("PageShell");
-    expect(content).toContain("SurfacePanel");
-    expect(content).toContain("data-table");
-  }
+  const stats = source("pages/stats.vue");
+  expect(stats).toContain("PageShell");
+  expect(stats).toContain("SurfacePanel");
+  expect(stats).toContain("data-table");
 });

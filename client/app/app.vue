@@ -3,7 +3,6 @@ const tabs = [
   { label: "统计", path: "/stats" },
   { label: "供应商", path: "/providers" },
   { label: "接口", path: "/interfaces" },
-  { label: "诊断", path: "/diagnostics" },
 ];
 </script>
 
