@@ -83,6 +83,46 @@ textarea {
   color: var(--pr-color-brand);
 }
 
+.app-unavailable {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: var(--pr-color-page);
+}
+
+.app-unavailable__content {
+  display: grid;
+  max-width: 28rem;
+  justify-items: center;
+  gap: 1rem;
+  text-align: center;
+  color: #57534e;
+}
+
+.app-unavailable__content svg {
+  color: var(--pr-color-danger);
+}
+
+.app-unavailable__content h2 {
+  margin: 0;
+  color: #292524;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.app-unavailable__content p {
+  margin: 0;
+  line-height: 1.625;
+}
+
+.app-unavailable__hint {
+  color: #78716c;
+  font-size: 0.875rem;
+}
+
 .page-shell {
   display: flex;
   height: 100%;

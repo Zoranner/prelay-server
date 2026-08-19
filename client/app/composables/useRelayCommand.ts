@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { computed, ref, type ComputedRef, type Ref } from "vue";
+import { computed, readonly, ref, type ComputedRef, type Ref } from "vue";
 
 import { toRelayError, type RelayError } from "~/utils/errors";
 
@@ -26,21 +26,37 @@ export interface CommandState {
   error: Ref<RelayError | null>;
 }
 
+const managementApiError = ref<RelayError | null>(null);
+
+export function useRelayManagementApiStatus() {
+  return { error: readonly(managementApiError) };
+}
+
 export function useRelayCommand(): CommandState & {
-  invokeCommand<T>(command: RelayCommand, payload?: Record<string, unknown>): Promise<T>;
+  invokeCommand<T>(
+    command: RelayCommand,
+    payload?: Record<string, unknown>,
+  ): Promise<T>;
 } {
   const pendingRequests = ref(0);
   const pending = computed(() => pendingRequests.value > 0);
   const error = ref<RelayError | null>(null);
 
-  async function invokeCommand<T>(command: RelayCommand, payload?: Record<string, unknown>): Promise<T> {
+  async function invokeCommand<T>(
+    command: RelayCommand,
+    payload?: Record<string, unknown>,
+  ): Promise<T> {
     pendingRequests.value += 1;
     error.value = null;
+    managementApiError.value = null;
     try {
       return await invoke<T>(command, payload);
     } catch (caught) {
       const relayError = toRelayError(caught);
       error.value = relayError;
+      if (relayError.code === "network_error") {
+        managementApiError.value = relayError;
+      }
       throw relayError;
     } finally {
       pendingRequests.value = Math.max(0, pendingRequests.value - 1);

@@ -1,9 +1,17 @@
 <script setup lang="ts">
+import { RefreshCw, WifiOff } from "lucide-vue-next";
+
 const tabs = [
   { label: "统计", path: "/stats" },
   { label: "供应商", path: "/providers" },
   { label: "接口", path: "/interfaces" },
 ];
+
+const managementApi = useRelayManagementApiStatus();
+
+function reloadApplication() {
+  window.location.reload();
+}
 </script>
 
 <template>
@@ -35,5 +43,24 @@ const tabs = [
         <NuxtPage />
       </div>
     </main>
+    <section
+      v-if="managementApi.error"
+      class="app-unavailable"
+      role="alert"
+      aria-live="assertive"
+    >
+      <div class="app-unavailable__content">
+        <WifiOff :size="32" stroke-width="1.75" aria-hidden="true" />
+        <h2>无法连接管理服务</h2>
+        <p>当前无法访问 Provider Relay 管理 API。</p>
+        <p class="app-unavailable__hint">
+          请检查网络连接和服务地址，然后重新加载。
+        </p>
+        <button class="button-primary" type="button" @click="reloadApplication">
+          <RefreshCw :size="16" aria-hidden="true" />
+          重新加载
+        </button>
+      </div>
+    </section>
   </div>
 </template>

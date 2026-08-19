@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
+const appSource = () =>
+  readFileSync(new URL("../app/app.vue", import.meta.url), "utf8");
+
 test("client uses Nuxt Tauri and Tailwind entrypoints", () => {
   const packageJson = JSON.parse(
     readFileSync(new URL("../package.json", import.meta.url), "utf8"),
@@ -39,4 +42,13 @@ test("Tauri uses the static Nuxt output and a fixed development port", () => {
   expect(tauriConfig.build.devUrl).toBe("http://localhost:18081");
   expect(tauriConfig.build.beforeBuildCommand).toBe("bun run generate");
   expect(tauriConfig.build.frontendDist).toBe("../.output/public");
+});
+
+test("管理 API 不可达时由应用根节点显示阻断层", () => {
+  const app = appSource();
+
+  expect(app).toContain("useRelayManagementApiStatus");
+  expect(app).toContain("managementApi.error");
+  expect(app).toContain("app-unavailable");
+  expect(app).toContain("重新加载");
 });
