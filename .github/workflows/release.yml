@@ -1,0 +1,279 @@
+name: Release Provider Relay
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: provider-relay-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify Project
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install Linux desktop dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev
+
+      - name: Verify server
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path server/Cargo.toml --all -- --check
+          cargo clippy --manifest-path server/Cargo.toml --all-targets --all-features -- -D warnings
+          cargo test --manifest-path server/Cargo.toml --all-targets --all-features
+
+      - name: Verify shared protocol
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path crates/protocol/Cargo.toml --all -- --check
+          cargo clippy --manifest-path crates/protocol/Cargo.toml --all-targets --all-features -- -D warnings
+          cargo test --manifest-path crates/protocol/Cargo.toml --all-targets --all-features
+
+      - name: Verify desktop client
+        working-directory: client
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+          cargo test --manifest-path src-tauri/Cargo.toml --all-targets --all-features
+
+  prepare:
+    name: Prepare Release
+    needs: verify
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      image: ${{ steps.version.outputs.image }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: version
+        name: Validate release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          [[ "$tag_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          server_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' server/Cargo.toml | head -n 1)"
+          client_version="$(jq -r '.version' client/package.json)"
+          native_client_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' client/src-tauri/Cargo.toml | head -n 1)"
+          tauri_version="$(jq -r '.version' client/src-tauri/tauri.conf.json)"
+          test "$tag_version" = "$server_version"
+          test "$tag_version" = "$client_version"
+          test "$tag_version" = "$native_client_version"
+          test "$tag_version" = "$tauri_version"
+          echo "version=$tag_version" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/zoranner/provider-relay" >> "$GITHUB_OUTPUT"
+
+  build-server-image:
+    name: Build server image (${{ matrix.platform }})
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            archive_suffix: linux-amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            archive_suffix: linux-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: server/Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ needs.prepare.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          provenance: false
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+
+      - name: Export offline image
+        shell: bash
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          ARCHIVE_SUFFIX: ${{ matrix.archive_suffix }}
+        run: |
+          set -euo pipefail
+          archive="provider-relay-server-${VERSION}-${ARCHIVE_SUFFIX}.tar"
+          docker pull "$IMAGE@$DIGEST"
+          image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE@$DIGEST")"
+          docker image tag "$image_id" "$IMAGE:$VERSION"
+          docker image save --output "$archive" "$IMAGE:$VERSION"
+          mkdir -p digests
+          touch "digests/${DIGEST#sha256:}"
+
+      - name: Upload server image artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: provider-relay-server-${{ matrix.archive_suffix }}
+          path: |
+            provider-relay-server-${{ needs.prepare.outputs.version }}-${{ matrix.archive_suffix }}.tar
+            digests/*
+          if-no-files-found: error
+
+  build-desktop-client:
+    name: Build desktop client (${{ matrix.platform }})
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            platform: windows-x86_64
+            bundles: msi,nsis
+            artifact_name: provider-relay-client-windows-x86_64
+            artifact_path: |
+              client/src-tauri/target/release/bundle/msi/*.msi
+              client/src-tauri/target/release/bundle/nsis/*.exe
+          - runner: ubuntu-latest
+            platform: linux-x86_64
+            bundles: deb,appimage
+            artifact_name: provider-relay-client-linux-x86_64
+            artifact_path: |
+              client/src-tauri/target/release/bundle/deb/*.deb
+              client/src-tauri/target/release/bundle/appimage/*.AppImage
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf
+
+      - name: Build desktop client
+        working-directory: client
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run tauri build --bundles "${{ matrix.bundles }}"
+
+      - name: Upload desktop client artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [prepare, build-server-image, build-desktop-client]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: provider-relay-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create multi-platform server image
+        shell: bash
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          mapfile -t digest_files < <(find artifacts -type f -path '*/digests/*' -o -type f -path 'artifacts/digests/*' | sort)
+          test "${#digest_files[@]}" -eq 2
+          references=()
+          for digest_file in "${digest_files[@]}"; do
+            references+=("$IMAGE@sha256:$(basename "$digest_file")")
+          done
+          docker buildx imagetools create \
+            --tag "$IMAGE:$VERSION" \
+            "${references[@]}"
+
+      - name: Generate checksums
+        working-directory: artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          find . -type f ! -path './digests/*' -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: Provider Relay ${{ needs.prepare.outputs.version }}
+          body: |
+            Server image: ${{ needs.prepare.outputs.image }}:${{ needs.prepare.outputs.version }}
+            Desktop packages: Windows MSI and NSIS; Linux DEB and AppImage.
+            Offline images: provider-relay-server-${{ needs.prepare.outputs.version }}-linux-amd64.tar, provider-relay-server-${{ needs.prepare.outputs.version }}-linux-arm64.tar
+          files: |
+            artifacts/*.tar
+            artifacts/*.msi
+            artifacts/*.exe
+            artifacts/*.deb
+            artifacts/*.AppImage
+            artifacts/SHA256SUMS
+          fail_on_unmatched_files: true
+          overwrite_files: true
