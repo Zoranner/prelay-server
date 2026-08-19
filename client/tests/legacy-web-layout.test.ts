@@ -4,17 +4,19 @@ import { readFileSync } from "node:fs";
 const source = (path: string) =>
   readFileSync(new URL(`../app/${path}`, import.meta.url), "utf8");
 
-test("desktop client preserves the legacy management shell", () => {
+test("desktop client preserves management primitives in the desktop workbench shell", () => {
   const app = source("app.vue");
   const css = source("assets/css/main.css");
 
   expect(app).toContain("app-root");
-  expect(app).toContain("app-header");
-  expect(app).toContain("app-frame");
+  expect(app).toContain("workspace-sidebar");
+  expect(app).toContain("workspace-main");
+  expect(app).toContain("workspace-topbar");
   expect(app).toContain("大模型服务透传代理");
   expect(app).not.toContain('label: "诊断"');
   expect(app).not.toContain('path: "/diagnostics"');
   expect(css).toContain("--pr-color-page");
+  expect(css).toContain(".workspace-sidebar");
   expect(css).toContain(".page-shell");
   expect(css).toContain(".surface-panel");
   expect(css).toContain(".data-table");

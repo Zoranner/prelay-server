@@ -1,14 +1,16 @@
 pub mod bootstrap;
 pub mod interfaces;
 pub mod providers;
+pub mod settings;
 pub mod stats;
 
 use std::ops::Deref;
 
 use crate::{
-    api_client::{configured_relay_url, generate_device_credential, ApiClient, ClientError},
+    api_client::{generate_device_credential, ApiClient, ClientError},
     credential_store::{CredentialStore, FileCredentialLifecycleGuard},
     identity::{IdentitySource, WindowsIdentity},
+    relay_settings::RelaySettingsStore,
     NativeState,
 };
 
@@ -33,7 +35,13 @@ pub(crate) async fn authenticated_api(
         .identity
         .identity()
         .map_err(|error| ClientError::new("internal", error))?;
-    let relay_url = configured_relay_url()?;
+    let relay_url = state
+        .relay_settings
+        .load()
+        .map_err(|error| ClientError::new("relay_settings_error", error))?
+        .ok_or_else(|| {
+            ClientError::new("relay_url_not_configured", "relay URL is not configured")
+        })?;
     authenticated_api_with_identity(state, &identity, &relay_url).await
 }
 

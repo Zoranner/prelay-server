@@ -7,11 +7,13 @@ pub mod autostart;
 pub mod commands;
 pub mod credential_store;
 pub mod identity;
+pub mod relay_settings;
 pub mod tray;
 
 pub struct NativeState {
     pub identity: identity::WindowsIdentitySource,
     pub credentials: credential_store::FileCredentialStore,
+    pub relay_settings: relay_settings::FileRelaySettingsStore,
     pub registration_gate: api_client::RegistrationGate,
     pub credential_lifecycle_gate: tokio::sync::Mutex<()>,
 }
@@ -24,6 +26,11 @@ impl NativeState {
                 app_data_dir
                     .join("Provider Relay")
                     .join("device-credential.json"),
+            ),
+            relay_settings: relay_settings::FileRelaySettingsStore::at(
+                app_data_dir
+                    .join("Provider Relay")
+                    .join("relay-settings.json"),
             ),
             registration_gate: api_client::RegistrationGate::default(),
             credential_lifecycle_gate: tokio::sync::Mutex::new(()),
@@ -46,6 +53,8 @@ pub fn run() {
         ))
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap::bootstrap,
+            commands::settings::relay_settings_get,
+            commands::settings::relay_settings_save,
             commands::providers::providers_list,
             commands::providers::providers_save,
             commands::providers::providers_delete,

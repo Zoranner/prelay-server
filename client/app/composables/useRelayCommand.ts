@@ -5,6 +5,8 @@ import { toRelayError, type RelayError } from "~/utils/errors";
 
 export type RelayCommand =
   | "bootstrap"
+  | "relay_settings_get"
+  | "relay_settings_save"
   | "providers_list"
   | "providers_save"
   | "providers_delete"
@@ -29,7 +31,11 @@ export interface CommandState {
 const managementApiError = ref<RelayError | null>(null);
 
 export function useRelayManagementApiStatus() {
-  return { error: readonly(managementApiError) };
+  function clear() {
+    managementApiError.value = null;
+  }
+
+  return { error: readonly(managementApiError), clear };
 }
 
 export function useRelayCommand(): CommandState & {

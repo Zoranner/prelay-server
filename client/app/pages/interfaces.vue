@@ -120,8 +120,8 @@ onMounted(load);
 <template>
   <PageShell>
     <PageHeader
-      title="接口"
-      description="AI 工具使用根 /v1/ 地址和 Interface Token 访问此电脑的配置。"
+      title="接入"
+      description="为 AI 工具维护服务地址、Interface Token 与模型映射。"
     >
       <template #actions
         ><button class="button-secondary" :disabled="pending" @click="load">

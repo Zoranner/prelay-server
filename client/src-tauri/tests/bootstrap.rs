@@ -37,7 +37,7 @@ fn bootstrap_only_exposes_display_identity_and_credential_status() {
     let response = collect_bootstrap(&identity, &api_client).unwrap();
 
     assert_eq!(response.username, "Ada");
-    assert_eq!(response.relay_url, "https://relay.rd.kim");
+    assert_eq!(response.relay_url, "https://relay.example.test");
     assert!(response.has_device_credential);
     let response = serde_json::to_value(response).unwrap();
     assert!(response.get("machine_id").is_none());

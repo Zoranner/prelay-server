@@ -81,8 +81,8 @@ onMounted(loadOverview);
 <template>
   <PageShell>
     <PageHeader
-      title="统计"
-      description="查看当前电脑与 Windows 账户身份下的请求概览与明细。"
+      title="活动"
+      description="查看当前身份下的请求概览、明细和错误记录。"
       ><template #actions
         ><button class="button-secondary" :disabled="pending" @click="refresh">
           {{ pending ? "刷新中..." : "刷新" }}

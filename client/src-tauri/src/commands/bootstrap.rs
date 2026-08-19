@@ -22,7 +22,7 @@ pub fn collect_bootstrap(
         .identity()
         .map_err(|error| ClientError::new("internal", error))?;
     let has_device_credential = api_client.has_stored_credential()?;
-    let relay_url = crate::api_client::configured_relay_url()?;
+    let relay_url = api_client.base_url().to_owned();
 
     Ok(BootstrapResponse {
         relay_url,

@@ -11,8 +11,6 @@ use crate::{
     identity::WindowsIdentity,
 };
 
-pub const DEFAULT_RELAY_URL: &str = "https://relay.rd.kim";
-
 #[derive(Clone, Debug, Serialize)]
 pub struct ClientError {
     pub code: String,
@@ -72,18 +70,12 @@ impl<'a> ApiClient<'a> {
         base_url: impl AsRef<str>,
         credential_store: &'a dyn CredentialStore,
     ) -> Result<Self, ClientError> {
-        let base_url = normalize_base_url(base_url.as_ref())?;
+        let base_url = normalize_relay_url(base_url.as_ref())?;
         Ok(Self {
             base_url,
             credential_store,
             http: reqwest::Client::new(),
         })
-    }
-
-    pub fn from_environment(
-        credential_store: &'a dyn CredentialStore,
-    ) -> Result<Self, ClientError> {
-        Self::new(configured_relay_url()?, credential_store)
     }
 
     pub fn has_stored_credential(&self) -> Result<bool, ClientError> {
@@ -92,6 +84,10 @@ impl<'a> ApiClient<'a> {
             .load()
             .map_err(credential_store_error)?
             .is_some_and(|record| !record.current.trim().is_empty()))
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
     }
 
     pub fn authenticated_request(
@@ -351,13 +347,7 @@ pub fn generate_device_credential() -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-pub fn configured_relay_url() -> Result<String, ClientError> {
-    let base_url =
-        std::env::var("PROVIDER_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string());
-    normalize_base_url(&base_url)
-}
-
-fn normalize_base_url(value: &str) -> Result<String, ClientError> {
+pub fn normalize_relay_url(value: &str) -> Result<String, ClientError> {
     let value = value.trim().trim_end_matches('/');
     if !(value.starts_with("https://") || value.starts_with("http://")) {
         return Err(ClientError::new(

@@ -9,6 +9,8 @@ test("Nuxt 管理页面只通过固定的 Tauri command 调用服务端", () => 
 
   for (const command of [
     "bootstrap",
+    "relay_settings_get",
+    "relay_settings_save",
     "providers_list",
     "providers_save",
     "providers_delete",
@@ -38,6 +40,8 @@ test("Nuxt 页面不直连服务端或读取认证凭据", () => {
     "pages/providers.vue",
     "pages/interfaces.vue",
     "pages/stats.vue",
+    "pages/setup.vue",
+    "pages/settings.vue",
   ]) {
     const content = source(page);
     expect(content).not.toContain("fetch(");
