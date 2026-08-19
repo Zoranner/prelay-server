@@ -4,7 +4,7 @@ export default defineNuxtConfig({
   srcDir: "app/",
   ssr: false,
   devServer: {
-    port: 3000,
+    port: 18081,
   },
   css: ["~/assets/css/main.css"],
   vite: {

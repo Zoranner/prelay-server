@@ -5,7 +5,7 @@
   "identifier": "kim.rd.provider-relay",
   "build": {
     "beforeDevCommand": "bun run dev",
-    "devUrl": "http://localhost:3000",
+    "devUrl": "http://localhost:18081",
     "beforeBuildCommand": "bun run generate",
     "frontendDist": "../.output/public"
   },
