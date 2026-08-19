@@ -6,8 +6,14 @@ import {
   type Provider,
   type RelayInterface,
 } from "~/stores/relay";
+import { DrawerPanel, PageHeader, PageShell } from "~/components/base";
 
-type InterfaceFormPayload = { id?: string; name: string; protocol: string; models: InterfaceModel[] };
+type InterfaceFormPayload = {
+  id?: string;
+  name: string;
+  protocol: string;
+  models: InterfaceModel[];
+};
 
 const { error, pending, invokeCommand } = useRelayCommand();
 const { bootstrap, setBootstrap } = useRelayStore();
@@ -16,14 +22,19 @@ const interfaces = ref<RelayInterface[]>([]);
 const editingInterface = ref<RelayInterface | null>(null);
 const showForm = ref(false);
 const operationMessage = ref<string | null>(null);
-const endpoint = computed(() => `${(bootstrap.value?.relay_url ?? "https://relay.rd.kim").replace(/\/$/, "")}/v1/`);
+const endpoint = computed(
+  () =>
+    `${(bootstrap.value?.relay_url ?? "https://relay.rd.kim").replace(/\/$/, "")}/v1/`,
+);
 
 async function load() {
   try {
     const [providerList, interfaceList, bootstrapState] = await Promise.all([
       invokeCommand<Provider[]>("providers_list"),
       invokeCommand<RelayInterface[]>("interfaces_list"),
-      bootstrap.value ? Promise.resolve(bootstrap.value) : invokeCommand<BootstrapState>("bootstrap"),
+      bootstrap.value
+        ? Promise.resolve(bootstrap.value)
+        : invokeCommand<BootstrapState>("bootstrap"),
     ]);
     providers.value = providerList;
     interfaces.value = interfaceList;
@@ -41,11 +52,13 @@ async function saveInterface(payload: InterfaceFormPayload) {
       input: {
         name: payload.name,
         protocol: payload.protocol,
-        models: payload.models.map(({ provider_id, upstream_model, model_name }) => ({
-          provider_id,
-          upstream_model,
-          model_name: model_name || null,
-        })),
+        models: payload.models.map(
+          ({ provider_id, upstream_model, model_name }) => ({
+            provider_id,
+            upstream_model,
+            model_name: model_name || null,
+          }),
+        ),
       },
     });
     editingInterface.value = null;
@@ -69,9 +82,12 @@ async function deleteInterface(item: RelayInterface) {
 }
 
 async function regenerateToken(item: RelayInterface) {
-  if (!confirm(`重置“${item.name}”的 Interface Token？现有工具将立即失效。`)) return;
+  if (!confirm(`重置“${item.name}”的 Interface Token？现有工具将立即失效。`))
+    return;
   try {
-    await invokeCommand("interfaces_regenerate_token", { interfaceId: item.id });
+    await invokeCommand("interfaces_regenerate_token", {
+      interfaceId: item.id,
+    });
     await load();
     operationMessage.value = "Interface Token 已重置。";
   } catch {
@@ -102,31 +118,29 @@ onMounted(load);
 </script>
 
 <template>
-  <main class="page">
-    <div class="flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <h1 class="page-heading">接口</h1>
-        <p class="page-subheading">AI 工具使用接口的根 <code>/v1/</code> 地址和 Interface Token。</p>
-      </div>
-      <button class="button-primary" :disabled="!providers.length" @click="createInterface">添加接口</button>
-    </div>
-
-    <p v-if="!providers.length" class="mt-5 border border-amber-900 bg-amber-950/30 p-3 text-sm text-amber-200">
+  <PageShell>
+    <PageHeader
+      title="接口"
+      description="AI 工具使用根 /v1/ 地址和 Interface Token 访问此电脑的配置。"
+    >
+      <template #actions
+        ><button class="button-secondary" :disabled="pending" @click="load">
+          {{ pending ? "刷新中..." : "刷新" }}</button
+        ><button
+          class="button-primary"
+          :disabled="!providers.length"
+          @click="createInterface"
+        >
+          添加接口
+        </button></template
+      >
+    </PageHeader>
+    <p v-if="!providers.length" class="notice notice--warning">
       请先在供应商页面配置至少一个模型。
     </p>
-    <section v-if="showForm" class="panel mt-6">
-      <h2 class="mb-5 font-medium text-white">{{ editingInterface ? "编辑接口" : "添加接口" }}</h2>
-      <InterfacesInterfaceForm
-        :interface="editingInterface"
-        :providers="providers"
-        :pending="pending"
-        @save="saveInterface"
-        @cancel="showForm = false"
-      />
-    </section>
-    <p v-if="error" class="mt-5 border border-rose-900 bg-rose-950/40 p-3 text-sm text-rose-200">{{ error.message }}</p>
-    <p v-else-if="operationMessage" class="mt-5 border border-emerald-900 bg-emerald-950/30 p-3 text-sm text-emerald-200">{{ operationMessage }}</p>
-    <section class="mt-6">
+    <p v-if="error" class="notice notice--error">{{ error.message }}</p>
+    <p v-else-if="operationMessage" class="notice">{{ operationMessage }}</p>
+    <section class="min-h-0 flex-1">
       <InterfacesInterfaceList
         :interfaces="interfaces"
         :endpoint="endpoint"
@@ -137,5 +151,20 @@ onMounted(load);
         @copy="copy"
       />
     </section>
-  </main>
+    <DrawerPanel
+      :open="showForm"
+      :title="editingInterface ? '编辑接口' : '添加接口'"
+      :description="'选择供应商模型并维护对外模型映射。'"
+      label="接口配置"
+      @close="showForm = false"
+    >
+      <InterfacesInterfaceForm
+        :interface="editingInterface"
+        :providers="providers"
+        :pending="pending"
+        @save="saveInterface"
+        @cancel="showForm = false"
+      />
+    </DrawerPanel>
+  </PageShell>
 </template>

@@ -48,7 +48,10 @@ test("协议测试成功时使用服务端返回的协议字段", () => {
 });
 
 test("Nuxt 供应商操作 DTO 只声明 Tauri 实际返回的字段", () => {
-  const source = readFileSync(new URL("../app/utils/providerOperations.ts", import.meta.url), "utf8");
+  const source = readFileSync(
+    new URL("../app/utils/providerOperations.ts", import.meta.url),
+    "utf8",
+  );
 
   expect(source).toContain("protocol: string | null;");
   expect(source).not.toContain("message?: string | null;");
@@ -59,10 +62,13 @@ test("Nuxt 供应商操作 DTO 只声明 Tauri 实际返回的字段", () => {
 });
 
 test("供应商页面根据结果成功状态使用不同提示颜色并显示指标", () => {
-  const page = readFileSync(new URL("../app/pages/providers.vue", import.meta.url), "utf8");
+  const page = readFileSync(
+    new URL("../app/pages/providers.vue", import.meta.url),
+    "utf8",
+  );
 
   expect(page).toContain("operationFeedback.success");
   expect(page).toContain("operationFeedback.metrics");
-  expect(page).toContain("text-rose-200");
+  expect(page).toContain("notice--error");
   expect(page).toContain("getProviderOperationFeedback");
 });

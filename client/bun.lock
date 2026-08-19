@@ -6,6 +6,7 @@
       "name": "provider-relay-client",
       "dependencies": {
         "@tauri-apps/api": "^2.0.0",
+        "lucide-vue-next": "^1.0.0",
       },
       "devDependencies": {
         "@nuxtjs/tailwindcss": "^6.14.0",
@@ -928,6 +929,8 @@
     "lodash": ["lodash@4.18.1", "http://pkg.rd.kim/repository/npm-group/lodash/-/lodash-4.18.1.tgz", {}, "sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q=="],
 
     "lru-cache": ["lru-cache@11.5.2", "http://pkg.rd.kim/repository/npm-group/lru-cache/-/lru-cache-11.5.2.tgz", {}, "sha512-4pfM1Ff0x50o0tQwb5ucw/RzNyD0/YJME6IVcStalZuMWxdt3sR3huStTtxz4PUmvZfRguvDejasvQ2kifR11g=="],
+
+    "lucide-vue-next": ["lucide-vue-next@1.0.0", "http://pkg.rd.kim/repository/npm-group/lucide-vue-next/-/lucide-vue-next-1.0.0.tgz", { "peerDependencies": { "vue": ">=3.0.1" } }, "sha512-V6SPvx1IHTj/UY+FrIYWV5faISsPSb8BnWSFDxAtezWKvWc9ZZ40PDrdu1/Qb5vg4lHWr1hs1BAMGVGm6V1Xdg=="],
 
     "magic-string": ["magic-string@1.2.0", "http://pkg.rd.kim/repository/npm-group/magic-string/-/magic-string-1.2.0.tgz", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.5" } }, "sha512-ptco+HFxTLgjafSLim2LojBSwfg5feBjd+SqyiwdGkzC38UPdZy3zgrHMI2CoTf5fJL38tbHMYWVzIH8BxGqJw=="],
 

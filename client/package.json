@@ -21,6 +21,7 @@
     "vue-tsc": "^3.3.9"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.0.0"
+    "@tauri-apps/api": "^2.0.0",
+    "lucide-vue-next": "^1.0.0"
   }
 }
