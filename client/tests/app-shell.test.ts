@@ -13,6 +13,7 @@ test("client uses Nuxt Tauri and Tailwind entrypoints", () => {
   expect(packageJson.scripts.typecheck).toBe("nuxt typecheck");
   expect(packageJson.devDependencies["@tauri-apps/cli"]).toBeDefined();
   expect(config).toContain("@tailwindcss/vite");
+  expect(config).toContain('compatibilityDate: "2026-08-19"');
 });
 
 test("Tauri uses the static Nuxt output and a fixed development port", () => {
