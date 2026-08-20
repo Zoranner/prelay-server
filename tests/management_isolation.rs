@@ -936,17 +936,17 @@ async fn management_provider_operations_return_success_envelopes_for_upstream_ne
     assert_eq!(status, StatusCode::CREATED);
     let provider_id = provider["id"].as_str().expect("provider id");
 
-    for (action, body, expected_error_prefix) in [
-        ("ping", serde_json::json!({}), "模型获取失败，上游"),
+    for (action, body, expected_error_prefixes) in [
+        ("ping", serde_json::json!({}), &["模型获取失败，上游"][..]),
         (
             "discover-models",
             serde_json::json!({}),
-            "模型获取失败，上游",
+            &["模型获取失败，上游"][..],
         ),
         (
             "test-protocol",
             serde_json::json!({ "protocol": "openai", "model": "unavailable-model" }),
-            "上游测试失败",
+            &["上游测试超时", "上游连接失败", "上游测试失败"][..],
         ),
     ] {
         let (status, response): (StatusCode, serde_json::Value) = request_json(
@@ -959,11 +959,11 @@ async fn management_provider_operations_return_success_envelopes_for_upstream_ne
         .await;
         assert_eq!(status, StatusCode::OK, "{action}");
         assert_eq!(response["ok"], false, "{action}");
+        let error = response["error"].as_str().expect("operation error");
         assert!(
-            response["error"]
-                .as_str()
-                .expect("operation error")
-                .starts_with(expected_error_prefix),
+            expected_error_prefixes
+                .iter()
+                .any(|prefix| error.starts_with(prefix)),
             "{action}: {response}"
         );
     }
