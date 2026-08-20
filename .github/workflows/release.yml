@@ -75,16 +75,16 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
       - id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -110,6 +110,7 @@ jobs:
           image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE@$DIGEST")"
           docker image tag "$image_id" "$IMAGE:$VERSION"
           docker image save --output "$archive" "$IMAGE:$VERSION"
+          sha256sum "$archive" > "$archive.sha256"
           mkdir -p digests
           touch "digests/${DIGEST#sha256:}"
 
@@ -119,6 +120,7 @@ jobs:
           name: prelay-server-${{ matrix.archive_suffix }}
           path: |
             prelay-server-${{ needs.prepare.outputs.version }}-${{ matrix.archive_suffix }}.tar
+            prelay-server-${{ needs.prepare.outputs.version }}-${{ matrix.archive_suffix }}.tar.sha256
             digests/*
           if-no-files-found: error
 
@@ -127,9 +129,9 @@ jobs:
     needs: [prepare, build-server-image]
     runs-on: ubuntu-latest
     steps:
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -159,13 +161,6 @@ jobs:
             --tag "$IMAGE:$VERSION" \
             "${references[@]}"
 
-      - name: Generate checksums
-        working-directory: artifacts
-        shell: bash
-        run: |
-          set -euo pipefail
-          find . -type f ! -path './digests/*' -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -173,8 +168,9 @@ jobs:
           body: |
             Server image: ${{ needs.prepare.outputs.image }}:${{ needs.prepare.outputs.version }}
             Offline images: prelay-server-${{ needs.prepare.outputs.version }}-linux-amd64.tar, prelay-server-${{ needs.prepare.outputs.version }}-linux-arm64.tar
+            Each offline image has a same-name .sha256 file for integrity verification.
           files: |
             artifacts/*.tar
-            artifacts/SHA256SUMS
+            artifacts/*.tar.sha256
           fail_on_unmatched_files: true
           overwrite_files: true
