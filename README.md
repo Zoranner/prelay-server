@@ -41,7 +41,7 @@ Copy-Item deploy/.env.example deploy/.env
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
-Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.1.0`，使用 `data/` 作为数据库卷，并以只读方式挂载 `config/`。模型价格为可选配置，可复制 `config/model_prices.example.json` 为 `config/model_prices.json` 后再调整内容。
+Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.1.0`，使用 `data/` 作为数据库卷，并以只读方式挂载 `app/config/`。模型价格为可选配置，可复制 `config/model_prices.example.json` 为 `app/config/model_prices.json` 后再调整内容。
 
 ## AI 工具接口
 

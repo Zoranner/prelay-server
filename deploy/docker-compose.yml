@@ -8,8 +8,8 @@ services:
     ports:
       - "18080:18080"
     volumes:
+      - ./app/config:/app/config:ro
       - ./data:/app/data
-      - ./config:/app/config:ro
 networks:
   default:
     external: true
