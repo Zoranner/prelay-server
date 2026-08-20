@@ -1,0 +1,23 @@
+services:
+  prelay-server:
+    image: prelay-server:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: prelay-server
+    restart: always
+    ports:
+      - ${LISTEN_PORT:-18080}:${LISTEN_PORT:-18080}
+    environment:
+      - TZ=Asia/Shanghai
+      - LISTEN_PORT=${LISTEN_PORT:-18080}
+      - RUST_LOG=${RUST_LOG:-prelay_server=info,tower_http=info}
+      - MODEL_PRICES_PATH=${MODEL_PRICES_PATH:-config/model_prices.json}
+      - PRELAY_MASTER_KEY=${PRELAY_MASTER_KEY:?set a Base64-encoded 32-byte master key}
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config:ro
+networks:
+  default:
+    external: true
+    name: prelay

@@ -1,0 +1,4 @@
+[submodule "crates/protocol"]
+	path = crates/protocol
+	url = https://github.com/Zoranner/prelay-protocol.git
+	branch = master

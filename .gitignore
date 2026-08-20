@@ -6,3 +6,15 @@
 .idea/
 .vscode/settings.json
 *.swp
+
+# Local server state
+/target/
+/server/target/
+/client/
+/data/
+/config/model_prices.json
+/deploy/.env
+
+.git/
+.env
+.env.*
