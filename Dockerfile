@@ -4,7 +4,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y libssl-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-COPY Cargo.toml build.rs ./
+COPY Cargo.toml Cargo.lock build.rs ./
 COPY crates/protocol crates/protocol
 COPY src src
 RUN cargo build --release --locked

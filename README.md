@@ -37,11 +37,11 @@ Docker Compose 的部署文件位于 `deploy/`。先复制环境模板、填入�
 
 ```powershell
 Copy-Item deploy/.env.example deploy/.env
-# Edit deploy/.env and replace PRELAY_MASTER_KEY.
-docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --build
+# Edit deploy/.env and set PRELAY_VERSION and PRELAY_MASTER_KEY.
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
 ```
 
-Compose 使用 `data/` 作为数据库卷、以只读方式挂载 `config/`，并沿用根目录 `Dockerfile` 构建镜像。模型价格为可选配置，可复制 `config/model_prices.example.json` 为 `config/model_prices.json` 后再调整内容。
+Compose 拉取 `ghcr.io/zoranner/prelay-server` 的固定版本镜像，使用 `data/` 作为数据库卷，并以只读方式挂载 `config/`。模型价格为可选配置，可复制 `config/model_prices.example.json` 为 `config/model_prices.json` 后再调整内容。
 
 ## AI 工具接口
 

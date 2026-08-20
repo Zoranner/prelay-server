@@ -1,9 +1,6 @@
 services:
   prelay-server:
-    image: prelay-server:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/zoranner/prelay-server:${PRELAY_VERSION:?set an image version}
     container_name: prelay-server
     restart: always
     ports:
