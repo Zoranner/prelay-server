@@ -1,16 +1,12 @@
 services:
   prelay-server:
-    image: ghcr.io/zoranner/prelay-server:${PRELAY_VERSION:?set an image version}
+    image: ghcr.io/zoranner/prelay-server:0.1.0
     container_name: prelay-server
     restart: always
+    env_file:
+      - .env
     ports:
-      - ${LISTEN_PORT:-18080}:${LISTEN_PORT:-18080}
-    environment:
-      - TZ=Asia/Shanghai
-      - LISTEN_PORT=${LISTEN_PORT:-18080}
-      - RUST_LOG=${RUST_LOG:-prelay_server=info,tower_http=info}
-      - MODEL_PRICES_PATH=${MODEL_PRICES_PATH:-config/model_prices.json}
-      - PRELAY_MASTER_KEY=${PRELAY_MASTER_KEY:?set a Base64-encoded 32-byte master key}
+      - "18080:18080"
     volumes:
       - ./data:/app/data
       - ./config:/app/config:ro
