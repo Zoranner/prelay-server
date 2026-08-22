@@ -92,6 +92,8 @@ mod tests {
                 input_tokens: Some(10),
                 output_tokens: Some(5),
                 reasoning_tokens: Some(2),
+                cache_read_tokens: None,
+                cache_write_tokens: None,
             }),
         });
 
