@@ -15,6 +15,51 @@ pub(crate) struct ResponsesSseAnthropicMessagesSseDecoder {
     anthropic: AnthropicMessagesSseDecoder,
 }
 
+#[derive(Default)]
+pub(crate) struct NativeResponsesSseStatsDecoder {
+    line_buffer: Vec<u8>,
+    event_name: Option<String>,
+    data_lines: Vec<String>,
+    stats: Option<SharedStreamStats>,
+}
+
+impl NativeResponsesSseStatsDecoder {
+    fn process_line(&mut self, line: &[u8]) {
+        if line.is_empty() {
+            self.record_event();
+            return;
+        }
+
+        let Ok(line) = std::str::from_utf8(line) else {
+            return;
+        };
+        if let Some(event) = line.strip_prefix("event:") {
+            let event = event.strip_prefix(' ').unwrap_or(event);
+            self.event_name = Some(event.to_string());
+            return;
+        }
+        let Some(data) = line.strip_prefix("data:") else {
+            return;
+        };
+        let data = data.strip_prefix(' ').unwrap_or(data);
+        self.data_lines.push(data.to_string());
+    }
+
+    fn record_event(&mut self) {
+        let event_name = self.event_name.take();
+        let data = std::mem::take(&mut self.data_lines).join("\n");
+        let Some(stats) = &self.stats else {
+            return;
+        };
+        let Ok(mut stats) = stats.lock() else {
+            return;
+        };
+        for event in decode_responses_sse_event(event_name.as_deref(), &data) {
+            stats.record_event(&event);
+        }
+    }
+}
+
 impl ResponsesSseAnthropicMessagesSseDecoder {
     pub(crate) fn new(model: String) -> Self {
         Self {
@@ -92,6 +137,29 @@ impl ByteStreamDecoder for ResponsesSseAnthropicMessagesSseDecoder {
 
     fn set_stats(&mut self, stats: SharedStreamStats) {
         self.anthropic.set_stats(stats);
+    }
+}
+
+impl ByteStreamDecoder for NativeResponsesSseStatsDecoder {
+    fn push_chunk(&mut self, chunk: &[u8]) -> Vec<Bytes> {
+        self.line_buffer.extend_from_slice(chunk);
+        for line in drain_lines(&mut self.line_buffer) {
+            self.process_line(&line);
+        }
+        vec![Bytes::copy_from_slice(chunk)]
+    }
+
+    fn finish(&mut self) -> Vec<Bytes> {
+        if !self.line_buffer.is_empty() {
+            let line = std::mem::take(&mut self.line_buffer);
+            self.process_line(&line);
+        }
+        self.record_event();
+        Vec::new()
+    }
+
+    fn set_stats(&mut self, stats: SharedStreamStats) {
+        self.stats = Some(stats);
     }
 }
 
@@ -217,10 +285,33 @@ fn decode_responses_usage(data: &str) -> Option<StreamUsage> {
     let usage = value
         .pointer("/response/usage")
         .or_else(|| value.get("usage"))?;
+    let input_tokens = usage
+        .get("input_tokens")
+        .or_else(|| usage.get("prompt_tokens"))
+        .and_then(Value::as_u64);
+    let output_tokens = usage
+        .get("output_tokens")
+        .or_else(|| usage.get("completion_tokens"))
+        .and_then(Value::as_u64);
     Some(StreamUsage {
-        input_tokens: usage.get("input_tokens").and_then(Value::as_u64),
-        output_tokens: usage.get("output_tokens").and_then(Value::as_u64),
-        total_tokens: usage.get("total_tokens").and_then(Value::as_u64),
+        input_tokens,
+        output_tokens,
+        total_tokens: usage
+            .get("total_tokens")
+            .and_then(Value::as_u64)
+            .or_else(|| {
+                input_tokens
+                    .zip(output_tokens)
+                    .map(|(input, output)| input + output)
+            }),
+        cache_read_tokens: usage
+            .pointer("/input_tokens_details/cached_tokens")
+            .or_else(|| usage.pointer("/prompt_tokens_details/cached_tokens"))
+            .or_else(|| usage.get("cache_read_input_tokens"))
+            .and_then(Value::as_u64),
+        cache_write_tokens: usage
+            .get("cache_creation_input_tokens")
+            .and_then(Value::as_u64),
     })
 }
 
@@ -243,7 +334,7 @@ fn responses_tool_call_id(primary: &Value, fallback: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::ResponsesSseAnthropicMessagesSseDecoder;
+    use super::{decode_responses_usage, ResponsesSseAnthropicMessagesSseDecoder};
     use std::sync::{Arc, Mutex};
 
     use crate::bridge::stream::{pipeline::ByteStreamDecoder, StreamStatsSnapshot};
@@ -377,5 +468,17 @@ data: {"type":"response.completed","response":{"usage":{"input_tokens":3,"output
 
         assert!(output.contains("event: content_block_delta"));
         assert!(output.contains("\"text\":\"hel\""));
+    }
+
+    #[test]
+    fn decodes_openai_named_usage_from_completed_responses_event() {
+        let usage = decode_responses_usage(
+            r#"{"response":{"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}}"#,
+        )
+        .expect("usage");
+
+        assert_eq!(usage.input_tokens, Some(11));
+        assert_eq!(usage.output_tokens, Some(7));
+        assert_eq!(usage.total_tokens, Some(18));
     }
 }
