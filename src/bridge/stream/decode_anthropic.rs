@@ -344,6 +344,10 @@ fn decode_anthropic_usage(value: &Value) -> Option<StreamUsage> {
         input_tokens: usage.get("input_tokens").and_then(Value::as_u64),
         output_tokens: usage.get("output_tokens").and_then(Value::as_u64),
         total_tokens: None,
+        cache_read_tokens: usage.get("cache_read_input_tokens").and_then(Value::as_u64),
+        cache_write_tokens: usage
+            .get("cache_creation_input_tokens")
+            .and_then(Value::as_u64),
     })
 }
 

@@ -19,7 +19,7 @@ pub(crate) use pipeline::SharedStreamStats;
 use self::{
     decode_anthropic::AnthropicMessagesToResponsesSseDecoder,
     decode_chat::ChatToResponsesSseDecoder,
-    decode_responses::ResponsesSseAnthropicMessagesSseDecoder,
+    decode_responses::{NativeResponsesSseStatsDecoder, ResponsesSseAnthropicMessagesSseDecoder},
     encode_anthropic::AnthropicMessagesSseDecoder,
     pipeline::{map_response_stream, map_response_stream_with_stats},
 };
@@ -87,6 +87,15 @@ pub(crate) fn responses_sse_response_to_anthropic_messages_sse_with_stats(
         response,
         ResponsesSseAnthropicMessagesSseDecoder::new(model),
     )
+}
+
+pub(crate) fn native_responses_sse_with_stats(
+    response: reqwest::Response,
+) -> (
+    impl Stream<Item = Result<Bytes, std::io::Error>>,
+    SharedStreamStats,
+) {
+    map_response_stream_with_stats(response, NativeResponsesSseStatsDecoder::default())
 }
 
 pub(crate) fn anthropic_messages_sse_response_to_responses_sse_with_stats(

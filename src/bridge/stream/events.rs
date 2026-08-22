@@ -22,6 +22,8 @@ pub struct StreamUsage {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub total_tokens: Option<u64>,
+    pub cache_read_tokens: Option<u64>,
+    pub cache_write_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -29,6 +31,8 @@ pub struct StreamStatsSnapshot {
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
+    pub cache_read_tokens: Option<i64>,
+    pub cache_write_tokens: Option<i64>,
     pub tool_call_count: i64,
     pub completed: bool,
     pub final_usage_seen: bool,
@@ -44,9 +48,13 @@ impl StreamStatsSnapshot {
                 self.input_tokens = usage.input_tokens.and_then(u64_to_i64);
                 self.output_tokens = usage.output_tokens.and_then(u64_to_i64);
                 self.total_tokens = usage.total_tokens.and_then(u64_to_i64);
+                self.cache_read_tokens = usage.cache_read_tokens.and_then(u64_to_i64);
+                self.cache_write_tokens = usage.cache_write_tokens.and_then(u64_to_i64);
                 self.final_usage_seen = usage.input_tokens.is_some()
                     || usage.output_tokens.is_some()
-                    || usage.total_tokens.is_some();
+                    || usage.total_tokens.is_some()
+                    || usage.cache_read_tokens.is_some()
+                    || usage.cache_write_tokens.is_some();
             }
             InternalStreamEvent::Finished(_) => {
                 self.completed = true;
@@ -173,6 +181,8 @@ mod tests {
             input_tokens: Some(3),
             output_tokens: Some(5),
             total_tokens: Some(8),
+            cache_read_tokens: Some(2),
+            cache_write_tokens: Some(1),
         });
 
         assert!(matches!(
@@ -181,6 +191,8 @@ mod tests {
                 input_tokens: Some(3),
                 output_tokens: Some(5),
                 total_tokens: Some(8),
+                cache_read_tokens: Some(2),
+                cache_write_tokens: Some(1),
             })
         ));
     }
@@ -193,6 +205,8 @@ mod tests {
             input_tokens: Some(3),
             output_tokens: Some(5),
             total_tokens: Some(8),
+            cache_read_tokens: Some(2),
+            cache_write_tokens: Some(1),
         }));
         stats.record_event(&InternalStreamEvent::ToolCallDone {
             index: 0,
@@ -207,6 +221,8 @@ mod tests {
         assert_eq!(stats.input_tokens, Some(3));
         assert_eq!(stats.output_tokens, Some(5));
         assert_eq!(stats.total_tokens, Some(8));
+        assert_eq!(stats.cache_read_tokens, Some(2));
+        assert_eq!(stats.cache_write_tokens, Some(1));
         assert_eq!(stats.tool_call_count, 1);
         assert!(stats.completed);
         assert!(stats.final_usage_seen);
