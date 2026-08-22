@@ -1,5 +1,5 @@
 use chrono::{Duration, TimeZone, Utc};
-use prelay_protocol::{CreateInterfaceRequest, CreateProviderRequest, InterfaceModelInput};
+use prelay_protocol::{CreateEndpointRequest, CreateProviderRequest, EndpointModelInput};
 use prelay_server::{
     identity::credential::generate_credential,
     storage::{MasterKey, Storage},
@@ -41,10 +41,10 @@ async fn seed_owned_resources(
     storage
         .create_interface(
             identity_id,
-            CreateInterfaceRequest {
-                name: format!("Interface {resource_suffix}"),
+            CreateEndpointRequest {
+                name: format!("Endpoint {resource_suffix}"),
                 protocol: None,
-                models: vec![InterfaceModelInput {
+                models: vec![EndpointModelInput {
                     model_name: Some(format!("model-{resource_suffix}")),
                     provider_id: provider_id.clone(),
                     upstream_model: format!("upstream-model-{resource_suffix}"),
@@ -52,7 +52,7 @@ async fn seed_owned_resources(
             },
         )
         .await
-        .expect("create interface");
+        .expect("create endpoint");
     sqlx::query(
         "INSERT INTO identity_request_logs (id, identity_id, created_at, status) VALUES (?, ?, ?, ?)",
     )
@@ -102,9 +102,9 @@ async fn owned_resource_count(pool: &SqlitePool, identity_id: &str) -> i64 {
              (SELECT COUNT(*) FROM identity_provider_models WHERE provider_id IN (\
                  SELECT id FROM identity_provider_configs WHERE identity_id = ?\
              )) + \
-             (SELECT COUNT(*) FROM identity_interface_configs WHERE identity_id = ?) + \
-             (SELECT COUNT(*) FROM identity_interface_models WHERE interface_id IN (\
-                 SELECT id FROM identity_interface_configs WHERE identity_id = ?\
+             (SELECT COUNT(*) FROM identity_endpoint_configs WHERE identity_id = ?) + \
+             (SELECT COUNT(*) FROM identity_endpoint_models WHERE endpoint_id IN (\
+                 SELECT id FROM identity_endpoint_configs WHERE identity_id = ?\
              )) + \
              (SELECT COUNT(*) FROM identity_response_sessions WHERE identity_id = ?) + \
              (SELECT COUNT(*) FROM identity_request_logs WHERE identity_id = ?) + \
@@ -143,13 +143,13 @@ async fn cleanup_removes_inactive_identity_and_all_owned_data() {
         )
         .await
         .expect("create provider");
-    let interface = storage
+    let endpoint = storage
         .create_interface(
             &identity.identity_id,
-            CreateInterfaceRequest {
-                name: "Interface".to_string(),
+            CreateEndpointRequest {
+                name: "Endpoint".to_string(),
                 protocol: None,
-                models: vec![InterfaceModelInput {
+                models: vec![EndpointModelInput {
                     model_name: Some("model".to_string()),
                     provider_id: provider_id.clone(),
                     upstream_model: "upstream-model".to_string(),
@@ -157,7 +157,7 @@ async fn cleanup_removes_inactive_identity_and_all_owned_data() {
             },
         )
         .await
-        .expect("create interface");
+        .expect("create endpoint");
 
     sqlx::query(
         "INSERT INTO identity_model_aliases (id, identity_id, alias, provider_id, upstream_model, \
@@ -217,8 +217,8 @@ async fn cleanup_removes_inactive_identity_and_all_owned_data() {
         "identities",
         "identity_provider_configs",
         "identity_provider_models",
-        "identity_interface_configs",
-        "identity_interface_models",
+        "identity_endpoint_configs",
+        "identity_endpoint_models",
         "identity_response_sessions",
         "identity_request_logs",
         "identity_model_aliases",
@@ -229,7 +229,7 @@ async fn cleanup_removes_inactive_identity_and_all_owned_data() {
             .expect("count owned resources");
         assert_eq!(count, 0, "{table} still has an inactive identity resource");
     }
-    assert_eq!(interface.models.len(), 1);
+    assert_eq!(endpoint.models.len(), 1);
 }
 
 #[tokio::test]
@@ -312,8 +312,8 @@ async fn initialization_discards_unscoped_legacy_database() {
         .expect("create legacy provider table");
     for table in [
         "provider_models",
-        "interface_configs",
-        "interface_models",
+        "endpoint_configs",
+        "endpoint_models",
         "response_sessions",
         "request_logs",
         "model_aliases",
@@ -341,7 +341,7 @@ async fn initialization_discards_unscoped_legacy_database() {
 
     let legacy_table_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (\
-         'provider_configs', 'provider_models', 'interface_configs', 'interface_models', \
+         'provider_configs', 'provider_models', 'endpoint_configs', 'endpoint_models', \
          'response_sessions', 'request_logs', 'model_aliases')",
     )
     .fetch_one(&pool)
@@ -351,7 +351,7 @@ async fn initialization_discards_unscoped_legacy_database() {
     let identity_table_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (\
          'identities', 'identity_provider_configs', 'identity_provider_models', \
-         'identity_interface_configs', 'identity_interface_models', \
+         'identity_endpoint_configs', 'identity_endpoint_models', \
          'identity_response_sessions', 'identity_request_logs', 'identity_model_aliases')",
     )
     .fetch_one(&pool)
@@ -365,4 +365,39 @@ async fn initialization_discards_unscoped_legacy_database() {
             .expect("count identities"),
         0
     );
+}
+
+#[tokio::test]
+async fn request_log_schema_creates_the_beijing_time_index_for_statistics() {
+    let (_storage, pool) = test_storage().await;
+    let index_sql: Option<String> = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = \
+         'idx_identity_request_logs_identity_beijing_created_at'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("load request log statistics index");
+
+    assert_eq!(
+        index_sql.as_deref(),
+        Some(
+            "CREATE INDEX idx_identity_request_logs_identity_beijing_created_at \
+             ON identity_request_logs (identity_id, datetime(created_at, '+8 hours'))"
+        )
+    );
+
+    let query_plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+        "EXPLAIN QUERY PLAN SELECT id FROM identity_request_logs \
+         WHERE identity_id = ? AND datetime(created_at, '+8 hours') >= ? \
+         AND datetime(created_at, '+8 hours') < ?",
+    )
+    .bind("identity")
+    .bind("2026-08-01 00:00:00")
+    .bind("2026-09-01 00:00:00")
+    .fetch_all(&pool)
+    .await
+    .expect("explain statistics range query");
+    assert!(query_plan.iter().any(|(_, _, _, detail)| {
+        detail.contains("USING INDEX idx_identity_request_logs_identity_beijing_created_at")
+    }));
 }

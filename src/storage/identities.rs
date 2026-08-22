@@ -149,26 +149,22 @@ pub(crate) async fn delete_inactive(
     let inactive_identities = "SELECT id FROM identities WHERE last_active_at <= ?";
 
     for statement in [
-        format!(
-            "DELETE FROM identity_request_logs WHERE identity_id IN ({inactive_identities})"
-        ),
+        format!("DELETE FROM identity_request_logs WHERE identity_id IN ({inactive_identities})"),
         format!(
             "DELETE FROM identity_response_sessions WHERE identity_id IN ({inactive_identities})"
         ),
         format!(
-            "DELETE FROM identity_interface_models WHERE interface_id IN (\
-             SELECT id FROM identity_interface_configs WHERE identity_id IN ({inactive_identities}))"
+            "DELETE FROM identity_endpoint_models WHERE endpoint_id IN (\
+             SELECT id FROM identity_endpoint_configs WHERE identity_id IN ({inactive_identities}))"
         ),
         format!(
-            "DELETE FROM identity_interface_configs WHERE identity_id IN ({inactive_identities})"
+            "DELETE FROM identity_endpoint_configs WHERE identity_id IN ({inactive_identities})"
         ),
         format!(
             "DELETE FROM identity_provider_models WHERE provider_id IN (\
              SELECT id FROM identity_provider_configs WHERE identity_id IN ({inactive_identities}))"
         ),
-        format!(
-            "DELETE FROM identity_model_aliases WHERE identity_id IN ({inactive_identities})"
-        ),
+        format!("DELETE FROM identity_model_aliases WHERE identity_id IN ({inactive_identities})"),
         format!(
             "DELETE FROM identity_provider_configs WHERE identity_id IN ({inactive_identities})"
         ),

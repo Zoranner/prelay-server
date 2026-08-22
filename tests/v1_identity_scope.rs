@@ -4,7 +4,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use prelay_protocol::{
-    CreateIdentityRequest, CreateInterfaceRequest, CreateProviderRequest, InterfaceModelInput,
+    CreateEndpointRequest, CreateIdentityRequest, CreateProviderRequest, EndpointModelInput,
 };
 use prelay_server::{app, test_support::test_state};
 use serde_json::Value;
@@ -48,13 +48,13 @@ async fn management_post(
     response
 }
 
-async fn create_interface_for(
+async fn create_endpoint_for(
     app: &axum::Router,
     machine_id: &str,
     account_sid: &str,
     provider_name: &str,
 ) -> Value {
-    create_interface_for_url(
+    create_endpoint_for_url(
         app,
         machine_id,
         account_sid,
@@ -64,7 +64,7 @@ async fn create_interface_for(
     .await
 }
 
-async fn create_interface_for_url(
+async fn create_endpoint_for_url(
     app: &axum::Router,
     machine_id: &str,
     account_sid: &str,
@@ -102,18 +102,18 @@ async fn create_interface_for_url(
     .await;
     management_post(
         app,
-        "/api/interfaces",
+        "/api/endpoints",
         Some(&credential),
-        serde_json::to_value(CreateInterfaceRequest {
-            name: format!("{provider_name} interface"),
+        serde_json::to_value(CreateEndpointRequest {
+            name: format!("{provider_name} endpoint"),
             protocol: None,
-            models: vec![InterfaceModelInput {
+            models: vec![EndpointModelInput {
                 model_name: Some("shared-model".to_string()),
                 provider_id: provider["id"].as_str().expect("provider id").to_string(),
                 upstream_model: "upstream-model".to_string(),
             }],
         })
-        .expect("serialize interface"),
+        .expect("serialize endpoint"),
     )
     .await
 }
@@ -148,12 +148,12 @@ async fn spawn_chat_upstream() -> String {
 }
 
 #[tokio::test]
-async fn interface_token_resolves_only_its_identity_model_mapping() {
+async fn endpoint_token_resolves_only_its_identity_model_mapping() {
     let app = app::router(test_state().await).await.expect("build app");
-    let interface_a = create_interface_for(&app, "machine-a", "S-1-5-21-100", "provider-a").await;
-    create_interface_for(&app, "machine-b", "S-1-5-21-200", "provider-b").await;
+    let endpoint_a = create_endpoint_for(&app, "machine-a", "S-1-5-21-100", "provider-a").await;
+    create_endpoint_for(&app, "machine-b", "S-1-5-21-200", "provider-b").await;
 
-    let token = interface_a["token"].as_str().expect("interface token");
+    let token = endpoint_a["token"].as_str().expect("endpoint token");
     let (status, response) = request(
         &app,
         Request::builder()
@@ -176,8 +176,8 @@ async fn protocol_request_writes_identity_scoped_log_and_response_session() {
     let db = state.db.clone();
     let app = app::router(state).await.expect("build app");
     let upstream = spawn_chat_upstream().await;
-    let interface_a =
-        create_interface_for_url(&app, "machine-a", "S-1-5-21-100", "provider-a", &upstream).await;
+    let endpoint_a =
+        create_endpoint_for_url(&app, "machine-a", "S-1-5-21-100", "provider-a", &upstream).await;
     let credential_b = valid_credential("machine-b-S-1-5-21-200");
     let identity_b = management_post(
         &app,
@@ -191,7 +191,7 @@ async fn protocol_request_writes_identity_scoped_log_and_response_session() {
         .expect("serialize identity B"),
     )
     .await;
-    let token = interface_a["token"].as_str().expect("interface token");
+    let token = endpoint_a["token"].as_str().expect("endpoint token");
     let (status, response) = request(
         &app,
         Request::builder()
@@ -208,7 +208,7 @@ async fn protocol_request_writes_identity_scoped_log_and_response_session() {
     assert_eq!(status, StatusCode::OK, "{response}");
 
     let identity_id = sqlx::query_scalar::<_, String>(
-        "SELECT identity_id FROM identity_interface_configs WHERE token = ?",
+        "SELECT identity_id FROM identity_endpoint_configs WHERE token = ?",
     )
     .bind(token)
     .fetch_one(&db)

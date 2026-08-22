@@ -1,4 +1,6 @@
-use prelay_protocol::{CreateProviderRequest, ProtocolErrorCode};
+use prelay_protocol::{
+    CreateEndpointRequest, CreateProviderRequest, EndpointModelInput, ProtocolErrorCode,
+};
 use prelay_server::{
     bridge::internal::{InternalContentPart, InternalMessage, InternalOutputItem, InternalRole},
     identity::credential::generate_credential,
@@ -89,6 +91,112 @@ async fn identity_credentials_are_hashed_and_provider_keys_are_encrypted() {
             .await
             .expect("load second provider ciphertext")
     );
+}
+
+#[tokio::test]
+async fn endpoint_model_candidates_allow_same_alias_and_keep_mapping_order() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("create sqlite pool");
+    let storage = Storage::initialize(pool.clone(), MasterKey::from_bytes([0; 32]))
+        .await
+        .expect("create in-memory storage");
+    let identity = storage
+        .register_identity(
+            "machine-priority",
+            "S-1-5-21-priority",
+            &generate_credential(),
+        )
+        .await
+        .expect("register identity");
+    let primary_provider_id = storage
+        .create_provider(&identity.identity_id, provider_input("sk-primary"))
+        .await
+        .expect("create primary provider");
+    let backup_provider_id = storage
+        .create_provider(&identity.identity_id, provider_input("sk-backup"))
+        .await
+        .expect("create backup provider");
+    let endpoint = storage
+        .create_interface(
+            &identity.identity_id,
+            CreateEndpointRequest {
+                name: "Priority endpoint".to_string(),
+                protocol: Some("all".to_string()),
+                models: vec![
+                    EndpointModelInput {
+                        provider_id: primary_provider_id.clone(),
+                        upstream_model: "test-model".to_string(),
+                        model_name: Some("shared-model".to_string()),
+                    },
+                    EndpointModelInput {
+                        provider_id: backup_provider_id.clone(),
+                        upstream_model: "test-model".to_string(),
+                        model_name: Some("shared-model".to_string()),
+                    },
+                ],
+            },
+        )
+        .await
+        .expect("create endpoint with primary and backup");
+
+    let candidates = storage
+        .resolve_protocol_models(
+            &prelay_server::storage::ProtocolAccess {
+                identity_id: identity.identity_id.clone(),
+                endpoint_id: endpoint.id.clone(),
+                endpoint_name: endpoint.name.clone(),
+            },
+            "shared-model",
+        )
+        .await
+        .expect("resolve candidates");
+
+    assert_eq!(candidates.len(), 2);
+    assert_eq!(candidates[0].provider.id, primary_provider_id);
+    assert_eq!(candidates[1].provider.id, backup_provider_id);
+
+    for (id, provider_id, upstream_latency_ms) in [
+        ("primary-latency", primary_provider_id.as_str(), 120_i64),
+        ("backup-latency", backup_provider_id.as_str(), 20_i64),
+    ] {
+        sqlx::query(
+            "INSERT INTO identity_request_logs (\
+                id, identity_id, created_at, provider_id, status, upstream_latency_ms\
+             ) VALUES (?, ?, ?, ?, 'success', ?)",
+        )
+        .bind(id)
+        .bind(&identity.identity_id)
+        .bind("2026-08-23T00:00:00Z")
+        .bind(provider_id)
+        .bind(upstream_latency_ms)
+        .execute(&pool)
+        .await
+        .expect("insert successful request latency");
+    }
+
+    let access = prelay_server::storage::ProtocolAccess {
+        identity_id: identity.identity_id,
+        endpoint_id: endpoint.id,
+        endpoint_name: endpoint.name,
+    };
+    let selected = storage
+        .select_protocol_model_candidates(&access, "shared-model")
+        .await
+        .expect("select candidates by latency");
+    assert_eq!(selected[0].provider.id, backup_provider_id);
+
+    storage
+        .remember_protocol_model_provider(&access, "shared-model", &primary_provider_id)
+        .await
+        .expect("remember current provider");
+    let selected = storage
+        .select_protocol_model_candidates(&access, "shared-model")
+        .await
+        .expect("select candidates with current provider");
+    assert_eq!(selected[0].provider.id, primary_provider_id);
 }
 
 #[tokio::test]
