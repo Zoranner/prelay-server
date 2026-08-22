@@ -19,6 +19,7 @@ axum = { version = "0.7", features = ["macros"] }
 base64 = "0.22"
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
+dotenvy = "0.15"
 futures = "0.3"
 prelay-protocol = { path = "crates/protocol" }
 rand = "0.8"
