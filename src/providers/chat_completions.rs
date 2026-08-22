@@ -384,6 +384,13 @@ fn decode_usage(usage: Option<&Value>) -> Option<InternalUsage> {
             .get("completion_tokens_details")
             .and_then(|details| details.get("reasoning_tokens"))
             .and_then(Value::as_i64),
+        cache_read_tokens: usage
+            .pointer("/prompt_tokens_details/cached_tokens")
+            .or_else(|| usage.get("cache_read_input_tokens"))
+            .and_then(Value::as_i64),
+        cache_write_tokens: usage
+            .get("cache_creation_input_tokens")
+            .and_then(Value::as_i64),
     })
 }
 
@@ -603,6 +610,8 @@ mod tests {
             "usage": {
                 "prompt_tokens": 11,
                 "completion_tokens": 7,
+                "prompt_tokens_details": { "cached_tokens": 4 },
+                "cache_creation_input_tokens": 2,
                 "completion_tokens_details": {
                     "reasoning_tokens": 3
                 }
@@ -617,6 +626,8 @@ mod tests {
         assert_eq!(usage.input_tokens, Some(11));
         assert_eq!(usage.output_tokens, Some(7));
         assert_eq!(usage.reasoning_tokens, Some(3));
+        assert_eq!(usage.cache_read_tokens, Some(4));
+        assert_eq!(usage.cache_write_tokens, Some(2));
     }
 
     #[test]

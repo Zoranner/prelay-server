@@ -115,7 +115,11 @@ impl ProviderSpec {
         overrides: &ProviderCapabilityOverrides,
     ) -> Self {
         let mut spec = match provider_type {
-            "openai" | "responses_compatible" | "qwen_responses" | "minimax_responses" => Self {
+            "openai"
+            | "responses_compatible"
+            | "qwen_responses"
+            | "minimax_responses"
+            | "gotoken" => Self {
                 protocol: UpstreamProtocol::Responses,
                 supported_protocols: provider_supported_protocols(
                     provider_type,
@@ -324,6 +328,12 @@ pub fn normalize_upstream_base_url(
     {
         return format!("{base_url}/v1");
     }
+    if provider_type == "gotoken"
+        && upstream_protocol == UpstreamProtocol::AnthropicMessages
+        && base_url == "https://gotoken.cc"
+    {
+        return format!("{base_url}/v1");
+    }
     base_url.to_string()
 }
 
@@ -364,7 +374,7 @@ fn provider_supported_protocols(
             ]
         }
         "qwen" | "qwen_responses" | "qwen_anthropic" | "minimax" | "minimax_responses"
-        | "minimax_anthropic" => vec![
+        | "minimax_anthropic" | "gotoken" => vec![
             UpstreamProtocol::Responses,
             UpstreamProtocol::ChatCompletions,
             UpstreamProtocol::AnthropicMessages,
@@ -401,6 +411,23 @@ mod tests {
         assert_eq!(spec.auth_scheme, AuthScheme::Bearer);
         assert!(spec.capabilities.tool_calls);
         assert!(spec.capabilities.reasoning);
+    }
+
+    #[test]
+    fn maps_gotoken_to_all_documented_upstream_protocols() {
+        let spec = ProviderSpec::from_provider_config(&provider("gotoken"));
+
+        assert_eq!(spec.protocol, UpstreamProtocol::Responses);
+        assert_eq!(spec.auth_scheme, AuthScheme::Bearer);
+        assert_eq!(
+            spec.supported_protocols,
+            vec![
+                UpstreamProtocol::Responses,
+                UpstreamProtocol::ChatCompletions,
+                UpstreamProtocol::AnthropicMessages,
+            ]
+        );
+        assert!(spec.capabilities.tool_calls);
     }
 
     #[test]
@@ -646,6 +673,17 @@ mod tests {
         assert_eq!(
             provider_upstream_base_url(&provider, UpstreamProtocol::AnthropicMessages),
             "https://api.kimi.com/coding/v1"
+        );
+    }
+
+    #[test]
+    fn normalizes_gotoken_anthropic_root_to_versioned_messages_root() {
+        let mut provider = provider("gotoken");
+        provider.base_url = "https://gotoken.cc".to_string();
+
+        assert_eq!(
+            provider_upstream_base_url(&provider, UpstreamProtocol::AnthropicMessages),
+            "https://gotoken.cc/v1"
         );
     }
 

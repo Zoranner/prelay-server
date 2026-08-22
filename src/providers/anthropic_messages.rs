@@ -138,6 +138,10 @@ fn decode_usage(usage: Option<&Value>) -> Option<InternalUsage> {
         input_tokens: usage.get("input_tokens").and_then(Value::as_i64),
         output_tokens: usage.get("output_tokens").and_then(Value::as_i64),
         reasoning_tokens: None,
+        cache_read_tokens: usage.get("cache_read_input_tokens").and_then(Value::as_i64),
+        cache_write_tokens: usage
+            .get("cache_creation_input_tokens")
+            .and_then(Value::as_i64),
     })
 }
 
@@ -263,7 +267,9 @@ mod tests {
             ],
             "usage": {
                 "input_tokens": 3,
-                "output_tokens": 4
+                "output_tokens": 4,
+                "cache_read_input_tokens": 2,
+                "cache_creation_input_tokens": 1
             }
         }))
         .expect("decode anthropic response");
@@ -274,7 +280,10 @@ mod tests {
             response.output[0].text_content().as_deref(),
             Some("hello\nworld")
         );
-        assert_eq!(response.usage.expect("usage").output_tokens, Some(4));
+        let usage = response.usage.expect("usage");
+        assert_eq!(usage.output_tokens, Some(4));
+        assert_eq!(usage.cache_read_tokens, Some(2));
+        assert_eq!(usage.cache_write_tokens, Some(1));
     }
 
     #[test]

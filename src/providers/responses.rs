@@ -155,11 +155,25 @@ fn join_text_content(content: &[InternalContentPart]) -> String {
 fn decode_usage(usage: Option<&Value>) -> Option<InternalUsage> {
     let usage = usage?;
     Some(InternalUsage {
-        input_tokens: usage.get("input_tokens").and_then(Value::as_i64),
-        output_tokens: usage.get("output_tokens").and_then(Value::as_i64),
+        input_tokens: usage
+            .get("input_tokens")
+            .or_else(|| usage.get("prompt_tokens"))
+            .and_then(Value::as_i64),
+        output_tokens: usage
+            .get("output_tokens")
+            .or_else(|| usage.get("completion_tokens"))
+            .and_then(Value::as_i64),
         reasoning_tokens: usage
             .get("output_tokens_details")
             .and_then(|details| details.get("reasoning_tokens"))
+            .and_then(Value::as_i64),
+        cache_read_tokens: usage
+            .pointer("/input_tokens_details/cached_tokens")
+            .or_else(|| usage.pointer("/prompt_tokens_details/cached_tokens"))
+            .or_else(|| usage.get("cache_read_input_tokens"))
+            .and_then(Value::as_i64),
+        cache_write_tokens: usage
+            .get("cache_creation_input_tokens")
             .and_then(Value::as_i64),
     })
 }
@@ -260,6 +274,8 @@ mod tests {
             "usage": {
                 "input_tokens": 3,
                 "output_tokens": 4,
+                "input_tokens_details": { "cached_tokens": 2 },
+                "cache_creation_input_tokens": 1,
                 "output_tokens_details": { "reasoning_tokens": 1 }
             }
         }))
@@ -268,7 +284,28 @@ mod tests {
         assert_eq!(response.id, "resp_123");
         assert_eq!(response.model, "gpt-4.1");
         assert_eq!(response.output[0].text_content().as_deref(), Some("hello"));
-        assert_eq!(response.usage.expect("usage").reasoning_tokens, Some(1));
+        let usage = response.usage.expect("usage");
+        assert_eq!(usage.reasoning_tokens, Some(1));
+        assert_eq!(usage.cache_read_tokens, Some(2));
+        assert_eq!(usage.cache_write_tokens, Some(1));
+    }
+
+    #[test]
+    fn decodes_openai_named_usage_from_responses_response() {
+        let response = decode_responses_response(json!({
+            "id": "resp_123",
+            "model": "gpt-5.6-terra",
+            "output": [],
+            "usage": {
+                "prompt_tokens": 11,
+                "completion_tokens": 7
+            }
+        }))
+        .expect("decode responses response");
+        let usage = response.usage.expect("usage");
+
+        assert_eq!(usage.input_tokens, Some(11));
+        assert_eq!(usage.output_tokens, Some(7));
     }
 
     #[test]
