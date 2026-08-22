@@ -6,7 +6,6 @@ use axum::{
     routing::post,
     Json, Router,
 };
-use futures::TryStreamExt;
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -17,21 +16,19 @@ use crate::{
         responses_encode::encode_responses_response,
         stream::{
             anthropic_messages_sse_response_to_responses_sse_with_stats,
-            chat_sse_response_to_responses_sse_with_stats,
+            chat_sse_response_to_responses_sse_with_stats, native_responses_sse_with_stats,
         },
     },
     error::AppError,
-    observability::{
-        request_metadata::build_request_metadata,
-        stream_stats::{record_first_chunk, record_stream},
-    },
+    observability::{request_metadata::build_request_metadata, stream_stats::record_stream},
     providers::anthropic_messages::{
         decode_anthropic_messages_response, encode_anthropic_messages_request,
     },
     providers::chat_completions::{decode_chat_response, encode_chat_request},
+    providers::responses::encode_responses_request,
     providers::spec::{provider_upstream_base_url, UpstreamProtocol},
     routes::v1::auth::CurrentProtocolAccess,
-    routes::v1::interface_resolver::resolve_interface_model,
+    routes::v1::endpoint_resolver::{resolve_endpoint_model_candidates, ResolvedEndpointProvider},
     stats::RequestLogInsert,
     storage::{
         sessions::{load_response_session_messages, save_response_session, ResponseSessionInsert},
@@ -42,6 +39,16 @@ use crate::{
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/responses", post(create_response))
+}
+
+struct ResponseCandidateRequest {
+    original_payload: Value,
+    request: InternalRequest,
+    diagnostics: Vec<crate::bridge::diagnostics::BridgeDiagnostic>,
+    model_requested: String,
+    is_streaming: bool,
+    previous_response_id: Option<String>,
+    started_at: std::time::Instant,
 }
 
 async fn create_response(
@@ -57,7 +64,74 @@ async fn create_response(
     let model_requested = request.model.clone();
     let is_streaming = request.stream;
     let previous_response_id = request.previous_response_id.clone();
-    let resolved = resolve_interface_model(&state, &access, &request.model, "responses").await?;
+    let candidates =
+        resolve_endpoint_model_candidates(&state, &access, &request.model, "responses").await?;
+    let mut last_upstream_error = None;
+    for resolved in candidates.into_iter().take(
+        crate::upstream::policy()
+            .max_candidates
+            .unwrap_or(usize::MAX),
+    ) {
+        let provider_id = resolved.provider.id.clone();
+        match crate::upstream::retry_with_policy(crate::upstream::policy(), || {
+            create_response_with_candidate(
+                &state,
+                &access,
+                ResponseCandidateRequest {
+                    original_payload: original_payload.clone(),
+                    request: request.clone(),
+                    diagnostics: diagnostics.clone(),
+                    model_requested: model_requested.clone(),
+                    is_streaming,
+                    previous_response_id: previous_response_id.clone(),
+                    started_at,
+                },
+                resolved.clone(),
+            )
+        })
+        .await
+        {
+            Ok(response) => {
+                if let Err(error) = state
+                    .storage
+                    .remember_protocol_model_provider(
+                        &crate::storage::ProtocolAccess {
+                            identity_id: access.identity_id.clone(),
+                            endpoint_id: access.endpoint_id.clone(),
+                            endpoint_name: access.endpoint_name.clone(),
+                        },
+                        &model_requested,
+                        &provider_id,
+                    )
+                    .await
+                {
+                    tracing::warn!(error = %error, "failed to remember active endpoint model provider");
+                }
+                return Ok(response);
+            }
+            Err(error) if error.is_retryable_upstream() => last_upstream_error = Some(error),
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_upstream_error
+        .unwrap_or_else(|| AppError::BadRequest(format!("接入点未配置模型 {model_requested}"))))
+}
+
+async fn create_response_with_candidate(
+    state: &AppState,
+    access: &CurrentProtocolAccess,
+    candidate_request: ResponseCandidateRequest,
+    resolved: ResolvedEndpointProvider,
+) -> Result<Response, AppError> {
+    let ResponseCandidateRequest {
+        original_payload,
+        request,
+        diagnostics,
+        model_requested,
+        is_streaming,
+        previous_response_id,
+        started_at,
+    } = candidate_request;
     let provider = resolved.provider;
     let upstream_protocol = resolved.upstream_protocol;
     let model_upstream = resolved.model_upstream;
@@ -69,17 +143,27 @@ async fn create_response(
         &model_upstream,
         diagnostics,
     )?;
-    let mut upstream_payload = original_payload.clone();
+    let mut upstream_payload = original_payload;
     upstream_payload["model"] = Value::String(model_upstream.clone());
     let mut request = request;
     request.model = model_upstream.clone();
     if upstream_protocol == UpstreamProtocol::Responses {
+        let (upstream_payload, request) = if previous_response_id.is_some() {
+            let request =
+                request_with_session_history(&state.db, &access.identity_id, request).await?;
+            (encode_responses_request(&request), request)
+        } else {
+            (upstream_payload, request)
+        };
         return create_native_response(
-            &state,
+            state,
             upstream_payload,
             provider,
+            request,
+            previous_response_id,
             ResponseBridgeContext {
                 identity_id: access.identity_id.clone(),
+                endpoint_name: access.endpoint_name.clone(),
                 model_requested,
                 is_streaming,
                 metadata_json,
@@ -90,12 +174,13 @@ async fn create_response(
     }
     if upstream_protocol == UpstreamProtocol::AnthropicMessages {
         return create_anthropic_messages_response(
-            &state,
+            state,
             request,
             provider,
             previous_response_id,
             ResponseBridgeContext {
                 identity_id: access.identity_id.clone(),
+                endpoint_name: access.endpoint_name.clone(),
                 model_requested,
                 is_streaming,
                 metadata_json,
@@ -119,7 +204,10 @@ async fn create_response(
         .json(&encode_chat_request(&request))
         .send()
         .await
-        .map_err(|error| AppError::Internal(error.into()))?;
+        .map_err(|error| AppError::Upstream {
+            status: None,
+            message: format!("上游连接失败: {error}"),
+        })?;
     let upstream_latency_ms = upstream_started_at.elapsed().as_millis() as i64;
 
     if !upstream_response.status().is_success() {
@@ -133,6 +221,7 @@ async fn create_response(
                 protocol_upstream: "chat_completions".to_string(),
                 provider_id: provider.id,
                 provider_name: provider.name,
+                endpoint_name: access.endpoint_name.clone(),
                 model_requested,
                 model_upstream: request.model,
                 status: "failed".to_string(),
@@ -143,6 +232,8 @@ async fn create_response(
                 input_tokens: None,
                 output_tokens: None,
                 reasoning_tokens: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
                 latency_ms: started_at.elapsed().as_millis() as i64,
                 upstream_latency_ms: None,
                 first_token_ms: None,
@@ -152,7 +243,10 @@ async fn create_response(
             },
         )
         .await?;
-        return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
+        return Err(AppError::Upstream {
+            status: Some(status),
+            message: format!("上游请求失败: {status}"),
+        });
     }
 
     if is_streaming {
@@ -162,6 +256,7 @@ async fn create_response(
             protocol_upstream: "chat_completions".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
+            endpoint_name: access.endpoint_name.clone(),
             model_requested,
             model_upstream: request.model,
             status: "success".to_string(),
@@ -172,6 +267,8 @@ async fn create_response(
             input_tokens: None,
             output_tokens: None,
             reasoning_tokens: None,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
             latency_ms: started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
             first_token_ms: None,
@@ -229,6 +326,7 @@ async fn create_response(
             protocol_upstream: "chat_completions".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
+            endpoint_name: access.endpoint_name.clone(),
             model_requested,
             model_upstream: response.model.clone(),
             status: "success".to_string(),
@@ -242,6 +340,14 @@ async fn create_response(
                 .as_ref()
                 .and_then(|usage| usage.output_tokens),
             reasoning_tokens,
+            cache_read_tokens: response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.cache_read_tokens),
+            cache_write_tokens: response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.cache_write_tokens),
             latency_ms: started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
             first_token_ms: None,
@@ -275,7 +381,10 @@ async fn create_anthropic_messages_response(
         .json(&encode_anthropic_messages_request(&request))
         .send()
         .await
-        .map_err(|error| AppError::Internal(error.into()))?;
+        .map_err(|error| AppError::Upstream {
+            status: None,
+            message: format!("上游连接失败: {error}"),
+        })?;
     let upstream_latency_ms = upstream_started_at.elapsed().as_millis() as i64;
 
     if !upstream_response.status().is_success() {
@@ -289,6 +398,7 @@ async fn create_anthropic_messages_response(
                 protocol_upstream: "anthropic_messages".to_string(),
                 provider_id: provider.id,
                 provider_name: provider.name,
+                endpoint_name: context.endpoint_name.clone(),
                 model_requested: context.model_requested,
                 model_upstream: request.model,
                 status: "failed".to_string(),
@@ -299,6 +409,8 @@ async fn create_anthropic_messages_response(
                 input_tokens: None,
                 output_tokens: None,
                 reasoning_tokens: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
                 latency_ms: context.started_at.elapsed().as_millis() as i64,
                 upstream_latency_ms: None,
                 first_token_ms: None,
@@ -308,7 +420,10 @@ async fn create_anthropic_messages_response(
             },
         )
         .await?;
-        return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
+        return Err(AppError::Upstream {
+            status: Some(status),
+            message: format!("上游请求失败: {status}"),
+        });
     }
 
     if context.is_streaming {
@@ -318,6 +433,7 @@ async fn create_anthropic_messages_response(
             protocol_upstream: "anthropic_messages".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
+            endpoint_name: context.endpoint_name.clone(),
             model_requested: context.model_requested,
             model_upstream: request.model,
             status: "success".to_string(),
@@ -328,6 +444,8 @@ async fn create_anthropic_messages_response(
             input_tokens: None,
             output_tokens: None,
             reasoning_tokens: None,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
             latency_ms: context.started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
             first_token_ms: None,
@@ -381,6 +499,7 @@ async fn create_anthropic_messages_response(
             protocol_upstream: "anthropic_messages".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
+            endpoint_name: context.endpoint_name.clone(),
             model_requested: context.model_requested,
             model_upstream: response.model.clone(),
             status: "success".to_string(),
@@ -394,6 +513,14 @@ async fn create_anthropic_messages_response(
                 .as_ref()
                 .and_then(|usage| usage.output_tokens),
             reasoning_tokens: None,
+            cache_read_tokens: response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.cache_read_tokens),
+            cache_write_tokens: response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.cache_write_tokens),
             latency_ms: context.started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
             first_token_ms: None,
@@ -409,6 +536,7 @@ async fn create_anthropic_messages_response(
 
 struct ResponseBridgeContext {
     identity_id: String,
+    endpoint_name: String,
     model_requested: String,
     is_streaming: bool,
     metadata_json: String,
@@ -419,6 +547,8 @@ async fn create_native_response(
     state: &AppState,
     payload: Value,
     provider: crate::models::ProviderConfig,
+    request: InternalRequest,
+    previous_response_id: Option<String>,
     context: ResponseBridgeContext,
 ) -> Result<Response, AppError> {
     let upstream_base_url = provider_upstream_base_url(&provider, UpstreamProtocol::Responses);
@@ -431,7 +561,10 @@ async fn create_native_response(
         .json(&payload)
         .send()
         .await
-        .map_err(|error| AppError::Internal(error.into()))?;
+        .map_err(|error| AppError::Upstream {
+            status: None,
+            message: format!("上游连接失败: {error}"),
+        })?;
     let upstream_latency_ms = upstream_started_at.elapsed().as_millis() as i64;
 
     if !upstream_response.status().is_success() {
@@ -445,6 +578,7 @@ async fn create_native_response(
                 protocol_upstream: "responses".to_string(),
                 provider_id: provider.id,
                 provider_name: provider.name,
+                endpoint_name: context.endpoint_name.clone(),
                 model_requested: context.model_requested,
                 model_upstream: "unknown".to_string(),
                 status: "failed".to_string(),
@@ -455,6 +589,8 @@ async fn create_native_response(
                 input_tokens: None,
                 output_tokens: None,
                 reasoning_tokens: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
                 latency_ms: context.started_at.elapsed().as_millis() as i64,
                 upstream_latency_ms: None,
                 first_token_ms: None,
@@ -464,7 +600,10 @@ async fn create_native_response(
             },
         )
         .await?;
-        return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
+        return Err(AppError::Upstream {
+            status: Some(status),
+            message: format!("上游请求失败: {status}"),
+        });
     }
 
     if context.is_streaming {
@@ -474,6 +613,7 @@ async fn create_native_response(
             protocol_upstream: "responses".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
+            endpoint_name: context.endpoint_name.clone(),
             model_requested: context.model_requested,
             model_upstream: payload
                 .get("model")
@@ -488,6 +628,8 @@ async fn create_native_response(
             input_tokens: None,
             output_tokens: None,
             reasoning_tokens: None,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
             latency_ms: context.started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
             first_token_ms: None,
@@ -495,14 +637,14 @@ async fn create_native_response(
             upstream_request_id: None,
             metadata_json: Some(context.metadata_json.clone()),
         };
-        let body = Body::from_stream(record_first_chunk(
+        let (stream, stream_stats) = native_responses_sse_with_stats(upstream_response);
+        let body = Body::from_stream(record_stream(
             state.db.clone(),
             context.identity_id.clone(),
-            upstream_response
-                .bytes_stream()
-                .map_err(std::io::Error::other),
+            stream,
             log,
             context.started_at,
+            stream_stats,
         ));
         return Ok((
             [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
@@ -515,6 +657,21 @@ async fn create_native_response(
         .json::<Value>()
         .await
         .map_err(|error| AppError::Internal(error.into()))?;
+    let decoded_response =
+        crate::providers::responses::decode_responses_response(response.clone())?;
+    save_response_session(
+        &state.db,
+        ResponseSessionInsert {
+            identity_id: &context.identity_id,
+            response_id: &decoded_response.id,
+            previous_response_id: previous_response_id.as_deref(),
+            provider_id: &provider.id,
+            model: &decoded_response.model,
+            input_messages: &request.messages,
+            response: &decoded_response,
+        },
+    )
+    .await?;
     insert_request_log(
         &state.db,
         &context.identity_id,
@@ -524,6 +681,7 @@ async fn create_native_response(
             protocol_upstream: "responses".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
+            endpoint_name: context.endpoint_name.clone(),
             model_requested: context.model_requested,
             model_upstream: response
                 .get("model")
@@ -544,6 +702,19 @@ async fn create_native_response(
                 .and_then(|usage| usage.get("output_tokens"))
                 .and_then(Value::as_i64),
             reasoning_tokens: None,
+            cache_read_tokens: response
+                .get("usage")
+                .and_then(|usage| {
+                    usage
+                        .pointer("/input_tokens_details/cached_tokens")
+                        .or_else(|| usage.pointer("/prompt_tokens_details/cached_tokens"))
+                        .or_else(|| usage.get("cache_read_input_tokens"))
+                })
+                .and_then(Value::as_i64),
+            cache_write_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("cache_creation_input_tokens"))
+                .and_then(Value::as_i64),
             latency_ms: context.started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
             first_token_ms: None,
@@ -606,7 +777,7 @@ mod tests {
     use axum::body::Body;
     use axum::{extract::State, middleware, response::IntoResponse, routing::post, Json, Router};
     use bytes::Bytes;
-    use futures::StreamExt;
+    use futures::{StreamExt, TryStreamExt};
     use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
     use std::{convert::Infallible, time::Duration};
@@ -616,8 +787,9 @@ mod tests {
     use super::responses_sse_from_text_chunks;
     use crate::{
         db,
-        routes::v1::interface_resolver::{
-            create_empty_test_interface_auth, create_test_interface_auth,
+        routes::v1::endpoint_resolver::{
+            create_empty_test_endpoint_auth, create_test_endpoint_auth,
+            create_test_endpoint_auth_with_candidates,
         },
         AppState,
     };
@@ -671,6 +843,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fails_over_responses_to_a_healthy_candidate_and_keeps_using_it() {
+        let failing_upstream = spawn_failing_chat_upstream().await;
+        let healthy_upstream = spawn_chat_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        let primary = db::create_config(
+            &db,
+            "primary",
+            "openai_compatible",
+            &failing_upstream,
+            "sk-primary",
+        )
+        .await
+        .expect("create primary provider");
+        let backup = db::create_config(
+            &db,
+            "backup",
+            "openai_compatible",
+            &healthy_upstream,
+            "sk-backup",
+        )
+        .await
+        .expect("create backup provider");
+        let auth = create_test_endpoint_auth_with_candidates(
+            &db,
+            &[primary, backup],
+            "shared-model",
+            "deepseek-chat",
+        )
+        .await;
+        let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
+            db: db.clone(),
+            client: reqwest::Client::new(),
+        };
+        let payload = json!({ "model": "shared-model", "input": "hello" });
+
+        create_response(
+            State(state.clone()),
+            auth.access.clone(),
+            axum::Json(payload.clone()),
+        )
+        .await
+        .expect("fall back to the healthy candidate");
+        create_response(State(state.clone()), auth.access, axum::Json(payload))
+            .await
+            .expect("keep using the last successful candidate");
+
+        let (total, failed, successful): (i64, i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*), SUM(status = 'failed'), SUM(status = 'success') \
+             FROM identity_request_logs",
+        )
+        .fetch_one(&state.db)
+        .await
+        .expect("load request logs");
+        assert_eq!((total, failed, successful), (3, 1, 2));
+    }
+
+    #[tokio::test]
     async fn rejects_response_when_model_is_not_configured() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
@@ -678,7 +916,7 @@ mod tests {
             .await
             .expect("create sqlite pool");
         db::init_schema(&db).await.expect("init schema");
-        let auth = create_empty_test_interface_auth(&db).await;
+        let auth = create_empty_test_endpoint_auth(&db).await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -697,9 +935,9 @@ mod tests {
             })),
         )
         .await
-        .expect_err("missing interface model should fail");
+        .expect_err("missing endpoint model should fail");
 
-        assert!(format!("{error:?}").contains("接口未配置模型 deepseek-chat"));
+        assert!(format!("{error:?}").contains("接入点未配置支持 responses 的模型 deepseek-chat"));
     }
 
     #[tokio::test]
@@ -721,7 +959,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -774,7 +1012,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -816,7 +1054,7 @@ mod tests {
         let provider = db::create_config(&db, "gpt-4.1", "openai", &upstream, "sk-upstream")
             .await
             .expect("create provider");
-        let auth = create_test_interface_auth(&db, &provider, "gpt-4.1", "gpt-4.1").await;
+        let auth = create_test_endpoint_auth(&db, &provider, "gpt-4.1", "gpt-4.1").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -866,7 +1104,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "claude-sonnet", "claude-sonnet").await;
+            create_test_endpoint_auth(&db, &provider, "claude-sonnet", "claude-sonnet").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -917,7 +1155,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "claude-sonnet", "claude-sonnet").await;
+            create_test_endpoint_auth(&db, &provider, "claude-sonnet", "claude-sonnet").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -988,7 +1226,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -1038,7 +1276,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -1100,7 +1338,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -1148,7 +1386,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -1207,7 +1445,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -1276,7 +1514,8 @@ mod tests {
         let provider = db::create_config(&db, "gpt-4.1", "openai", &upstream, "sk-upstream")
             .await
             .expect("create provider");
-        let auth = create_test_interface_auth(&db, &provider, "gpt-4.1", "gpt-4.1").await;
+        let auth = create_test_endpoint_auth(&db, &provider, "gpt-4.1", "gpt-4.1").await;
+        let logs_db = db.clone();
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -1332,6 +1571,17 @@ mod tests {
         assert!(first.contains("event: response.output_text.delta"));
         assert!(first.contains("data: hel"));
 
+        stream
+            .try_collect::<Vec<_>>()
+            .await
+            .expect("read remaining response stream");
+        let row: (Option<i64>, Option<i64>) =
+            sqlx::query_as("SELECT input_tokens, output_tokens FROM identity_request_logs")
+                .fetch_one(&logs_db)
+                .await
+                .expect("load request log");
+        assert_eq!(row, (Some(11), Some(7)));
+
         server.abort();
     }
 
@@ -1354,7 +1604,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -1434,7 +1684,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -1511,7 +1761,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -1708,7 +1958,7 @@ mod tests {
                         Some((
                             Ok::<_, Infallible>(Bytes::from_static(
                                 b"event: response.output_text.delta\ndata: lo\n\n\
-                                  event: response.completed\ndata: {}\n\n",
+                                  event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7,\"total_tokens\":18}}}\n\n",
                             )),
                             2,
                         ))
