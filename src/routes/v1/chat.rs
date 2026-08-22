@@ -17,7 +17,7 @@ use crate::{
     },
     providers::spec::provider_upstream_base_url,
     routes::v1::auth::CurrentProtocolAccess,
-    routes::v1::interface_resolver::resolve_interface_model,
+    routes::v1::endpoint_resolver::{resolve_endpoint_model_candidates, ResolvedEndpointProvider},
     stats::RequestLogInsert,
     storage::stats::insert as insert_request_log,
     AppState,
@@ -30,7 +30,7 @@ pub fn router() -> Router<AppState> {
 async fn create_chat_completion(
     State(state): State<AppState>,
     Extension(access): Extension<CurrentProtocolAccess>,
-    Json(mut payload): Json<Value>,
+    Json(payload): Json<Value>,
 ) -> Result<Response, AppError> {
     let started_at = std::time::Instant::now();
     let model = payload
@@ -42,7 +42,63 @@ async fn create_chat_completion(
         .get("stream")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let resolved = resolve_interface_model(&state, &access, &model, "chat_completions").await?;
+    let candidates =
+        resolve_endpoint_model_candidates(&state, &access, &model, "chat_completions").await?;
+    let mut last_upstream_error = None;
+    for resolved in candidates.into_iter().take(
+        crate::upstream::policy()
+            .max_candidates
+            .unwrap_or(usize::MAX),
+    ) {
+        let provider_id = resolved.provider.id.clone();
+        match crate::upstream::retry_with_policy(crate::upstream::policy(), || {
+            create_chat_completion_with_candidate(
+                &state,
+                &access,
+                payload.clone(),
+                model.clone(),
+                is_streaming,
+                started_at,
+                resolved.clone(),
+            )
+        })
+        .await
+        {
+            Ok(response) => {
+                if let Err(error) = state
+                    .storage
+                    .remember_protocol_model_provider(
+                        &crate::storage::ProtocolAccess {
+                            identity_id: access.identity_id.clone(),
+                            endpoint_id: access.endpoint_id.clone(),
+                            endpoint_name: access.endpoint_name.clone(),
+                        },
+                        &model,
+                        &provider_id,
+                    )
+                    .await
+                {
+                    tracing::warn!(error = %error, "failed to remember active endpoint model provider");
+                }
+                return Ok(response);
+            }
+            Err(error) if error.is_retryable_upstream() => last_upstream_error = Some(error),
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_upstream_error
+        .unwrap_or_else(|| AppError::BadRequest(format!("接入点未配置模型 {model}"))))
+}
+
+async fn create_chat_completion_with_candidate(
+    state: &AppState,
+    access: &CurrentProtocolAccess,
+    mut payload: Value,
+    model: String,
+    is_streaming: bool,
+    started_at: std::time::Instant,
+    resolved: ResolvedEndpointProvider,
+) -> Result<Response, AppError> {
     let provider = resolved.provider;
     let model_upstream = resolved.model_upstream;
     let metadata_json = build_request_metadata(
@@ -68,7 +124,10 @@ async fn create_chat_completion(
         .json(&payload)
         .send()
         .await
-        .map_err(|error| AppError::Internal(error.into()))?;
+        .map_err(|error| AppError::Upstream {
+            status: None,
+            message: format!("上游连接失败: {error}"),
+        })?;
     let upstream_latency_ms = upstream_started_at.elapsed().as_millis() as i64;
 
     if !upstream_response.status().is_success() {
@@ -85,6 +144,7 @@ async fn create_chat_completion(
                 protocol_upstream: "chat_completions".to_string(),
                 provider_id: provider.id,
                 provider_name: provider.name,
+                endpoint_name: access.endpoint_name.clone(),
                 model_requested: model.clone(),
                 model_upstream,
                 status: "failed".to_string(),
@@ -95,6 +155,8 @@ async fn create_chat_completion(
                 input_tokens: None,
                 output_tokens: None,
                 reasoning_tokens: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
                 latency_ms: started_at.elapsed().as_millis() as i64,
                 upstream_latency_ms: None,
                 first_token_ms: None,
@@ -104,7 +166,10 @@ async fn create_chat_completion(
             },
         )
         .await?;
-        return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
+        return Err(AppError::Upstream {
+            status: Some(status),
+            message: format!("上游请求失败: {status}"),
+        });
     }
 
     if is_streaming {
@@ -116,6 +181,7 @@ async fn create_chat_completion(
             protocol_upstream: "chat_completions".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
+            endpoint_name: access.endpoint_name.clone(),
             model_requested: model,
             model_upstream,
             status: "success".to_string(),
@@ -126,6 +192,8 @@ async fn create_chat_completion(
             input_tokens: None,
             output_tokens: None,
             reasoning_tokens: None,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
             latency_ms: started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
             first_token_ms: None,
@@ -159,6 +227,7 @@ async fn create_chat_completion(
             protocol_upstream: "chat_completions".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
+            endpoint_name: access.endpoint_name.clone(),
             model_requested: model,
             model_upstream: response
                 .get("model")
@@ -182,6 +251,18 @@ async fn create_chat_completion(
                 .get("usage")
                 .and_then(|usage| usage.get("completion_tokens_details"))
                 .and_then(|details| details.get("reasoning_tokens"))
+                .and_then(Value::as_i64),
+            cache_read_tokens: response
+                .get("usage")
+                .and_then(|usage| {
+                    usage
+                        .pointer("/prompt_tokens_details/cached_tokens")
+                        .or_else(|| usage.get("cache_read_input_tokens"))
+                })
+                .and_then(Value::as_i64),
+            cache_write_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("cache_creation_input_tokens"))
                 .and_then(Value::as_i64),
             latency_ms: started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
@@ -210,8 +291,12 @@ mod tests {
 
     use super::create_chat_completion;
     use crate::{
-        db, models::ProviderCapabilityOverrides,
-        routes::v1::interface_resolver::create_test_interface_auth, AppState,
+        db,
+        models::ProviderCapabilityOverrides,
+        routes::v1::endpoint_resolver::{
+            create_test_endpoint_auth, create_test_endpoint_auth_with_candidates,
+        },
+        AppState,
     };
 
     #[tokio::test]
@@ -283,7 +368,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -316,7 +401,79 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolves_interface_model_name_to_upstream_model() {
+    async fn fails_over_to_a_healthy_candidate_and_keeps_using_it() {
+        let failing_upstream = spawn_failing_chat_upstream().await;
+        let healthy_upstream = spawn_chat_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        let primary = db::create_config(
+            &db,
+            "primary",
+            "openai_compatible",
+            &failing_upstream,
+            "sk-primary",
+        )
+        .await
+        .expect("create primary provider");
+        let backup = db::create_config(
+            &db,
+            "backup",
+            "openai_compatible",
+            &healthy_upstream,
+            "sk-backup",
+        )
+        .await
+        .expect("create backup provider");
+        let auth = create_test_endpoint_auth_with_candidates(
+            &db,
+            &[primary, backup],
+            "shared-model",
+            "deepseek-chat",
+        )
+        .await;
+        let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
+            db: db.clone(),
+            client: reqwest::Client::new(),
+        };
+        let payload = json!({
+            "model": "shared-model",
+            "messages": [{ "role": "user", "content": "hello" }]
+        });
+
+        let first = create_chat_completion(
+            State(state.clone()),
+            auth.access.clone(),
+            axum::Json(payload.clone()),
+        )
+        .await
+        .expect("fall back to the healthy candidate");
+        assert_eq!(response_json(first).await["id"], "chatcmpl_test");
+
+        let second = create_chat_completion(State(state.clone()), auth.access, axum::Json(payload))
+            .await
+            .expect("keep using the last successful candidate");
+        assert_eq!(response_json(second).await["id"], "chatcmpl_test");
+
+        let (total, failed, successful): (i64, i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*), SUM(status = 'failed'), SUM(status = 'success') \
+             FROM identity_request_logs",
+        )
+        .fetch_one(&state.db)
+        .await
+        .expect("load request logs");
+        assert_eq!((total, failed, successful), (3, 1, 2));
+    }
+
+    #[tokio::test]
+    async fn resolves_endpoint_model_name_to_upstream_model() {
         let upstream = spawn_alias_chat_upstream().await;
         let db = SqlitePoolOptions::new()
             .max_connections(1)
@@ -333,7 +490,7 @@ mod tests {
         )
         .await
         .expect("create provider");
-        let auth = create_test_interface_auth(&db, &provider, "coder", "deepseek-chat").await;
+        let auth = create_test_endpoint_auth(&db, &provider, "coder", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -378,7 +535,7 @@ mod tests {
         )
         .await
         .expect("create provider");
-        let auth = create_test_interface_auth(&db, &provider, "coder", "deepseek-chat").await;
+        let auth = create_test_endpoint_auth(&db, &provider, "coder", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -401,8 +558,7 @@ mod tests {
         .await
         .expect_err("unsupported provider protocol should fail before upstream");
 
-        assert!(format!("{error:?}")
-            .contains("供应商 DeepSeek Provider 不支持接口协议 chat_completions"));
+        assert!(format!("{error:?}").contains("接入点未配置支持 chat_completions 的模型 coder"));
     }
 
     #[tokio::test]
@@ -422,7 +578,7 @@ mod tests {
         )
         .await
         .expect("create provider");
-        let auth = create_test_interface_auth(&db, &provider, "Claude", "claude-sonnet-4").await;
+        let auth = create_test_endpoint_auth(&db, &provider, "Claude", "claude-sonnet-4").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -445,7 +601,7 @@ mod tests {
         .await
         .expect_err("anthropic provider should not be exposed as chat completions");
 
-        assert!(format!("{error:?}").contains("供应商 Claude 不支持接口协议 chat_completions"));
+        assert!(format!("{error:?}").contains("接入点未配置支持 chat_completions 的模型 Claude"));
     }
 
     #[tokio::test]
@@ -467,7 +623,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -489,15 +645,15 @@ mod tests {
         )
         .await
         .expect("create chat completion");
-        let row: (i64, i64, i64, i64) = sqlx::query_as(
-            "SELECT COUNT(*), SUM(status = 'success'), SUM(input_tokens), SUM(output_tokens) \
+        let row: (i64, i64, i64, i64, Option<String>) = sqlx::query_as(
+            "SELECT COUNT(*), SUM(status = 'success'), SUM(input_tokens), SUM(output_tokens), endpoint_name \
              FROM identity_request_logs",
         )
         .fetch_one(&state.db)
         .await
         .expect("load identity request log totals");
 
-        assert_eq!(row, (1, 1, 3, 4));
+        assert_eq!(row, (1, 1, 3, 4, Some("Test Endpoint".to_string())));
     }
 
     #[tokio::test]
@@ -528,7 +684,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -577,7 +733,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -628,7 +784,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -682,7 +838,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -787,6 +943,28 @@ mod tests {
                     "completion_tokens": 4
                 }
             }))
+        }
+
+        let app = Router::new().route("/chat/completions", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_failing_chat_upstream() -> String {
+        async fn handler() -> axum::response::Response {
+            use axum::{http::StatusCode, response::IntoResponse};
+
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "message": "primary unavailable" } })),
+            )
+                .into_response()
         }
 
         let app = Router::new().route("/chat/completions", post(handler));

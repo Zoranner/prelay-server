@@ -27,7 +27,7 @@ use crate::{
     providers::responses::{decode_responses_response, encode_responses_request},
     providers::spec::{provider_upstream_base_url, UpstreamProtocol},
     routes::v1::auth::CurrentProtocolAccess,
-    routes::v1::interface_resolver::resolve_interface_model,
+    routes::v1::endpoint_resolver::{resolve_endpoint_model_candidates, ResolvedEndpointProvider},
     stats::RequestLogInsert,
     storage::stats::insert as insert_request_log,
     AppState,
@@ -39,9 +39,19 @@ pub fn router() -> Router<AppState> {
 
 struct AnthropicMessageRequestContext {
     identity_id: String,
+    endpoint_name: String,
     model_requested: String,
     is_streaming: bool,
     metadata_json: String,
+    started_at: std::time::Instant,
+}
+
+struct AnthropicMessageCandidateRequest {
+    original_payload: Value,
+    request: crate::bridge::internal::InternalRequest,
+    diagnostics: Vec<crate::bridge::diagnostics::BridgeDiagnostic>,
+    model_requested: String,
+    is_streaming: bool,
     started_at: std::time::Instant,
 }
 
@@ -57,8 +67,73 @@ async fn create_message(
     let diagnostics = decoded_request.diagnostics;
     let model_requested = request.model.clone();
     let is_streaming = request.stream;
-    let resolved =
-        resolve_interface_model(&state, &access, &request.model, "anthropic_messages").await?;
+    let candidates =
+        resolve_endpoint_model_candidates(&state, &access, &request.model, "anthropic_messages")
+            .await?;
+    let mut last_upstream_error = None;
+    for resolved in candidates.into_iter().take(
+        crate::upstream::policy()
+            .max_candidates
+            .unwrap_or(usize::MAX),
+    ) {
+        let provider_id = resolved.provider.id.clone();
+        match crate::upstream::retry_with_policy(crate::upstream::policy(), || {
+            create_message_with_candidate(
+                &state,
+                &access,
+                AnthropicMessageCandidateRequest {
+                    original_payload: original_payload.clone(),
+                    request: request.clone(),
+                    diagnostics: diagnostics.clone(),
+                    model_requested: model_requested.clone(),
+                    is_streaming,
+                    started_at,
+                },
+                resolved.clone(),
+            )
+        })
+        .await
+        {
+            Ok(response) => {
+                if let Err(error) = state
+                    .storage
+                    .remember_protocol_model_provider(
+                        &crate::storage::ProtocolAccess {
+                            identity_id: access.identity_id.clone(),
+                            endpoint_id: access.endpoint_id.clone(),
+                            endpoint_name: access.endpoint_name.clone(),
+                        },
+                        &request.model,
+                        &provider_id,
+                    )
+                    .await
+                {
+                    tracing::warn!(error = %error, "failed to remember active endpoint model provider");
+                }
+                return Ok(response);
+            }
+            Err(error) if error.is_retryable_upstream() => last_upstream_error = Some(error),
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_upstream_error
+        .unwrap_or_else(|| AppError::BadRequest(format!("接入点未配置模型 {}", request.model))))
+}
+
+async fn create_message_with_candidate(
+    state: &AppState,
+    access: &CurrentProtocolAccess,
+    candidate_request: AnthropicMessageCandidateRequest,
+    resolved: ResolvedEndpointProvider,
+) -> Result<Response, AppError> {
+    let AnthropicMessageCandidateRequest {
+        original_payload,
+        request,
+        diagnostics,
+        model_requested,
+        is_streaming,
+        started_at,
+    } = candidate_request;
     let provider = resolved.provider;
     let upstream_protocol = resolved.upstream_protocol;
     let model_upstream = resolved.model_upstream;
@@ -76,18 +151,19 @@ async fn create_message(
     request.model = model_upstream.clone();
     let context = AnthropicMessageRequestContext {
         identity_id: access.identity_id.clone(),
+        endpoint_name: access.endpoint_name.clone(),
         model_requested,
         is_streaming,
         metadata_json,
         started_at,
     };
     if upstream_protocol == UpstreamProtocol::AnthropicMessages {
-        return create_native_anthropic_message(&state, upstream_payload, provider, context)
+        return create_native_anthropic_message(state, upstream_payload, provider, context)
             .await
             .map(IntoResponse::into_response);
     }
     if upstream_protocol == UpstreamProtocol::Responses {
-        return create_responses_anthropic_message(&state, request, provider, context)
+        return create_responses_anthropic_message(state, request, provider, context)
             .await
             .map(IntoResponse::into_response);
     }
@@ -104,7 +180,10 @@ async fn create_message(
         .json(&encode_chat_request(&request))
         .send()
         .await
-        .map_err(|error| AppError::Internal(error.into()))?;
+        .map_err(|error| AppError::Upstream {
+            status: None,
+            message: format!("上游连接失败: {error}"),
+        })?;
     let upstream_latency_ms = upstream_started_at.elapsed().as_millis() as i64;
 
     if !upstream_response.status().is_success() {
@@ -118,6 +197,7 @@ async fn create_message(
                 protocol_upstream: "chat_completions".to_string(),
                 provider_id: provider.id,
                 provider_name: provider.name,
+                endpoint_name: context.endpoint_name.clone(),
                 model_requested: context.model_requested,
                 model_upstream: request.model,
                 status: "failed".to_string(),
@@ -128,6 +208,8 @@ async fn create_message(
                 input_tokens: None,
                 output_tokens: None,
                 reasoning_tokens: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
                 latency_ms: context.started_at.elapsed().as_millis() as i64,
                 upstream_latency_ms: None,
                 first_token_ms: None,
@@ -137,7 +219,10 @@ async fn create_message(
             },
         )
         .await?;
-        return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
+        return Err(AppError::Upstream {
+            status: Some(status),
+            message: format!("上游请求失败: {status}"),
+        });
     }
 
     if context.is_streaming {
@@ -147,6 +232,7 @@ async fn create_message(
             protocol_upstream: "chat_completions".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
+            endpoint_name: context.endpoint_name.clone(),
             model_requested: context.model_requested,
             model_upstream: request.model.clone(),
             status: "success".to_string(),
@@ -157,6 +243,8 @@ async fn create_message(
             input_tokens: None,
             output_tokens: None,
             reasoning_tokens: None,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
             latency_ms: context.started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
             first_token_ms: None,
@@ -200,6 +288,7 @@ async fn create_message(
             protocol_upstream: "chat_completions".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
+            endpoint_name: context.endpoint_name.clone(),
             model_requested: context.model_requested,
             model_upstream: response.model.clone(),
             status: "success".to_string(),
@@ -213,6 +302,14 @@ async fn create_message(
                 .as_ref()
                 .and_then(|usage| usage.output_tokens),
             reasoning_tokens,
+            cache_read_tokens: response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.cache_read_tokens),
+            cache_write_tokens: response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.cache_write_tokens),
             latency_ms: context.started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
             first_token_ms: None,
@@ -242,7 +339,10 @@ async fn create_responses_anthropic_message(
         .json(&encode_responses_request(&request))
         .send()
         .await
-        .map_err(|error| AppError::Internal(error.into()))?;
+        .map_err(|error| AppError::Upstream {
+            status: None,
+            message: format!("上游连接失败: {error}"),
+        })?;
     let upstream_latency_ms = upstream_started_at.elapsed().as_millis() as i64;
 
     if !upstream_response.status().is_success() {
@@ -256,6 +356,7 @@ async fn create_responses_anthropic_message(
                 protocol_upstream: "responses".to_string(),
                 provider_id: provider.id,
                 provider_name: provider.name,
+                endpoint_name: context.endpoint_name.clone(),
                 model_requested: context.model_requested,
                 model_upstream: request.model,
                 status: "failed".to_string(),
@@ -266,6 +367,8 @@ async fn create_responses_anthropic_message(
                 input_tokens: None,
                 output_tokens: None,
                 reasoning_tokens: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
                 latency_ms: context.started_at.elapsed().as_millis() as i64,
                 upstream_latency_ms: None,
                 first_token_ms: None,
@@ -275,7 +378,10 @@ async fn create_responses_anthropic_message(
             },
         )
         .await?;
-        return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
+        return Err(AppError::Upstream {
+            status: Some(status),
+            message: format!("上游请求失败: {status}"),
+        });
     }
 
     if context.is_streaming {
@@ -285,6 +391,7 @@ async fn create_responses_anthropic_message(
             protocol_upstream: "responses".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
+            endpoint_name: context.endpoint_name.clone(),
             model_requested: context.model_requested,
             model_upstream: request.model.clone(),
             status: "success".to_string(),
@@ -295,6 +402,8 @@ async fn create_responses_anthropic_message(
             input_tokens: None,
             output_tokens: None,
             reasoning_tokens: None,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
             latency_ms: context.started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
             first_token_ms: None,
@@ -338,6 +447,7 @@ async fn create_responses_anthropic_message(
             protocol_upstream: "responses".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
+            endpoint_name: context.endpoint_name.clone(),
             model_requested: context.model_requested,
             model_upstream: response.model.clone(),
             status: "success".to_string(),
@@ -351,6 +461,14 @@ async fn create_responses_anthropic_message(
                 .as_ref()
                 .and_then(|usage| usage.output_tokens),
             reasoning_tokens,
+            cache_read_tokens: response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.cache_read_tokens),
+            cache_write_tokens: response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.cache_write_tokens),
             latency_ms: context.started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
             first_token_ms: None,
@@ -382,7 +500,10 @@ async fn create_native_anthropic_message(
         .json(&payload)
         .send()
         .await
-        .map_err(|error| AppError::Internal(error.into()))?;
+        .map_err(|error| AppError::Upstream {
+            status: None,
+            message: format!("上游连接失败: {error}"),
+        })?;
     let upstream_latency_ms = upstream_started_at.elapsed().as_millis() as i64;
 
     if !upstream_response.status().is_success() {
@@ -396,6 +517,7 @@ async fn create_native_anthropic_message(
                 protocol_upstream: "anthropic_messages".to_string(),
                 provider_id: provider.id,
                 provider_name: provider.name,
+                endpoint_name: context.endpoint_name.clone(),
                 model_requested: context.model_requested,
                 model_upstream: "unknown".to_string(),
                 status: "failed".to_string(),
@@ -406,6 +528,8 @@ async fn create_native_anthropic_message(
                 input_tokens: None,
                 output_tokens: None,
                 reasoning_tokens: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
                 latency_ms: context.started_at.elapsed().as_millis() as i64,
                 upstream_latency_ms: None,
                 first_token_ms: None,
@@ -415,7 +539,10 @@ async fn create_native_anthropic_message(
             },
         )
         .await?;
-        return Err(AppError::BadRequest(format!("上游请求失败: {}", status)));
+        return Err(AppError::Upstream {
+            status: Some(status),
+            message: format!("上游请求失败: {status}"),
+        });
     }
 
     if context.is_streaming {
@@ -430,6 +557,7 @@ async fn create_native_anthropic_message(
             protocol_upstream: "anthropic_messages".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
+            endpoint_name: context.endpoint_name.clone(),
             model_requested: context.model_requested,
             model_upstream,
             status: "success".to_string(),
@@ -440,6 +568,8 @@ async fn create_native_anthropic_message(
             input_tokens: None,
             output_tokens: None,
             reasoning_tokens: None,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
             latency_ms: context.started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
             first_token_ms: None,
@@ -475,6 +605,7 @@ async fn create_native_anthropic_message(
             protocol_upstream: "anthropic_messages".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
+            endpoint_name: context.endpoint_name.clone(),
             model_requested: context.model_requested,
             model_upstream: response
                 .get("model")
@@ -495,6 +626,14 @@ async fn create_native_anthropic_message(
                 .and_then(|usage| usage.get("output_tokens"))
                 .and_then(Value::as_i64),
             reasoning_tokens: None,
+            cache_read_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("cache_read_input_tokens"))
+                .and_then(Value::as_i64),
+            cache_write_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("cache_creation_input_tokens"))
+                .and_then(Value::as_i64),
             latency_ms: context.started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
             first_token_ms: None,
@@ -518,13 +657,20 @@ fn count_tool_calls(response: &crate::bridge::internal::InternalResponse) -> i64
 
 #[cfg(test)]
 mod tests {
-    use axum::{middleware, routing::post, Json, Router};
+    use axum::{extract::State, middleware, routing::post, Json, Router};
     use futures::{StreamExt, TryStreamExt};
     use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
     use tokio::net::TcpListener;
 
-    use crate::{db, routes::v1::interface_resolver::create_test_interface_auth, AppState};
+    use super::create_message;
+    use crate::{
+        db,
+        routes::v1::endpoint_resolver::{
+            create_test_endpoint_auth, create_test_endpoint_auth_with_candidates,
+        },
+        AppState,
+    };
 
     #[tokio::test]
     async fn rejects_unauthenticated_anthropic_messages_request() {
@@ -596,7 +742,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -656,6 +802,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fails_over_messages_to_a_healthy_candidate_and_keeps_using_it() {
+        let failing_upstream = spawn_failing_chat_upstream().await;
+        let healthy_upstream = spawn_user_only_chat_upstream().await;
+        let db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite pool");
+        db::init_schema(&db).await.expect("init schema");
+        let primary = db::create_config(
+            &db,
+            "primary",
+            "openai_compatible",
+            &failing_upstream,
+            "sk-primary",
+        )
+        .await
+        .expect("create primary provider");
+        let backup = db::create_config(
+            &db,
+            "backup",
+            "openai_compatible",
+            &healthy_upstream,
+            "sk-backup",
+        )
+        .await
+        .expect("create backup provider");
+        let auth = create_test_endpoint_auth_with_candidates(
+            &db,
+            &[primary, backup],
+            "shared-model",
+            "deepseek-chat",
+        )
+        .await;
+        let state = AppState {
+            storage: crate::storage::Storage::from_pool(
+                db.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
+            db: db.clone(),
+            client: reqwest::Client::new(),
+        };
+        let payload = json!({
+            "model": "shared-model",
+            "max_tokens": 1024,
+            "messages": [{ "role": "user", "content": "hello" }]
+        });
+
+        create_message(
+            State(state.clone()),
+            auth.access.clone(),
+            axum::Json(payload.clone()),
+        )
+        .await
+        .expect("fall back to the healthy candidate");
+        create_message(State(state.clone()), auth.access, axum::Json(payload))
+            .await
+            .expect("keep using the last successful candidate");
+
+        let (total, failed, successful): (i64, i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*), SUM(status = 'failed'), SUM(status = 'success') \
+             FROM identity_request_logs",
+        )
+        .fetch_one(&state.db)
+        .await
+        .expect("load request logs");
+        assert_eq!((total, failed, successful), (3, 1, 2));
+    }
+
+    #[tokio::test]
     async fn forwards_anthropic_messages_request_to_responses_upstream_for_openai_provider() {
         let upstream = spawn_responses_upstream().await;
         let db = SqlitePoolOptions::new()
@@ -667,7 +883,7 @@ mod tests {
         let provider = db::create_config(&db, "gpt-4.1", "openai", &upstream, "sk-upstream")
             .await
             .expect("create provider");
-        let auth = create_test_interface_auth(&db, &provider, "gpt-4.1", "gpt-4.1").await;
+        let auth = create_test_endpoint_auth(&db, &provider, "gpt-4.1", "gpt-4.1").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -742,7 +958,7 @@ mod tests {
         let provider = db::create_config(&db, "gpt-4.1", "openai", &upstream, "sk-upstream")
             .await
             .expect("create provider");
-        let auth = create_test_interface_auth(&db, &provider, "gpt-4.1", "gpt-4.1").await;
+        let auth = create_test_endpoint_auth(&db, &provider, "gpt-4.1", "gpt-4.1").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -848,7 +1064,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "claude-sonnet", "claude-sonnet").await;
+            create_test_endpoint_auth(&db, &provider, "claude-sonnet", "claude-sonnet").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -916,7 +1132,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -988,7 +1204,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -1065,7 +1281,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -1147,7 +1363,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -1223,7 +1439,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
+            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -1304,7 +1520,7 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_interface_auth(&db, &provider, "claude-sonnet", "claude-sonnet").await;
+            create_test_endpoint_auth(&db, &provider, "claude-sonnet", "claude-sonnet").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -1427,6 +1643,28 @@ mod tests {
                     "completion_tokens": 4
                 }
             }))
+        }
+
+        let app = Router::new().route("/chat/completions", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let addr = listener.local_addr().expect("upstream addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn spawn_failing_chat_upstream() -> String {
+        async fn handler() -> axum::response::Response {
+            use axum::{http::StatusCode, response::IntoResponse};
+
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "message": "primary unavailable" } })),
+            )
+                .into_response()
         }
 
         let app = Router::new().route("/chat/completions", post(handler));
