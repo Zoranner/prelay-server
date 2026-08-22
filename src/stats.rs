@@ -27,6 +27,10 @@ pub struct RequestLogSummary {
     pub error_message: Option<String>,
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
+    pub is_streaming: Option<bool>,
+    pub first_token_ms: Option<i64>,
+    pub cache_read_tokens: Option<i64>,
+    pub cache_write_tokens: Option<i64>,
     pub latency_ms: Option<i64>,
     pub upstream_request_id: Option<String>,
     pub metadata_json: Option<String>,
@@ -58,11 +62,12 @@ pub struct ProviderStatsSummary {
     pub average_first_token_ms: Option<f64>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RequestLogInsert {
     pub protocol_in: String,
     pub protocol_out: String,
     pub protocol_upstream: String,
+    pub endpoint_name: String,
     pub provider_id: String,
     pub provider_name: String,
     pub model_requested: String,
@@ -75,6 +80,8 @@ pub struct RequestLogInsert {
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
     pub reasoning_tokens: Option<i64>,
+    pub cache_read_tokens: Option<i64>,
+    pub cache_write_tokens: Option<i64>,
     pub latency_ms: i64,
     pub upstream_latency_ms: Option<i64>,
     pub first_token_ms: Option<i64>,
@@ -132,6 +139,8 @@ async fn insert_request_log_with_prices(
             input_tokens,
             output_tokens,
             reasoning_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
             estimated_cost,
             currency,
             latency_ms,
@@ -141,7 +150,7 @@ async fn insert_request_log_with_prices(
             upstream_request_id,
             metadata_json
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(id)
@@ -161,6 +170,8 @@ async fn insert_request_log_with_prices(
     .bind(log.input_tokens)
     .bind(log.output_tokens)
     .bind(log.reasoning_tokens)
+    .bind(log.cache_read_tokens)
+    .bind(log.cache_write_tokens)
     .bind(cost.as_ref().map(|cost| cost.estimated_cost))
     .bind(cost.as_ref().map(|cost| cost.currency.as_str()))
     .bind(log.latency_ms)
@@ -184,6 +195,8 @@ pub struct StreamRequestLogUpdate {
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
     pub reasoning_tokens: Option<i64>,
+    pub cache_read_tokens: Option<i64>,
+    pub cache_write_tokens: Option<i64>,
     pub latency_ms: i64,
     pub tool_call_count: Option<i64>,
     pub upstream_request_id: Option<String>,
@@ -209,6 +222,7 @@ async fn update_stream_request_log_with_prices(
         protocol_in: String::new(),
         protocol_out: String::new(),
         protocol_upstream: String::new(),
+        endpoint_name: String::new(),
         provider_id: String::new(),
         provider_name: String::new(),
         model_requested: String::new(),
@@ -221,6 +235,8 @@ async fn update_stream_request_log_with_prices(
         input_tokens: update.input_tokens,
         output_tokens: update.output_tokens,
         reasoning_tokens: update.reasoning_tokens,
+        cache_read_tokens: update.cache_read_tokens,
+        cache_write_tokens: update.cache_write_tokens,
         latency_ms: update.latency_ms,
         upstream_latency_ms: None,
         first_token_ms: None,
@@ -241,6 +257,8 @@ async fn update_stream_request_log_with_prices(
             input_tokens = ?,
             output_tokens = ?,
             reasoning_tokens = ?,
+            cache_read_tokens = ?,
+            cache_write_tokens = ?,
             estimated_cost = ?,
             currency = ?,
             latency_ms = ?,
@@ -257,6 +275,8 @@ async fn update_stream_request_log_with_prices(
     .bind(update.input_tokens)
     .bind(update.output_tokens)
     .bind(update.reasoning_tokens)
+    .bind(update.cache_read_tokens)
+    .bind(update.cache_write_tokens)
     .bind(cost.as_ref().map(|cost| cost.estimated_cost))
     .bind(cost.as_ref().map(|cost| cost.currency.as_str()))
     .bind(update.latency_ms)
@@ -383,6 +403,10 @@ pub async fn list_requests(pool: &SqlitePool, limit: usize) -> Result<Vec<Reques
             error_message,
             input_tokens,
             output_tokens,
+            is_streaming,
+            first_token_ms,
+            cache_read_tokens,
+            cache_write_tokens,
             latency_ms,
             upstream_request_id,
             metadata_json
@@ -601,6 +625,7 @@ mod tests {
                 protocol_in: "responses".to_string(),
                 protocol_out: "responses".to_string(),
                 protocol_upstream: "chat_completions".to_string(),
+                endpoint_name: String::new(),
                 provider_id: "provider-1".to_string(),
                 provider_name: "DeepSeek".to_string(),
                 model_requested: "deepseek-chat".to_string(),
@@ -613,6 +638,8 @@ mod tests {
                 input_tokens: Some(1_000_000),
                 output_tokens: Some(500_000),
                 reasoning_tokens: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
                 latency_ms: 120,
                 upstream_latency_ms: None,
                 first_token_ms: None,
@@ -641,6 +668,7 @@ mod tests {
                 protocol_in: "responses".to_string(),
                 protocol_out: "responses".to_string(),
                 protocol_upstream: "chat_completions".to_string(),
+                endpoint_name: String::new(),
                 provider_id: "provider-1".to_string(),
                 provider_name: "DeepSeek".to_string(),
                 model_requested: "deepseek-chat".to_string(),
@@ -653,6 +681,8 @@ mod tests {
                 input_tokens: Some(1_000_000),
                 output_tokens: Some(500_000),
                 reasoning_tokens: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
                 latency_ms: 120,
                 upstream_latency_ms: None,
                 first_token_ms: None,
@@ -682,6 +712,7 @@ mod tests {
                 protocol_in: "responses".to_string(),
                 protocol_out: "responses".to_string(),
                 protocol_upstream: "chat_completions".to_string(),
+                endpoint_name: String::new(),
                 provider_id: "provider-1".to_string(),
                 provider_name: "DeepSeek".to_string(),
                 model_requested: "deepseek-chat".to_string(),
@@ -694,6 +725,8 @@ mod tests {
                 input_tokens: Some(1_000_000),
                 output_tokens: Some(500_000),
                 reasoning_tokens: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
                 latency_ms: 120,
                 upstream_latency_ms: None,
                 first_token_ms: None,
@@ -738,6 +771,7 @@ mod tests {
                 protocol_in: "responses".to_string(),
                 protocol_out: "responses".to_string(),
                 protocol_upstream: "chat_completions".to_string(),
+                endpoint_name: String::new(),
                 provider_id: "provider-1".to_string(),
                 provider_name: "DeepSeek".to_string(),
                 model_requested: "deepseek-chat".to_string(),
@@ -750,6 +784,8 @@ mod tests {
                 input_tokens: Some(10),
                 output_tokens: Some(5),
                 reasoning_tokens: Some(2),
+                cache_read_tokens: Some(3),
+                cache_write_tokens: Some(1),
                 latency_ms: 120,
                 upstream_latency_ms: Some(90),
                 first_token_ms: Some(30),
@@ -810,6 +846,7 @@ mod tests {
                 protocol_in: "responses".to_string(),
                 protocol_out: "responses".to_string(),
                 protocol_upstream: "chat_completions".to_string(),
+                endpoint_name: String::new(),
                 provider_id: "provider-1".to_string(),
                 provider_name: "DeepSeek".to_string(),
                 model_requested: "deepseek-chat".to_string(),
@@ -822,6 +859,8 @@ mod tests {
                 input_tokens: None,
                 output_tokens: None,
                 reasoning_tokens: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
                 latency_ms: 30,
                 upstream_latency_ms: Some(20),
                 first_token_ms: Some(30),
@@ -845,6 +884,8 @@ mod tests {
                 input_tokens: Some(11),
                 output_tokens: Some(7),
                 reasoning_tokens: Some(2),
+                cache_read_tokens: Some(3),
+                cache_write_tokens: Some(1),
                 latency_ms: 80,
                 tool_call_count: Some(1),
                 upstream_request_id: Some("req_stream".to_string()),
@@ -914,6 +955,7 @@ mod tests {
                 protocol_in: "responses".to_string(),
                 protocol_out: "responses".to_string(),
                 protocol_upstream: "chat_completions".to_string(),
+                endpoint_name: String::new(),
                 provider_id: "provider-1".to_string(),
                 provider_name: "DeepSeek".to_string(),
                 model_requested: "deepseek-chat".to_string(),
@@ -926,6 +968,8 @@ mod tests {
                 input_tokens: None,
                 output_tokens: None,
                 reasoning_tokens: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
                 latency_ms: 12,
                 upstream_latency_ms: None,
                 first_token_ms: None,
