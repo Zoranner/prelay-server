@@ -12,6 +12,10 @@ pub enum AppError {
     NotFound(String),
     Unauthorized,
     BadRequest(String),
+    Upstream {
+        status: Option<StatusCode>,
+        message: String,
+    },
     Protocol {
         code: ProtocolErrorCode,
         message: String,
@@ -25,6 +29,7 @@ impl IntoResponse for AppError {
             AppError::NotFound(message) => (StatusCode::NOT_FOUND, json!(message)),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, json!("Invalid or missing token")),
             AppError::BadRequest(message) => (StatusCode::BAD_REQUEST, json!(message)),
+            AppError::Upstream { message, .. } => (StatusCode::BAD_GATEWAY, json!(message)),
             AppError::Protocol { code, message } => {
                 let status = match code {
                     ProtocolErrorCode::NotFound => StatusCode::NOT_FOUND,
@@ -60,6 +65,19 @@ impl IntoResponse for AppError {
         };
 
         (status, Json(json!({ "error": error }))).into_response()
+    }
+}
+
+impl AppError {
+    pub fn is_retryable_upstream(&self) -> bool {
+        match self {
+            Self::Upstream { status: None, .. } => true,
+            Self::Upstream {
+                status: Some(status),
+                ..
+            } => matches!(status.as_u16(), 408 | 429 | 500..=599),
+            _ => false,
+        }
     }
 }
 

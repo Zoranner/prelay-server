@@ -10,6 +10,7 @@ pub mod providers;
 pub mod routes;
 pub mod stats;
 pub mod storage;
+pub mod upstream;
 
 #[derive(Clone)]
 pub struct AppState {
