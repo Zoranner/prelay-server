@@ -4,7 +4,7 @@ use sqlx::{Sqlite, SqlitePool, Transaction};
 use uuid::Uuid;
 
 use crate::models::{
-    InterfaceConfig, InterfaceModel, InterfaceModelInput, ModelAlias, ProviderCapabilityOverrides,
+    EndpointConfig, EndpointModel, EndpointModelInput, ModelAlias, ProviderCapabilityOverrides,
     ProviderConfig, ProviderModel, UpdateConfigRequest,
 };
 #[cfg(test)]
@@ -18,15 +18,15 @@ pub struct ResolvedProvider {
     pub model_upstream: String,
 }
 
-pub struct ResolvedInterfaceProvider {
+pub struct ResolvedEndpointProvider {
     pub provider: ProviderConfig,
     pub model_upstream: String,
     pub upstream_protocol: UpstreamProtocol,
 }
 
 #[derive(Debug)]
-pub enum InterfaceWriteError {
-    InterfaceNotFound,
+pub enum EndpointWriteError {
+    EndpointNotFound,
     ProviderModelNotFound {
         provider_id: String,
         upstream_model: String,
@@ -37,10 +37,10 @@ pub enum InterfaceWriteError {
     Storage(anyhow::Error),
 }
 
-impl std::fmt::Display for InterfaceWriteError {
+impl std::fmt::Display for EndpointWriteError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InterfaceNotFound => formatter.write_str("interface does not exist"),
+            Self::EndpointNotFound => formatter.write_str("endpoint does not exist"),
             Self::ProviderModelNotFound {
                 provider_id,
                 upstream_model,
@@ -51,7 +51,7 @@ impl std::fmt::Display for InterfaceWriteError {
             Self::DuplicateModelName { model_name } => {
                 write!(
                     formatter,
-                    "interface model name `{model_name}` already exists"
+                    "endpoint model name `{model_name}` already exists"
                 )
             }
             Self::Storage(error) => error.fmt(formatter),
@@ -59,7 +59,7 @@ impl std::fmt::Display for InterfaceWriteError {
     }
 }
 
-impl std::error::Error for InterfaceWriteError {
+impl std::error::Error for EndpointWriteError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Storage(error) => Some(error.as_ref()),
@@ -68,7 +68,7 @@ impl std::error::Error for InterfaceWriteError {
     }
 }
 
-impl From<sqlx::Error> for InterfaceWriteError {
+impl From<sqlx::Error> for EndpointWriteError {
     fn from(error: sqlx::Error) -> Self {
         Self::Storage(error.into())
     }
@@ -162,7 +162,7 @@ pub async fn init_schema(pool: &SqlitePool) -> Result<()> {
 
     sqlx::query(
         r#"
-        CREATE TABLE IF NOT EXISTS interface_configs (
+        CREATE TABLE IF NOT EXISTS endpoint_configs (
             id          TEXT PRIMARY KEY,
             name        TEXT NOT NULL,
             protocol    TEXT NOT NULL,
@@ -176,14 +176,14 @@ pub async fn init_schema(pool: &SqlitePool) -> Result<()> {
 
     sqlx::query(
         r#"
-        CREATE TABLE IF NOT EXISTS interface_models (
+        CREATE TABLE IF NOT EXISTS endpoint_models (
             id              TEXT PRIMARY KEY,
-            interface_id    TEXT NOT NULL,
+            endpoint_id    TEXT NOT NULL,
             model_name      TEXT NOT NULL,
             provider_id     TEXT NOT NULL,
             upstream_model  TEXT NOT NULL,
             created_at      TEXT NOT NULL,
-            UNIQUE(interface_id, model_name)
+            UNIQUE(endpoint_id, model_name)
         )
         "#,
     )
@@ -209,33 +209,33 @@ pub async fn init_schema(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
-pub async fn list_interfaces(pool: &SqlitePool) -> Result<Vec<InterfaceConfig>> {
-    sqlx::query_as::<_, InterfaceConfig>(
-        "SELECT id, name, protocol, token, created_at FROM interface_configs ORDER BY created_at DESC",
+pub async fn list_endpoints(pool: &SqlitePool) -> Result<Vec<EndpointConfig>> {
+    sqlx::query_as::<_, EndpointConfig>(
+        "SELECT id, name, protocol, token, created_at FROM endpoint_configs ORDER BY created_at DESC",
     )
     .fetch_all(pool)
     .await
     .map_err(Into::into)
 }
 
-pub async fn list_interface_models(pool: &SqlitePool) -> Result<Vec<InterfaceModel>> {
-    sqlx::query_as::<_, InterfaceModel>(
-        "SELECT id, interface_id, model_name, provider_id, upstream_model, created_at FROM interface_models ORDER BY created_at DESC",
+pub async fn list_endpoint_models(pool: &SqlitePool) -> Result<Vec<EndpointModel>> {
+    sqlx::query_as::<_, EndpointModel>(
+        "SELECT id, endpoint_id, model_name, provider_id, upstream_model, created_at FROM endpoint_models ORDER BY created_at DESC",
     )
     .fetch_all(pool)
     .await
     .map_err(Into::into)
 }
 
-pub async fn list_interface_models_by_interface(
+pub async fn list_endpoint_models_by_interface(
     pool: &SqlitePool,
-    interface_id: &str,
-) -> Result<Vec<InterfaceModel>> {
-    sqlx::query_as::<_, InterfaceModel>(
-        "SELECT id, interface_id, model_name, provider_id, upstream_model, created_at
-         FROM interface_models WHERE interface_id = ? ORDER BY created_at DESC",
+    endpoint_id: &str,
+) -> Result<Vec<EndpointModel>> {
+    sqlx::query_as::<_, EndpointModel>(
+        "SELECT id, endpoint_id, model_name, provider_id, upstream_model, created_at
+         FROM endpoint_models WHERE endpoint_id = ? ORDER BY created_at DESC",
     )
-    .bind(interface_id)
+    .bind(endpoint_id)
     .fetch_all(pool)
     .await
     .map_err(Into::into)
@@ -368,7 +368,7 @@ async fn delete_provider_model_in_tx(
     provider_id: &str,
     model_name: &str,
 ) -> Result<bool> {
-    sqlx::query("DELETE FROM interface_models WHERE provider_id = ? AND upstream_model = ?")
+    sqlx::query("DELETE FROM endpoint_models WHERE provider_id = ? AND upstream_model = ?")
         .bind(provider_id)
         .bind(model_name)
         .execute(&mut **tx)
@@ -397,12 +397,12 @@ pub async fn provider_model_exists(
     Ok(exists.0 != 0)
 }
 
-pub async fn get_interface_by_token(
+pub async fn get_endpoint_by_token(
     pool: &SqlitePool,
     token: &str,
-) -> Result<Option<InterfaceConfig>> {
-    sqlx::query_as::<_, InterfaceConfig>(
-        "SELECT id, name, protocol, token, created_at FROM interface_configs WHERE token = ?",
+) -> Result<Option<EndpointConfig>> {
+    sqlx::query_as::<_, EndpointConfig>(
+        "SELECT id, name, protocol, token, created_at FROM endpoint_configs WHERE token = ?",
     )
     .bind(token)
     .fetch_optional(pool)
@@ -411,9 +411,9 @@ pub async fn get_interface_by_token(
 }
 
 #[cfg(test)]
-pub async fn get_interface_by_id(pool: &SqlitePool, id: &str) -> Result<Option<InterfaceConfig>> {
-    sqlx::query_as::<_, InterfaceConfig>(
-        "SELECT id, name, protocol, token, created_at FROM interface_configs WHERE id = ?",
+pub async fn get_endpoint_by_id(pool: &SqlitePool, id: &str) -> Result<Option<EndpointConfig>> {
+    sqlx::query_as::<_, EndpointConfig>(
+        "SELECT id, name, protocol, token, created_at FROM endpoint_configs WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -426,12 +426,12 @@ pub async fn create_interface(
     pool: &SqlitePool,
     name: &str,
     protocol: &str,
-) -> Result<InterfaceConfig> {
+) -> Result<EndpointConfig> {
     let id = Uuid::new_v4().to_string();
     let token = generate_token();
     let created_at = Utc::now().to_rfc3339();
     sqlx::query(
-        "INSERT INTO interface_configs (id, name, protocol, token, created_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO endpoint_configs (id, name, protocol, token, created_at) VALUES (?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(name)
@@ -441,7 +441,7 @@ pub async fn create_interface(
     .execute(pool)
     .await?;
 
-    Ok(InterfaceConfig {
+    Ok(EndpointConfig {
         id,
         name: name.to_string(),
         protocol: protocol.to_string(),
@@ -450,22 +450,22 @@ pub async fn create_interface(
     })
 }
 
-pub async fn create_interface_with_models(
+pub async fn create_endpoint_with_models(
     pool: &SqlitePool,
     name: &str,
     protocol: &str,
-    inputs: &[InterfaceModelInput],
-) -> std::result::Result<(InterfaceConfig, Vec<InterfaceModel>), InterfaceWriteError> {
+    inputs: &[EndpointModelInput],
+) -> std::result::Result<(EndpointConfig, Vec<EndpointModel>), EndpointWriteError> {
     let inputs = inputs
         .iter()
-        .map(normalize_interface_model_input)
+        .map(normalize_endpoint_model_input)
         .collect::<Vec<_>>();
     let id = Uuid::new_v4().to_string();
     let token = generate_token();
     let created_at = Utc::now().to_rfc3339();
     let mut tx = pool.begin().await?;
     sqlx::query(
-        "INSERT INTO interface_configs (id, name, protocol, token, created_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO endpoint_configs (id, name, protocol, token, created_at) VALUES (?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(name)
@@ -477,13 +477,13 @@ pub async fn create_interface_with_models(
 
     let mut models = Vec::with_capacity(inputs.len());
     for input in &inputs {
-        validate_interface_model_reference_in_tx(&mut tx, input).await?;
-        models.push(insert_interface_model_in_tx(&mut tx, &id, input).await?);
+        validate_endpoint_model_reference_in_tx(&mut tx, input).await?;
+        models.push(insert_endpoint_model_in_tx(&mut tx, &id, input).await?);
     }
     tx.commit().await?;
 
     Ok((
-        InterfaceConfig {
+        EndpointConfig {
             id,
             name: name.to_string(),
             protocol: protocol.to_string(),
@@ -494,28 +494,28 @@ pub async fn create_interface_with_models(
     ))
 }
 
-pub async fn update_interface_with_models(
+pub async fn update_endpoint_with_models(
     pool: &SqlitePool,
     id: &str,
     name: Option<&str>,
-    inputs: Option<&[InterfaceModelInput]>,
-) -> std::result::Result<(InterfaceConfig, Vec<InterfaceModel>), InterfaceWriteError> {
+    inputs: Option<&[EndpointModelInput]>,
+) -> std::result::Result<(EndpointConfig, Vec<EndpointModel>), EndpointWriteError> {
     let inputs = inputs.map(|inputs| {
         inputs
             .iter()
-            .map(normalize_interface_model_input)
+            .map(normalize_endpoint_model_input)
             .collect::<Vec<_>>()
     });
     let mut tx = pool.begin().await?;
-    let current = sqlx::query_as::<_, InterfaceConfig>(
-        "SELECT id, name, protocol, token, created_at FROM interface_configs WHERE id = ?",
+    let current = sqlx::query_as::<_, EndpointConfig>(
+        "SELECT id, name, protocol, token, created_at FROM endpoint_configs WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(&mut *tx)
     .await?
-    .ok_or(InterfaceWriteError::InterfaceNotFound)?;
+    .ok_or(EndpointWriteError::EndpointNotFound)?;
     let name = name.unwrap_or(&current.name);
-    sqlx::query("UPDATE interface_configs SET name = ? WHERE id = ?")
+    sqlx::query("UPDATE endpoint_configs SET name = ? WHERE id = ?")
         .bind(name)
         .bind(id)
         .execute(&mut *tx)
@@ -523,12 +523,12 @@ pub async fn update_interface_with_models(
 
     if let Some(inputs) = inputs.as_deref() {
         for input in inputs {
-            validate_interface_model_reference_in_tx(&mut tx, input).await?;
+            validate_endpoint_model_reference_in_tx(&mut tx, input).await?;
         }
 
-        let existing_models = sqlx::query_as::<_, InterfaceModel>(
-            "SELECT id, interface_id, model_name, provider_id, upstream_model, created_at
-             FROM interface_models WHERE interface_id = ?",
+        let existing_models = sqlx::query_as::<_, EndpointModel>(
+            "SELECT id, endpoint_id, model_name, provider_id, upstream_model, created_at
+             FROM endpoint_models WHERE endpoint_id = ?",
         )
         .bind(id)
         .fetch_all(&mut *tx)
@@ -539,7 +539,7 @@ pub async fn update_interface_with_models(
                 input
                     .model_name
                     .as_deref()
-                    .expect("normalized interface model name must be present")
+                    .expect("normalized endpoint model name must be present")
                     == existing.model_name
             });
             match replacement {
@@ -548,7 +548,7 @@ pub async fn update_interface_with_models(
                         || input.upstream_model != existing.upstream_model =>
                 {
                     sqlx::query(
-                        "UPDATE interface_models SET provider_id = ?, upstream_model = ? WHERE id = ?",
+                        "UPDATE endpoint_models SET provider_id = ?, upstream_model = ? WHERE id = ?",
                     )
                     .bind(&input.provider_id)
                     .bind(&input.upstream_model)
@@ -558,7 +558,7 @@ pub async fn update_interface_with_models(
                 }
                 Some(_) => {}
                 None => {
-                    sqlx::query("DELETE FROM interface_models WHERE id = ?")
+                    sqlx::query("DELETE FROM endpoint_models WHERE id = ?")
                         .bind(&existing.id)
                         .execute(&mut *tx)
                         .await?;
@@ -570,37 +570,37 @@ pub async fn update_interface_with_models(
             let model_name = input
                 .model_name
                 .as_deref()
-                .expect("normalized interface model name must be present");
+                .expect("normalized endpoint model name must be present");
             if !existing_models
                 .iter()
                 .any(|existing| existing.model_name == model_name)
             {
-                insert_interface_model_in_tx(&mut tx, id, input).await?;
+                insert_endpoint_model_in_tx(&mut tx, id, input).await?;
             }
         }
     }
 
-    let interface = sqlx::query_as::<_, InterfaceConfig>(
-        "SELECT id, name, protocol, token, created_at FROM interface_configs WHERE id = ?",
+    let endpoint = sqlx::query_as::<_, EndpointConfig>(
+        "SELECT id, name, protocol, token, created_at FROM endpoint_configs WHERE id = ?",
     )
     .bind(id)
     .fetch_one(&mut *tx)
     .await?;
-    let models = sqlx::query_as::<_, InterfaceModel>(
-        "SELECT id, interface_id, model_name, provider_id, upstream_model, created_at
-         FROM interface_models WHERE interface_id = ? ORDER BY created_at DESC",
+    let models = sqlx::query_as::<_, EndpointModel>(
+        "SELECT id, endpoint_id, model_name, provider_id, upstream_model, created_at
+         FROM endpoint_models WHERE endpoint_id = ? ORDER BY created_at DESC",
     )
     .bind(id)
     .fetch_all(&mut *tx)
     .await?;
     tx.commit().await?;
-    Ok((interface, models))
+    Ok((endpoint, models))
 }
 
-async fn validate_interface_model_reference_in_tx(
+async fn validate_endpoint_model_reference_in_tx(
     tx: &mut Transaction<'_, Sqlite>,
-    input: &InterfaceModelInput,
-) -> std::result::Result<(), InterfaceWriteError> {
+    input: &EndpointModelInput,
+) -> std::result::Result<(), EndpointWriteError> {
     let exists = sqlx::query_scalar::<_, i64>(
         "SELECT EXISTS(
             SELECT 1
@@ -614,7 +614,7 @@ async fn validate_interface_model_reference_in_tx(
     .fetch_one(&mut **tx)
     .await?;
     if exists == 0 {
-        return Err(InterfaceWriteError::ProviderModelNotFound {
+        return Err(EndpointWriteError::ProviderModelNotFound {
             provider_id: input.provider_id.clone(),
             upstream_model: input.upstream_model.clone(),
         });
@@ -622,23 +622,23 @@ async fn validate_interface_model_reference_in_tx(
     Ok(())
 }
 
-async fn insert_interface_model_in_tx(
+async fn insert_endpoint_model_in_tx(
     tx: &mut Transaction<'_, Sqlite>,
-    interface_id: &str,
-    input: &InterfaceModelInput,
-) -> std::result::Result<InterfaceModel, InterfaceWriteError> {
+    endpoint_id: &str,
+    input: &EndpointModelInput,
+) -> std::result::Result<EndpointModel, EndpointWriteError> {
     let id = Uuid::new_v4().to_string();
     let created_at = Utc::now().to_rfc3339();
     let model_name = input
         .model_name
         .as_deref()
-        .expect("normalized interface model name must be present");
+        .expect("normalized endpoint model name must be present");
     let result = sqlx::query(
-        "INSERT INTO interface_models (id, interface_id, model_name, provider_id, upstream_model, created_at)
+        "INSERT INTO endpoint_models (id, endpoint_id, model_name, provider_id, upstream_model, created_at)
          VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
-    .bind(interface_id)
+    .bind(endpoint_id)
     .bind(model_name)
     .bind(&input.provider_id)
     .bind(&input.upstream_model)
@@ -648,16 +648,16 @@ async fn insert_interface_model_in_tx(
     match result {
         Ok(_) => {}
         Err(sqlx::Error::Database(error)) if error.is_unique_violation() => {
-            return Err(InterfaceWriteError::DuplicateModelName {
+            return Err(EndpointWriteError::DuplicateModelName {
                 model_name: model_name.to_string(),
             });
         }
-        Err(error) => return Err(InterfaceWriteError::Storage(error.into())),
+        Err(error) => return Err(EndpointWriteError::Storage(error.into())),
     }
 
-    Ok(InterfaceModel {
+    Ok(EndpointModel {
         id,
-        interface_id: interface_id.to_string(),
+        endpoint_id: endpoint_id.to_string(),
         model_name: model_name.to_string(),
         provider_id: input.provider_id.clone(),
         upstream_model: input.upstream_model.clone(),
@@ -665,7 +665,7 @@ async fn insert_interface_model_in_tx(
     })
 }
 
-fn normalize_interface_model_input(input: &InterfaceModelInput) -> InterfaceModelInput {
+fn normalize_endpoint_model_input(input: &EndpointModelInput) -> EndpointModelInput {
     let provider_id = input.provider_id.trim().to_string();
     let upstream_model = input.upstream_model.trim().to_string();
     let model_name = input
@@ -675,7 +675,7 @@ fn normalize_interface_model_input(input: &InterfaceModelInput) -> InterfaceMode
         .filter(|value| !value.is_empty())
         .unwrap_or(&upstream_model)
         .to_string();
-    InterfaceModelInput {
+    EndpointModelInput {
         provider_id,
         upstream_model,
         model_name: Some(model_name),
@@ -684,11 +684,11 @@ fn normalize_interface_model_input(input: &InterfaceModelInput) -> InterfaceMode
 
 pub async fn delete_interface(pool: &SqlitePool, id: &str) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    sqlx::query("DELETE FROM interface_models WHERE interface_id = ?")
+    sqlx::query("DELETE FROM endpoint_models WHERE endpoint_id = ?")
         .bind(id)
         .execute(&mut *tx)
         .await?;
-    let result = sqlx::query("DELETE FROM interface_configs WHERE id = ?")
+    let result = sqlx::query("DELETE FROM endpoint_configs WHERE id = ?")
         .bind(id)
         .execute(&mut *tx)
         .await?;
@@ -696,9 +696,9 @@ pub async fn delete_interface(pool: &SqlitePool, id: &str) -> Result<bool> {
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn regenerate_interface_token(pool: &SqlitePool, id: &str) -> Result<Option<String>> {
+pub async fn regenerate_endpoint_token(pool: &SqlitePool, id: &str) -> Result<Option<String>> {
     let new_token = generate_token();
-    let result = sqlx::query("UPDATE interface_configs SET token = ? WHERE id = ?")
+    let result = sqlx::query("UPDATE endpoint_configs SET token = ? WHERE id = ?")
         .bind(&new_token)
         .bind(id)
         .execute(pool)
@@ -711,58 +711,58 @@ pub async fn regenerate_interface_token(pool: &SqlitePool, id: &str) -> Result<O
     }
 }
 
-pub async fn create_interface_model(
+pub async fn create_endpoint_model(
     pool: &SqlitePool,
-    interface_id: &str,
+    endpoint_id: &str,
     model_name: &str,
     provider_id: &str,
     upstream_model: &str,
-) -> std::result::Result<InterfaceModel, InterfaceWriteError> {
-    let input = normalize_interface_model_input(&InterfaceModelInput {
+) -> std::result::Result<EndpointModel, EndpointWriteError> {
+    let input = normalize_endpoint_model_input(&EndpointModelInput {
         provider_id: provider_id.to_string(),
         upstream_model: upstream_model.to_string(),
         model_name: Some(model_name.to_string()),
     });
     let mut tx = pool.begin().await?;
-    let interface_exists =
-        sqlx::query_scalar::<_, i64>("SELECT EXISTS(SELECT 1 FROM interface_configs WHERE id = ?)")
-            .bind(interface_id)
+    let endpoint_exists =
+        sqlx::query_scalar::<_, i64>("SELECT EXISTS(SELECT 1 FROM endpoint_configs WHERE id = ?)")
+            .bind(endpoint_id)
             .fetch_one(&mut *tx)
             .await?;
-    if interface_exists == 0 {
-        return Err(InterfaceWriteError::InterfaceNotFound);
+    if endpoint_exists == 0 {
+        return Err(EndpointWriteError::EndpointNotFound);
     }
 
-    validate_interface_model_reference_in_tx(&mut tx, &input).await?;
+    validate_endpoint_model_reference_in_tx(&mut tx, &input).await?;
 
-    let model = insert_interface_model_in_tx(&mut tx, interface_id, &input).await?;
+    let model = insert_endpoint_model_in_tx(&mut tx, endpoint_id, &input).await?;
     tx.commit().await?;
     Ok(model)
 }
 
-pub async fn delete_interface_model(
+pub async fn delete_endpoint_model(
     pool: &SqlitePool,
-    interface_id: &str,
+    endpoint_id: &str,
     model_id: &str,
 ) -> Result<bool> {
-    let result = sqlx::query("DELETE FROM interface_models WHERE interface_id = ? AND id = ?")
-        .bind(interface_id)
+    let result = sqlx::query("DELETE FROM endpoint_models WHERE endpoint_id = ? AND id = ?")
+        .bind(endpoint_id)
         .bind(model_id)
         .execute(pool)
         .await?;
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn get_interface_model(
+pub async fn get_endpoint_model(
     pool: &SqlitePool,
-    interface_id: &str,
+    endpoint_id: &str,
     model_name: &str,
-) -> Result<Option<InterfaceModel>> {
-    sqlx::query_as::<_, InterfaceModel>(
-        "SELECT id, interface_id, model_name, provider_id, upstream_model, created_at
-         FROM interface_models WHERE interface_id = ? AND model_name = ?",
+) -> Result<Option<EndpointModel>> {
+    sqlx::query_as::<_, EndpointModel>(
+        "SELECT id, endpoint_id, model_name, provider_id, upstream_model, created_at
+         FROM endpoint_models WHERE endpoint_id = ? AND model_name = ?",
     )
-    .bind(interface_id)
+    .bind(endpoint_id)
     .bind(model_name)
     .fetch_optional(pool)
     .await
@@ -1191,7 +1191,7 @@ pub async fn delete_config(pool: &SqlitePool, id: &str) -> Result<bool> {
         return Ok(false);
     }
 
-    sqlx::query("DELETE FROM interface_models WHERE provider_id = ?")
+    sqlx::query("DELETE FROM endpoint_models WHERE provider_id = ?")
         .bind(id)
         .execute(&mut *tx)
         .await?;
@@ -1260,11 +1260,11 @@ fn generate_token() -> String {
 mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
-    use crate::models::{InterfaceModelInput, UpdateConfigRequest};
+    use crate::models::{EndpointModelInput, UpdateConfigRequest};
 
     use super::{
-        create_config, create_interface, create_interface_model, create_model_alias,
-        create_provider_model, get_provider_by_model, list_interface_models,
+        create_config, create_endpoint_model, create_interface, create_model_alias,
+        create_provider_model, get_provider_by_model, list_endpoint_models,
         list_provider_models_by_provider,
     };
 
@@ -1279,12 +1279,12 @@ mod tests {
         }
     }
 
-    fn interface_model_input(
+    fn endpoint_model_input(
         provider_id: &str,
         upstream_model: &str,
         model_name: Option<&str>,
-    ) -> InterfaceModelInput {
-        InterfaceModelInput {
+    ) -> EndpointModelInput {
+        EndpointModelInput {
             provider_id: provider_id.to_string(),
             upstream_model: upstream_model.to_string(),
             model_name: model_name.map(str::to_string),
@@ -1292,7 +1292,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn creates_interface_and_complete_model_mapping_in_one_transaction() {
+    async fn creates_endpoint_and_complete_model_mapping_in_one_transaction() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -1311,26 +1311,26 @@ mod tests {
         create_provider_model(&db, &provider.id, "model-a")
             .await
             .expect("create provider model");
-        let mappings = vec![interface_model_input(
+        let mappings = vec![endpoint_model_input(
             &provider.id,
             "model-a",
             Some("alias-a"),
         )];
 
-        let (interface, models) =
-            super::create_interface_with_models(&db, "Interface", "all", &mappings)
+        let (endpoint, models) =
+            super::create_endpoint_with_models(&db, "Endpoint", "all", &mappings)
                 .await
-                .expect("create interface with models");
+                .expect("create endpoint with models");
 
         assert_eq!(models.len(), 1);
-        assert_eq!(models[0].interface_id, interface.id);
+        assert_eq!(models[0].endpoint_id, endpoint.id);
         assert_eq!(models[0].model_name, "alias-a");
         assert_eq!(models[0].provider_id, provider.id);
         assert_eq!(models[0].upstream_model, "model-a");
     }
 
     #[tokio::test]
-    async fn update_interface_replaces_complete_model_mapping() {
+    async fn update_endpoint_replaces_complete_model_mapping() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -1351,28 +1351,28 @@ mod tests {
                 .await
                 .expect("create provider model");
         }
-        let original = vec![interface_model_input(
+        let original = vec![endpoint_model_input(
             &provider.id,
             "model-a",
             Some("old-alias"),
         )];
-        let (interface, _) = super::create_interface_with_models(&db, "Original", "all", &original)
+        let (endpoint, _) = super::create_endpoint_with_models(&db, "Original", "all", &original)
             .await
-            .expect("create interface");
-        let replacement = vec![interface_model_input(
+            .expect("create endpoint");
+        let replacement = vec![endpoint_model_input(
             &provider.id,
             "model-b",
             Some("new-alias"),
         )];
 
-        let (updated, models) = super::update_interface_with_models(
+        let (updated, models) = super::update_endpoint_with_models(
             &db,
-            &interface.id,
+            &endpoint.id,
             Some("Updated"),
             Some(&replacement),
         )
         .await
-        .expect("update interface");
+        .expect("update endpoint");
 
         assert_eq!(updated.name, "Updated");
         assert_eq!(models.len(), 1);
@@ -1381,7 +1381,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_interface_without_models_preserves_model_identity() {
+    async fn update_endpoint_without_models_preserves_model_identity() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -1400,20 +1400,20 @@ mod tests {
         create_provider_model(&db, &provider.id, "model-a")
             .await
             .expect("create provider model");
-        let mappings = vec![interface_model_input(
+        let mappings = vec![endpoint_model_input(
             &provider.id,
             "model-a",
             Some("alias-a"),
         )];
-        let (interface, original_models) =
-            super::create_interface_with_models(&db, "Original", "all", &mappings)
+        let (endpoint, original_models) =
+            super::create_endpoint_with_models(&db, "Original", "all", &mappings)
                 .await
-                .expect("create interface");
+                .expect("create endpoint");
 
         let (_, models) =
-            super::update_interface_with_models(&db, &interface.id, Some("Updated"), None)
+            super::update_endpoint_with_models(&db, &endpoint.id, Some("Updated"), None)
                 .await
-                .expect("update interface");
+                .expect("update endpoint");
 
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, original_models[0].id);
@@ -1421,7 +1421,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_interface_with_unchanged_models_preserves_model_identity() {
+    async fn update_endpoint_with_unchanged_models_preserves_model_identity() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -1440,24 +1440,20 @@ mod tests {
         create_provider_model(&db, &provider.id, "model-a")
             .await
             .expect("create provider model");
-        let mappings = vec![interface_model_input(
+        let mappings = vec![endpoint_model_input(
             &provider.id,
             "model-a",
             Some("alias-a"),
         )];
-        let (interface, original_models) =
-            super::create_interface_with_models(&db, "Original", "all", &mappings)
+        let (endpoint, original_models) =
+            super::create_endpoint_with_models(&db, "Original", "all", &mappings)
                 .await
-                .expect("create interface");
+                .expect("create endpoint");
 
-        let (_, models) = super::update_interface_with_models(
-            &db,
-            &interface.id,
-            Some("Updated"),
-            Some(&mappings),
-        )
-        .await
-        .expect("update interface");
+        let (_, models) =
+            super::update_endpoint_with_models(&db, &endpoint.id, Some("Updated"), Some(&mappings))
+                .await
+                .expect("update endpoint");
 
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, original_models[0].id);
@@ -1465,7 +1461,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_interface_with_whitespace_normalized_models_preserves_model_identity() {
+    async fn update_endpoint_with_whitespace_normalized_models_preserves_model_identity() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -1484,25 +1480,25 @@ mod tests {
         create_provider_model(&db, &provider.id, "model-a")
             .await
             .expect("create provider model");
-        let mappings = vec![interface_model_input(
+        let mappings = vec![endpoint_model_input(
             &provider.id,
             "model-a",
             Some("alias-a"),
         )];
-        let (interface, original_models) =
-            super::create_interface_with_models(&db, "Original", "all", &mappings)
+        let (endpoint, original_models) =
+            super::create_endpoint_with_models(&db, "Original", "all", &mappings)
                 .await
-                .expect("create interface");
-        let whitespace_padded = vec![interface_model_input(
+                .expect("create endpoint");
+        let whitespace_padded = vec![endpoint_model_input(
             &format!(" {} ", provider.id),
             " model-a ",
             Some(" alias-a "),
         )];
 
         let (_, models) =
-            super::update_interface_with_models(&db, &interface.id, None, Some(&whitespace_padded))
+            super::update_endpoint_with_models(&db, &endpoint.id, None, Some(&whitespace_padded))
                 .await
-                .expect("update interface");
+                .expect("update endpoint");
 
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, original_models[0].id);
@@ -1517,26 +1513,26 @@ mod tests {
             .await
             .expect("create sqlite pool");
         super::init_schema(&db).await.expect("init schema");
-        let interface = create_interface(&db, "Interface", "all")
+        let endpoint = create_interface(&db, "Endpoint", "all")
             .await
-            .expect("create interface");
-        let input = interface_model_input("provider", "model-a", Some("alias-a"));
+            .expect("create endpoint");
+        let input = endpoint_model_input("provider", "model-a", Some("alias-a"));
         let mut tx = db.begin().await.expect("begin transaction");
-        super::insert_interface_model_in_tx(&mut tx, &interface.id, &input)
+        super::insert_endpoint_model_in_tx(&mut tx, &endpoint.id, &input)
             .await
-            .expect("insert first interface model");
+            .expect("insert first endpoint model");
 
-        let result = super::insert_interface_model_in_tx(&mut tx, &interface.id, &input).await;
+        let result = super::insert_endpoint_model_in_tx(&mut tx, &endpoint.id, &input).await;
 
         assert!(matches!(
             result,
-            Err(super::InterfaceWriteError::DuplicateModelName { ref model_name })
+            Err(super::EndpointWriteError::DuplicateModelName { ref model_name })
                 if model_name == "alias-a"
         ));
     }
 
     #[tokio::test]
-    async fn update_interface_model_mapping_preserves_identity_for_same_model_name() {
+    async fn update_endpoint_model_mapping_preserves_identity_for_same_model_name() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -1557,25 +1553,25 @@ mod tests {
                 .await
                 .expect("create provider model");
         }
-        let original = vec![interface_model_input(
+        let original = vec![endpoint_model_input(
             &provider.id,
             "model-a",
             Some("alias-a"),
         )];
-        let (interface, original_models) =
-            super::create_interface_with_models(&db, "Original", "all", &original)
+        let (endpoint, original_models) =
+            super::create_endpoint_with_models(&db, "Original", "all", &original)
                 .await
-                .expect("create interface");
-        let replacement = vec![interface_model_input(
+                .expect("create endpoint");
+        let replacement = vec![endpoint_model_input(
             &provider.id,
             "model-b",
             Some("alias-a"),
         )];
 
         let (_, models) =
-            super::update_interface_with_models(&db, &interface.id, None, Some(&replacement))
+            super::update_endpoint_with_models(&db, &endpoint.id, None, Some(&replacement))
                 .await
-                .expect("update interface");
+                .expect("update endpoint");
 
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, original_models[0].id);
@@ -1584,7 +1580,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invalid_provider_model_rolls_back_interface_creation() {
+    async fn invalid_provider_model_rolls_back_endpoint_creation() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -1600,31 +1596,31 @@ mod tests {
         )
         .await
         .expect("create provider");
-        let mappings = vec![interface_model_input(
+        let mappings = vec![endpoint_model_input(
             &provider.id,
             "missing-model",
             Some("alias-a"),
         )];
 
         let result =
-            super::create_interface_with_models(&db, "Must Roll Back", "all", &mappings).await;
+            super::create_endpoint_with_models(&db, "Must Roll Back", "all", &mappings).await;
 
         assert!(matches!(
             result,
-            Err(super::InterfaceWriteError::ProviderModelNotFound { .. })
+            Err(super::EndpointWriteError::ProviderModelNotFound { .. })
         ));
-        assert!(super::list_interfaces(&db)
+        assert!(super::list_endpoints(&db)
             .await
-            .expect("list interfaces")
+            .expect("list endpoints")
             .is_empty());
-        assert!(list_interface_models(&db)
+        assert!(list_endpoint_models(&db)
             .await
-            .expect("list interface models")
+            .expect("list endpoint models")
             .is_empty());
     }
 
     #[tokio::test]
-    async fn invalid_provider_model_rolls_back_interface_update() {
+    async fn invalid_provider_model_rolls_back_endpoint_update() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -1643,24 +1639,24 @@ mod tests {
         create_provider_model(&db, &provider.id, "model-a")
             .await
             .expect("create provider model");
-        let original = vec![interface_model_input(
+        let original = vec![endpoint_model_input(
             &provider.id,
             "model-a",
             Some("old-alias"),
         )];
-        let (interface, original_models) =
-            super::create_interface_with_models(&db, "Original", "all", &original)
+        let (endpoint, original_models) =
+            super::create_endpoint_with_models(&db, "Original", "all", &original)
                 .await
-                .expect("create interface");
-        let invalid = vec![interface_model_input(
+                .expect("create endpoint");
+        let invalid = vec![endpoint_model_input(
             &provider.id,
             "missing-model",
             Some("new-alias"),
         )];
 
-        let result = super::update_interface_with_models(
+        let result = super::update_endpoint_with_models(
             &db,
-            &interface.id,
+            &endpoint.id,
             Some("Must Roll Back"),
             Some(&invalid),
         )
@@ -1668,16 +1664,16 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(super::InterfaceWriteError::ProviderModelNotFound { .. })
+            Err(super::EndpointWriteError::ProviderModelNotFound { .. })
         ));
-        let stored = super::get_interface_by_id(&db, &interface.id)
+        let stored = super::get_endpoint_by_id(&db, &endpoint.id)
             .await
-            .expect("get interface")
-            .expect("interface exists");
+            .expect("get endpoint")
+            .expect("endpoint exists");
         assert_eq!(stored.name, "Original");
-        let stored_models = super::list_interface_models_by_interface(&db, &interface.id)
+        let stored_models = super::list_endpoint_models_by_interface(&db, &endpoint.id)
             .await
-            .expect("list interface models");
+            .expect("list endpoint models");
         assert_eq!(stored_models.len(), 1);
         assert_eq!(stored_models[0].id, original_models[0].id);
         assert_eq!(stored_models[0].model_name, "old-alias");
@@ -1751,7 +1747,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replaces_complete_model_set_and_removes_only_stale_interface_references() {
+    async fn replaces_complete_model_set_and_removes_only_stale_endpoint_references() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -1775,21 +1771,21 @@ mod tests {
             .find(|model| model.model_name == "model-kept")
             .expect("kept model")
             .clone();
-        let interface = create_interface(&db, "Responses", "responses")
+        let endpoint = create_interface(&db, "Responses", "responses")
             .await
-            .expect("create interface");
-        create_interface_model(&db, &interface.id, "kept-alias", &provider.id, "model-kept")
+            .expect("create endpoint");
+        create_endpoint_model(&db, &endpoint.id, "kept-alias", &provider.id, "model-kept")
             .await
-            .expect("create kept interface model");
-        create_interface_model(
+            .expect("create kept endpoint model");
+        create_endpoint_model(
             &db,
-            &interface.id,
+            &endpoint.id,
             "removed-alias",
             &provider.id,
             "model-removed",
         )
         .await
-        .expect("create removed interface model");
+        .expect("create removed endpoint model");
         let replacement = vec!["model-kept".to_string(), "model-new".to_string()];
         let update = config_update(Some("Updated Provider"));
 
@@ -1812,11 +1808,11 @@ mod tests {
             .iter()
             .any(|model| model.model_name == "model-removed"));
 
-        let interface_models = list_interface_models(&db)
+        let endpoint_models = list_endpoint_models(&db)
             .await
-            .expect("list interface models");
-        assert_eq!(interface_models.len(), 1);
-        assert_eq!(interface_models[0].upstream_model, "model-kept");
+            .expect("list endpoint models");
+        assert_eq!(endpoint_models.len(), 1);
+        assert_eq!(endpoint_models[0].upstream_model, "model-kept");
     }
 
     #[tokio::test]
@@ -2054,7 +2050,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_interface_model_outside_provider_model_catalog() {
+    async fn rejects_endpoint_model_outside_provider_model_catalog() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -2070,13 +2066,13 @@ mod tests {
         )
         .await
         .expect("create provider");
-        let interface = create_interface(&db, "Responses", "responses")
+        let endpoint = create_interface(&db, "Responses", "responses")
             .await
-            .expect("create interface");
+            .expect("create endpoint");
 
-        let result = create_interface_model(
+        let result = create_endpoint_model(
             &db,
-            &interface.id,
+            &endpoint.id,
             "not-in-catalog",
             &provider.id,
             "not-in-catalog",
@@ -2087,7 +2083,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deleting_provider_removes_provider_and_interface_models() {
+    async fn deleting_provider_removes_provider_and_endpoint_models() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -2106,12 +2102,12 @@ mod tests {
         create_provider_model(&db, &provider.id, "deepseek-chat")
             .await
             .expect("create provider model");
-        let interface = create_interface(&db, "Responses", "responses")
+        let endpoint = create_interface(&db, "Responses", "responses")
             .await
-            .expect("create interface");
-        create_interface_model(&db, &interface.id, "coder", &provider.id, "deepseek-chat")
+            .expect("create endpoint");
+        create_endpoint_model(&db, &endpoint.id, "coder", &provider.id, "deepseek-chat")
             .await
-            .expect("create interface model");
+            .expect("create endpoint model");
 
         let deleted = super::delete_config(&db, &provider.id)
             .await
@@ -2122,9 +2118,9 @@ mod tests {
             .await
             .expect("list provider models")
             .is_empty());
-        assert!(list_interface_models(&db)
+        assert!(list_endpoint_models(&db)
             .await
-            .expect("list interface models")
+            .expect("list endpoint models")
             .is_empty());
     }
 
@@ -2149,17 +2145,17 @@ mod tests {
         .await
         .expect("insert orphaned provider model");
         sqlx::query(
-            "INSERT INTO interface_models (id, interface_id, model_name, provider_id, upstream_model, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO endpoint_models (id, endpoint_id, model_name, provider_id, upstream_model, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
-        .bind("orphaned-interface-model")
-        .bind("missing-interface")
+        .bind("orphaned-endpoint-model")
+        .bind("missing-endpoint")
         .bind("model-a")
         .bind(missing_provider_id)
         .bind("model-a")
         .bind("2026-08-01T00:00:00Z")
         .execute(&db)
         .await
-        .expect("insert orphaned interface model");
+        .expect("insert orphaned endpoint model");
         sqlx::query(
             "INSERT INTO model_aliases (id, alias, provider_id, upstream_model, downstream_protocols_json, enabled, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)",
         )
@@ -2178,7 +2174,7 @@ mod tests {
             .expect("delete missing provider");
 
         assert!(!deleted);
-        for table in ["provider_models", "interface_models", "model_aliases"] {
+        for table in ["provider_models", "endpoint_models", "model_aliases"] {
             let count = sqlx::query_scalar::<_, i64>(&format!(
                 "SELECT COUNT(*) FROM {table} WHERE provider_id = ?"
             ))

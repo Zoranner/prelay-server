@@ -32,7 +32,7 @@ pub struct ProviderModel {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
-pub struct InterfaceConfig {
+pub struct EndpointConfig {
     pub id: String,
     pub name: String,
     pub protocol: String,
@@ -41,9 +41,9 @@ pub struct InterfaceConfig {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
-pub struct InterfaceModel {
+pub struct EndpointModel {
     pub id: String,
-    pub interface_id: String,
+    pub endpoint_id: String,
     pub model_name: String,
     pub provider_id: String,
     pub upstream_model: String,
@@ -143,27 +143,27 @@ pub struct CreateProviderModelRequest {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub struct InterfaceModelInput {
+pub struct EndpointModelInput {
     pub provider_id: String,
     pub upstream_model: String,
     pub model_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CreateInterfaceRequest {
+pub struct CreateEndpointRequest {
     pub name: String,
     pub protocol: Option<String>,
-    pub models: Vec<InterfaceModelInput>,
+    pub models: Vec<EndpointModelInput>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UpdateInterfaceRequest {
+pub struct UpdateEndpointRequest {
     pub name: Option<String>,
-    pub models: Option<Vec<InterfaceModelInput>>,
+    pub models: Option<Vec<EndpointModelInput>>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CreateInterfaceModelRequest {
+pub struct CreateEndpointModelRequest {
     pub provider_id: String,
     pub upstream_model: String,
     pub model_name: Option<String>,
@@ -208,20 +208,20 @@ impl From<ModelAlias> for ModelAliasResponse {
 }
 
 #[derive(Debug, Serialize)]
-pub struct InterfaceModelResponse {
+pub struct EndpointModelResponse {
     pub id: String,
-    pub interface_id: String,
+    pub endpoint_id: String,
     pub model_name: String,
     pub provider_id: String,
     pub upstream_model: String,
     pub created_at: String,
 }
 
-impl From<InterfaceModel> for InterfaceModelResponse {
-    fn from(model: InterfaceModel) -> Self {
-        InterfaceModelResponse {
+impl From<EndpointModel> for EndpointModelResponse {
+    fn from(model: EndpointModel) -> Self {
+        EndpointModelResponse {
             id: model.id,
-            interface_id: model.interface_id,
+            endpoint_id: model.endpoint_id,
             model_name: model.model_name,
             provider_id: model.provider_id,
             upstream_model: model.upstream_model,
@@ -231,18 +231,18 @@ impl From<InterfaceModel> for InterfaceModelResponse {
 }
 
 #[derive(Debug, Serialize)]
-pub struct InterfaceResponse {
+pub struct EndpointResponse {
     pub id: String,
     pub name: String,
     pub protocol: String,
     pub token: String,
-    pub models: Vec<InterfaceModelResponse>,
+    pub models: Vec<EndpointModelResponse>,
     pub created_at: String,
 }
 
-impl InterfaceResponse {
-    pub fn from_config(config: InterfaceConfig, models: Vec<InterfaceModel>) -> Self {
-        InterfaceResponse {
+impl EndpointResponse {
+    pub fn from_config(config: EndpointConfig, models: Vec<EndpointModel>) -> Self {
+        EndpointResponse {
             id: config.id,
             name: config.name,
             protocol: config.protocol,
