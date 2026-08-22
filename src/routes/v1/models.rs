@@ -4,11 +4,11 @@ use axum::{
     Json, Router,
 };
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     error::AppError,
-    models::InterfaceModel,
+    models::EndpointModel,
     providers::spec::{ProviderCapabilities, ProviderSpec, UpstreamProtocol},
     routes::v1::auth::CurrentProtocolAccess,
     AppState,
@@ -75,12 +75,17 @@ async fn list_models(
         .storage
         .list_protocol_models(&crate::storage::ProtocolAccess {
             identity_id: access.identity_id,
-            interface_id: access.interface_id,
+            endpoint_id: access.endpoint_id,
+            endpoint_name: access.endpoint_name,
         })
         .await?;
+    let mut seen_model_names = HashSet::new();
     let data = models
         .into_iter()
-        .map(|model| {
+        .filter_map(|model| {
+            if !seen_model_names.insert(model.model.model_name.clone()) {
+                return None;
+            }
             let mut providers = HashMap::new();
             providers.insert(
                 model.provider.id.clone(),
@@ -89,7 +94,7 @@ async fn list_models(
                     ProviderSpec::from_provider_config(&model.provider),
                 ),
             );
-            model_entry_for_interface_model(model.model, &providers)
+            Some(model_entry_for_endpoint_model(model.model, &providers))
         })
         .collect::<Vec<_>>();
 
@@ -99,8 +104,8 @@ async fn list_models(
     }))
 }
 
-fn model_entry_for_interface_model(
-    model: InterfaceModel,
+fn model_entry_for_endpoint_model(
+    model: EndpointModel,
     providers_by_id: &HashMap<String, (String, ProviderSpec)>,
 ) -> ModelEntry {
     let provider = providers_by_id.get(&model.provider_id);
@@ -111,7 +116,7 @@ fn model_entry_for_interface_model(
     ModelEntry {
         id: model.model_name,
         object: "model",
-        entry_type: "interface_model",
+        entry_type: "endpoint_model",
         owned_by: "prelay",
         provider_id: model.provider_id,
         provider_name: provider
@@ -156,10 +161,10 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     use super::list_models;
-    use crate::{db, routes::v1::interface_resolver::create_test_interface_auth, AppState};
+    use crate::{db, routes::v1::endpoint_resolver::create_test_endpoint_auth, AppState};
 
     #[tokio::test]
-    async fn lists_identity_interface_models_only() {
+    async fn lists_identity_endpoint_models_only() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -175,7 +180,7 @@ mod tests {
         )
         .await
         .expect("create legacy provider source");
-        let auth = create_test_interface_auth(&db, &provider, "coder", "deepseek-chat").await;
+        let auth = create_test_endpoint_auth(&db, &provider, "coder", "deepseek-chat").await;
         let state = AppState {
             storage: crate::storage::Storage::from_pool(
                 db.clone(),
@@ -194,7 +199,7 @@ mod tests {
         assert_eq!(response.0.data.len(), 1);
         assert_eq!(model.id, "coder");
         assert_eq!(model.object, "model");
-        assert_eq!(model.entry_type, "interface_model");
+        assert_eq!(model.entry_type, "endpoint_model");
         assert_eq!(model.owned_by, "prelay");
         assert_eq!(model.provider_name, "DeepSeek");
         assert_eq!(model.upstream_protocol, "chat_completions");
