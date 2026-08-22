@@ -1,7 +1,7 @@
 use axum::{
     body::{to_bytes, Body},
     http::{HeaderMap, Request, StatusCode},
-    routing::{get, post},
+    routing::{get, head, post},
     Json, Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -103,12 +103,11 @@ async fn seed_request_log(db: &SqlitePool, seed: RequestLogSeed<'_>) {
     sqlx::query(
         "INSERT INTO identity_request_logs (\
             id, identity_id, created_at, protocol_in, protocol_upstream, provider_id, provider_name, \
-            model_requested, status, http_status, input_tokens, output_tokens, latency_ms\
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            model_requested, status, http_status, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, latency_ms\
+        ) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(seed.id)
     .bind(seed.identity_id)
-    .bind("2026-08-13T00:00:00Z")
     .bind("chat_completions")
     .bind("openai")
     .bind(seed.provider_id)
@@ -118,6 +117,8 @@ async fn seed_request_log(db: &SqlitePool, seed: RequestLogSeed<'_>) {
     .bind(200_i64)
     .bind(seed.input_tokens)
     .bind(seed.output_tokens)
+    .bind(1_i64)
+    .bind(2_i64)
     .bind(120_i64)
     .execute(db)
     .await
@@ -295,7 +296,7 @@ async fn management_provider_rejects_duplicate_model_names_without_creating_a_pr
 }
 
 #[tokio::test]
-async fn management_interface_rejects_duplicate_model_names_without_creating_an_interface() {
+async fn management_endpoint_rejects_duplicate_model_names_without_creating_an_interface() {
     let app = app::router(test_state().await).await.expect("build app");
     let identity = register(&app, "machine-a", "S-1-5-21-100").await;
     let credential = identity["credential"].as_str().expect("credential");
@@ -319,10 +320,10 @@ async fn management_interface_rejects_duplicate_model_names_without_creating_an_
     let (status, error): (StatusCode, serde_json::Value) = request_json(
         &app,
         "POST",
-        "/api/interfaces",
+        "/api/endpoints",
         Some(credential),
         Some(serde_json::json!({
-            "name": "Interface A",
+            "name": "Endpoint A",
             "models": [
                 {
                     "provider_id": provider_id,
@@ -341,10 +342,10 @@ async fn management_interface_rejects_duplicate_model_names_without_creating_an_
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(error["error"]["code"], "validation_failed");
 
-    let (status, interfaces): (StatusCode, Vec<serde_json::Value>) =
-        request_json(&app, "GET", "/api/interfaces", Some(credential), None).await;
+    let (status, endpoints): (StatusCode, Vec<serde_json::Value>) =
+        request_json(&app, "GET", "/api/endpoints", Some(credential), None).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(interfaces.is_empty());
+    assert!(endpoints.is_empty());
 }
 
 #[tokio::test]
@@ -352,16 +353,16 @@ async fn management_credential_cannot_read_mutate_or_delete_another_identity_int
     let app = app::router(test_state().await).await.expect("build app");
     let identity_a = register(&app, "machine-a", "S-1-5-21-100").await;
     let credential_a = identity_a["credential"].as_str().expect("credential A");
-    let (status, interface): (StatusCode, serde_json::Value) = request_json(
+    let (status, endpoint): (StatusCode, serde_json::Value) = request_json(
         &app,
         "POST",
-        "/api/interfaces",
+        "/api/endpoints",
         Some(credential_a),
-        Some(serde_json::json!({ "name": "Interface A", "models": [] })),
+        Some(serde_json::json!({ "name": "Endpoint A", "models": [] })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
-    let interface_id = interface["id"].as_str().expect("interface id");
+    let endpoint_id = endpoint["id"].as_str().expect("endpoint id");
 
     let identity_b = register(&app, "machine-b", "S-1-5-21-200").await;
     let credential_b = identity_b["credential"].as_str().expect("credential B");
@@ -369,7 +370,7 @@ async fn management_credential_cannot_read_mutate_or_delete_another_identity_int
     let (status, _): (StatusCode, serde_json::Value) = request_json(
         &app,
         "GET",
-        &format!("/api/interfaces/{interface_id}"),
+        &format!("/api/endpoints/{endpoint_id}"),
         Some(credential_b),
         None,
     )
@@ -379,9 +380,9 @@ async fn management_credential_cannot_read_mutate_or_delete_another_identity_int
     let (status, _): (StatusCode, serde_json::Value) = request_json(
         &app,
         "PATCH",
-        &format!("/api/interfaces/{interface_id}"),
+        &format!("/api/endpoints/{endpoint_id}"),
         Some(credential_b),
-        Some(serde_json::json!({ "name": "Interface B" })),
+        Some(serde_json::json!({ "name": "Endpoint B" })),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -390,7 +391,7 @@ async fn management_credential_cannot_read_mutate_or_delete_another_identity_int
         request_status(
             &app,
             "DELETE",
-            &format!("/api/interfaces/{interface_id}"),
+            &format!("/api/endpoints/{endpoint_id}"),
             Some(credential_b),
         )
         .await,
@@ -400,23 +401,23 @@ async fn management_credential_cannot_read_mutate_or_delete_another_identity_int
     let (status, _): (StatusCode, serde_json::Value) = request_json(
         &app,
         "POST",
-        &format!("/api/interfaces/{interface_id}/regenerate-token"),
+        &format!("/api/endpoints/{endpoint_id}/regenerate-token"),
         Some(credential_b),
         None,
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
-    let (status, interface): (StatusCode, serde_json::Value) = request_json(
+    let (status, endpoint): (StatusCode, serde_json::Value) = request_json(
         &app,
         "GET",
-        &format!("/api/interfaces/{interface_id}"),
+        &format!("/api/endpoints/{endpoint_id}"),
         Some(credential_a),
         None,
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(interface["name"], "Interface A");
+    assert_eq!(endpoint["name"], "Endpoint A");
 }
 
 #[tokio::test]
@@ -490,6 +491,27 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     seed_request_log(
         &db,
         RequestLogSeed {
+            id: "request-a-last-year",
+            identity_id: identity_a_id,
+            provider_id: provider_a_id,
+            provider_name: "Provider A",
+            model_requested: "model-a",
+            status: "success",
+            input_tokens: 4,
+            output_tokens: 5,
+        },
+    )
+    .await;
+    sqlx::query(
+        "UPDATE identity_request_logs SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 year') WHERE id = ?",
+    )
+    .bind("request-a-last-year")
+    .execute(&db)
+    .await
+    .expect("move historical request");
+    seed_request_log(
+        &db,
+        RequestLogSeed {
             id: "request-b",
             identity_id: identity_b_id,
             provider_id: provider_b_id,
@@ -502,24 +524,57 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     )
     .await;
 
-    let (status, overview_a): (StatusCode, StatsOverview) =
-        request_json(&app, "GET", "/api/stats/overview", Some(credential_a), None).await;
+    let (status, overview_a): (StatusCode, StatsOverview) = request_json(
+        &app,
+        "GET",
+        "/api/stats/overview?range=today",
+        Some(credential_a),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(overview_a.total_requests, 1);
     assert_eq!(overview_a.successful_requests, 1);
     assert_eq!(overview_a.failed_requests, 0);
     assert_eq!(overview_a.input_tokens, 3);
     assert_eq!(overview_a.output_tokens, 4);
+    assert_eq!(overview_a.cache_read_tokens, 1);
+    assert_eq!(overview_a.cache_write_tokens, 2);
+    assert_eq!(overview_a.average_latency_ms, Some(120));
+
+    let (status, timeline_a): (StatusCode, Vec<serde_json::Value>) = request_json(
+        &app,
+        "GET",
+        "/api/stats/timeline?range=today",
+        Some(credential_a),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(timeline_a.len(), 24);
+    assert_eq!(
+        timeline_a
+            .iter()
+            .map(|point| point["input_tokens"].as_i64().expect("input tokens"))
+            .sum::<i64>(),
+        3
+    );
 
     let (status, requests_a): (StatusCode, Vec<RequestLogSummary>) =
         request_json(&app, "GET", "/api/stats/requests", Some(credential_a), None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(requests_a.len(), 1);
+    assert_eq!(requests_a.len(), 2);
     assert_eq!(requests_a[0].id, "request-a");
     assert_eq!(requests_a[0].provider_name.as_deref(), Some("Provider A"));
 
-    let (status, models_a): (StatusCode, Vec<ModelStatsSummary>) =
-        request_json(&app, "GET", "/api/stats/models", Some(credential_a), None).await;
+    let (status, models_a): (StatusCode, Vec<ModelStatsSummary>) = request_json(
+        &app,
+        "GET",
+        "/api/stats/models?range=today",
+        Some(credential_a),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(models_a.len(), 1);
     assert_eq!(models_a[0].model_requested.as_deref(), Some("model-a"));
@@ -530,7 +585,7 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     let (status, providers_a): (StatusCode, Vec<ProviderStatsSummary>) = request_json(
         &app,
         "GET",
-        "/api/stats/providers",
+        "/api/stats/providers?range=today",
         Some(credential_a),
         None,
     )
@@ -541,6 +596,37 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     assert_eq!(providers_a[0].provider_name.as_deref(), Some("Provider A"));
     assert_eq!(providers_a[0].total_requests, 1);
 
+    let (status, overview_a_all): (StatusCode, StatsOverview) = request_json(
+        &app,
+        "GET",
+        "/api/stats/overview?range=all",
+        Some(credential_a),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(overview_a_all.total_requests, 2);
+    assert_eq!(overview_a_all.input_tokens, 7);
+    assert_eq!(overview_a_all.output_tokens, 9);
+
+    let (status, timeline_a_all): (StatusCode, Vec<serde_json::Value>) = request_json(
+        &app,
+        "GET",
+        "/api/stats/timeline?range=all",
+        Some(credential_a),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(timeline_a_all.len() >= 13);
+    assert_eq!(
+        timeline_a_all
+            .iter()
+            .map(|point| point["input_tokens"].as_i64().expect("input tokens"))
+            .sum::<i64>(),
+        7
+    );
+
     let (status, overview_b): (StatusCode, StatsOverview) =
         request_json(&app, "GET", "/api/stats/overview", Some(credential_b), None).await;
     assert_eq!(status, StatusCode::OK);
@@ -549,6 +635,9 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     assert_eq!(overview_b.failed_requests, 1);
     assert_eq!(overview_b.input_tokens, 5);
     assert_eq!(overview_b.output_tokens, 6);
+    assert_eq!(overview_b.cache_read_tokens, 1);
+    assert_eq!(overview_b.cache_write_tokens, 2);
+    assert_eq!(overview_b.average_latency_ms, Some(120));
 
     let (status, requests_b): (StatusCode, Vec<RequestLogSummary>) =
         request_json(&app, "GET", "/api/stats/requests", Some(credential_b), None).await;
@@ -582,7 +671,7 @@ async fn management_stats_only_return_the_current_identity_request_data() {
 }
 
 #[tokio::test]
-async fn management_credential_deletes_own_interface_with_model_mapping() {
+async fn management_credential_deletes_own_endpoint_with_model_mapping() {
     let app = app::router(test_state().await).await.expect("build app");
     let identity_a = register(&app, "machine-a", "S-1-5-21-100").await;
     let credential_a = identity_a["credential"].as_str().expect("credential A");
@@ -605,13 +694,13 @@ async fn management_credential_deletes_own_interface_with_model_mapping() {
     assert_eq!(status, StatusCode::CREATED);
     let provider_id = provider["id"].as_str().expect("provider id");
 
-    let (status, interface): (StatusCode, serde_json::Value) = request_json(
+    let (status, endpoint): (StatusCode, serde_json::Value) = request_json(
         &app,
         "POST",
-        "/api/interfaces",
+        "/api/endpoints",
         Some(credential_a),
         Some(serde_json::json!({
-            "name": "Interface A",
+            "name": "Endpoint A",
             "models": [{
                 "model_name": "public-model",
                 "provider_id": provider_id,
@@ -622,13 +711,13 @@ async fn management_credential_deletes_own_interface_with_model_mapping() {
     .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(
-        interface["models"]
+        endpoint["models"]
             .as_array()
-            .expect("interface models")
+            .expect("endpoint models")
             .len(),
         1
     );
-    let interface_id = interface["id"].as_str().expect("interface id");
+    let endpoint_id = endpoint["id"].as_str().expect("endpoint id");
 
     let identity_b = register(&app, "machine-b", "S-1-5-21-200").await;
     let credential_b = identity_b["credential"].as_str().expect("credential B");
@@ -636,7 +725,7 @@ async fn management_credential_deletes_own_interface_with_model_mapping() {
         request_status(
             &app,
             "DELETE",
-            &format!("/api/interfaces/{interface_id}"),
+            &format!("/api/endpoints/{endpoint_id}"),
             Some(credential_b),
         )
         .await,
@@ -647,7 +736,7 @@ async fn management_credential_deletes_own_interface_with_model_mapping() {
         request_status(
             &app,
             "DELETE",
-            &format!("/api/interfaces/{interface_id}"),
+            &format!("/api/endpoints/{endpoint_id}"),
             Some(credential_a),
         )
         .await,
@@ -657,16 +746,16 @@ async fn management_credential_deletes_own_interface_with_model_mapping() {
     let (status, _): (StatusCode, serde_json::Value) = request_json(
         &app,
         "GET",
-        &format!("/api/interfaces/{interface_id}"),
+        &format!("/api/endpoints/{endpoint_id}"),
         Some(credential_a),
         None,
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, interfaces): (StatusCode, Vec<serde_json::Value>) =
-        request_json(&app, "GET", "/api/interfaces", Some(credential_a), None).await;
+    let (status, endpoints): (StatusCode, Vec<serde_json::Value>) =
+        request_json(&app, "GET", "/api/endpoints", Some(credential_a), None).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(interfaces.is_empty());
+    assert!(endpoints.is_empty());
 }
 
 async fn spawn_provider_actions_upstream(expected_api_key: &'static str) -> String {
@@ -709,121 +798,107 @@ async fn spawn_provider_actions_upstream(expected_api_key: &'static str) -> Stri
 }
 
 #[tokio::test]
-async fn management_provider_actions_use_only_the_current_identity_and_keep_key_private() {
+async fn management_provider_actions_do_not_persist_the_supplied_key() {
     let app = app::router(test_state().await).await.expect("build app");
-    let credential_a = register(&app, "machine-actions-a", "S-1-5-21-610").await["credential"]
+    let credential = register(&app, "machine-transient", "S-1-5-21-615").await["credential"]
         .as_str()
-        .expect("credential A")
+        .expect("credential")
         .to_string();
     let base_url = spawn_provider_actions_upstream("sk-provider-action-secret").await;
-    let (status, provider): (StatusCode, serde_json::Value) = request_json(
-        &app,
-        "POST",
-        "/api/providers",
-        Some(&credential_a),
-        Some(serde_json::json!({
-            "name": "Action Provider",
-            "provider_type": "openai_compatible",
-            "base_url": base_url,
-            "api_key": "sk-provider-action-secret",
-            "models": ["saved-model"]
-        })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED);
-    let provider_id = provider["id"].as_str().expect("provider id");
-    assert!(!provider.to_string().contains("sk-provider-action-secret"));
-
-    assert_eq!(
-        request_status(
-            &app,
-            "POST",
-            &format!("/api/providers/{provider_id}/ping"),
-            Some(&credential_a),
-        )
-        .await,
-        StatusCode::OK
-    );
-
-    let (status, ping): (StatusCode, serde_json::Value) = request_json(
-        &app,
-        "POST",
-        &format!("/api/providers/{provider_id}/ping"),
-        Some(&credential_a),
-        Some(serde_json::json!({})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(ping["ok"], true);
-    assert!(!ping.to_string().contains("sk-provider-action-secret"));
+    let input = serde_json::json!({
+        "provider_type": "openai_compatible",
+        "base_url": base_url,
+        "api_key": "sk-provider-action-secret",
+        "protocol": "openai",
+        "model": "discovered-model"
+    });
 
     let (status, discovered): (StatusCode, serde_json::Value) = request_json(
         &app,
         "POST",
-        &format!("/api/providers/{provider_id}/discover-models"),
-        Some(&credential_a),
-        Some(serde_json::json!({})),
+        "/api/providers/discover-models",
+        Some(&credential),
+        Some(input.clone()),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(discovered["ok"], true);
     assert_eq!(
         discovered["models"],
         serde_json::json!(["discovered-model"])
     );
     assert!(!discovered.to_string().contains("sk-provider-action-secret"));
 
-    let (status, protocol): (StatusCode, serde_json::Value) = request_json(
+    let (status, tested): (StatusCode, serde_json::Value) = request_json(
         &app,
         "POST",
-        &format!("/api/providers/{provider_id}/test-protocol"),
-        Some(&credential_a),
-        Some(serde_json::json!({ "protocol": "openai", "model": "discovered-model" })),
+        "/api/providers/test-protocol",
+        Some(&credential),
+        Some(input),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(protocol["ok"], true);
-    assert_eq!(protocol["protocol"], "openai");
-    assert!(!protocol.to_string().contains("sk-provider-action-secret"));
+    assert_eq!(tested["ok"], true);
+    assert!(!tested.to_string().contains("sk-provider-action-secret"));
 
-    let credential_b = register(&app, "machine-actions-b", "S-1-5-21-620").await["credential"]
-        .as_str()
-        .expect("credential B")
-        .to_string();
-    for action in ["ping", "discover-models", "test-protocol"] {
-        let (status, response): (StatusCode, serde_json::Value) = request_json(
-            &app,
-            "POST",
-            &format!("/api/providers/{provider_id}/{action}"),
-            Some(&credential_b),
-            Some(serde_json::json!({ "protocol": "openai", "model": "discovered-model" })),
-        )
-        .await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "{action}");
-        assert!(!response.to_string().contains("sk-provider-action-secret"));
-    }
+    let (status, providers): (StatusCode, Vec<serde_json::Value>) =
+        request_json(&app, "GET", "/api/providers", Some(&credential), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(providers.is_empty());
 }
 
 #[tokio::test]
-async fn management_provider_protocol_test_uses_protocol_specific_upstream_base_url() {
-    async fn custom_openai_endpoint(headers: HeaderMap) -> (StatusCode, &'static str) {
-        assert_eq!(
-            headers
-                .get("authorization")
-                .and_then(|value| value.to_str().ok()),
-            Some("Bearer sk-protocol-override-secret")
-        );
-        (StatusCode::OK, "data: {\"choices\":[]}\n\n")
+async fn management_provider_response_exposes_the_key_only_to_its_current_identity() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let credential_a = register(&app, "machine-key-a", "S-1-5-21-617").await["credential"]
+        .as_str()
+        .expect("credential A")
+        .to_string();
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(&credential_a),
+        Some(serde_json::json!({
+            "name": "Provider With Visible Key",
+            "provider_type": "openai_compatible",
+            "base_url": "https://provider.example",
+            "api_key": "sk-visible-to-owner-only",
+            "models": ["model-a"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(provider["api_key"], "sk-visible-to-owner-only");
+
+    let credential_b = register(&app, "machine-key-b", "S-1-5-21-618").await["credential"]
+        .as_str()
+        .expect("credential B")
+        .to_string();
+    let provider_id = provider["id"].as_str().expect("provider id");
+    assert_eq!(
+        request_status(
+            &app,
+            "GET",
+            &format!("/api/providers/{provider_id}"),
+            Some(&credential_b),
+        )
+        .await,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn management_saved_provider_ping_checks_reachability_without_a_provider_key() {
+    async fn ping(headers: HeaderMap) -> StatusCode {
+        assert!(headers.get("authorization").is_none());
+        StatusCode::NO_CONTENT
     }
 
+    let upstream = Router::new().route("/", head(ping));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind upstream");
     let address = listener.local_addr().expect("read upstream address");
-    let upstream = Router::new().route(
-        "/custom/openai/chat/completions",
-        post(custom_openai_endpoint),
-    );
     tokio::spawn(async move {
         axum::serve(listener, upstream)
             .await
@@ -831,8 +906,7 @@ async fn management_provider_protocol_test_uses_protocol_specific_upstream_base_
     });
 
     let app = app::router(test_state().await).await.expect("build app");
-    let credential = register(&app, "machine-protocol-override", "S-1-5-21-630").await
-        ["credential"]
+    let credential = register(&app, "machine-saved-actions", "S-1-5-21-616").await["credential"]
         .as_str()
         .expect("credential")
         .to_string();
@@ -842,73 +916,28 @@ async fn management_provider_protocol_test_uses_protocol_specific_upstream_base_
         "/api/providers",
         Some(&credential),
         Some(serde_json::json!({
-            "name": "Protocol Override Provider",
+            "name": "Saved Provider",
             "provider_type": "openai_compatible",
-            "base_url": format!("http://{address}/default"),
-            "api_key": "sk-protocol-override-secret",
-            "capabilities": {
-                "upstream_protocols": ["openai"],
-                "protocol_base_urls": {
-                    "openai": format!("http://{address}/custom/openai")
-                }
-            },
-            "models": ["override-model"]
+            "base_url": format!("http://{address}"),
+            "api_key": "sk-provider-action-secret",
+            "models": ["saved-model"]
         })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
     let provider_id = provider["id"].as_str().expect("provider id");
 
-    let (status, response): (StatusCode, serde_json::Value) = request_json(
+    let (status, ping): (StatusCode, serde_json::Value) = request_json(
         &app,
         "POST",
-        &format!("/api/providers/{provider_id}/test-protocol"),
+        &format!("/api/providers/{provider_id}/ping"),
         Some(&credential),
-        Some(serde_json::json!({ "protocol": "openai", "model": "override-model" })),
+        Some(serde_json::json!({})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(response["ok"], true);
-    assert_eq!(response["protocol"], "openai");
-    assert!(!response.to_string().contains("sk-protocol-override-secret"));
-}
-
-#[tokio::test]
-async fn management_provider_protocol_test_rejects_a_protocol_not_configured_for_provider() {
-    let app = app::router(test_state().await).await.expect("build app");
-    let credential = register(&app, "machine-protocol-capability", "S-1-5-21-640").await
-        ["credential"]
-        .as_str()
-        .expect("credential")
-        .to_string();
-    let (status, provider): (StatusCode, serde_json::Value) = request_json(
-        &app,
-        "POST",
-        "/api/providers",
-        Some(&credential),
-        Some(serde_json::json!({
-            "name": "Anthropic Only Provider",
-            "provider_type": "openai_compatible",
-            "base_url": "http://127.0.0.1:0",
-            "api_key": "sk-protocol-capability-secret",
-            "capabilities": { "upstream_protocols": ["anthropic"] },
-            "models": ["capability-model"]
-        })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED);
-    let provider_id = provider["id"].as_str().expect("provider id");
-
-    let (status, response): (StatusCode, serde_json::Value) = request_json(
-        &app,
-        "POST",
-        &format!("/api/providers/{provider_id}/test-protocol"),
-        Some(&credential),
-        Some(serde_json::json!({ "protocol": "openai", "model": "capability-model" })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(response["error"], "协议未配置");
+    assert_eq!(ping["ok"], true);
+    assert!(!ping.to_string().contains("sk-provider-action-secret"));
 }
 
 #[tokio::test]
@@ -918,53 +947,38 @@ async fn management_provider_operations_return_success_envelopes_for_upstream_ne
         .as_str()
         .expect("credential")
         .to_string();
-    let (status, provider): (StatusCode, serde_json::Value) = request_json(
-        &app,
-        "POST",
-        "/api/providers",
-        Some(&credential),
-        Some(serde_json::json!({
-            "name": "Unavailable Provider",
-            "provider_type": "openai_compatible",
-            "base_url": "http://127.0.0.1:0",
-            "api_key": "sk-upstream-failure-secret",
-            "capabilities": { "upstream_protocols": ["openai"] },
-            "models": ["unavailable-model"]
-        })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED);
-    let provider_id = provider["id"].as_str().expect("provider id");
-
-    for (action, body, expected_error_prefixes) in [
-        ("ping", serde_json::json!({}), &["模型获取失败，上游"][..]),
+    for (path, body, expected_error_prefixes) in [
         (
-            "discover-models",
-            serde_json::json!({}),
+            "/api/providers/discover-models",
+            serde_json::json!({
+                "provider_type": "openai_compatible",
+                "base_url": "http://127.0.0.1:0",
+                "api_key": "sk-upstream-failure-secret"
+            }),
             &["模型获取失败，上游"][..],
         ),
         (
-            "test-protocol",
-            serde_json::json!({ "protocol": "openai", "model": "unavailable-model" }),
+            "/api/providers/test-protocol",
+            serde_json::json!({
+                "provider_type": "openai_compatible",
+                "base_url": "http://127.0.0.1:0",
+                "api_key": "sk-upstream-failure-secret",
+                "protocol": "openai",
+                "model": "unavailable-model"
+            }),
             &["上游测试超时", "上游连接失败", "上游测试失败"][..],
         ),
     ] {
-        let (status, response): (StatusCode, serde_json::Value) = request_json(
-            &app,
-            "POST",
-            &format!("/api/providers/{provider_id}/{action}"),
-            Some(&credential),
-            Some(body),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{action}");
-        assert_eq!(response["ok"], false, "{action}");
+        let (status, response): (StatusCode, serde_json::Value) =
+            request_json(&app, "POST", path, Some(&credential), Some(body)).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert_eq!(response["ok"], false, "{path}");
         let error = response["error"].as_str().expect("operation error");
         assert!(
             expected_error_prefixes
                 .iter()
                 .any(|prefix| error.starts_with(prefix)),
-            "{action}: {response}"
+            "{path}: {response}"
         );
     }
 }
