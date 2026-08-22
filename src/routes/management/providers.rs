@@ -5,15 +5,15 @@ use axum::{
     Json, Router,
 };
 use prelay_protocol::{
-    CreateProviderRequest, ProviderOperationResponse, ProviderResponse,
-    TestProviderProtocolRequest, UpdateProviderRequest,
+    CreateProviderRequest, ProviderOperationRequest, ProviderOperationResponse, ProviderResponse,
+    UpdateProviderRequest,
 };
 
 use crate::{
     error::AppError,
     providers::{
         model_discovery,
-        spec::{provider_response_upstream_base_url, UpstreamProtocol},
+        spec::{normalize_upstream_base_url, UpstreamProtocol},
     },
     AppState,
 };
@@ -23,16 +23,13 @@ use super::auth::CurrentIdentity;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/providers", get(list).post(create))
+        .route("/providers/discover-models", post(discover_models))
+        .route("/providers/test-protocol", post(test_protocol))
+        .route("/providers/:provider_id/ping", post(ping))
         .route(
             "/providers/:provider_id",
             get(get_one).patch(update).delete(delete_one),
         )
-        .route("/providers/:provider_id/ping", post(ping))
-        .route(
-            "/providers/:provider_id/discover-models",
-            post(discover_models),
-        )
-        .route("/providers/:provider_id/test-protocol", post(test_protocol))
 }
 
 async fn list(
@@ -107,23 +104,15 @@ async fn ping(
         .storage
         .get_provider(&identity.id, &provider_id)
         .await?;
-    let api_key = state
-        .storage
-        .decrypt_provider_key(&identity.id, &provider_id)
-        .await?;
     let started_at = std::time::Instant::now();
-    let response = match model_discovery::discover_models(
-        &state.client,
-        &provider.provider_type,
-        &provider.base_url,
-        &api_key,
-    )
-    .await
-    {
+    let response = state.client.head(&provider.base_url).send().await;
+    let latency_ms = Some(started_at.elapsed().as_millis() as i64);
+
+    Ok(Json(match response {
         Ok(_) => ProviderOperationResponse {
             ok: true,
             protocol: None,
-            latency_ms: Some(started_at.elapsed().as_millis() as i64),
+            latency_ms,
             first_token_ms: None,
             error: None,
             models: None,
@@ -131,33 +120,27 @@ async fn ping(
         Err(error) => ProviderOperationResponse {
             ok: false,
             protocol: None,
-            latency_ms: Some(started_at.elapsed().as_millis() as i64),
+            latency_ms,
             first_token_ms: None,
-            error: Some(error.public_message()),
+            error: Some(if error.is_timeout() {
+                "上游连接超时".to_string()
+            } else {
+                "上游连接失败".to_string()
+            }),
             models: None,
         },
-    };
-    Ok(Json(response))
+    }))
 }
 
 async fn discover_models(
     State(state): State<AppState>,
-    Extension(identity): Extension<CurrentIdentity>,
-    Path(provider_id): Path<String>,
+    Json(input): Json<ProviderOperationRequest>,
 ) -> Result<Json<ProviderOperationResponse>, AppError> {
-    let provider = state
-        .storage
-        .get_provider(&identity.id, &provider_id)
-        .await?;
-    let api_key = state
-        .storage
-        .decrypt_provider_key(&identity.id, &provider_id)
-        .await?;
     let models = match model_discovery::discover_models(
         &state.client,
-        &provider.provider_type,
-        &provider.base_url,
-        &api_key,
+        &input.provider_type,
+        &input.base_url,
+        &input.api_key,
     )
     .await
     {
@@ -173,10 +156,6 @@ async fn discover_models(
             }));
         }
     };
-    state
-        .storage
-        .add_provider_models(&identity.id, &provider_id, &models)
-        .await?;
     Ok(Json(ProviderOperationResponse {
         ok: true,
         protocol: None,
@@ -189,96 +168,91 @@ async fn discover_models(
 
 async fn test_protocol(
     State(state): State<AppState>,
-    Extension(identity): Extension<CurrentIdentity>,
-    Path(provider_id): Path<String>,
-    Json(input): Json<TestProviderProtocolRequest>,
+    Json(input): Json<ProviderOperationRequest>,
 ) -> Result<Json<ProviderOperationResponse>, AppError> {
-    let provider = state
-        .storage
-        .get_provider(&identity.id, &provider_id)
-        .await?;
-    let model = input
-        .model
-        .as_deref()
-        .map(str::trim)
-        .filter(|model| !model.is_empty())
-        .map(str::to_owned)
-        .or_else(|| {
-            provider
-                .models
-                .first()
-                .map(|model| model.model_name.clone())
-        })
-        .ok_or_else(|| AppError::BadRequest("测试模型不能为空".to_string()))?;
-    let api_key = state
-        .storage
-        .decrypt_provider_key(&identity.id, &provider_id)
-        .await?;
-    let protocol = input.protocol.trim();
+    Ok(Json(
+        run_protocol_test(
+            &state.client,
+            &input.provider_type,
+            input.protocol.as_deref(),
+            &input.base_url,
+            &input.api_key,
+            input.model.as_deref(),
+        )
+        .await?,
+    ))
+}
+
+async fn run_protocol_test(
+    client: &reqwest::Client,
+    provider_type: &str,
+    protocol_value: Option<&str>,
+    base_url: &str,
+    api_key: &str,
+    model_value: Option<&str>,
+) -> Result<ProviderOperationResponse, AppError> {
+    let protocol = protocol_value.unwrap_or_default().trim();
     let upstream_protocol = UpstreamProtocol::from_capability_value(protocol)
         .ok_or_else(|| AppError::BadRequest("协议不支持".to_string()))?;
-    if !provider
-        .upstream_protocols
-        .iter()
-        .any(|configured_protocol| configured_protocol == protocol)
-    {
-        return Err(AppError::BadRequest("协议未配置".to_string()));
-    }
-    let base_url = provider_response_upstream_base_url(&provider, upstream_protocol);
+    let model = model_value
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .ok_or_else(|| AppError::BadRequest("测试模型不能为空".to_string()))?;
+    let base_url = normalize_upstream_base_url(provider_type, upstream_protocol, base_url);
     let started_at = std::time::Instant::now();
     let response = match send_protocol_test_request(
-        &state.client,
+        client,
         upstream_protocol,
         &base_url,
-        &api_key,
-        &model,
+        api_key,
+        model,
     )
     .await
     {
         Ok(response) => response,
         Err(error) => {
-            return Ok(Json(ProviderOperationResponse {
+            return Ok(ProviderOperationResponse {
                 ok: false,
                 protocol: Some(protocol.to_string()),
                 latency_ms: Some(started_at.elapsed().as_millis() as i64),
                 first_token_ms: None,
                 error: Some(sanitize_protocol_test_error(error)),
                 models: None,
-            }));
+            });
         }
     };
     let latency_ms = Some(started_at.elapsed().as_millis() as i64);
     if !response.status().is_success() {
-        return Ok(Json(ProviderOperationResponse {
+        return Ok(ProviderOperationResponse {
             ok: false,
             protocol: Some(protocol.to_string()),
             latency_ms,
             first_token_ms: None,
             error: Some(format!("上游测试失败: {}", response.status().as_u16())),
             models: None,
-        }));
+        });
     }
     let first_token_ms = match first_response_byte_ms(response, started_at).await {
         Ok(first_token_ms) => first_token_ms,
         Err(error) => {
-            return Ok(Json(ProviderOperationResponse {
+            return Ok(ProviderOperationResponse {
                 ok: false,
                 protocol: Some(protocol.to_string()),
                 latency_ms: Some(started_at.elapsed().as_millis() as i64),
                 first_token_ms: None,
                 error: Some(sanitize_protocol_test_error(error)),
                 models: None,
-            }));
+            });
         }
     };
-    Ok(Json(ProviderOperationResponse {
+    Ok(ProviderOperationResponse {
         ok: true,
         protocol: Some(protocol.to_string()),
         latency_ms: Some(started_at.elapsed().as_millis() as i64),
         first_token_ms,
         error: None,
         models: None,
-    }))
+    })
 }
 
 async fn send_protocol_test_request(
