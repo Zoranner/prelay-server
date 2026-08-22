@@ -1,0 +1,29 @@
+meta {
+  name: 新增接口
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{relay_url}}/api/endpoints
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: <device-credential>
+}
+
+body:json {
+  {
+    "name": "示例接口",
+    "protocol": "chat_completions",
+    "models": [
+      {
+        "provider_id": "<provider-id>",
+        "upstream_model": "example-model",
+        "model_name": "example-model"
+      }
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+meta {
+  name: 删除接口
+  type: http
+  seq: 17
+}
+
+delete {
+  url: {{relay_url}}/api/endpoints/:endpoint_id
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: <device-credential>
+}
+
+params:path {
+  endpoint_id: <endpoint-id>
+}

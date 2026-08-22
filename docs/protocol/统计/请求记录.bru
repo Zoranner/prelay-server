@@ -1,0 +1,19 @@
+meta {
+  name: 获取请求记录
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{relay_url}}/api/stats/requests
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: <device-credential>
+}
+
+params:query {
+  limit: 100
+}

@@ -1,0 +1,19 @@
+meta {
+  name: 测试供应商连通性
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{relay_url}}/api/providers/:provider_id/ping
+  body: none
+  auth: bearer
+}
+
+params:path {
+  provider_id: <provider-id>
+}
+
+auth:bearer {
+  token: <device-credential>
+}

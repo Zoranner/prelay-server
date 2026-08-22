@@ -1,0 +1,28 @@
+meta {
+  name: 更新供应商
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{relay_url}}/api/providers/:provider_id
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: <device-credential>
+}
+
+params:path {
+  provider_id: <provider-id>
+}
+
+body:json {
+  {
+    "name": "更新后的供应商名称",
+    "models": [
+      "example-model"
+    ]
+  }
+}

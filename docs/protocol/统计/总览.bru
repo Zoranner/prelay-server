@@ -1,0 +1,15 @@
+meta {
+  name: 获取统计总览
+  type: http
+  seq: 19
+}
+
+get {
+  url: {{relay_url}}/api/stats/overview?range=today
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: <device-credential>
+}

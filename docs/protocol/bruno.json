@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "Prelay 服务端接口",
+  "type": "collection",
+  "ignore": [
+    ".git",
+    "node_modules"
+  ]
+}

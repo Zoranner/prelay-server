@@ -1,0 +1,21 @@
+meta {
+  name: 轮换身份凭据
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{relay_url}}/api/identity/credential/rotate
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: <device-credential>
+}
+
+body:json {
+  {
+    "new_credential": "<new-device-credential>"
+  }
+}

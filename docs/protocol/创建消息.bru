@@ -1,0 +1,33 @@
+meta {
+  name: 创建消息
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{relay_url}}/v1/messages
+  body: json
+  auth: bearer
+}
+
+headers {
+  Anthropic-Version: 2023-06-01
+}
+
+auth:bearer {
+  token: <endpoint-token>
+}
+
+body:json {
+  {
+    "model": "<endpoint-model-name>",
+    "max_tokens": 256,
+    "messages": [
+      {
+        "role": "user",
+        "content": "请用一句话回复。"
+      }
+    ],
+    "stream": false
+  }
+}
