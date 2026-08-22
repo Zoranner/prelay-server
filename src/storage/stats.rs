@@ -31,11 +31,11 @@ async fn insert_with_id_and_prices(
     let cost = estimate_cost(&log, prices);
     sqlx::query(
         "INSERT INTO identity_request_logs (id, identity_id, created_at, protocol_in, protocol_out, \
-         protocol_upstream, provider_id, provider_name, model_requested, model_upstream, status, \
+         protocol_upstream, endpoint_name, provider_id, provider_name, model_requested, model_upstream, status, \
          http_status, error_code, error_message, is_streaming, input_tokens, output_tokens, \
-         reasoning_tokens, estimated_cost, currency, latency_ms, upstream_latency_ms, first_token_ms, \
+         reasoning_tokens, cache_read_tokens, cache_write_tokens, estimated_cost, currency, latency_ms, upstream_latency_ms, first_token_ms, \
          tool_call_count, upstream_request_id, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
-         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(id)
     .bind(identity_id)
@@ -43,6 +43,7 @@ async fn insert_with_id_and_prices(
     .bind(log.protocol_in)
     .bind(log.protocol_out)
     .bind(log.protocol_upstream)
+    .bind(log.endpoint_name)
     .bind(log.provider_id)
     .bind(log.provider_name)
     .bind(log.model_requested)
@@ -55,6 +56,8 @@ async fn insert_with_id_and_prices(
     .bind(log.input_tokens)
     .bind(log.output_tokens)
     .bind(log.reasoning_tokens)
+    .bind(log.cache_read_tokens)
+    .bind(log.cache_write_tokens)
     .bind(cost.as_ref().map(|cost| cost.estimated_cost))
     .bind(cost.as_ref().map(|cost| cost.currency.as_str()))
     .bind(log.latency_ms)
@@ -88,7 +91,7 @@ async fn update_stream_with_prices(
     let cost = estimate_cost_for_existing_log(pool, identity_id, id, &update, prices).await?;
     sqlx::query(
         "UPDATE identity_request_logs SET status = ?, http_status = ?, error_code = ?, \
-         error_message = ?, input_tokens = ?, output_tokens = ?, reasoning_tokens = ?, \
+         error_message = ?, input_tokens = ?, output_tokens = ?, reasoning_tokens = ?, cache_read_tokens = ?, cache_write_tokens = ?, \
          estimated_cost = ?, currency = ?, latency_ms = ?, tool_call_count = ?, \
          upstream_request_id = COALESCE(?, upstream_request_id), \
          metadata_json = ? WHERE id = ? AND identity_id = ?",
@@ -100,6 +103,8 @@ async fn update_stream_with_prices(
     .bind(update.input_tokens)
     .bind(update.output_tokens)
     .bind(update.reasoning_tokens)
+    .bind(update.cache_read_tokens)
+    .bind(update.cache_write_tokens)
     .bind(cost.as_ref().map(|cost| cost.estimated_cost))
     .bind(cost.as_ref().map(|cost| cost.currency.as_str()))
     .bind(update.latency_ms)
@@ -145,6 +150,7 @@ async fn estimate_cost_for_existing_log(
         protocol_in: String::new(),
         protocol_out: String::new(),
         protocol_upstream: String::new(),
+        endpoint_name: String::new(),
         provider_id: String::new(),
         provider_name: context.provider_name,
         model_requested: context.model_requested,
@@ -157,6 +163,8 @@ async fn estimate_cost_for_existing_log(
         input_tokens: update.input_tokens,
         output_tokens: update.output_tokens,
         reasoning_tokens: update.reasoning_tokens,
+        cache_read_tokens: update.cache_read_tokens,
+        cache_write_tokens: update.cache_write_tokens,
         latency_ms: update.latency_ms,
         upstream_latency_ms: None,
         first_token_ms: None,
@@ -257,6 +265,7 @@ mod tests {
             protocol_in: "responses".to_string(),
             protocol_out: "responses".to_string(),
             protocol_upstream: "chat_completions".to_string(),
+            endpoint_name: String::new(),
             provider_id: "provider-1".to_string(),
             provider_name: "Provider One".to_string(),
             model_requested: "model-1".to_string(),
@@ -269,6 +278,8 @@ mod tests {
             input_tokens,
             output_tokens,
             reasoning_tokens: None,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
             latency_ms: 10,
             upstream_latency_ms: None,
             first_token_ms: None,

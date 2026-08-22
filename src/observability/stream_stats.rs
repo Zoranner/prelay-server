@@ -87,6 +87,7 @@ where
         upstream_request_id,
         inserted: false,
         failed: false,
+        usage_recorded: false,
     };
 
     futures::stream::unfold(state, |mut state| async move {
@@ -99,6 +100,9 @@ where
             state.insert_first_chunk_log(&item).await;
         } else if let Err(error) = &item {
             state.record_stream_error(error.to_string()).await;
+        }
+        if state.inserted && !state.failed {
+            state.record_final_usage().await;
         }
 
         Some((item, state))
@@ -117,6 +121,7 @@ struct StreamRecordState {
     upstream_request_id: Option<String>,
     inserted: bool,
     failed: bool,
+    usage_recorded: bool,
 }
 
 impl StreamRecordState {
@@ -188,10 +193,44 @@ impl StreamRecordState {
             input_tokens: snapshot.input_tokens,
             output_tokens: snapshot.output_tokens,
             reasoning_tokens: None,
+            cache_read_tokens: snapshot.cache_read_tokens,
+            cache_write_tokens: snapshot.cache_write_tokens,
             latency_ms,
             tool_call_count: Some(snapshot.tool_call_count),
             upstream_request_id: self.upstream_request_id.clone(),
             metadata_json,
+        };
+        update_stream_log(&self.db, &self.identity_id, &self.log_id, update).await;
+    }
+
+    async fn record_final_usage(&mut self) {
+        let snapshot = self.stats_snapshot();
+        if self.usage_recorded || !snapshot.final_usage_seen {
+            return;
+        }
+
+        self.usage_recorded = true;
+        let update = StreamRequestLogUpdate {
+            status: "success".to_string(),
+            http_status: 200,
+            error_code: None,
+            error_message: None,
+            input_tokens: snapshot.input_tokens,
+            output_tokens: snapshot.output_tokens,
+            reasoning_tokens: None,
+            cache_read_tokens: snapshot.cache_read_tokens,
+            cache_write_tokens: snapshot.cache_write_tokens,
+            latency_ms: self.started_at.elapsed().as_millis() as i64,
+            tool_call_count: Some(snapshot.tool_call_count),
+            upstream_request_id: self.upstream_request_id.clone(),
+            metadata_json: self.metadata(StreamMetadataUpdate {
+                empty: Some(false),
+                completed: Some(snapshot.completed),
+                final_usage_seen: Some(true),
+                stream_error: None,
+                upstream_request_id: self.upstream_request_id.clone(),
+                upstream_error_body_excerpt: None,
+            }),
         };
         update_stream_log(&self.db, &self.identity_id, &self.log_id, update).await;
     }
@@ -242,6 +281,8 @@ impl StreamRecordState {
             input_tokens: snapshot.input_tokens,
             output_tokens: snapshot.output_tokens,
             reasoning_tokens: None,
+            cache_read_tokens: snapshot.cache_read_tokens,
+            cache_write_tokens: snapshot.cache_write_tokens,
             latency_ms,
             tool_call_count: Some(snapshot.tool_call_count),
             upstream_request_id: self.upstream_request_id.clone(),
@@ -302,7 +343,7 @@ mod tests {
     };
 
     use bytes::Bytes;
-    use futures::{stream, TryStreamExt};
+    use futures::{stream, StreamExt, TryStreamExt};
     use sqlx::sqlite::SqlitePoolOptions;
     use tracing::{
         field::{Field, Visit},
@@ -359,6 +400,8 @@ mod tests {
             input_tokens: Some(11),
             output_tokens: Some(7),
             total_tokens: Some(18),
+            cache_read_tokens: Some(3),
+            cache_write_tokens: Some(2),
             tool_call_count: 2,
             completed: true,
             final_usage_seen: true,
@@ -377,21 +420,77 @@ mod tests {
         .await
         .expect("collect stream");
 
-        let row: (i64, Option<i64>, Option<i64>, Option<i64>, Option<String>) = sqlx::query_as(
-            "SELECT COUNT(*), input_tokens, output_tokens, tool_call_count, metadata_json FROM identity_request_logs",
+        #[derive(sqlx::FromRow)]
+        struct StreamLogRow {
+            count: i64,
+            input_tokens: Option<i64>,
+            output_tokens: Option<i64>,
+            cache_read_tokens: Option<i64>,
+            cache_write_tokens: Option<i64>,
+            tool_call_count: Option<i64>,
+            metadata_json: Option<String>,
+        }
+
+        let row: StreamLogRow = sqlx::query_as(
+            "SELECT COUNT(*) AS count, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, tool_call_count, metadata_json FROM identity_request_logs",
         )
         .fetch_one(&db)
         .await
         .expect("load stream log");
         let metadata: serde_json::Value =
-            serde_json::from_str(row.4.as_deref().expect("metadata")).expect("parse metadata");
+            serde_json::from_str(row.metadata_json.as_deref().expect("metadata"))
+                .expect("parse metadata");
 
-        assert_eq!(row.0, 1);
-        assert_eq!(row.1, Some(11));
-        assert_eq!(row.2, Some(7));
-        assert_eq!(row.3, Some(2));
+        assert_eq!(row.count, 1);
+        assert_eq!(row.input_tokens, Some(11));
+        assert_eq!(row.output_tokens, Some(7));
+        assert_eq!(row.cache_read_tokens, Some(3));
+        assert_eq!(row.cache_write_tokens, Some(2));
+        assert_eq!(row.tool_call_count, Some(2));
         assert_eq!(metadata["stream"]["completed"], true);
         assert_eq!(metadata["stream"]["final_usage_seen"], true);
+    }
+
+    #[tokio::test]
+    async fn record_stream_persists_final_usage_before_eof() {
+        let (db, identity_id) = test_db().await;
+        let stats = Arc::new(Mutex::new(StreamStatsSnapshot {
+            input_tokens: Some(11),
+            output_tokens: Some(7),
+            total_tokens: Some(18),
+            cache_read_tokens: Some(3),
+            cache_write_tokens: Some(2),
+            tool_call_count: 0,
+            completed: true,
+            final_usage_seen: true,
+        }));
+        let stream = stream::iter([Ok::<_, std::io::Error>(Bytes::from_static(b"hello"))])
+            .chain(stream::pending());
+        let mut output = Box::pin(record_stream(
+            db.clone(),
+            identity_id,
+            stream,
+            test_log(test_metadata()),
+            std::time::Instant::now(),
+            stats,
+        ));
+
+        assert_eq!(
+            output
+                .next()
+                .await
+                .expect("first chunk")
+                .expect("stream chunk"),
+            Bytes::from_static(b"hello")
+        );
+
+        let row: (Option<i64>, Option<i64>) =
+            sqlx::query_as("SELECT input_tokens, output_tokens FROM identity_request_logs")
+                .fetch_one(&db)
+                .await
+                .expect("load stream log");
+
+        assert_eq!(row, (Some(11), Some(7)));
     }
 
     #[tokio::test]
@@ -473,6 +572,7 @@ mod tests {
             protocol_in: "responses".to_string(),
             protocol_out: "responses".to_string(),
             protocol_upstream: "chat_completions".to_string(),
+            endpoint_name: String::new(),
             provider_id: "provider-1".to_string(),
             provider_name: "DeepSeek".to_string(),
             model_requested: "coder".to_string(),
@@ -485,6 +585,8 @@ mod tests {
             input_tokens: None,
             output_tokens: None,
             reasoning_tokens: None,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
             latency_ms: 0,
             upstream_latency_ms: Some(5),
             first_token_ms: None,
