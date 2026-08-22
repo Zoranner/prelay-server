@@ -2,7 +2,7 @@
 
 ## 背景
 
-`provider-relay` 定位为面向 AI 编程工具的小型协议桥接网关。桌面客户端维护当前身份的 Provider、Provider 模型、Interface 及 Interface 模型映射；协议入口使用 Interface Token 确定可访问的客户端模型，再解析到上游 Provider 和模型。
+`provider-relay` 定位为面向 AI 编程工具的小型协议桥接网关。桌面客户端维护当前身份的 Provider、Provider 模型、Endpoint 及 Endpoint 模型映射；协议入口使用 Endpoint Token 确定可访问的客户端模型，再解析到上游 Provider 和模型。
 
 用户侧支持三类协议：
 
@@ -28,7 +28,7 @@
 - `aura-llm-gateway`：适合作为生产化参考。它包含 provider、router、metrics、cost tracking、cache、multi-tenancy 等完整网关能力，但本项目不应直接照搬其复杂度。
 - `cc-switch`：适合作为客户端生态参考。它说明用户会同时管理 Claude Code、Codex、Gemini CLI 等工具，也说明 `chat_completions`、`anthropic_messages`、`codex_responses` 这类协议分类是实际产品概念。
 
-本项目应借鉴 `codex-bridge` 的桥接细节、`GodeX` 的 provider 规约、`litellm` 的入口分层，以及 `cc-switch` 的客户端接入形态，但保持 Rust 服务的小型化实现。
+本项目应借鉴 `codex-bridge` 的桥接细节、`GodeX` 的 provider 规约、`litellm` 的入口分层，以及 `cc-switch` 的客户端接入点形态，但保持 Rust 服务的小型化实现。
 
 ## 协议范围
 
@@ -386,29 +386,29 @@ GET /api/stats/providers
 
 ## 配置模型
 
-配置关系以 Provider 和 Interface 为中心：
+配置关系以 Provider 和 Endpoint 为中心：
 
 ```text
 provider_configs
   -> provider_models
 
-interfaces
-  -> interface_models
+endpoints
+  -> endpoint_models
        -> provider_configs + provider_models
 ```
 
 Provider 保存请求中的 `models` 表示保存后的完整模型集合，不是增量命令。创建请求必须携带该集合；更新请求传入 `models` 时替换完整集合，缺省时保留原集合以兼容已有调用方。服务端统一去除模型名首尾空白，并拒绝空名称和规范化后的重复名称。
 
-Interface 保存请求中的 `models` 表示保存后的完整映射集合。每项包含 `provider_id`、`upstream_model` 和可选 `model_name`；`model_name` 为空时使用 `upstream_model`。同一 Interface 内的客户端模型名必须唯一，且每项都必须引用已存在的 Provider 模型。
+Endpoint 保存请求中的 `models` 表示保存后的完整映射集合。每项包含 `provider_id`、`upstream_model` 和可选 `model_name`；`model_name` 为空时使用 `upstream_model`。同一 Endpoint 可以用多个 Provider 映射到同一个客户端模型名，作为该模型的候选供应商；每项都必须引用已存在的 Provider 模型。网关为每个 Endpoint 模型保存最近成功的当前供应商，后续请求优先继续使用它；当前供应商发生可恢复的上游故障时，按已有成功请求的平均上游延迟尝试其余候选，成功后更新当前供应商。`/v1/models` 对同一个客户端模型名只返回一项。
 
-Provider 配置及完整模型集合在同一 SQLite 事务中保存。Interface 配置及完整映射集合也在同一事务中保存。校验、删除或写入任一步骤失败时，整笔保存回滚。删除 Provider 模型时，同时清理引用该 Provider 和上游模型组合的 Interface 映射。模型 CRUD 接口可以为兼容调用方保留，但必须复用相同的校验、父资源和引用清理规则。
+Provider 配置及完整模型集合在同一 SQLite 事务中保存。Endpoint 配置及完整映射集合也在同一事务中保存。校验、删除或写入任一步骤失败时，整笔保存回滚。删除 Provider 模型时，同时清理引用该 Provider 和上游模型组合的 Endpoint 映射。模型 CRUD 接口可以为兼容调用方保留，但必须复用相同的校验、父资源和引用清理规则。
 
 ## 鉴权
 
 系统区分三类凭据：
 
 - 设备凭据：保护已注册身份的 `/api/*` 管理接口。客户端通过操作系统 CSPRNG 生成 32 字节随机值并编码为 URL-safe Base64，在应用数据目录的 `device-credential.json` 中保存 `{ current, pending? }`。服务端只保存哈希；Nuxt 运行时和管理响应均不得取得凭据。
-- Interface Token：保护 `/v1/*` 协议入口。请求必须使用 Interface Token，服务按该 Interface 的完整模型映射集合解析客户端模型名；Provider API Key 不能替代 Interface Token。
+- Endpoint Token：保护 `/v1/*` 协议入口。请求必须使用 Endpoint Token，服务按该 Endpoint 的完整模型映射集合解析客户端模型名；Provider API Key 不能替代 Endpoint Token。
 - Provider API Key：仅由服务端用于访问上游，不作为用户侧或管理侧凭据。
 
 `POST /api/identities` 是唯一不要求设备凭据的管理入口。它接收 `machine_id`、`account_sid` 和 `credential`，首次注册返回 `201 Created` 与 `{ "identity_id": "<identity-id>", "created": true }`；同一稳定键和同一凭据重复注册返回 `200 OK` 与 `{ "identity_id": "<identity-id>", "created": false }`；稳定键已存在但凭据不同会被拒绝。其余 `/api/*` 请求必须使用：
@@ -419,7 +419,7 @@ Authorization: Bearer <device-credential>
 
 设备凭据轮换使用 `POST /api/identity/credential/rotate`，认证凭据放在请求头，正文只传 `{ new_credential }`，响应只传 `{ rotated: true }`，不回传任何明文凭据。客户端先原子写入带有 `pending` 的本地记录，再使用 `current` 提交轮换；网络故障保留两个值，认证失败的 `pending` 回退到 `current`，成功认证的 `pending` 成为新的 `current`。该本地文件不使用 Windows Credential Manager、系统 Keychain 或加密 vault，安全边界为内网桌面客户端本地使用。
 
-Interface Token 只授予该 Interface 已配置模型的协议访问能力。模型不在该 Interface 的完整集合中时，请求失败，不回退到其他 Interface、Provider API Key 或旧 alias。
+Endpoint Token 只授予该 Endpoint 已配置模型的协议访问能力。模型不在该 Endpoint 的完整集合中时，请求失败，不回退到其他 Endpoint、Provider API Key 或旧 alias。
 
 ## 协议能力契约
 
@@ -462,7 +462,7 @@ Interface Token 只授予该 Interface 已配置模型的协议访问能力。�
 - 能定位失败请求的 provider、模型、协议和错误类型。
 - 无价格配置的模型不会阻断请求。
 
-### 原生 Responses 与 Anthropic Messages 上游接入
+### 原生 Responses 与 Anthropic Messages 上游接入点
 
 原生协议上游保持同协议语义，范围包括：
 
@@ -603,4 +603,4 @@ bun run build
 
 `provider-relay` 是小型协议桥接网关：用户侧和供给侧均围绕 Chat Completions、Responses、Anthropic Messages 建立明确入口和适配器。核心转换通过内部模型承载，不做任意协议互转，禁止将入站 `responses` 和 `anthropic_messages` 降格输出到 `chat_completions`。
 
-Interface token 和完整模型映射集合共同构成协议入口的授权与解析边界；Provider 与 Interface 保存均使用事务提交完整目标状态。统计只做观测，不做限额、预算和扣费。真实供应商与客户端兼容性必须通过单独的端到端记录确认。
+Endpoint token 和完整模型映射集合共同构成协议入口的授权与解析边界；Provider 与 Endpoint 保存均使用事务提交完整目标状态。统计只做观测，不做限额、预算和扣费。真实供应商与客户端兼容性必须通过单独的端到端记录确认。
