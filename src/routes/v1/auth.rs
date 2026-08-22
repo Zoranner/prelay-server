@@ -10,7 +10,8 @@ use crate::{error::AppError, AppState};
 #[derive(Clone, Debug)]
 pub struct CurrentProtocolAccess {
     pub identity_id: String,
-    pub interface_id: String,
+    pub endpoint_id: String,
+    pub endpoint_name: String,
 }
 
 pub async fn require_protocol_auth(
@@ -35,7 +36,8 @@ pub async fn authenticate_protocol_request(
         .await?
         .map(|access| CurrentProtocolAccess {
             identity_id: access.identity_id,
-            interface_id: access.interface_id,
+            endpoint_id: access.endpoint_id,
+            endpoint_name: access.endpoint_name,
         })
         .ok_or(AppError::Unauthorized)
 }
