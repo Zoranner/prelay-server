@@ -1,0 +1,15 @@
+meta {
+  name: 获取接口可用模型
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{relay_url}}/v1/models
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: <endpoint-token>
+}

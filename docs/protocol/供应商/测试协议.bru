@@ -1,0 +1,25 @@
+meta {
+  name: 测试供应商协议
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{relay_url}}/api/providers/test-protocol
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: <device-credential>
+}
+
+body:json {
+  {
+    "provider_type": "openai_compatible",
+    "base_url": "https://example.invalid/v1",
+    "api_key": "<provider-api-key>",
+    "protocol": "chat_completions",
+    "model": "example-model"
+  }
+}

@@ -1,0 +1,19 @@
+meta {
+  name: 删除供应商
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{relay_url}}/api/providers/:provider_id
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: <device-credential>
+}
+
+params:path {
+  provider_id: <provider-id>
+}

@@ -1,0 +1,15 @@
+meta {
+  name: 获取供应商列表
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{relay_url}}/api/providers
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: <device-credential>
+}

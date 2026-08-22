@@ -1,0 +1,15 @@
+meta {
+  name: 获取模型统计
+  type: http
+  seq: 21
+}
+
+get {
+  url: {{relay_url}}/api/stats/models?range=today
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: <device-credential>
+}

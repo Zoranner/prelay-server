@@ -1,0 +1,23 @@
+meta {
+  name: 发现供应商模型
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{relay_url}}/api/providers/discover-models
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: <device-credential>
+}
+
+body:json {
+  {
+    "provider_type": "openai_compatible",
+    "base_url": "https://example.invalid/v1",
+    "api_key": "<provider-api-key>"
+  }
+}

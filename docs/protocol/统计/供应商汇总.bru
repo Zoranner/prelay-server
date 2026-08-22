@@ -1,0 +1,15 @@
+meta {
+  name: 获取供应商统计
+  type: http
+  seq: 22
+}
+
+get {
+  url: {{relay_url}}/api/stats/providers?range=today
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: <device-credential>
+}

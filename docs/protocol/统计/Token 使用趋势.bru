@@ -1,0 +1,15 @@
+meta {
+  name: 获取 Token 使用趋势
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{relay_url}}/api/stats/timeline?range=today
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: <device-credential>
+}
