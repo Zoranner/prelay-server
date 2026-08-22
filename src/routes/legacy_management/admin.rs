@@ -13,11 +13,11 @@ use crate::{
     db,
     error::AppError,
     models::{
-        ConfigResponse, CreateConfigRequest, CreateInterfaceModelRequest, CreateInterfaceRequest,
+        ConfigResponse, CreateConfigRequest, CreateEndpointModelRequest, CreateEndpointRequest,
         CreateProviderModelRequest, DiscoverModelsRequest, DiscoverModelsResponse,
-        InterfaceModelInput, InterfaceResponse, PingProviderResponse, ProviderModelResponse,
+        EndpointModelInput, EndpointResponse, PingProviderResponse, ProviderModelResponse,
         TestProviderProtocolRequest, TestProviderProtocolResponse, UpdateConfigRequest,
-        UpdateInterfaceRequest,
+        UpdateEndpointRequest,
     },
     models::{CreateModelAliasRequest, ModelAliasResponse},
     providers::model_discovery,
@@ -50,19 +50,19 @@ pub fn router() -> Router<AppState> {
                 .post(create_model_alias)
                 .delete(delete_model_alias_protocol),
         )
-        .route("/interfaces", get(list_interfaces).post(create_interface))
+        .route("/endpoints", get(list_endpoints).post(create_interface))
         .route(
-            "/interfaces/:id",
+            "/endpoints/:id",
             put(update_interface).delete(delete_interface),
         )
         .route(
-            "/interfaces/:id/regenerate-token",
-            post(regenerate_interface_token),
+            "/endpoints/:id/regenerate-token",
+            post(regenerate_endpoint_token),
         )
-        .route("/interfaces/:id/models", post(create_interface_model))
+        .route("/endpoints/:id/models", post(create_endpoint_model))
         .route(
-            "/interfaces/:interface_id/models/:model_id",
-            delete(delete_interface_model),
+            "/endpoints/:endpoint_id/models/:model_id",
+            delete(delete_endpoint_model),
         )
 }
 
@@ -106,18 +106,18 @@ async fn list_model_aliases(State(state): State<AppState>) -> Result<impl IntoRe
     Ok(Json(responses))
 }
 
-async fn list_interfaces(State(state): State<AppState>) -> Result<impl IntoResponse, AppError> {
-    let interfaces = db::list_interfaces(&state.db).await?;
-    let models = db::list_interface_models(&state.db).await?;
-    let responses = interfaces
+async fn list_endpoints(State(state): State<AppState>) -> Result<impl IntoResponse, AppError> {
+    let endpoints = db::list_endpoints(&state.db).await?;
+    let models = db::list_endpoint_models(&state.db).await?;
+    let responses = endpoints
         .into_iter()
-        .map(|interface| {
-            let interface_models = models
+        .map(|endpoint| {
+            let endpoint_models = models
                 .iter()
-                .filter(|model| model.interface_id == interface.id)
+                .filter(|model| model.endpoint_id == endpoint.id)
                 .cloned()
                 .collect::<Vec<_>>();
-            InterfaceResponse::from_config(interface, interface_models)
+            EndpointResponse::from_config(endpoint, endpoint_models)
         })
         .collect::<Vec<_>>();
     Ok(Json(responses))
@@ -560,43 +560,43 @@ async fn delete_provider_model(
 
 async fn create_interface(
     State(state): State<AppState>,
-    Json(req): Json<CreateInterfaceRequest>,
+    Json(req): Json<CreateEndpointRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    validate_interface_name(&req.name)?;
+    validate_endpoint_name(&req.name)?;
     let protocol = req.protocol.as_deref().map(str::trim).unwrap_or("all");
-    let models = normalize_interface_models(&req.models)?;
-    let (interface, models) =
-        db::create_interface_with_models(&state.db, req.name.trim(), protocol, &models)
+    let models = normalize_endpoint_models(&req.models)?;
+    let (endpoint, models) =
+        db::create_endpoint_with_models(&state.db, req.name.trim(), protocol, &models)
             .await
-            .map_err(|error| map_interface_write_error(error, None))?;
+            .map_err(|error| map_endpoint_write_error(error, None))?;
     Ok((
         StatusCode::CREATED,
-        Json(InterfaceResponse::from_config(interface, models)),
+        Json(EndpointResponse::from_config(endpoint, models)),
     ))
 }
 
 async fn update_interface(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(req): Json<UpdateInterfaceRequest>,
+    Json(req): Json<UpdateEndpointRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     if let Some(name) = req.name.as_deref() {
-        validate_interface_name(name)?;
+        validate_endpoint_name(name)?;
     }
     let models = req
         .models
         .as_deref()
-        .map(normalize_interface_models)
+        .map(normalize_endpoint_models)
         .transpose()?;
-    let (interface, models) = db::update_interface_with_models(
+    let (endpoint, models) = db::update_endpoint_with_models(
         &state.db,
         &id,
         req.name.as_deref().map(str::trim),
         models.as_deref(),
     )
     .await
-    .map_err(|error| map_interface_write_error(error, Some(&id)))?;
-    Ok(Json(InterfaceResponse::from_config(interface, models)))
+    .map_err(|error| map_endpoint_write_error(error, Some(&id)))?;
+    Ok(Json(EndpointResponse::from_config(endpoint, models)))
 }
 
 async fn delete_interface(
@@ -605,39 +605,39 @@ async fn delete_interface(
 ) -> Result<impl IntoResponse, AppError> {
     let deleted = db::delete_interface(&state.db, &id).await?;
     if !deleted {
-        return Err(AppError::NotFound(format!("接口 {} 不存在", id)));
+        return Err(AppError::NotFound(format!("接入点 {} 不存在", id)));
     }
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn regenerate_interface_token(
+async fn regenerate_endpoint_token(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
-    let token = db::regenerate_interface_token(&state.db, &id)
+    let token = db::regenerate_endpoint_token(&state.db, &id)
         .await?
-        .ok_or_else(|| AppError::NotFound(format!("接口 {} 不存在", id)))?;
+        .ok_or_else(|| AppError::NotFound(format!("接入点 {} 不存在", id)))?;
     Ok(Json(serde_json::json!({ "token": token })))
 }
 
-async fn create_interface_model(
+async fn create_endpoint_model(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(req): Json<CreateInterfaceModelRequest>,
+    Json(req): Json<CreateEndpointModelRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let normalized = normalize_interface_models(&[InterfaceModelInput {
+    let normalized = normalize_endpoint_models(&[EndpointModelInput {
         provider_id: req.provider_id,
         upstream_model: req.upstream_model,
         model_name: req.model_name,
     }])?;
     let input = normalized
         .first()
-        .expect("single interface model input must remain present");
+        .expect("single endpoint model input must remain present");
     let model_name = input
         .model_name
         .as_deref()
-        .expect("normalized interface model name must be present");
-    let model = db::create_interface_model(
+        .expect("normalized endpoint model name must be present");
+    let model = db::create_endpoint_model(
         &state.db,
         &id,
         model_name,
@@ -645,29 +645,29 @@ async fn create_interface_model(
         &input.upstream_model,
     )
     .await
-    .map_err(|error| map_interface_write_error(error, Some(&id)))?;
+    .map_err(|error| map_endpoint_write_error(error, Some(&id)))?;
     Ok((
         StatusCode::CREATED,
-        Json(crate::models::InterfaceModelResponse::from(model)),
+        Json(crate::models::EndpointModelResponse::from(model)),
     ))
 }
 
-async fn delete_interface_model(
+async fn delete_endpoint_model(
     State(state): State<AppState>,
-    Path((interface_id, model_id)): Path<(String, String)>,
+    Path((endpoint_id, model_id)): Path<(String, String)>,
 ) -> Result<impl IntoResponse, AppError> {
-    let deleted = db::delete_interface_model(&state.db, &interface_id, &model_id).await?;
+    let deleted = db::delete_endpoint_model(&state.db, &endpoint_id, &model_id).await?;
     if !deleted {
-        return Err(AppError::NotFound(format!("接口模型 {} 不存在", model_id)));
+        return Err(AppError::NotFound(format!("接入点模型 {} 不存在", model_id)));
     }
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn normalize_interface_models(
-    models: &[InterfaceModelInput],
-) -> Result<Vec<InterfaceModelInput>, AppError> {
+fn normalize_endpoint_models(
+    models: &[EndpointModelInput],
+) -> Result<Vec<EndpointModelInput>, AppError> {
     if models.is_empty() {
-        return Err(AppError::BadRequest("接口至少需要配置一个模型".to_string()));
+        return Err(AppError::BadRequest("接入点至少需要配置一个模型".to_string()));
     }
     let mut model_names = HashSet::with_capacity(models.len());
     models
@@ -689,11 +689,11 @@ fn normalize_interface_models(
                 .unwrap_or(upstream_model);
             if !model_names.insert(model_name.to_string()) {
                 return Err(AppError::BadRequest(format!(
-                    "接口模型名称 {} 重复",
+                    "接入点模型名称 {} 重复",
                     model_name
                 )));
             }
-            Ok(InterfaceModelInput {
+            Ok(EndpointModelInput {
                 provider_id: provider_id.to_string(),
                 upstream_model: upstream_model.to_string(),
                 model_name: Some(model_name.to_string()),
@@ -702,31 +702,31 @@ fn normalize_interface_models(
         .collect()
 }
 
-fn map_interface_write_error(
-    error: db::InterfaceWriteError,
-    interface_id: Option<&str>,
+fn map_endpoint_write_error(
+    error: db::EndpointWriteError,
+    endpoint_id: Option<&str>,
 ) -> AppError {
     match error {
-        db::InterfaceWriteError::InterfaceNotFound => {
-            AppError::NotFound(format!("接口 {} 不存在", interface_id.unwrap_or_default()))
+        db::EndpointWriteError::EndpointNotFound => {
+            AppError::NotFound(format!("接入点 {} 不存在", endpoint_id.unwrap_or_default()))
         }
-        db::InterfaceWriteError::ProviderModelNotFound {
+        db::EndpointWriteError::ProviderModelNotFound {
             provider_id,
             upstream_model,
         } => AppError::BadRequest(format!(
             "Provider {} 未配置上游模型 {}",
             provider_id, upstream_model
         )),
-        db::InterfaceWriteError::DuplicateModelName { model_name } => {
-            AppError::BadRequest(format!("接口模型名称 {} 重复", model_name))
+        db::EndpointWriteError::DuplicateModelName { model_name } => {
+            AppError::BadRequest(format!("接入点模型名称 {} 重复", model_name))
         }
-        db::InterfaceWriteError::Storage(error) => AppError::Internal(error),
+        db::EndpointWriteError::Storage(error) => AppError::Internal(error),
     }
 }
 
-fn validate_interface_name(name: &str) -> Result<(), AppError> {
+fn validate_endpoint_name(name: &str) -> Result<(), AppError> {
     if name.trim().is_empty() {
-        return Err(AppError::BadRequest("接口名称不能为空".to_string()));
+        return Err(AppError::BadRequest("接入点名称不能为空".to_string()));
     }
     Ok(())
 }
@@ -805,7 +805,7 @@ mod tests {
     use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
 
-    use crate::{db, models::InterfaceModelInput, AppState};
+    use crate::{db, models::EndpointModelInput, AppState};
 
     #[tokio::test]
     async fn creates_config_with_complete_trimmed_model_set() {
@@ -964,12 +964,12 @@ mod tests {
         db::create_provider_model(&state.db, &provider.id, "model-a")
             .await
             .expect("create provider model");
-        let interface = db::create_interface(&state.db, "Interface", "responses")
+        let endpoint = db::create_interface(&state.db, "Endpoint", "responses")
             .await
-            .expect("create interface");
-        db::create_interface_model(&state.db, &interface.id, "model-a", &provider.id, "model-a")
+            .expect("create endpoint");
+        db::create_endpoint_model(&state.db, &endpoint.id, "model-a", &provider.id, "model-a")
             .await
-            .expect("create interface model");
+            .expect("create endpoint model");
         db::create_model_alias(
             &state.db,
             "model-alias",
@@ -991,7 +991,7 @@ mod tests {
             .await
             .expect("get deleted provider")
             .is_none());
-        for table in ["provider_models", "interface_models", "model_aliases"] {
+        for table in ["provider_models", "endpoint_models", "model_aliases"] {
             let count = sqlx::query_scalar::<_, i64>(&format!(
                 "SELECT COUNT(*) FROM {table} WHERE provider_id = ?"
             ))
@@ -1020,17 +1020,17 @@ mod tests {
         .await
         .expect("insert orphaned provider model");
         sqlx::query(
-            "INSERT INTO interface_models (id, interface_id, model_name, provider_id, upstream_model, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO endpoint_models (id, endpoint_id, model_name, provider_id, upstream_model, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
-        .bind("orphaned-interface-model")
-        .bind("missing-interface")
+        .bind("orphaned-endpoint-model")
+        .bind("missing-endpoint")
         .bind("model-a")
         .bind(missing_provider_id)
         .bind("model-a")
         .bind("2026-08-01T00:00:00Z")
         .execute(&state.db)
         .await
-        .expect("insert orphaned interface model");
+        .expect("insert orphaned endpoint model");
         sqlx::query(
             "INSERT INTO model_aliases (id, alias, provider_id, upstream_model, downstream_protocols_json, enabled, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)",
         )
@@ -1051,7 +1051,7 @@ mod tests {
             .expect("send delete missing config request");
 
         assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
-        for table in ["provider_models", "interface_models", "model_aliases"] {
+        for table in ["provider_models", "endpoint_models", "model_aliases"] {
             let count = sqlx::query_scalar::<_, i64>(&format!(
                 "SELECT COUNT(*) FROM {table} WHERE provider_id = ?"
             ))
@@ -1527,7 +1527,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_interface_model_missing_from_provider_catalog_from_admin_api() {
+    async fn rejects_endpoint_model_missing_from_provider_catalog_from_admin_api() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -1543,9 +1543,9 @@ mod tests {
         )
         .await
         .expect("create provider");
-        let interface = db::create_interface(&db, "Responses", "responses")
+        let endpoint = db::create_interface(&db, "Responses", "responses")
             .await
-            .expect("create interface");
+            .expect("create endpoint");
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -1562,8 +1562,8 @@ mod tests {
 
         let response = reqwest::Client::new()
             .post(format!(
-                "http://{addr}/api/interfaces/{}/models",
-                interface.id
+                "http://{addr}/api/endpoints/{}/models",
+                endpoint.id
             ))
             .json(&json!({
                 "provider_id": provider.id,
@@ -1572,7 +1572,7 @@ mod tests {
             }))
             .send()
             .await
-            .expect("send create interface model request");
+            .expect("send create endpoint model request");
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
         let body: serde_json::Value = response.json().await.expect("parse error body");
@@ -1585,7 +1585,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn creates_interface_with_complete_trimmed_model_mapping() {
+    async fn creates_endpoint_with_complete_trimmed_model_mapping() {
         let (addr, server, state) = spawn_admin_app().await;
         let provider = db::create_config(
             &state.db,
@@ -1601,7 +1601,7 @@ mod tests {
             .expect("create provider model");
 
         let response = reqwest::Client::new()
-            .post(format!("http://{addr}/api/interfaces"))
+            .post(format!("http://{addr}/api/endpoints"))
             .json(&json!({
                 "name": "Main",
                 "models": [{
@@ -1612,10 +1612,10 @@ mod tests {
             }))
             .send()
             .await
-            .expect("send create interface request");
+            .expect("send create endpoint request");
 
         assert_eq!(response.status(), reqwest::StatusCode::CREATED);
-        let body: serde_json::Value = response.json().await.expect("parse interface json");
+        let body: serde_json::Value = response.json().await.expect("parse endpoint json");
         assert_eq!(body["name"], "Main");
         assert_eq!(body["protocol"], "all");
         assert_eq!(body["models"][0]["provider_id"], provider.id);
@@ -1626,47 +1626,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_interface_creation_with_empty_models() {
+    async fn rejects_endpoint_creation_with_empty_models() {
         let (addr, server, state) = spawn_admin_app().await;
 
         let response = reqwest::Client::new()
-            .post(format!("http://{addr}/api/interfaces"))
+            .post(format!("http://{addr}/api/endpoints"))
             .json(&json!({ "name": "Main", "models": [] }))
             .send()
             .await
-            .expect("send create interface request");
+            .expect("send create endpoint request");
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
-        assert!(db::list_interfaces(&state.db)
+        assert!(db::list_endpoints(&state.db)
             .await
-            .expect("list interfaces")
+            .expect("list endpoints")
             .is_empty());
 
         server.abort();
     }
 
     #[tokio::test]
-    async fn rejects_interface_creation_without_models_field() {
+    async fn rejects_endpoint_creation_without_models_field() {
         let (addr, server, state) = spawn_admin_app().await;
 
         let response = reqwest::Client::new()
-            .post(format!("http://{addr}/api/interfaces"))
+            .post(format!("http://{addr}/api/endpoints"))
             .json(&json!({ "name": "Main" }))
             .send()
             .await
-            .expect("send create interface request");
+            .expect("send create endpoint request");
 
         assert_eq!(response.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
-        assert!(db::list_interfaces(&state.db)
+        assert!(db::list_endpoints(&state.db)
             .await
-            .expect("list interfaces")
+            .expect("list endpoints")
             .is_empty());
 
         server.abort();
     }
 
     #[tokio::test]
-    async fn rejects_invalid_interface_mapping_with_bad_request_and_rolls_back_creation() {
+    async fn rejects_invalid_endpoint_mapping_with_bad_request_and_rolls_back_creation() {
         let (addr, server, state) = spawn_admin_app().await;
         let provider = db::create_config(
             &state.db,
@@ -1679,7 +1679,7 @@ mod tests {
         .expect("create provider");
 
         let response = reqwest::Client::new()
-            .post(format!("http://{addr}/api/interfaces"))
+            .post(format!("http://{addr}/api/endpoints"))
             .json(&json!({
                 "name": "Must Roll Back",
                 "models": [{
@@ -1689,23 +1689,23 @@ mod tests {
             }))
             .send()
             .await
-            .expect("send create interface request");
+            .expect("send create endpoint request");
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
-        assert!(db::list_interfaces(&state.db)
+        assert!(db::list_endpoints(&state.db)
             .await
-            .expect("list interfaces")
+            .expect("list endpoints")
             .is_empty());
 
         server.abort();
     }
 
     #[tokio::test]
-    async fn rejects_missing_provider_in_interface_mapping_with_bad_request() {
+    async fn rejects_missing_provider_in_endpoint_mapping_with_bad_request() {
         let (addr, server, state) = spawn_admin_app().await;
 
         let response = reqwest::Client::new()
-            .post(format!("http://{addr}/api/interfaces"))
+            .post(format!("http://{addr}/api/endpoints"))
             .json(&json!({
                 "name": "Missing Provider",
                 "models": [{
@@ -1715,19 +1715,19 @@ mod tests {
             }))
             .send()
             .await
-            .expect("send create interface request");
+            .expect("send create endpoint request");
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
-        assert!(db::list_interfaces(&state.db)
+        assert!(db::list_endpoints(&state.db)
             .await
-            .expect("list interfaces")
+            .expect("list endpoints")
             .is_empty());
 
         server.abort();
     }
 
     #[tokio::test]
-    async fn rejects_duplicate_normalized_interface_model_names() {
+    async fn rejects_duplicate_normalized_endpoint_model_names() {
         let (addr, server, state) = spawn_admin_app().await;
         let provider = db::create_config(
             &state.db,
@@ -1745,7 +1745,7 @@ mod tests {
         }
 
         let response = reqwest::Client::new()
-            .post(format!("http://{addr}/api/interfaces"))
+            .post(format!("http://{addr}/api/endpoints"))
             .json(&json!({
                 "name": "Duplicate Aliases",
                 "models": [
@@ -1763,19 +1763,19 @@ mod tests {
             }))
             .send()
             .await
-            .expect("send create interface request");
+            .expect("send create endpoint request");
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
-        assert!(db::list_interfaces(&state.db)
+        assert!(db::list_endpoints(&state.db)
             .await
-            .expect("list interfaces")
+            .expect("list endpoints")
             .is_empty());
 
         server.abort();
     }
 
     #[tokio::test]
-    async fn update_interface_authoritatively_replaces_models_and_rolls_back_invalid_replacement() {
+    async fn update_endpoint_authoritatively_replaces_models_and_rolls_back_invalid_replacement() {
         let (addr, server, state) = spawn_admin_app().await;
         let provider = db::create_config(
             &state.db,
@@ -1793,7 +1793,7 @@ mod tests {
         }
         let client = reqwest::Client::new();
         let created: serde_json::Value = client
-            .post(format!("http://{addr}/api/interfaces"))
+            .post(format!("http://{addr}/api/endpoints"))
             .json(&json!({
                 "name": "Original",
                 "models": [{
@@ -1804,14 +1804,14 @@ mod tests {
             }))
             .send()
             .await
-            .expect("send create interface request")
+            .expect("send create endpoint request")
             .json()
             .await
-            .expect("parse created interface");
-        let interface_id = created["id"].as_str().expect("interface id");
+            .expect("parse created endpoint");
+        let endpoint_id = created["id"].as_str().expect("endpoint id");
 
         let replaced = client
-            .put(format!("http://{addr}/api/interfaces/{interface_id}"))
+            .put(format!("http://{addr}/api/endpoints/{endpoint_id}"))
             .json(&json!({
                 "name": "Updated",
                 "models": [{
@@ -1822,16 +1822,16 @@ mod tests {
             }))
             .send()
             .await
-            .expect("send interface update");
+            .expect("send endpoint update");
 
         assert_eq!(replaced.status(), reqwest::StatusCode::OK);
         let replaced_body: serde_json::Value =
-            replaced.json().await.expect("parse updated interface");
+            replaced.json().await.expect("parse updated endpoint");
         assert_eq!(replaced_body["models"].as_array().expect("models").len(), 1);
         assert_eq!(replaced_body["models"][0]["model_name"], "new-alias");
 
         let invalid = client
-            .put(format!("http://{addr}/api/interfaces/{interface_id}"))
+            .put(format!("http://{addr}/api/endpoints/{endpoint_id}"))
             .json(&json!({
                 "name": "Must Roll Back",
                 "models": [{
@@ -1841,17 +1841,17 @@ mod tests {
             }))
             .send()
             .await
-            .expect("send invalid interface update");
+            .expect("send invalid endpoint update");
 
         assert_eq!(invalid.status(), reqwest::StatusCode::BAD_REQUEST);
-        let stored = db::get_interface_by_id(&state.db, interface_id)
+        let stored = db::get_endpoint_by_id(&state.db, endpoint_id)
             .await
-            .expect("get interface")
-            .expect("interface exists");
+            .expect("get endpoint")
+            .expect("endpoint exists");
         assert_eq!(stored.name, "Updated");
-        let models = db::list_interface_models_by_interface(&state.db, interface_id)
+        let models = db::list_endpoint_models_by_interface(&state.db, endpoint_id)
             .await
-            .expect("list interface models");
+            .expect("list endpoint models");
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].model_name, "new-alias");
 
@@ -1859,7 +1859,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_empty_interface_update_models_and_preserves_existing_mapping() {
+    async fn rejects_empty_endpoint_update_models_and_preserves_existing_mapping() {
         let (addr, server, state) = spawn_admin_app().await;
         let provider = db::create_config(
             &state.db,
@@ -1873,32 +1873,32 @@ mod tests {
         db::create_provider_model(&state.db, &provider.id, "model-a")
             .await
             .expect("create provider model");
-        let mappings = vec![InterfaceModelInput {
+        let mappings = vec![EndpointModelInput {
             provider_id: provider.id,
             upstream_model: "model-a".to_string(),
             model_name: Some("alias-a".to_string()),
         }];
-        let (interface, original_models) =
-            db::create_interface_with_models(&state.db, "Original", "all", &mappings)
+        let (endpoint, original_models) =
+            db::create_endpoint_with_models(&state.db, "Original", "all", &mappings)
                 .await
-                .expect("create interface");
+                .expect("create endpoint");
 
         let response = reqwest::Client::new()
-            .put(format!("http://{addr}/api/interfaces/{}", interface.id))
+            .put(format!("http://{addr}/api/endpoints/{}", endpoint.id))
             .json(&json!({ "name": "Must Not Persist", "models": [] }))
             .send()
             .await
-            .expect("send interface update");
+            .expect("send endpoint update");
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
-        let stored = db::get_interface_by_id(&state.db, &interface.id)
+        let stored = db::get_endpoint_by_id(&state.db, &endpoint.id)
             .await
-            .expect("get interface")
-            .expect("interface exists");
+            .expect("get endpoint")
+            .expect("endpoint exists");
         assert_eq!(stored.name, "Original");
-        let models = db::list_interface_models_by_interface(&state.db, &interface.id)
+        let models = db::list_endpoint_models_by_interface(&state.db, &endpoint.id)
             .await
-            .expect("list interface models");
+            .expect("list endpoint models");
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, original_models[0].id);
 
@@ -1906,15 +1906,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn updating_missing_interface_returns_not_found() {
+    async fn updating_missing_endpoint_returns_not_found() {
         let (addr, server, _state) = spawn_admin_app().await;
 
         let response = reqwest::Client::new()
-            .put(format!("http://{addr}/api/interfaces/missing-interface"))
+            .put(format!("http://{addr}/api/endpoints/missing-endpoint"))
             .json(&json!({ "name": "Updated" }))
             .send()
             .await
-            .expect("send interface update");
+            .expect("send endpoint update");
 
         assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
 
@@ -1922,7 +1922,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deleting_interface_model_through_wrong_parent_returns_not_found_and_preserves_model() {
+    async fn deleting_endpoint_model_through_wrong_parent_returns_not_found_and_preserves_model() {
         let (addr, server, state) = spawn_admin_app().await;
         let provider = db::create_config(
             &state.db,
@@ -1938,18 +1938,18 @@ mod tests {
             .expect("create provider model");
         let first = db::create_interface(&state.db, "First", "all")
             .await
-            .expect("create first interface");
+            .expect("create first endpoint");
         let second = db::create_interface(&state.db, "Second", "all")
             .await
-            .expect("create second interface");
+            .expect("create second endpoint");
         let model =
-            db::create_interface_model(&state.db, &first.id, "alias-a", &provider.id, "model-a")
+            db::create_endpoint_model(&state.db, &first.id, "alias-a", &provider.id, "model-a")
                 .await
-                .expect("create interface model");
+                .expect("create endpoint model");
 
         let response = reqwest::Client::new()
             .delete(format!(
-                "http://{addr}/api/interfaces/{}/models/{}",
+                "http://{addr}/api/endpoints/{}/models/{}",
                 second.id, model.id
             ))
             .send()
@@ -1957,9 +1957,9 @@ mod tests {
             .expect("send delete request");
 
         assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
-        let models = db::list_interface_models_by_interface(&state.db, &first.id)
+        let models = db::list_endpoint_models_by_interface(&state.db, &first.id)
             .await
-            .expect("list first interface models");
+            .expect("list first endpoint models");
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, model.id);
 
@@ -1967,7 +1967,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn creates_interface_model_without_filtering_by_legacy_interface_protocol() {
+    async fn creates_endpoint_model_without_filtering_by_legacy_endpoint_protocol() {
         let db = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -1986,9 +1986,9 @@ mod tests {
         db::create_provider_model(&db, &provider.id, "gpt-4.1")
             .await
             .expect("create provider model");
-        let interface = db::create_interface(&db, "Legacy Chat", "chat_completions")
+        let endpoint = db::create_interface(&db, "Legacy Chat", "chat_completions")
             .await
-            .expect("create interface");
+            .expect("create endpoint");
         let state = AppState {
             db,
             client: reqwest::Client::new(),
@@ -2005,8 +2005,8 @@ mod tests {
 
         let response = reqwest::Client::new()
             .post(format!(
-                "http://{addr}/api/interfaces/{}/models",
-                interface.id
+                "http://{addr}/api/endpoints/{}/models",
+                endpoint.id
             ))
             .json(&json!({
                 "provider_id": provider.id,
@@ -2015,17 +2015,17 @@ mod tests {
             }))
             .send()
             .await
-            .expect("send create interface model request");
+            .expect("send create endpoint model request");
 
         assert_eq!(response.status(), reqwest::StatusCode::CREATED);
-        let body: serde_json::Value = response.json().await.expect("parse interface model json");
+        let body: serde_json::Value = response.json().await.expect("parse endpoint model json");
         assert_eq!(body["model_name"], "gpt");
 
         server.abort();
     }
 
     #[tokio::test]
-    async fn rejects_duplicate_interface_model_name_without_adding_a_row() {
+    async fn rejects_duplicate_endpoint_model_name_without_adding_a_row() {
         let (addr, server, state) = spawn_admin_app().await;
         let provider = db::create_config(
             &state.db,
@@ -2041,17 +2041,17 @@ mod tests {
                 .await
                 .expect("create provider model");
         }
-        let interface = db::create_interface(&state.db, "Legacy", "all")
+        let endpoint = db::create_interface(&state.db, "Legacy", "all")
             .await
-            .expect("create interface");
-        db::create_interface_model(&state.db, &interface.id, "shared", &provider.id, "model-a")
+            .expect("create endpoint");
+        db::create_endpoint_model(&state.db, &endpoint.id, "shared", &provider.id, "model-a")
             .await
-            .expect("create existing interface model");
+            .expect("create existing endpoint model");
 
         let response = reqwest::Client::new()
             .post(format!(
-                "http://{addr}/api/interfaces/{}/models",
-                interface.id
+                "http://{addr}/api/endpoints/{}/models",
+                endpoint.id
             ))
             .json(&json!({
                 "provider_id": provider.id,
@@ -2060,12 +2060,12 @@ mod tests {
             }))
             .send()
             .await
-            .expect("send duplicate interface model request");
+            .expect("send duplicate endpoint model request");
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
-        let models = db::list_interface_models_by_interface(&state.db, &interface.id)
+        let models = db::list_endpoint_models_by_interface(&state.db, &endpoint.id)
             .await
-            .expect("list interface models");
+            .expect("list endpoint models");
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].upstream_model, "model-a");
 

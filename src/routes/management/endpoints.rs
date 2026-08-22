@@ -4,7 +4,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use prelay_protocol::{CreateInterfaceRequest, InterfaceResponse, UpdateInterfaceRequest};
+use prelay_protocol::{CreateEndpointRequest, EndpointResponse, UpdateEndpointRequest};
 
 use crate::{error::AppError, AppState};
 
@@ -12,13 +12,13 @@ use super::auth::CurrentIdentity;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/interfaces", get(list).post(create))
+        .route("/endpoints", get(list).post(create))
         .route(
-            "/interfaces/:interface_id",
+            "/endpoints/:endpoint_id",
             get(get_one).patch(update).delete(delete_one),
         )
         .route(
-            "/interfaces/:interface_id/regenerate-token",
+            "/endpoints/:endpoint_id/regenerate-token",
             post(regenerate_token),
         )
 }
@@ -26,15 +26,15 @@ pub fn router() -> Router<AppState> {
 async fn list(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
-) -> Result<Json<Vec<InterfaceResponse>>, AppError> {
-    Ok(Json(state.storage.list_interfaces(&identity.id).await?))
+) -> Result<Json<Vec<EndpointResponse>>, AppError> {
+    Ok(Json(state.storage.list_endpoints(&identity.id).await?))
 }
 
 async fn create(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
-    Json(input): Json<CreateInterfaceRequest>,
-) -> Result<(StatusCode, Json<InterfaceResponse>), AppError> {
+    Json(input): Json<CreateEndpointRequest>,
+) -> Result<(StatusCode, Json<EndpointResponse>), AppError> {
     Ok((
         StatusCode::CREATED,
         Json(state.storage.create_interface(&identity.id, input).await?),
@@ -44,12 +44,12 @@ async fn create(
 async fn get_one(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
-    Path(interface_id): Path<String>,
-) -> Result<Json<InterfaceResponse>, AppError> {
+    Path(endpoint_id): Path<String>,
+) -> Result<Json<EndpointResponse>, AppError> {
     Ok(Json(
         state
             .storage
-            .get_interface(&identity.id, &interface_id)
+            .get_interface(&identity.id, &endpoint_id)
             .await?,
     ))
 }
@@ -57,13 +57,13 @@ async fn get_one(
 async fn update(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
-    Path(interface_id): Path<String>,
-    Json(input): Json<UpdateInterfaceRequest>,
-) -> Result<Json<InterfaceResponse>, AppError> {
+    Path(endpoint_id): Path<String>,
+    Json(input): Json<UpdateEndpointRequest>,
+) -> Result<Json<EndpointResponse>, AppError> {
     Ok(Json(
         state
             .storage
-            .update_interface(&identity.id, &interface_id, input)
+            .update_interface(&identity.id, &endpoint_id, input)
             .await?,
     ))
 }
@@ -71,11 +71,11 @@ async fn update(
 async fn delete_one(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
-    Path(interface_id): Path<String>,
+    Path(endpoint_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
     state
         .storage
-        .delete_interface(&identity.id, &interface_id)
+        .delete_interface(&identity.id, &endpoint_id)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -83,12 +83,12 @@ async fn delete_one(
 async fn regenerate_token(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
-    Path(interface_id): Path<String>,
-) -> Result<Json<InterfaceResponse>, AppError> {
+    Path(endpoint_id): Path<String>,
+) -> Result<Json<EndpointResponse>, AppError> {
     Ok(Json(
         state
             .storage
-            .regenerate_interface_token(&identity.id, &interface_id)
+            .regenerate_endpoint_token(&identity.id, &endpoint_id)
             .await?,
     ))
 }
