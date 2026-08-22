@@ -85,6 +85,7 @@ pub(crate) async fn raw_key_ciphertext(
 
 pub(crate) async fn list(
     pool: &SqlitePool,
+    crypto: &KeyCipher,
     identity_id: &str,
 ) -> Result<Vec<ProviderResponse>, StorageError> {
     let ids = sqlx::query_scalar::<_, String>(
@@ -95,13 +96,14 @@ pub(crate) async fn list(
     .await?;
     let mut providers = Vec::with_capacity(ids.len());
     for id in ids {
-        providers.push(get(pool, identity_id, &id).await?);
+        providers.push(get(pool, crypto, identity_id, &id).await?);
     }
     Ok(providers)
 }
 
 pub(crate) async fn get(
     pool: &SqlitePool,
+    crypto: &KeyCipher,
     identity_id: &str,
     provider_id: &str,
 ) -> Result<ProviderResponse, StorageError> {
@@ -133,11 +135,13 @@ pub(crate) async fn get(
         &row.provider_type,
         capabilities.upstream_protocols.as_deref(),
     );
+    let api_key = crypto.decrypt(&row.api_key_ciphertext)?;
     Ok(ProviderResponse {
         id: row.id,
         name: row.name,
         provider_type: row.provider_type,
         base_url: row.base_url,
+        api_key,
         api_key_masked: mask_ciphertext(&row.api_key_ciphertext),
         capabilities,
         upstream_protocols,
@@ -234,7 +238,7 @@ pub(crate) async fn update(
         }
     }
     transaction.commit().await?;
-    get(pool, identity_id, provider_id).await
+    get(pool, crypto, identity_id, provider_id).await
 }
 
 fn validate_model_names(models: &[String]) -> Result<(), StorageError> {
@@ -266,7 +270,7 @@ pub(crate) async fn delete(
     if exists == 0 {
         return Err(StorageError::ProviderNotFound);
     }
-    sqlx::query("DELETE FROM identity_interface_models WHERE provider_id = ?")
+    sqlx::query("DELETE FROM identity_endpoint_models WHERE provider_id = ?")
         .bind(provider_id)
         .execute(&mut *transaction)
         .await?;
