@@ -1,5 +1,5 @@
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use std::{net::SocketAddr, str::FromStr};
+use std::{net::SocketAddr, path::Path, str::FromStr};
 
 use prelay_server::{
     app,
@@ -26,8 +26,18 @@ fn handle_startup_cleanup_failure(error: StorageError) -> anyhow::Error {
     anyhow::anyhow!(STARTUP_CLEANUP_FAILURE)
 }
 
+fn load_environment_file(path: &Path) -> anyhow::Result<()> {
+    match dotenvy::from_path(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.not_found() => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    load_environment_file(Path::new(".env"))?;
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -65,8 +75,10 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    let upstream_policy =
+        prelay_server::upstream::initialize_from_environment().map_err(anyhow::Error::msg)?;
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
+        .timeout(upstream_policy.timeout)
         .build()?;
     let state = AppState {
         db,
@@ -91,8 +103,11 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use std::{
+        ffi::OsString,
         fmt::{self, Write as _},
+        path::PathBuf,
         sync::{Arc, Mutex},
+        time::{SystemTime, UNIX_EPOCH},
     };
 
     use prelay_server::storage::StorageError;
@@ -195,5 +210,61 @@ mod tests {
         assert!(events[0].contains("failure_kind=startup_identity_cleanup"));
         assert!(events[0].contains("failed to delete inactive identities at startup"));
         assert_excludes_storage_error_details(&events[0]);
+    }
+
+    #[test]
+    fn environment_file_loads_values_without_overriding_process_environment() {
+        const KEY: &str = "PRELAY_DOTENV_TEST_VALUE";
+        let _restore = EnvironmentVariableRestore::capture(KEY);
+        let path = temporary_environment_file();
+
+        std::fs::write(&path, format!("{KEY}=from-file\n")).expect("write environment file");
+        std::env::remove_var(KEY);
+        super::load_environment_file(&path).expect("load environment file");
+        assert_eq!(std::env::var(KEY).as_deref(), Ok("from-file"));
+
+        std::env::set_var(KEY, "from-process");
+        super::load_environment_file(&path).expect("reload environment file");
+        assert_eq!(std::env::var(KEY).as_deref(), Ok("from-process"));
+
+        std::fs::remove_file(path).expect("remove environment file");
+    }
+
+    #[test]
+    fn missing_environment_file_does_not_prevent_startup() {
+        let path = temporary_environment_file();
+
+        super::load_environment_file(&path).expect("ignore a missing environment file");
+    }
+
+    fn temporary_environment_file() -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after Unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("prelay-server-{unique}.env"))
+    }
+
+    struct EnvironmentVariableRestore {
+        key: &'static str,
+        original: Option<OsString>,
+    }
+
+    impl EnvironmentVariableRestore {
+        fn capture(key: &'static str) -> Self {
+            Self {
+                key,
+                original: std::env::var_os(key),
+            }
+        }
+    }
+
+    impl Drop for EnvironmentVariableRestore {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
     }
 }
