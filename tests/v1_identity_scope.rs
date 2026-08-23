@@ -80,6 +80,7 @@ async fn create_endpoint_for_url(
             machine_id: machine_id.to_string(),
             account_sid: account_sid.to_string(),
             credential: credential.clone(),
+            display_name: None,
         })
         .expect("serialize identity"),
     )
@@ -187,6 +188,7 @@ async fn protocol_request_writes_identity_scoped_log_and_response_session() {
             machine_id: "machine-b".to_string(),
             account_sid: "S-1-5-21-200".to_string(),
             credential: credential_b.clone(),
+            display_name: None,
         })
         .expect("serialize identity B"),
     )

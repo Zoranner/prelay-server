@@ -20,19 +20,26 @@ pub(crate) async fn register(
     machine_id: &str,
     account_sid: &str,
     credential: &str,
+    display_name: Option<&str>,
 ) -> Result<CreateIdentityResponse, StorageError> {
     validate_device_credential(credential)?;
     let identity_id = Uuid::new_v4().to_string();
     let credential_hash = hash_credential(credential);
     let now = Utc::now().to_rfc3339();
     let result = sqlx::query(
-        "INSERT INTO identities (id, machine_id, account_sid, credential_hash, created_at, last_active_at)\
-         VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO identities (id, machine_id, account_sid, credential_hash, display_name, created_at, last_active_at)\
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&identity_id)
     .bind(machine_id)
     .bind(account_sid)
     .bind(&credential_hash)
+    .bind(
+        display_name
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or_default(),
+    )
     .bind(&now)
     .bind(&now)
     .execute(pool)
@@ -66,6 +73,7 @@ pub(crate) async fn register(
 pub(crate) async fn authenticate(
     pool: &SqlitePool,
     credential: &str,
+    display_name: Option<&str>,
 ) -> Result<Option<AuthenticatedIdentity>, StorageError> {
     let supplied_hash = hash_credential(credential);
     let rows = sqlx::query_as::<_, (String, String)>("SELECT id, credential_hash FROM identities")
@@ -78,11 +86,20 @@ pub(crate) async fn authenticate(
         })
     });
     if let Some(identity) = &identity {
-        sqlx::query("UPDATE identities SET last_active_at = ? WHERE id = ?")
-            .bind(Utc::now().to_rfc3339())
-            .bind(&identity.id)
-            .execute(pool)
-            .await?;
+        if let Some(display_name) = display_name.filter(|value| !value.trim().is_empty()) {
+            sqlx::query("UPDATE identities SET display_name = ?, last_active_at = ? WHERE id = ?")
+                .bind(display_name.trim())
+                .bind(Utc::now().to_rfc3339())
+                .bind(&identity.id)
+                .execute(pool)
+                .await?;
+        } else {
+            sqlx::query("UPDATE identities SET last_active_at = ? WHERE id = ?")
+                .bind(Utc::now().to_rfc3339())
+                .bind(&identity.id)
+                .execute(pool)
+                .await?;
+        }
     }
     Ok(identity)
 }

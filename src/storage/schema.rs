@@ -10,6 +10,7 @@ pub(crate) async fn initialize(pool: &SqlitePool) -> Result<(), StorageError> {
     discard_unscoped_legacy_schema(&mut transaction).await?;
     migrate_interface_schema(&mut transaction).await?;
     create_identity_schema(&mut transaction).await?;
+    upgrade_identity_display_name(&mut transaction).await?;
     upgrade_endpoint_model_candidates(&mut transaction).await?;
     upgrade_request_log_columns(&mut transaction).await?;
     upgrade_response_sessions_primary_key(&mut transaction).await?;
@@ -88,6 +89,7 @@ async fn create_identity_schema(
             machine_id TEXT NOT NULL,\
             account_sid TEXT NOT NULL,\
             credential_hash TEXT NOT NULL,\
+            display_name TEXT NOT NULL DEFAULT '',\
             created_at TEXT NOT NULL,\
             last_active_at TEXT NOT NULL,\
             UNIQUE(machine_id, account_sid)\
@@ -172,6 +174,17 @@ async fn create_identity_schema(
         )",
     ] {
         sqlx::query(statement).execute(&mut **transaction).await?;
+    }
+    Ok(())
+}
+
+async fn upgrade_identity_display_name(
+    transaction: &mut Transaction<'_, Sqlite>,
+) -> Result<(), StorageError> {
+    if !column_exists(transaction, "identities", "display_name").await? {
+        sqlx::query("ALTER TABLE identities ADD COLUMN display_name TEXT NOT NULL DEFAULT ''")
+            .execute(&mut **transaction)
+            .await?;
     }
     Ok(())
 }

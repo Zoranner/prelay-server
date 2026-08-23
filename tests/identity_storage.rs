@@ -94,6 +94,41 @@ async fn identity_credentials_are_hashed_and_provider_keys_are_encrypted() {
 }
 
 #[tokio::test]
+async fn authentication_updates_identity_display_name() {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("create in-memory pool");
+    let storage = Storage::initialize(pool.clone(), MasterKey::from_bytes([0; 32]))
+        .await
+        .expect("initialize storage");
+    let credential = generate_credential();
+    let registered = storage
+        .register_identity_with_display_name(
+            "machine-a",
+            "S-1-5-21-100",
+            &credential,
+            Some("Initial name"),
+        )
+        .await
+        .expect("register identity");
+
+    storage
+        .authenticate_identity_with_display_name(&credential, Some("Updated name"))
+        .await
+        .expect("authenticate credential");
+
+    let display_name =
+        sqlx::query_scalar::<_, String>("SELECT display_name FROM identities WHERE id = ?")
+            .bind(registered.identity_id)
+            .fetch_one(&pool)
+            .await
+            .expect("load display name");
+    assert_eq!(display_name, "Updated name");
+}
+
+#[tokio::test]
 async fn endpoint_model_candidates_allow_same_alias_and_keep_mapping_order() {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)

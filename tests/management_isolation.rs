@@ -65,6 +65,7 @@ async fn register(app: &axum::Router, machine_id: &str, account_sid: &str) -> se
         machine_id: machine_id.to_string(),
         account_sid: account_sid.to_string(),
         credential: credential.clone(),
+        display_name: None,
     };
     let (status, mut response): (StatusCode, serde_json::Value) = request_json(
         app,
@@ -287,6 +288,7 @@ async fn management_identity_registration_rejects_blank_or_short_credentials() {
             machine_id: format!("machine-{credential}"),
             account_sid: "S-1-5-21-100".to_string(),
             credential: credential.to_string(),
+            display_name: None,
         };
         let (status, error): (StatusCode, serde_json::Value) = request_json(
             &app,

@@ -141,14 +141,41 @@ impl Storage {
         account_sid: &str,
         credential: &str,
     ) -> Result<CreateIdentityResponse, StorageError> {
-        identities::register(&self.pool, machine_id, account_sid, credential).await
+        self.register_identity_with_display_name(machine_id, account_sid, credential, None)
+            .await
+    }
+
+    pub async fn register_identity_with_display_name(
+        &self,
+        machine_id: &str,
+        account_sid: &str,
+        credential: &str,
+        display_name: Option<&str>,
+    ) -> Result<CreateIdentityResponse, StorageError> {
+        identities::register(
+            &self.pool,
+            machine_id,
+            account_sid,
+            credential,
+            display_name,
+        )
+        .await
     }
 
     pub async fn authenticate_identity(
         &self,
         credential: &str,
     ) -> Result<Option<AuthenticatedIdentity>, StorageError> {
-        identities::authenticate(&self.pool, credential).await
+        self.authenticate_identity_with_display_name(credential, None)
+            .await
+    }
+
+    pub async fn authenticate_identity_with_display_name(
+        &self,
+        credential: &str,
+        display_name: Option<&str>,
+    ) -> Result<Option<AuthenticatedIdentity>, StorageError> {
+        identities::authenticate(&self.pool, credential, display_name).await
     }
 
     pub async fn rotate_identity_credential(
