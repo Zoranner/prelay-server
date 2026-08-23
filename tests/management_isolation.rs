@@ -126,6 +126,63 @@ async fn seed_request_log(db: &SqlitePool, seed: RequestLogSeed<'_>) {
 }
 
 #[tokio::test]
+async fn cache_rate_uses_normalized_total_input_tokens() {
+    let state = test_state().await;
+    let db = state.db.clone();
+    let app = app::router(state).await.expect("build app");
+    let identity = register(&app, "cache-machine", "S-1-5-21-300").await;
+    let credential = identity["credential"].as_str().expect("credential");
+    let identity_id = identity["identity_id"].as_str().expect("identity id");
+
+    sqlx::query(
+        "INSERT INTO identity_request_logs (\
+            id, identity_id, created_at, protocol_in, protocol_upstream, status, http_status, \
+            input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, latency_ms\
+        ) VALUES \
+            ('openai-cache', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'responses', 'responses', 'success', 200, 3, 1, 2, 0, 10), \
+            ('anthropic-cache', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'anthropic_messages', 'anthropic_messages', 'success', 200, 3, 1, 2, 1, 10), \
+            ('unknown-cache', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'unknown', 'future_protocol', 'success', 200, 5, 1, 2, 1, 10)",
+    )
+    .bind(identity_id)
+    .bind(identity_id)
+    .bind(identity_id)
+    .execute(&db)
+    .await
+    .expect("seed cache logs");
+
+    let (status, overview): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "GET",
+        "/api/stats/overview?range=today",
+        Some(credential),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(overview["cache_read_tokens"], 6);
+    assert_eq!(overview["total_input_tokens"], 17);
+
+    let (status, timeline): (StatusCode, Vec<serde_json::Value>) = request_json(
+        &app,
+        "GET",
+        "/api/stats/timeline?range=today",
+        Some(credential),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        timeline
+            .iter()
+            .map(|point| point["total_input_tokens"]
+                .as_i64()
+                .expect("total input tokens"))
+            .sum::<i64>(),
+        17
+    );
+}
+
+#[tokio::test]
 async fn management_credential_cannot_read_or_mutate_another_identity_provider() {
     let app = app::router(test_state().await).await.expect("build app");
     let identity_a = register(&app, "machine-a", "S-1-5-21-100").await;

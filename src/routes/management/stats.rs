@@ -161,6 +161,21 @@ fn range_clause(has_bounds: bool) -> &'static str {
     }
 }
 
+fn total_input_tokens_sum_sql(alias: &str) -> String {
+    let prefix = if alias.is_empty() {
+        String::new()
+    } else {
+        format!("{alias}.")
+    };
+    format!(
+        "COALESCE(SUM(CASE WHEN {prefix}protocol_upstream IN ('responses', 'chat_completions') \
+         AND COALESCE({prefix}input_tokens, 0) >= COALESCE({prefix}cache_read_tokens, 0) \
+         THEN COALESCE({prefix}input_tokens, 0) \
+         ELSE COALESCE({prefix}input_tokens, 0) + COALESCE({prefix}cache_read_tokens, 0) END \
+         + COALESCE({prefix}cache_write_tokens, 0)), 0) AS total_input_tokens"
+    )
+}
+
 async fn timeline(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
@@ -199,29 +214,33 @@ async fn timeline(
     };
     let start = bounds.start_sql();
     let end = bounds.end_sql();
+    let total_input_tokens = total_input_tokens_sum_sql("log");
     let sql = match range.timeline_granularity() {
         TimelineGranularity::Hour => {
-            "WITH RECURSIVE buckets(bucket) AS ( \
+            format!("WITH RECURSIVE buckets(bucket) AS ( \
                  SELECT ? \
                  UNION ALL \
                  SELECT datetime(bucket, '+1 hour') FROM buckets WHERE datetime(bucket, '+1 hour') < ? \
              ) \
              SELECT buckets.bucket, COALESCE(SUM(log.input_tokens), 0) AS input_tokens, \
+                 {total_input_tokens}, \
                  COALESCE(SUM(log.output_tokens), 0) AS output_tokens, \
                  COALESCE(SUM(log.cache_read_tokens), 0) AS cache_read_tokens, \
                  COALESCE(SUM(log.cache_write_tokens), 0) AS cache_write_tokens \
              FROM buckets LEFT JOIN identity_request_logs AS log \
                  ON log.identity_id = ? AND datetime(log.created_at, '+8 hours') >= buckets.bucket \
                  AND datetime(log.created_at, '+8 hours') < datetime(buckets.bucket, '+1 hour') \
-             GROUP BY buckets.bucket ORDER BY buckets.bucket"
+             GROUP BY buckets.bucket ORDER BY buckets.bucket")
         }
         TimelineGranularity::Day => {
-            "WITH RECURSIVE buckets(bucket) AS ( \
+            format!(
+                "WITH RECURSIVE buckets(bucket) AS ( \
                  SELECT date(?) \
                  UNION ALL \
                  SELECT date(bucket, '+1 day') FROM buckets WHERE date(bucket, '+1 day') < date(?) \
              ) \
              SELECT buckets.bucket, COALESCE(SUM(log.input_tokens), 0) AS input_tokens, \
+                 {total_input_tokens}, \
                  COALESCE(SUM(log.output_tokens), 0) AS output_tokens, \
                  COALESCE(SUM(log.cache_read_tokens), 0) AS cache_read_tokens, \
                  COALESCE(SUM(log.cache_write_tokens), 0) AS cache_write_tokens \
@@ -229,24 +248,26 @@ async fn timeline(
                  ON log.identity_id = ? AND datetime(log.created_at, '+8 hours') >= buckets.bucket \
                  AND datetime(log.created_at, '+8 hours') < datetime(buckets.bucket, '+1 day') \
              GROUP BY buckets.bucket ORDER BY buckets.bucket"
+            )
         }
         TimelineGranularity::Month => {
-            "WITH RECURSIVE buckets(bucket) AS ( \
+            format!("WITH RECURSIVE buckets(bucket) AS ( \
                  SELECT strftime('%Y-%m-01', ?) \
                  UNION ALL \
                  SELECT date(bucket, '+1 month') FROM buckets WHERE date(bucket, '+1 month') < date(?) \
              ) \
              SELECT buckets.bucket, COALESCE(SUM(log.input_tokens), 0) AS input_tokens, \
+                 {total_input_tokens}, \
                  COALESCE(SUM(log.output_tokens), 0) AS output_tokens, \
                  COALESCE(SUM(log.cache_read_tokens), 0) AS cache_read_tokens, \
                  COALESCE(SUM(log.cache_write_tokens), 0) AS cache_write_tokens \
              FROM buckets LEFT JOIN identity_request_logs AS log \
                  ON log.identity_id = ? AND datetime(log.created_at, '+8 hours') >= buckets.bucket \
                  AND datetime(log.created_at, '+8 hours') < date(buckets.bucket, '+1 month') \
-             GROUP BY buckets.bucket ORDER BY buckets.bucket"
+             GROUP BY buckets.bucket ORDER BY buckets.bucket")
         }
     };
-    let rows = sqlx::query_as::<_, TokenUsageTimelineRow>(sql)
+    let rows = sqlx::query_as::<_, TokenUsageTimelineRow>(&sql)
         .bind(start)
         .bind(end)
         .bind(identity.id)
@@ -261,11 +282,13 @@ async fn overview(
     Query(query): Query<StatsQuery>,
 ) -> Result<Json<StatsOverview>, AppError> {
     let bounds = query.range().bounds(beijing_now());
+    let total_input_tokens = total_input_tokens_sum_sql("");
     let sql = format!(
         "SELECT COUNT(*) AS total_requests, \
          COALESCE(SUM(status = 'success'), 0) AS successful_requests, \
          COALESCE(SUM(status != 'success'), 0) AS failed_requests, \
          COALESCE(SUM(input_tokens), 0) AS input_tokens, \
+         {total_input_tokens}, \
          COALESCE(SUM(output_tokens), 0) AS output_tokens, \
          COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens, \
          COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens, \
@@ -360,6 +383,7 @@ struct StatsOverviewRow {
     successful_requests: i64,
     failed_requests: i64,
     input_tokens: i64,
+    total_input_tokens: i64,
     output_tokens: i64,
     cache_read_tokens: i64,
     cache_write_tokens: i64,
@@ -370,6 +394,7 @@ struct StatsOverviewRow {
 struct TokenUsageTimelineRow {
     bucket: String,
     input_tokens: i64,
+    total_input_tokens: i64,
     output_tokens: i64,
     cache_read_tokens: i64,
     cache_write_tokens: i64,
@@ -432,6 +457,7 @@ impl From<StatsOverviewRow> for StatsOverview {
             successful_requests: value.successful_requests,
             failed_requests: value.failed_requests,
             input_tokens: value.input_tokens,
+            total_input_tokens: value.total_input_tokens,
             output_tokens: value.output_tokens,
             cache_read_tokens: value.cache_read_tokens,
             cache_write_tokens: value.cache_write_tokens,
@@ -445,6 +471,7 @@ impl From<TokenUsageTimelineRow> for TokenUsageTimelinePoint {
         Self {
             bucket: value.bucket,
             input_tokens: value.input_tokens,
+            total_input_tokens: value.total_input_tokens,
             output_tokens: value.output_tokens,
             cache_read_tokens: value.cache_read_tokens,
             cache_write_tokens: value.cache_write_tokens,
