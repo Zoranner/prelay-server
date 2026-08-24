@@ -26,18 +26,20 @@ pub(crate) async fn create(
     identity_id: &str,
     input: CreateEndpointRequest,
 ) -> Result<EndpointResponse, StorageError> {
+    let name = input.name.trim().to_string();
     let models = normalize_models(input.models)?;
     let endpoint_id = Uuid::new_v4().to_string();
     let created_at = Utc::now().to_rfc3339();
     let protocol = input.protocol.unwrap_or_else(|| "all".to_string());
     let transaction = db.begin().await?;
     ensure_identity_exists(&transaction, identity_id).await?;
+    ensure_name_available(&transaction, identity_id, &name, None).await?;
     validate_models(&transaction, identity_id, &models).await?;
 
     identity_endpoint_configs::ActiveModel {
         id: Set(endpoint_id.clone()),
         identity_id: Set(identity_id.to_string()),
-        name: Set(input.name.trim().to_string()),
+        name: Set(name),
         protocol: Set(protocol.trim().to_string()),
         token: Set(generate_credential()),
         created_at: Set(created_at.clone()),
@@ -81,15 +83,22 @@ pub(crate) async fn update(
     input: UpdateEndpointRequest,
 ) -> Result<EndpointResponse, StorageError> {
     let current = find_endpoint(db, identity_id, endpoint_id).await?;
+    let name = input
+        .name
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or(&current.name)
+        .to_string();
     let models = input.models.map(normalize_models).transpose()?;
     let transaction = db.begin().await?;
+    ensure_name_available(&transaction, identity_id, &name, Some(endpoint_id)).await?;
     if let Some(models) = &models {
         validate_models(&transaction, identity_id, models).await?;
     }
 
     let mut active = current.into_active_model();
-    if let Some(name) = input.name {
-        active.name = Set(name.trim().to_string());
+    if input.name.is_some() {
+        active.name = Set(name);
     }
     if let Some(protocol) = input.protocol {
         active.protocol = Set(protocol.trim().to_string());
@@ -188,6 +197,26 @@ async fn ensure_identity_exists(
         .is_none()
     {
         return Err(StorageError::IdentityNotFound);
+    }
+    Ok(())
+}
+
+async fn ensure_name_available(
+    transaction: &DatabaseTransaction,
+    identity_id: &str,
+    name: &str,
+    current_endpoint_id: Option<&str>,
+) -> Result<(), StorageError> {
+    let mut query = identity_endpoint_configs::Entity::find()
+        .filter(identity_endpoint_configs::Column::IdentityId.eq(identity_id))
+        .filter(identity_endpoint_configs::Column::Name.eq(name));
+    if let Some(current_endpoint_id) = current_endpoint_id {
+        query = query.filter(identity_endpoint_configs::Column::Id.ne(current_endpoint_id));
+    }
+    if query.one(transaction).await?.is_some() {
+        return Err(StorageError::ValidationFailed(
+            "endpoint name already exists".to_string(),
+        ));
     }
     Ok(())
 }

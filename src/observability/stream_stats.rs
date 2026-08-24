@@ -137,9 +137,6 @@ impl StreamRecordState {
                     empty: Some(false),
                     completed: None,
                     final_usage_seen: None,
-                    stream_error: None,
-                    upstream_request_id: self.upstream_request_id.clone(),
-                    upstream_error_body_excerpt: None,
                 });
             }
             Err(error) => {
@@ -153,9 +150,6 @@ impl StreamRecordState {
                     empty: Some(false),
                     completed: Some(false),
                     final_usage_seen: Some(false),
-                    stream_error: Some(error.to_string()),
-                    upstream_request_id: self.upstream_request_id.clone(),
-                    upstream_error_body_excerpt: None,
                 });
             }
         }
@@ -181,9 +175,6 @@ impl StreamRecordState {
             empty: Some(false),
             completed: Some(completed),
             final_usage_seen: Some(snapshot.final_usage_seen),
-            stream_error: None,
-            upstream_request_id: self.upstream_request_id.clone(),
-            upstream_error_body_excerpt: None,
         });
         let update = StreamRequestLogUpdate {
             status: "success".to_string(),
@@ -227,9 +218,6 @@ impl StreamRecordState {
                 empty: Some(false),
                 completed: Some(snapshot.completed),
                 final_usage_seen: Some(true),
-                stream_error: None,
-                upstream_request_id: self.upstream_request_id.clone(),
-                upstream_error_body_excerpt: None,
             }),
         };
         update_stream_log(&self.storage, &self.identity_id, &self.log_id, update).await;
@@ -248,9 +236,6 @@ impl StreamRecordState {
             empty: Some(true),
             completed: Some(false),
             final_usage_seen: Some(false),
-            stream_error: None,
-            upstream_request_id: self.upstream_request_id.clone(),
-            upstream_error_body_excerpt: None,
         });
         if insert_stream_log_with_id(&self.storage, &self.identity_id, &self.log_id, log)
             .await
@@ -269,9 +254,6 @@ impl StreamRecordState {
             empty: Some(false),
             completed: Some(false),
             final_usage_seen: Some(snapshot.final_usage_seen),
-            stream_error: Some(message.clone()),
-            upstream_request_id: self.upstream_request_id.clone(),
-            upstream_error_body_excerpt: None,
         });
         let update = StreamRequestLogUpdate {
             status: "failed".to_string(),
@@ -299,7 +281,9 @@ impl StreamRecordState {
     }
 
     fn metadata(&self, update: StreamMetadataUpdate) -> Option<String> {
-        update_stream_metadata(self.base_metadata_json.as_deref(), &update).ok()
+        update_stream_metadata(self.base_metadata_json.as_deref(), &update)
+            .ok()
+            .flatten()
     }
 }
 
@@ -398,7 +382,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn record_stream_updates_usage_and_tool_count_on_eof() {
+    async fn record_stream_updates_usage_and_tool_count_without_normal_stream_metadata() {
         let (storage, identity_id) = test_storage().await;
         let metadata_json = test_metadata();
         let stats = Arc::new(Mutex::new(StreamStatsSnapshot {
@@ -439,8 +423,11 @@ mod tests {
         assert_eq!(row.output_tokens, Some(7));
         assert_eq!(row.cache_read_tokens, Some(3));
         assert_eq!(row.cache_write_tokens, Some(2));
-        assert_eq!(metadata["stream"]["completed"], true);
-        assert_eq!(metadata["stream"]["final_usage_seen"], true);
+        assert!(metadata["stream"].is_null());
+        assert_eq!(
+            metadata["diagnostics"][0]["code"],
+            "responses.content.non_text"
+        );
     }
 
     #[tokio::test]
@@ -541,15 +528,17 @@ mod tests {
     }
 
     fn test_metadata() -> String {
-        build_request_metadata(
+        build_request_metadata(vec![crate::bridge::diagnostics::BridgeDiagnostic::new(
             "responses",
-            "responses",
-            crate::providers::spec::UpstreamProtocol::ChatCompletions,
-            "coder",
-            "deepseek-chat",
-            Vec::new(),
-        )
+            "/input/0/content",
+            crate::bridge::diagnostics::DiagnosticAction::Textified,
+            crate::bridge::diagnostics::DiagnosticSeverity::Info,
+            "responses.content.non_text",
+            "非文本 content 已转为 JSON 字符串",
+            Some("object".to_string()),
+        )])
         .expect("build metadata")
+        .expect("metadata for diagnostic")
     }
 
     fn test_log(metadata_json: String) -> RequestLogInsert {

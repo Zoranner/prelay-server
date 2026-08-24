@@ -50,10 +50,7 @@ async fn download(
             .map_err(|_| unavailable_error())?;
 
     Response::builder()
-        .header(
-            header::CONTENT_TYPE,
-            "application/octet-stream",
-        )
+        .header(header::CONTENT_TYPE, "application/octet-stream")
         .header(header::CONTENT_LENGTH, metadata.len())
         .header(header::CONTENT_DISPOSITION, content_disposition)
         .body(Body::from_stream(ReaderStream::new(file)))

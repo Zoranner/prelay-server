@@ -100,14 +100,7 @@ async fn create_chat_completion_with_candidate(
 ) -> Result<Response, AppError> {
     let provider = resolved.provider;
     let model_upstream = resolved.model_upstream;
-    let metadata_json = build_request_metadata(
-        "chat_completions",
-        "chat_completions",
-        resolved.upstream_protocol,
-        &model,
-        &model_upstream,
-        Vec::new(),
-    )?;
+    let metadata_json = build_request_metadata(Vec::new())?;
 
     payload["model"] = Value::String(model_upstream.clone());
     let upstream_base_url = provider_upstream_base_url(&provider, resolved.upstream_protocol);
@@ -162,7 +155,7 @@ async fn create_chat_completion_with_candidate(
                     first_token_ms: None,
                     tool_call_count: None,
                     upstream_request_id: observability.request_id,
-                    metadata_json: Some(metadata_json.clone()),
+                    metadata_json: metadata_json.clone(),
                 },
             )
             .await?;
@@ -199,7 +192,7 @@ async fn create_chat_completion_with_candidate(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id,
-            metadata_json: Some(metadata_json.clone()),
+            metadata_json: metadata_json.clone(),
         };
         let body = Body::from_stream(record_first_chunk(
             state.storage.clone(),
@@ -270,7 +263,7 @@ async fn create_chat_completion_with_candidate(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id,
-                metadata_json: Some(metadata_json),
+                metadata_json,
             },
         )
         .await?;

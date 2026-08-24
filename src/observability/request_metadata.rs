@@ -1,37 +1,23 @@
-use serde::Serialize;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
 
 use crate::bridge::diagnostics::BridgeDiagnostic;
 use crate::error::AppError;
-use crate::providers::spec::UpstreamProtocol;
 
-#[derive(Debug, Clone, Default)]
-pub struct RequestMetadataBuilder {
-    protocol_in: Option<String>,
-    protocol_out: Option<String>,
-    protocol_upstream: Option<String>,
-    model_requested: Option<String>,
-    model_upstream: Option<String>,
-    diagnostics: Vec<BridgeDiagnostic>,
-}
+const METADATA_SCHEMA: &str = "provider-relay.request_metadata.v2";
+const DIAGNOSTIC_PATH_SAMPLE_LIMIT: usize = 3;
 
 pub fn build_request_metadata(
-    protocol_in: &str,
-    protocol_out: &str,
-    protocol_upstream: UpstreamProtocol,
-    model_requested: &str,
-    model_upstream: &str,
     diagnostics: Vec<BridgeDiagnostic>,
-) -> Result<String, AppError> {
-    RequestMetadataBuilder::new()
-        .protocol_in(protocol_in)
-        .protocol_out(protocol_out)
-        .protocol_upstream(upstream_protocol_label(protocol_upstream))
-        .model_requested(model_requested)
-        .model_upstream(model_upstream)
-        .diagnostics(diagnostics)
-        .into_json_string()
-        .map_err(|error| AppError::Internal(error.into()))
+) -> Result<Option<String>, AppError> {
+    let diagnostics = compact_diagnostics(diagnostics);
+    if diagnostics.is_empty() {
+        return Ok(None);
+    }
+
+    serialize_metadata(RequestMetadata {
+        diagnostics,
+        ..RequestMetadata::new()
+    })
 }
 
 #[derive(Debug, Clone, Default)]
@@ -39,192 +25,125 @@ pub struct StreamMetadataUpdate {
     pub empty: Option<bool>,
     pub completed: Option<bool>,
     pub final_usage_seen: Option<bool>,
-    pub stream_error: Option<String>,
-    pub upstream_request_id: Option<String>,
-    pub upstream_error_body_excerpt: Option<String>,
 }
 
 pub fn update_stream_metadata(
     metadata_json: Option<&str>,
     update: &StreamMetadataUpdate,
-) -> Result<String, AppError> {
+) -> Result<Option<String>, AppError> {
     let mut metadata = match metadata_json.filter(|metadata| !metadata.trim().is_empty()) {
-        Some(raw_metadata) => match serde_json::from_str::<Value>(raw_metadata) {
+        Some(raw_metadata) => match serde_json::from_str(raw_metadata) {
             Ok(metadata) => metadata,
-            Err(error) => serde_json::json!({
-                "schema": "provider-relay.request_metadata.v1",
-                "bridge": {},
-                "diagnostics": [],
-                "stream": {},
-                "upstream": {},
-                "metadata_parse_error": {
-                    "raw": raw_metadata,
-                    "message": error.to_string()
-                }
-            }),
+            Err(_) => RequestMetadata {
+                metadata_parse_error: true,
+                ..RequestMetadata::new()
+            },
         },
-        None => serde_json::json!({
-            "schema": "provider-relay.request_metadata.v1",
-            "bridge": {},
-            "diagnostics": [],
-            "stream": {},
-            "upstream": {}
-        }),
+        None => RequestMetadata::new(),
     };
 
-    if !metadata.is_object() {
-        metadata = serde_json::json!({
-            "schema": "provider-relay.request_metadata.v1",
-            "bridge": {},
-            "diagnostics": [],
-            "stream": {},
-            "upstream": {}
+    let stream_is_anomalous = update.empty == Some(true)
+        || update.completed == Some(false)
+        || update.final_usage_seen == Some(false);
+    if !stream_is_anomalous && metadata.diagnostics.is_empty() && !metadata.metadata_parse_error {
+        return Ok(None);
+    }
+
+    if stream_is_anomalous {
+        metadata.stream = Some(StreamMetadata {
+            empty: update.empty,
+            completed: update.completed,
+            final_usage_seen: update.final_usage_seen,
         });
     }
 
-    ensure_object_field(&mut metadata, "stream");
-    ensure_object_field(&mut metadata, "upstream");
-
-    if let Some(stream) = metadata.get_mut("stream").and_then(Value::as_object_mut) {
-        if let Some(empty) = update.empty {
-            stream.insert("empty".to_string(), Value::Bool(empty));
-        }
-        if let Some(completed) = update.completed {
-            stream.insert("completed".to_string(), Value::Bool(completed));
-        }
-        if let Some(final_usage_seen) = update.final_usage_seen {
-            stream.insert(
-                "final_usage_seen".to_string(),
-                Value::Bool(final_usage_seen),
-            );
-        }
-        if let Some(stream_error) = &update.stream_error {
-            stream.insert(
-                "stream_error".to_string(),
-                Value::String(stream_error.clone()),
-            );
-        }
-    }
-
-    if let Some(upstream) = metadata.get_mut("upstream").and_then(Value::as_object_mut) {
-        if let Some(request_id) = &update.upstream_request_id {
-            upstream.insert("request_id".to_string(), Value::String(request_id.clone()));
-        }
-        if let Some(error_body_excerpt) = &update.upstream_error_body_excerpt {
-            upstream.insert(
-                "error_body_excerpt".to_string(),
-                Value::String(error_body_excerpt.clone()),
-            );
-        }
-    }
-
-    serde_json::to_string(&metadata).map_err(|error| AppError::Internal(error.into()))
+    serialize_metadata(metadata)
 }
 
-fn ensure_object_field(metadata: &mut Value, field: &str) {
-    if !metadata.get(field).is_some_and(Value::is_object) {
-        metadata[field] = serde_json::json!({});
+fn compact_diagnostics(diagnostics: Vec<BridgeDiagnostic>) -> Vec<DiagnosticMetadata> {
+    let mut summaries = Vec::<DiagnosticMetadata>::new();
+    for diagnostic in diagnostics {
+        if let Some(summary) = summaries.iter_mut().find(|summary| {
+            summary.phase == diagnostic.phase
+                && summary.protocol == diagnostic.protocol
+                && summary.action == diagnostic.action
+                && summary.severity == diagnostic.severity
+                && summary.code == diagnostic.code
+                && summary.message == diagnostic.message
+                && summary.original_kind == diagnostic.original_kind
+        }) {
+            summary.count += 1;
+            if summary.paths.len() < DIAGNOSTIC_PATH_SAMPLE_LIMIT {
+                summary.paths.push(diagnostic.path);
+            }
+            continue;
+        }
+
+        summaries.push(DiagnosticMetadata {
+            phase: diagnostic.phase,
+            protocol: diagnostic.protocol,
+            action: diagnostic.action,
+            severity: diagnostic.severity,
+            code: diagnostic.code,
+            message: diagnostic.message,
+            original_kind: diagnostic.original_kind,
+            count: 1,
+            paths: vec![diagnostic.path],
+        });
     }
+    summaries
 }
 
-fn upstream_protocol_label(protocol: UpstreamProtocol) -> &'static str {
-    match protocol {
-        UpstreamProtocol::Responses => "responses",
-        UpstreamProtocol::ChatCompletions => "chat_completions",
-        UpstreamProtocol::AnthropicMessages => "anthropic_messages",
-    }
+fn serialize_metadata(metadata: RequestMetadata) -> Result<Option<String>, AppError> {
+    serde_json::to_string(&metadata)
+        .map(Some)
+        .map_err(|error| AppError::Internal(error.into()))
 }
 
-impl RequestMetadataBuilder {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn protocol_in(mut self, value: impl Into<String>) -> Self {
-        self.protocol_in = Some(value.into());
-        self
-    }
-
-    pub fn protocol_out(mut self, value: impl Into<String>) -> Self {
-        self.protocol_out = Some(value.into());
-        self
-    }
-
-    pub fn protocol_upstream(mut self, value: impl Into<String>) -> Self {
-        self.protocol_upstream = Some(value.into());
-        self
-    }
-
-    pub fn model_requested(mut self, value: impl Into<String>) -> Self {
-        self.model_requested = Some(value.into());
-        self
-    }
-
-    pub fn model_upstream(mut self, value: impl Into<String>) -> Self {
-        self.model_upstream = Some(value.into());
-        self
-    }
-
-    pub fn diagnostics(mut self, diagnostics: Vec<BridgeDiagnostic>) -> Self {
-        self.diagnostics = diagnostics;
-        self
-    }
-
-    pub fn into_json_string(self) -> Result<String, serde_json::Error> {
-        serde_json::to_string(&RequestMetadata {
-            schema: "provider-relay.request_metadata.v1",
-            bridge: BridgeMetadata {
-                protocol_in: self.protocol_in,
-                protocol_out: self.protocol_out,
-                protocol_upstream: self.protocol_upstream,
-                model_requested: self.model_requested,
-                model_upstream: self.model_upstream,
-            },
-            diagnostics: self.diagnostics,
-            stream: StreamMetadata {
-                empty: None,
-                completed: None,
-                final_usage_seen: None,
-                stream_error: None,
-            },
-            upstream: UpstreamMetadata {
-                request_id: None,
-                error_body_excerpt: None,
-            },
-        })
-    }
-}
-
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct RequestMetadata {
-    schema: &'static str,
-    bridge: BridgeMetadata,
-    diagnostics: Vec<BridgeDiagnostic>,
-    stream: StreamMetadata,
-    upstream: UpstreamMetadata,
+    schema: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    diagnostics: Vec<DiagnosticMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stream: Option<StreamMetadata>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    metadata_parse_error: bool,
 }
 
-#[derive(Debug, Serialize)]
-struct BridgeMetadata {
-    protocol_in: Option<String>,
-    protocol_out: Option<String>,
-    protocol_upstream: Option<String>,
-    model_requested: Option<String>,
-    model_upstream: Option<String>,
+impl RequestMetadata {
+    fn new() -> Self {
+        Self {
+            schema: METADATA_SCHEMA.to_string(),
+            diagnostics: Vec::new(),
+            stream: None,
+            metadata_parse_error: false,
+        }
+    }
 }
 
-#[derive(Debug, Serialize)]
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 struct StreamMetadata {
     empty: Option<bool>,
     completed: Option<bool>,
     final_usage_seen: Option<bool>,
-    stream_error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct UpstreamMetadata {
-    request_id: Option<String>,
-    error_body_excerpt: Option<String>,
+#[derive(Debug, Deserialize, Serialize)]
+struct DiagnosticMetadata {
+    phase: crate::bridge::diagnostics::DiagnosticPhase,
+    protocol: String,
+    action: crate::bridge::diagnostics::DiagnosticAction,
+    severity: crate::bridge::diagnostics::DiagnosticSeverity,
+    code: String,
+    message: String,
+    original_kind: Option<String>,
+    count: usize,
+    paths: Vec<String>,
 }
 
 #[cfg(test)]
@@ -234,98 +153,73 @@ mod tests {
         observability::request_metadata::{
             build_request_metadata, update_stream_metadata, StreamMetadataUpdate,
         },
-        providers::spec::UpstreamProtocol,
     };
 
     #[test]
-    fn builds_request_metadata_without_user_content() {
-        let metadata = build_request_metadata(
-            "responses",
-            "responses",
-            UpstreamProtocol::ChatCompletions,
-            "coder",
-            "deepseek-chat",
-            vec![BridgeDiagnostic::new(
+    fn omits_metadata_without_diagnostics() {
+        let metadata = build_request_metadata(Vec::new()).expect("serialize request metadata");
+
+        assert!(metadata.is_none());
+    }
+
+    #[test]
+    fn aggregates_repeated_diagnostics_and_limits_path_samples() {
+        let diagnostic = |path| {
+            BridgeDiagnostic::new(
                 "responses",
-                "/input/0/role",
-                DiagnosticAction::Mapped,
-                DiagnosticSeverity::Warning,
-                "responses.role.unknown",
-                "未知 role 已映射为 user",
-                Some("planner".to_string()),
-            )],
-        )
-        .expect("serialize request metadata");
+                path,
+                DiagnosticAction::Textified,
+                DiagnosticSeverity::Info,
+                "responses.content.non_text",
+                "非文本 content 已转为 JSON 字符串",
+                Some("object".to_string()),
+            )
+        };
+        let metadata = build_request_metadata(vec![
+            diagnostic("/input/0/content"),
+            diagnostic("/input/1/content"),
+            diagnostic("/input/2/content"),
+            diagnostic("/input/3/content"),
+        ])
+        .expect("serialize request metadata")
+        .expect("metadata for diagnostics");
 
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&metadata).expect("parse metadata"),
             serde_json::json!({
-                "schema": "provider-relay.request_metadata.v1",
-                "bridge": {
-                    "protocol_in": "responses",
-                    "protocol_out": "responses",
-                    "protocol_upstream": "chat_completions",
-                    "model_requested": "coder",
-                    "model_upstream": "deepseek-chat"
-                },
-                "diagnostics": [
-                    {
-                        "phase": "decode",
-                        "protocol": "responses",
-                        "path": "/input/0/role",
-                        "action": "mapped",
-                        "severity": "warning",
-                        "code": "responses.role.unknown",
-                        "message": "未知 role 已映射为 user",
-                        "original_kind": "planner"
-                    }
-                ],
-                "stream": {
-                    "empty": null,
-                    "completed": null,
-                    "final_usage_seen": null,
-                    "stream_error": null
-                },
-                "upstream": {
-                    "request_id": null,
-                    "error_body_excerpt": null
-                }
+                "schema": "provider-relay.request_metadata.v2",
+                "diagnostics": [{
+                    "phase": "decode",
+                    "protocol": "responses",
+                    "action": "textified",
+                    "severity": "info",
+                    "code": "responses.content.non_text",
+                    "message": "非文本 content 已转为 JSON 字符串",
+                    "original_kind": "object",
+                    "count": 4,
+                    "paths": [
+                        "/input/0/content",
+                        "/input/1/content",
+                        "/input/2/content"
+                    ]
+                }]
             })
         );
     }
 
     #[test]
-    fn updates_stream_metadata_without_losing_bridge_fields() {
-        let metadata = build_request_metadata(
-            "responses",
-            "responses",
-            UpstreamProtocol::ChatCompletions,
-            "coder",
-            "deepseek-chat",
-            Vec::new(),
-        )
-        .expect("serialize request metadata");
-
+    fn omits_metadata_for_completed_stream_without_diagnostics() {
         let updated = update_stream_metadata(
-            Some(&metadata),
+            None,
             &StreamMetadataUpdate {
                 empty: Some(false),
                 completed: Some(true),
                 final_usage_seen: Some(true),
-                stream_error: None,
-                upstream_request_id: Some("req_123".to_string()),
-                upstream_error_body_excerpt: None,
             },
         )
         .expect("update metadata");
-        let metadata: serde_json::Value =
-            serde_json::from_str(&updated).expect("parse updated metadata");
 
-        assert_eq!(metadata["bridge"]["model_requested"], "coder");
-        assert_eq!(metadata["stream"]["empty"], false);
-        assert_eq!(metadata["stream"]["completed"], true);
-        assert_eq!(metadata["stream"]["final_usage_seen"], true);
-        assert_eq!(metadata["upstream"]["request_id"], "req_123");
+        assert!(updated.is_none());
     }
 
     #[test]
@@ -336,20 +230,16 @@ mod tests {
                 empty: Some(false),
                 completed: Some(true),
                 final_usage_seen: Some(false),
-                stream_error: None,
-                upstream_request_id: Some("req_bad_metadata".to_string()),
-                upstream_error_body_excerpt: None,
             },
         )
-        .expect("update invalid metadata");
+        .expect("update invalid metadata")
+        .expect("metadata for abnormal stream");
         let metadata: serde_json::Value =
             serde_json::from_str(&updated).expect("parse updated metadata");
 
         assert_eq!(metadata["stream"]["empty"], false);
         assert_eq!(metadata["stream"]["completed"], true);
         assert_eq!(metadata["stream"]["final_usage_seen"], false);
-        assert_eq!(metadata["upstream"]["request_id"], "req_bad_metadata");
-        assert_eq!(metadata["metadata_parse_error"]["raw"], "{invalid metadata");
-        assert!(metadata["metadata_parse_error"]["message"].is_string());
+        assert_eq!(metadata["metadata_parse_error"], true);
     }
 }

@@ -41,7 +41,7 @@ struct AnthropicMessageRequestContext {
     endpoint_name: String,
     model_requested: String,
     is_streaming: bool,
-    metadata_json: String,
+    metadata_json: Option<String>,
     started_at: std::time::Instant,
 }
 
@@ -136,14 +136,7 @@ async fn create_message_with_candidate(
     let provider = resolved.provider;
     let upstream_protocol = resolved.upstream_protocol;
     let model_upstream = resolved.model_upstream;
-    let metadata_json = build_request_metadata(
-        "anthropic_messages",
-        "anthropic_messages",
-        upstream_protocol,
-        &model_requested,
-        &model_upstream,
-        diagnostics,
-    )?;
+    let metadata_json = build_request_metadata(diagnostics)?;
     let mut upstream_payload = original_payload.clone();
     upstream_payload["model"] = Value::String(model_upstream.clone());
     let mut request = request;
@@ -215,7 +208,7 @@ async fn create_message_with_candidate(
                     first_token_ms: None,
                     tool_call_count: None,
                     upstream_request_id: None,
-                    metadata_json: Some(context.metadata_json.clone()),
+                    metadata_json: context.metadata_json.clone(),
                 },
             )
             .await?;
@@ -250,7 +243,7 @@ async fn create_message_with_candidate(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: Some(context.metadata_json.clone()),
+            metadata_json: context.metadata_json.clone(),
         };
         let (stream, stream_stats) = chat_sse_response_to_anthropic_messages_sse_with_stats(
             upstream_response,
@@ -316,7 +309,7 @@ async fn create_message_with_candidate(
                 first_token_ms: None,
                 tool_call_count: Some(tool_call_count),
                 upstream_request_id: None,
-                metadata_json: Some(context.metadata_json),
+                metadata_json: context.metadata_json,
             },
         )
         .await?;
@@ -376,7 +369,7 @@ async fn create_responses_anthropic_message(
                     first_token_ms: None,
                     tool_call_count: None,
                     upstream_request_id: None,
-                    metadata_json: Some(context.metadata_json.clone()),
+                    metadata_json: context.metadata_json.clone(),
                 },
             )
             .await?;
@@ -411,7 +404,7 @@ async fn create_responses_anthropic_message(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: Some(context.metadata_json.clone()),
+            metadata_json: context.metadata_json.clone(),
         };
         let (stream, stream_stats) = responses_sse_response_to_anthropic_messages_sse_with_stats(
             upstream_response,
@@ -477,7 +470,7 @@ async fn create_responses_anthropic_message(
                 first_token_ms: None,
                 tool_call_count: Some(tool_call_count),
                 upstream_request_id: None,
-                metadata_json: Some(context.metadata_json),
+                metadata_json: context.metadata_json,
             },
         )
         .await?;
@@ -539,7 +532,7 @@ async fn create_native_anthropic_message(
                     first_token_ms: None,
                     tool_call_count: None,
                     upstream_request_id: None,
-                    metadata_json: Some(context.metadata_json.clone()),
+                    metadata_json: context.metadata_json.clone(),
                 },
             )
             .await?;
@@ -579,7 +572,7 @@ async fn create_native_anthropic_message(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: Some(context.metadata_json.clone()),
+            metadata_json: context.metadata_json.clone(),
         };
 
         return Response::builder()
@@ -644,7 +637,7 @@ async fn create_native_anthropic_message(
                 first_token_ms: None,
                 tool_call_count: None,
                 upstream_request_id: None,
-                metadata_json: Some(context.metadata_json),
+                metadata_json: context.metadata_json,
             },
         )
         .await?;
@@ -1150,10 +1143,7 @@ mod tests {
         let metadata: serde_json::Value =
             serde_json::from_str(&metadata_json.expect("metadata json")).expect("parse metadata");
 
-        assert_eq!(metadata["bridge"]["protocol_in"], "anthropic_messages");
-        assert_eq!(metadata["bridge"]["protocol_upstream"], "chat_completions");
-        assert_eq!(metadata["bridge"]["model_requested"], "deepseek-chat");
-        assert_eq!(metadata["bridge"]["model_upstream"], "deepseek-chat");
+        assert_eq!(metadata["schema"], "provider-relay.request_metadata.v2");
         assert_eq!(metadata["diagnostics"][0]["code"], "anthropic.role.unknown");
         assert_eq!(metadata["diagnostics"][0]["severity"], "warning");
 

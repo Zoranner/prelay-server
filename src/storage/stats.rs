@@ -484,6 +484,7 @@ fn request_summary(row: identity_request_logs::Model) -> RequestLogSummary {
         endpoint_name: row.endpoint_name,
         provider_name: row.provider_name,
         model_requested: row.model_requested,
+        model_upstream: row.model_upstream,
         status: row.status,
         http_status: row.http_status,
         error_code: row.error_code,
