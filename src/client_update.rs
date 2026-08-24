@@ -5,36 +5,43 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use futures::StreamExt;
-use serde::{Deserialize, Serialize};
-use tokio::{
-    io::AsyncWriteExt,
-    sync::{Mutex, RwLock},
-};
+use prelay_protocol::ClientUpdateTarget;
+use serde::Deserialize;
+use tokio::{io::AsyncWriteExt, sync::Mutex};
 use uuid::Uuid;
 
 const DEFAULT_REPOSITORY: &str = "Zoranner/prelay-client";
 const DEFAULT_CACHE_DIRECTORY: &str = "updates";
 const GITHUB_API_BASE_URL: &str = "https://api.github.com";
-const MANIFEST_FILE_NAME: &str = "client-update.json";
 
 #[derive(Clone)]
 pub struct ClientUpdateCache {
     cache_directory: PathBuf,
     client: reqwest::Client,
     repository: String,
-    latest: Arc<RwLock<Option<CachedClientUpdate>>>,
     refresh_lock: Arc<Mutex<()>>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug)]
 pub struct CachedClientUpdate {
     pub version: String,
     file_name: String,
 }
 
 impl CachedClientUpdate {
-    pub fn installer_path(&self, cache_directory: &Path) -> PathBuf {
-        cache_directory.join(&self.file_name)
+    pub fn installer_path(
+        &self,
+        cache_directory: &Path,
+        target: &ClientUpdateTarget,
+    ) -> Option<PathBuf> {
+        Some(
+            cache_directory_for_target(cache_directory, target, &self.version)?
+                .join(&self.file_name),
+        )
+    }
+
+    pub fn file_name(&self) -> &str {
+        &self.file_name
     }
 }
 
@@ -59,9 +66,7 @@ impl ClientUpdateCache {
         let cache_directory = std::env::var("CLIENT_UPDATE_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(DEFAULT_CACHE_DIRECTORY));
-        let cache = Self::new(client, repository, cache_directory);
-        cache.load_cached_update().await;
-        Ok(cache)
+        Ok(Self::new(client, repository, cache_directory))
     }
 
     pub fn unavailable(client: reqwest::Client) -> Self {
@@ -73,14 +78,12 @@ impl ClientUpdateCache {
             cache_directory,
             client,
             repository,
-            latest: Arc::new(RwLock::new(None)),
             refresh_lock: Arc::new(Mutex::new(())),
         }
     }
 
-    pub async fn latest(&self) -> Option<CachedClientUpdate> {
-        self.load_cached_update().await;
-        self.latest.read().await.clone()
+    pub async fn latest(&self, target: &ClientUpdateTarget) -> Option<CachedClientUpdate> {
+        self.load_cached_update(target).await
     }
 
     pub fn cache_directory(&self) -> PathBuf {
@@ -90,23 +93,22 @@ impl ClientUpdateCache {
     pub async fn refresh(&self) -> Result<()> {
         let _refresh_guard = self.refresh_lock.lock().await;
         let release = self.fetch_latest_release().await?;
-        let asset = release
+        let updates = release
             .assets
             .iter()
-            .find(|asset| is_windows_nsis_asset(&asset.name))
-            .context("latest GitHub release does not contain a Windows NSIS installer")?;
+            .filter_map(|asset| windows_nsis_target(&asset.name).map(|target| (asset, target)))
+            .collect::<Vec<_>>();
+        if updates.is_empty() {
+            bail!("latest GitHub release does not contain a Windows NSIS installer");
+        }
         let version = normalize_version(&release.tag_name)?;
-        let update = CachedClientUpdate {
-            file_name: format!("prelay-client-{version}.exe"),
-            version,
-        };
-
-        tokio::fs::create_dir_all(&self.cache_directory)
-            .await
-            .context("create client update cache directory")?;
-        self.download_asset(asset, &update).await?;
-        self.write_manifest(&update).await?;
-        *self.latest.write().await = Some(update);
+        for (asset, target) in updates {
+            let update = CachedClientUpdate {
+                file_name: asset.name.clone(),
+                version: version.clone(),
+            };
+            self.download_asset(asset, &update, &target).await?;
+        }
         Ok(())
     }
 
@@ -132,6 +134,7 @@ impl ClientUpdateCache {
         &self,
         asset: &GithubReleaseAsset,
         update: &CachedClientUpdate,
+        target: &ClientUpdateTarget,
     ) -> Result<()> {
         let response = self
             .client
@@ -142,10 +145,13 @@ impl ClientUpdateCache {
             .context("download client installer")?
             .error_for_status()
             .context("client installer download failed")?;
-        let target = update.installer_path(&self.cache_directory);
-        let temporary =
-            self.cache_directory
-                .join(format!(".{}.{}.tmp", update.file_name, Uuid::new_v4()));
+        let directory = cache_directory_for_target(&self.cache_directory, target, &update.version)
+            .context("invalid client update target")?;
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .context("create client update cache directory")?;
+        let installer_path = directory.join(&update.file_name);
+        let temporary = directory.join(format!(".{}.{}.tmp", update.file_name, Uuid::new_v4()));
         let mut file = tokio::fs::File::create(&temporary)
             .await
             .context("create temporary client installer")?;
@@ -164,78 +170,45 @@ impl ClientUpdateCache {
             return Err(error);
         }
 
-        if tokio::fs::try_exists(&target).await.unwrap_or(false) {
-            tokio::fs::remove_file(&target)
+        if tokio::fs::try_exists(&installer_path)
+            .await
+            .unwrap_or(false)
+        {
+            tokio::fs::remove_file(&installer_path)
                 .await
                 .context("replace cached client installer")?;
         }
-        tokio::fs::rename(&temporary, target)
+        tokio::fs::rename(&temporary, installer_path)
             .await
             .context("publish cached client installer")
     }
 
-    async fn load_cached_update(&self) {
-        let update = select_newer_update(
-            self.load_manifest_update().await,
-            self.find_installer_in_cache_directory().await,
-        );
-        *self.latest.write().await = update;
+    async fn load_cached_update(&self, target: &ClientUpdateTarget) -> Option<CachedClientUpdate> {
+        self.find_installer_in_cache_directory(target).await
     }
 
-    async fn load_manifest_update(&self) -> Option<CachedClientUpdate> {
-        let path = self.manifest_path();
-        let update = tokio::fs::read(&path)
-            .await
-            .ok()
-            .and_then(|content| serde_json::from_slice::<CachedClientUpdate>(&content).ok())?;
-        if is_cached_installer_file_name(&update.file_name, &update.version)
-            && tokio::fs::try_exists(update.installer_path(&self.cache_directory))
-                .await
-                .unwrap_or(false)
-        {
-            Some(update)
-        } else {
-            None
-        }
-    }
-
-    async fn find_installer_in_cache_directory(&self) -> Option<CachedClientUpdate> {
-        let mut entries = tokio::fs::read_dir(&self.cache_directory).await.ok()?;
+    async fn find_installer_in_cache_directory(
+        &self,
+        target: &ClientUpdateTarget,
+    ) -> Option<CachedClientUpdate> {
+        let directory = cache_directory_for_target(&self.cache_directory, target, "")?;
+        let mut entries = tokio::fs::read_dir(directory).await.ok()?;
         let mut latest = None;
         while let Ok(Some(entry)) = entries.next_entry().await {
-            if !entry.file_type().await.ok()?.is_file() {
+            if !entry.file_type().await.ok()?.is_dir() {
                 continue;
             }
-            let Some(update) = cached_update_from_file_name(&entry.file_name().to_string_lossy())
+            let version = entry.file_name().to_string_lossy().to_string();
+            if parse_version(&version).is_none() {
+                continue;
+            }
+            let Some(update) = find_installer_in_version_directory(entry.path(), version).await
             else {
                 continue;
             };
             latest = select_newer_update(latest, Some(update));
         }
         latest
-    }
-
-    async fn write_manifest(&self, update: &CachedClientUpdate) -> Result<()> {
-        let temporary = self
-            .cache_directory
-            .join(format!(".{MANIFEST_FILE_NAME}.{}.tmp", Uuid::new_v4()));
-        let manifest = serde_json::to_vec(update).context("serialize client update manifest")?;
-        tokio::fs::write(&temporary, manifest)
-            .await
-            .context("write client update manifest")?;
-        let path = self.manifest_path();
-        if tokio::fs::try_exists(&path).await.unwrap_or(false) {
-            tokio::fs::remove_file(&path)
-                .await
-                .context("replace client update manifest")?;
-        }
-        tokio::fs::rename(temporary, path)
-            .await
-            .context("publish client update manifest")
-    }
-
-    fn manifest_path(&self) -> PathBuf {
-        self.cache_directory.join(MANIFEST_FILE_NAME)
     }
 }
 
@@ -266,22 +239,79 @@ fn normalize_version(tag_name: &str) -> Result<String> {
 }
 
 fn is_windows_nsis_asset(name: &str) -> bool {
-    name.to_ascii_lowercase().ends_with("-setup.exe")
+    is_safe_file_name(name) && name.to_ascii_lowercase().ends_with("-setup.exe")
 }
 
-fn cached_update_from_file_name(file_name: &str) -> Option<CachedClientUpdate> {
-    let version = file_name
-        .strip_prefix("prelay-client-")?
-        .strip_suffix(".exe")?;
-    parse_version(version)?;
-    Some(CachedClientUpdate {
-        version: version.to_string(),
-        file_name: file_name.to_string(),
+fn windows_nsis_target(name: &str) -> Option<ClientUpdateTarget> {
+    if !is_windows_nsis_asset(name) {
+        return None;
+    }
+    let file_name = name.strip_suffix("-setup.exe")?;
+    let (_, architecture) = file_name.rsplit_once('_')?;
+    is_safe_path_component(architecture).then(|| ClientUpdateTarget {
+        platform: "windows".to_string(),
+        architecture: architecture.to_string(),
     })
 }
 
-fn is_cached_installer_file_name(file_name: &str, version: &str) -> bool {
-    cached_update_from_file_name(file_name).is_some_and(|update| update.version == version)
+fn cache_directory_for_target(
+    cache_directory: &Path,
+    target: &ClientUpdateTarget,
+    version: &str,
+) -> Option<PathBuf> {
+    if !is_safe_path_component(&target.platform)
+        || !is_safe_path_component(&target.architecture)
+        || (!version.is_empty() && parse_version(version).is_none())
+    {
+        return None;
+    }
+    let directory = cache_directory
+        .join(&target.platform)
+        .join(&target.architecture);
+    (!version.is_empty())
+        .then(|| directory.join(version))
+        .or(Some(directory))
+}
+
+fn is_safe_path_component(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+}
+
+fn is_safe_file_name(value: &str) -> bool {
+    !value.is_empty()
+        && Path::new(value)
+            .file_name()
+            .is_some_and(|file_name| file_name == value)
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_')
+        })
+}
+
+async fn find_installer_in_version_directory(
+    directory: PathBuf,
+    version: String,
+) -> Option<CachedClientUpdate> {
+    let mut entries = tokio::fs::read_dir(directory).await.ok()?;
+    let mut file_name = None;
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        if !entry.file_type().await.ok()?.is_file() {
+            continue;
+        }
+        let candidate = entry.file_name().to_string_lossy().to_string();
+        if !is_safe_file_name(&candidate) {
+            continue;
+        }
+        if file_name.replace(candidate).is_some() {
+            return None;
+        }
+    }
+    Some(CachedClientUpdate {
+        version,
+        file_name: file_name?,
+    })
 }
 
 fn select_newer_update(
@@ -317,9 +347,11 @@ fn parse_version(value: &str) -> Option<[u64; 3]> {
 #[cfg(test)]
 mod tests {
     use super::{
-        cached_update_from_file_name, is_windows_nsis_asset, normalize_version,
-        select_newer_update, validate_repository, DEFAULT_CACHE_DIRECTORY,
+        cache_directory_for_target, is_windows_nsis_asset, normalize_version, validate_repository,
+        windows_nsis_target, DEFAULT_CACHE_DIRECTORY,
     };
+    use prelay_protocol::ClientUpdateTarget;
+    use std::path::Path;
 
     #[test]
     fn stores_client_updates_outside_the_database_directory_by_default() {
@@ -342,15 +374,20 @@ mod tests {
     }
 
     #[test]
-    fn accepts_manually_cached_installers_and_uses_the_highest_version() {
-        let older = cached_update_from_file_name("prelay-client-0.2.0.exe");
-        let newer = cached_update_from_file_name("prelay-client-0.3.0.exe");
-
+    fn selects_original_installers_from_the_requested_target_directory() {
+        let target = ClientUpdateTarget {
+            platform: "windows".to_string(),
+            architecture: "x64".to_string(),
+        };
         assert_eq!(
-            select_newer_update(older, newer).map(|update| update.version),
-            Some("0.3.0".to_string())
+            cache_directory_for_target(Path::new("updates"), &target, "0.3.0").unwrap(),
+            Path::new("updates/windows/x64/0.3.0")
         );
-        assert!(cached_update_from_file_name("Prelay_0.3.0_x64-setup.exe").is_none());
-        assert!(cached_update_from_file_name("prelay-client-next.exe").is_none());
+        assert_eq!(
+            windows_nsis_target("Prelay_0.3.0_arm64-setup.exe")
+                .unwrap()
+                .architecture,
+            "arm64"
+        );
     }
 }

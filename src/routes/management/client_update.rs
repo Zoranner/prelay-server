@@ -1,12 +1,12 @@
 use axum::{
     body::Body,
-    extract::State,
+    extract::{Query, State},
     http::{header, HeaderValue},
     response::Response,
     routing::get,
     Json, Router,
 };
-use prelay_protocol::{ClientUpdateResponse, ProtocolErrorCode};
+use prelay_protocol::{ClientUpdateResponse, ClientUpdateTarget, ProtocolErrorCode};
 use tokio_util::io::ReaderStream;
 
 use crate::{client_update::CachedClientUpdate, error::AppError, AppState};
@@ -17,31 +17,42 @@ pub fn router() -> Router<AppState> {
         .route("/client-update/download", get(download))
 }
 
-async fn latest(State(state): State<AppState>) -> Result<Json<ClientUpdateResponse>, AppError> {
-    let update = cached_update(&state).await?;
+async fn latest(
+    State(state): State<AppState>,
+    Query(target): Query<ClientUpdateTarget>,
+) -> Result<Json<ClientUpdateResponse>, AppError> {
+    let update = cached_update(&state, &target).await?;
+    let file_name = update.file_name().to_string();
     Ok(Json(ClientUpdateResponse {
         version: update.version,
-        download_path: "/api/client-update/download".to_string(),
+        file_name,
+        download_path: format!(
+            "/api/client-update/download?platform={}&architecture={}",
+            target.platform, target.architecture
+        ),
     }))
 }
 
-async fn download(State(state): State<AppState>) -> Result<Response, AppError> {
-    let update = cached_update(&state).await?;
-    let path = update.installer_path(&state.client_update.cache_directory());
+async fn download(
+    State(state): State<AppState>,
+    Query(target): Query<ClientUpdateTarget>,
+) -> Result<Response, AppError> {
+    let update = cached_update(&state, &target).await?;
+    let path = update
+        .installer_path(&state.client_update.cache_directory(), &target)
+        .ok_or_else(unavailable_error)?;
     let file = tokio::fs::File::open(&path)
         .await
         .map_err(|_| unavailable_error())?;
     let metadata = file.metadata().await.map_err(|_| unavailable_error())?;
-    let content_disposition = HeaderValue::from_str(&format!(
-        "attachment; filename=\"prelay-client-{}.exe\"",
-        update.version
-    ))
-    .map_err(|_| unavailable_error())?;
+    let content_disposition =
+        HeaderValue::from_str(&format!("attachment; filename=\"{}\"", update.file_name()))
+            .map_err(|_| unavailable_error())?;
 
     Response::builder()
         .header(
             header::CONTENT_TYPE,
-            "application/vnd.microsoft.portable-executable",
+            "application/octet-stream",
         )
         .header(header::CONTENT_LENGTH, metadata.len())
         .header(header::CONTENT_DISPOSITION, content_disposition)
@@ -49,10 +60,13 @@ async fn download(State(state): State<AppState>) -> Result<Response, AppError> {
         .map_err(|error| AppError::Internal(error.into()))
 }
 
-async fn cached_update(state: &AppState) -> Result<CachedClientUpdate, AppError> {
+async fn cached_update(
+    state: &AppState,
+    target: &ClientUpdateTarget,
+) -> Result<CachedClientUpdate, AppError> {
     state
         .client_update
-        .latest()
+        .latest(target)
         .await
         .ok_or_else(unavailable_error)
 }
