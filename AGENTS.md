@@ -12,7 +12,7 @@
 
 ## 数据与安全边界
 
-- `data/relay.db` 是运行时 SQLite 数据库；不提交数据库、`.env`、主密钥、设备凭据、Endpoint Token 或 Provider API Key。
+- 不提交 SQLite 数据库文件、PostgreSQL 数据卷或导出、其他运行时数据库数据、`.env`、主密钥、设备凭据、Endpoint Token 或 Provider API Key。
 - 旧版未按身份归属的数据库会被有意丢弃，不能在未重新定义迁移和密钥边界的情况下恢复兼容路径。
 - 服务本身不提供 TLS。任何暴露到非受信网络的部署必须在运行环境中提供 TLS 与网络访问控制；不要把该部署责任伪装成路由层功能。
 - 不终止用户正在运行的 `prelay-server.exe`。若 Cargo 因 Windows 文件锁失败，报告锁和命令，不使用外部 target 目录规避。
