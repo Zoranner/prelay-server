@@ -13,21 +13,25 @@ const IDENTITY_TABLES: [&str; 9] = [
     "identity_request_logs",
     "identity_model_aliases",
 ];
+const COUNT_COLUMN: &str = "result_count";
 
 async fn table_exists(db: &DatabaseConnection, table: &str) -> bool {
     let sql = match db.get_database_backend() {
         DbBackend::Sqlite => {
-            format!("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '{table}'")
+            format!(
+                "SELECT COUNT(*) AS {COUNT_COLUMN} FROM sqlite_master \
+                 WHERE type = 'table' AND name = '{table}'"
+            )
         }
         DbBackend::Postgres => format!(
-            "SELECT COUNT(*) FROM information_schema.tables \
+            "SELECT COUNT(*) AS {COUNT_COLUMN} FROM information_schema.tables \
              WHERE table_schema = current_schema() AND table_name = '{table}'"
         ),
         _ => unreachable!("only SQLite and PostgreSQL are supported"),
     };
     let statement = Statement::from_string(db.get_database_backend(), sql);
     let row = db.query_one_raw(statement).await.unwrap().unwrap();
-    row.try_get::<i64>("", "COUNT(*)").unwrap() == 1
+    row.try_get::<i64>("", COUNT_COLUMN).unwrap() == 1
 }
 
 async fn column_type(db: &DatabaseConnection, table: &str, column: &str) -> String {
@@ -130,10 +134,12 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
     );
 
     let index_sql = match db.get_database_backend() {
-        DbBackend::Sqlite => "SELECT COUNT(*) FROM pragma_index_list('identity_request_logs') \
+        DbBackend::Sqlite => {
+            "SELECT COUNT(*) AS result_count FROM pragma_index_list('identity_request_logs') \
              WHERE name = 'idx_identity_request_logs_identity_created_at'"
-            .to_owned(),
-        DbBackend::Postgres => "SELECT COUNT(*) FROM pg_indexes \
+                .to_owned()
+        }
+        DbBackend::Postgres => "SELECT COUNT(*) AS result_count FROM pg_indexes \
              WHERE schemaname = current_schema() \
              AND tablename = 'identity_request_logs' \
              AND indexname = 'idx_identity_request_logs_identity_created_at'"
@@ -142,7 +148,7 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
     };
     let index_statement = Statement::from_string(db.get_database_backend(), index_sql);
     let row = db.query_one_raw(index_statement).await.unwrap().unwrap();
-    assert_eq!(row.try_get::<i64>("", "COUNT(*)").unwrap(), 1);
+    assert_eq!(row.try_get::<i64>("", COUNT_COLUMN).unwrap(), 1);
 }
 
 #[tokio::test]

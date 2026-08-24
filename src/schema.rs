@@ -489,10 +489,13 @@ async fn table_exists(db: &DatabaseConnection, table: &str) -> Result<bool, DbEr
     let backend = db.get_database_backend();
     let sql = match backend {
         DbBackend::Sqlite => {
-            format!("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '{table}'")
+            format!(
+                "SELECT COUNT(*) AS table_exists FROM sqlite_master \
+                 WHERE type = 'table' AND name = '{table}'"
+            )
         }
         DbBackend::Postgres => format!(
-            "SELECT COUNT(*) FROM information_schema.tables \
+            "SELECT COUNT(*) AS table_exists FROM information_schema.tables \
              WHERE table_schema = current_schema() AND table_name = '{table}'"
         ),
         _ => unreachable!("only SQLite and PostgreSQL are supported"),
@@ -501,7 +504,29 @@ async fn table_exists(db: &DatabaseConnection, table: &str) -> Result<bool, DbEr
         .query_one_raw(Statement::from_string(backend, sql))
         .await?
         .ok_or_else(|| DbErr::Custom("database table lookup returned no row".to_owned()))?;
-    row.try_get::<i64>("", "COUNT(*)").map(|count| count == 1)
+    row.try_get::<i64>("", "table_exists")
+        .map(|count| count == 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use sea_orm::{DbBackend, MockDatabase, Value};
+
+    use super::table_exists;
+
+    #[tokio::test]
+    async fn postgres_table_lookup_reads_the_explicit_count_alias() {
+        let row = BTreeMap::from([("table_exists".to_string(), Value::BigInt(Some(0)))]);
+        let db = MockDatabase::new(DbBackend::Postgres)
+            .append_query_results([[row]])
+            .into_connection();
+
+        assert!(!table_exists(&db, "identities")
+            .await
+            .expect("read PostgreSQL table count"));
+    }
 }
 
 #[derive(Iden)]
