@@ -1,0 +1,72 @@
+name: Verify Prelay Server
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  sqlite:
+    name: SQLite schema and storage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify format and lints
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test SQLite migration, schema, and storage
+        run: >-
+          cargo test --locked
+          --test database_configuration
+          --test migration_schema
+          --test identity_storage
+          --test identity_cleanup
+          --test management_isolation
+          --test v1_identity_scope
+
+  postgres:
+    name: PostgreSQL migration schema
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: prelay_test
+          POSTGRES_USER: prelay_test
+          POSTGRES_PASSWORD: prelay_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U prelay_test -d prelay_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Test PostgreSQL migration and storage contracts
+        env:
+          TEST_POSTGRES_URL: postgres://prelay_test:prelay_test@localhost:5432/prelay_test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked --test migration_schema applies_and_removes_the_complete_identity_schema_on_postgres -- --ignored --test-threads=1
+          cargo test --locked --test identity_storage -- --test-threads=1
+          cargo test --locked --test identity_cleanup -- --test-threads=1
+          cargo test --locked --test management_isolation -- --test-threads=1
+          cargo test --locked --test v1_identity_scope -- --test-threads=1

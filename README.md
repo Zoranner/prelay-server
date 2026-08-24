@@ -26,28 +26,59 @@ Windows PowerShell：
 [Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
 ```
 
-本地 `.env` 会在启动时自动加载；已有进程环境变量优先。开发运行：
+本地 `.env` 会在启动时自动加载；已有进程环境变量优先。`DATABASE_URL` 是数据库类型和位置的唯一选择，没有默认值。服务启动时只检查 schema 是否为当前版本，不创建或修改表；`prelay-migrate` 是唯一执行 DDL 的程序。
+
+SQLite 本地运行顺序：
 
 ```powershell
+$env:DATABASE_URL = "sqlite://data/relay.db?mode=rwc"
 $env:PRELAY_MASTER_KEY = "<Base64-encoded-32-byte-key>"
-cargo run
+New-Item -ItemType Directory -Force data
+cargo run --bin prelay-migrate
+cargo run --bin prelay-server
 ```
 
-服务使用 `data/relay.db`，首次运行会创建 `data/`，默认监听 `0.0.0.0:18080`。`LISTEN_PORT` 可覆盖端口，`RUST_LOG` 控制日志过滤。模型价格可放入 `config/model_prices.json`，或通过 `MODEL_PRICES_PATH` 指定其他文件。
+PostgreSQL 本地运行时，先准备一个全新空数据库，再按相同顺序执行迁移和服务：
 
-启动时及之后每 24 小时会删除连续 90 天未活动身份及其所有配置、会话和日志。旧版没有身份归属的数据库会在首次启动时被直接丢弃，不迁移或保留旧密钥。
+```powershell
+$env:DATABASE_URL = "postgresql://<user>:<password>@<host>:5432/<database>"
+$env:PRELAY_MASTER_KEY = "<Base64-encoded-32-byte-key>"
+cargo run --bin prelay-migrate
+cargo run --bin prelay-server
+```
+
+默认监听地址为 `0.0.0.0:18080`。`LISTEN_PORT` 可覆盖端口，`RUST_LOG` 控制日志过滤。PostgreSQL 可用 `DATABASE_MAX_CONNECTIONS` 覆盖默认连接数；SQLite 始终使用单连接。模型价格可放入 `config/model_prices.json`，或通过 `MODEL_PRICES_PATH` 指定其他文件。
+
+启动时及之后每 24 小时会删除连续 90 天未活动身份及其所有配置、会话和日志。
 
 ## 部署
 
-Docker Compose 文件位于 `deploy/`。复制环境模板，填入固定主密钥后启动：
+Docker Compose 文件位于 `deploy/`。首次部署先创建共享网络，并从模板创建本地环境文件：
 
 ```powershell
+docker network create prelay
 Copy-Item deploy/.env.example deploy/.env
-# Edit deploy/.env and set PRELAY_MASTER_KEY.
-docker compose -f deploy/docker-compose.yml up -d
 ```
 
-Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.1.0`，使用 `data/` 作为数据库卷，并以只读方式挂载 `app/config/`。模型价格是可选配置；可复制 `config/model_prices.example.json` 为 `app/config/model_prices.json` 后调整内容。
+`docker network create prelay` 只需执行一次。SQLite 部署在 `deploy/.env` 中设置固定的 `PRELAY_MASTER_KEY`，并将 `DATABASE_URL` 设置为 `sqlite:///app/data/relay.db?mode=rwc`；PostgreSQL 占位变量可保留。然后启动 SQLite 编排：
+
+```powershell
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --pull always
+```
+
+SQLite 编排为迁移任务与服务挂载同一个 `prelay-data` 卷，并向二者传入同一个 `DATABASE_URL`。迁移任务成功退出后服务才会启动；迁移失败时服务不会启动。
+
+PostgreSQL 部署在 `deploy/.env` 中设置固定的 `PRELAY_MASTER_KEY` 和 PostgreSQL 初始化变量，并将 `DATABASE_URL` 设置为 `postgresql://<POSTGRES_USER>:<POSTGRES_PASSWORD>@postgres:5432/<POSTGRES_DB>` 对应的连接串。然后启动 PostgreSQL 编排：
+
+```powershell
+docker compose --env-file deploy/.env -f deploy/docker-compose.postgres.yml up -d --pull always
+```
+
+PostgreSQL 编排使用 `postgres:16` 和独立的 `postgres-data` 命名卷。PostgreSQL 健康检查通过后运行迁移任务，迁移成功后才启动服务；迁移任务和服务使用完全相同的 `DATABASE_URL`。服务容器不挂载 SQLite 数据卷。
+
+SQLite 与 PostgreSQL 是二选一的全新部署方式。切换数据库类型不能只修改现有部署的 `DATABASE_URL`，必须停止原部署并为目标数据库创建新部署和新数据卷或空数据库。本项目不提供 SQLite 与 PostgreSQL 之间的数据迁移；原数据应由原部署独立保留或备份。
+
+两套 Compose 都固定拉取 `ghcr.io/zoranner/prelay-server:0.1.0`，并以只读方式挂载 `app/config/`。模型价格是可选配置；可复制 `config/model_prices.example.json` 为 `app/config/model_prices.json` 后调整内容。
 
 ## 服务边界
 

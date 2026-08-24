@@ -1,12 +1,29 @@
 services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in deploy/.env}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in deploy/.env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
   prelay-migrate:
     image: ghcr.io/zoranner/prelay-server:0.1.0
     restart: "no"
     environment:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in deploy/.env}
     command: ["./prelay-migrate"]
-    volumes:
-      - prelay-data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   prelay-server:
     image: ghcr.io/zoranner/prelay-server:0.1.0
@@ -17,16 +34,17 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in deploy/.env}
     depends_on:
+      postgres:
+        condition: service_healthy
       prelay-migrate:
         condition: service_completed_successfully
     ports:
       - "18080:18080"
     volumes:
       - ./app/config:/app/config:ro
-      - prelay-data:/app/data
 
 volumes:
-  prelay-data:
+  postgres-data:
 
 networks:
   default:
