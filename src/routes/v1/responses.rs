@@ -30,10 +30,7 @@ use crate::{
     routes::v1::auth::CurrentProtocolAccess,
     routes::v1::endpoint_resolver::{resolve_endpoint_model_candidates, ResolvedEndpointProvider},
     stats::RequestLogInsert,
-    storage::{
-        sessions::{load_response_session_messages, save_response_session, ResponseSessionInsert},
-        stats::insert as insert_request_log,
-    },
+    storage::{ResponseSessionInsert, Storage},
     AppState,
 };
 
@@ -150,7 +147,7 @@ async fn create_response_with_candidate(
     if upstream_protocol == UpstreamProtocol::Responses {
         let (upstream_payload, request) = if previous_response_id.is_some() {
             let request =
-                request_with_session_history(&state.db, &access.identity_id, request).await?;
+                request_with_session_history(&state.storage, &access.identity_id, request).await?;
             (encode_responses_request(&request), request)
         } else {
             (upstream_payload, request)
@@ -190,7 +187,8 @@ async fn create_response_with_candidate(
         .await;
     }
 
-    let request = request_with_session_history(&state.db, &access.identity_id, request).await?;
+    let request =
+        request_with_session_history(&state.storage, &access.identity_id, request).await?;
     let upstream_base_url = provider_upstream_base_url(&provider, upstream_protocol);
     let upstream_url = format!(
         "{}/chat/completions",
@@ -212,37 +210,38 @@ async fn create_response_with_candidate(
 
     if !upstream_response.status().is_success() {
         let status = upstream_response.status();
-        insert_request_log(
-            &state.db,
-            &access.identity_id,
-            RequestLogInsert {
-                protocol_in: "responses".to_string(),
-                protocol_out: "responses".to_string(),
-                protocol_upstream: "chat_completions".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                endpoint_name: access.endpoint_name.clone(),
-                model_requested,
-                model_upstream: request.model,
-                status: "failed".to_string(),
-                http_status: status.as_u16() as i64,
-                error_code: None,
-                error_message: None,
-                is_streaming,
-                input_tokens: None,
-                output_tokens: None,
-                reasoning_tokens: None,
-                cache_read_tokens: None,
-                cache_write_tokens: None,
-                latency_ms: started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: None,
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id: None,
-                metadata_json: Some(metadata_json.clone()),
-            },
-        )
-        .await?;
+        state
+            .storage
+            .insert_request_log(
+                &access.identity_id,
+                RequestLogInsert {
+                    protocol_in: "responses".to_string(),
+                    protocol_out: "responses".to_string(),
+                    protocol_upstream: "chat_completions".to_string(),
+                    provider_id: provider.id,
+                    provider_name: provider.name,
+                    endpoint_name: access.endpoint_name.clone(),
+                    model_requested,
+                    model_upstream: request.model,
+                    status: "failed".to_string(),
+                    http_status: status.as_u16() as i64,
+                    error_code: None,
+                    error_message: None,
+                    is_streaming,
+                    input_tokens: None,
+                    output_tokens: None,
+                    reasoning_tokens: None,
+                    cache_read_tokens: None,
+                    cache_write_tokens: None,
+                    latency_ms: started_at.elapsed().as_millis() as i64,
+                    upstream_latency_ms: None,
+                    first_token_ms: None,
+                    tool_call_count: None,
+                    upstream_request_id: None,
+                    metadata_json: Some(metadata_json.clone()),
+                },
+            )
+            .await?;
         return Err(AppError::Upstream {
             status: Some(status),
             message: format!("上游请求失败: {status}"),
@@ -279,7 +278,7 @@ async fn create_response_with_candidate(
         let (stream, stream_stats) =
             chat_sse_response_to_responses_sse_with_stats(upstream_response);
         let body = Body::from_stream(record_stream(
-            state.db.clone(),
+            state.storage.clone(),
             access.identity_id.clone(),
             stream,
             log,
@@ -304,9 +303,9 @@ async fn create_response_with_candidate(
         .as_ref()
         .and_then(|usage| usage.reasoning_tokens);
     let tool_call_count = count_tool_calls(&response);
-    save_response_session(
-        &state.db,
-        ResponseSessionInsert {
+    state
+        .storage
+        .save_response_session(ResponseSessionInsert {
             identity_id: &access.identity_id,
             response_id: &response.id,
             previous_response_id: previous_response_id.as_deref(),
@@ -314,49 +313,49 @@ async fn create_response_with_candidate(
             model: &response.model,
             input_messages: &request.messages,
             response: &response,
-        },
-    )
-    .await?;
-    insert_request_log(
-        &state.db,
-        &access.identity_id,
-        RequestLogInsert {
-            protocol_in: "responses".to_string(),
-            protocol_out: "responses".to_string(),
-            protocol_upstream: "chat_completions".to_string(),
-            provider_id: provider.id,
-            provider_name: provider.name,
-            endpoint_name: access.endpoint_name.clone(),
-            model_requested,
-            model_upstream: response.model.clone(),
-            status: "success".to_string(),
-            http_status: 200,
-            error_code: None,
-            error_message: None,
-            is_streaming,
-            input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
-            output_tokens: response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.output_tokens),
-            reasoning_tokens,
-            cache_read_tokens: response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.cache_read_tokens),
-            cache_write_tokens: response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.cache_write_tokens),
-            latency_ms: started_at.elapsed().as_millis() as i64,
-            upstream_latency_ms: Some(upstream_latency_ms),
-            first_token_ms: None,
-            tool_call_count: Some(tool_call_count),
-            upstream_request_id: None,
-            metadata_json: Some(metadata_json),
-        },
-    )
-    .await?;
+        })
+        .await?;
+    state
+        .storage
+        .insert_request_log(
+            &access.identity_id,
+            RequestLogInsert {
+                protocol_in: "responses".to_string(),
+                protocol_out: "responses".to_string(),
+                protocol_upstream: "chat_completions".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                endpoint_name: access.endpoint_name.clone(),
+                model_requested,
+                model_upstream: response.model.clone(),
+                status: "success".to_string(),
+                http_status: 200,
+                error_code: None,
+                error_message: None,
+                is_streaming,
+                input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
+                output_tokens: response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.output_tokens),
+                reasoning_tokens,
+                cache_read_tokens: response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.cache_read_tokens),
+                cache_write_tokens: response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.cache_write_tokens),
+                latency_ms: started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: Some(upstream_latency_ms),
+                first_token_ms: None,
+                tool_call_count: Some(tool_call_count),
+                upstream_request_id: None,
+                metadata_json: Some(metadata_json),
+            },
+        )
+        .await?;
 
     Ok(Json(encode_responses_response(response)).into_response())
 }
@@ -368,7 +367,7 @@ async fn create_anthropic_messages_response(
     previous_response_id: Option<String>,
     context: ResponseBridgeContext,
 ) -> Result<Response, AppError> {
-    request = request_with_session_history(&state.db, &context.identity_id, request).await?;
+    request = request_with_session_history(&state.storage, &context.identity_id, request).await?;
     let upstream_base_url =
         provider_upstream_base_url(&provider, UpstreamProtocol::AnthropicMessages);
     let upstream_url = format!("{}/messages", upstream_base_url.trim_end_matches('/'));
@@ -389,37 +388,38 @@ async fn create_anthropic_messages_response(
 
     if !upstream_response.status().is_success() {
         let status = upstream_response.status();
-        insert_request_log(
-            &state.db,
-            &context.identity_id,
-            RequestLogInsert {
-                protocol_in: "responses".to_string(),
-                protocol_out: "responses".to_string(),
-                protocol_upstream: "anthropic_messages".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                endpoint_name: context.endpoint_name.clone(),
-                model_requested: context.model_requested,
-                model_upstream: request.model,
-                status: "failed".to_string(),
-                http_status: status.as_u16() as i64,
-                error_code: None,
-                error_message: None,
-                is_streaming: context.is_streaming,
-                input_tokens: None,
-                output_tokens: None,
-                reasoning_tokens: None,
-                cache_read_tokens: None,
-                cache_write_tokens: None,
-                latency_ms: context.started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: None,
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id: None,
-                metadata_json: Some(context.metadata_json.clone()),
-            },
-        )
-        .await?;
+        state
+            .storage
+            .insert_request_log(
+                &context.identity_id,
+                RequestLogInsert {
+                    protocol_in: "responses".to_string(),
+                    protocol_out: "responses".to_string(),
+                    protocol_upstream: "anthropic_messages".to_string(),
+                    provider_id: provider.id,
+                    provider_name: provider.name,
+                    endpoint_name: context.endpoint_name.clone(),
+                    model_requested: context.model_requested,
+                    model_upstream: request.model,
+                    status: "failed".to_string(),
+                    http_status: status.as_u16() as i64,
+                    error_code: None,
+                    error_message: None,
+                    is_streaming: context.is_streaming,
+                    input_tokens: None,
+                    output_tokens: None,
+                    reasoning_tokens: None,
+                    cache_read_tokens: None,
+                    cache_write_tokens: None,
+                    latency_ms: context.started_at.elapsed().as_millis() as i64,
+                    upstream_latency_ms: None,
+                    first_token_ms: None,
+                    tool_call_count: None,
+                    upstream_request_id: None,
+                    metadata_json: Some(context.metadata_json.clone()),
+                },
+            )
+            .await?;
         return Err(AppError::Upstream {
             status: Some(status),
             message: format!("上游请求失败: {status}"),
@@ -456,7 +456,7 @@ async fn create_anthropic_messages_response(
         let (stream, stream_stats) =
             anthropic_messages_sse_response_to_responses_sse_with_stats(upstream_response);
         let body = Body::from_stream(record_stream(
-            state.db.clone(),
+            state.storage.clone(),
             context.identity_id.clone(),
             stream,
             log,
@@ -477,9 +477,9 @@ async fn create_anthropic_messages_response(
     let mut response = decode_anthropic_messages_response(upstream_json)?;
     response.id = format!("resp_{}", Uuid::new_v4().simple());
     let tool_call_count = count_tool_calls(&response);
-    save_response_session(
-        &state.db,
-        ResponseSessionInsert {
+    state
+        .storage
+        .save_response_session(ResponseSessionInsert {
             identity_id: &context.identity_id,
             response_id: &response.id,
             previous_response_id: previous_response_id.as_deref(),
@@ -487,49 +487,49 @@ async fn create_anthropic_messages_response(
             model: &response.model,
             input_messages: &request.messages,
             response: &response,
-        },
-    )
-    .await?;
-    insert_request_log(
-        &state.db,
-        &context.identity_id,
-        RequestLogInsert {
-            protocol_in: "responses".to_string(),
-            protocol_out: "responses".to_string(),
-            protocol_upstream: "anthropic_messages".to_string(),
-            provider_id: provider.id,
-            provider_name: provider.name,
-            endpoint_name: context.endpoint_name.clone(),
-            model_requested: context.model_requested,
-            model_upstream: response.model.clone(),
-            status: "success".to_string(),
-            http_status: 200,
-            error_code: None,
-            error_message: None,
-            is_streaming: context.is_streaming,
-            input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
-            output_tokens: response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.output_tokens),
-            reasoning_tokens: None,
-            cache_read_tokens: response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.cache_read_tokens),
-            cache_write_tokens: response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.cache_write_tokens),
-            latency_ms: context.started_at.elapsed().as_millis() as i64,
-            upstream_latency_ms: Some(upstream_latency_ms),
-            first_token_ms: None,
-            tool_call_count: Some(tool_call_count),
-            upstream_request_id: None,
-            metadata_json: Some(context.metadata_json),
-        },
-    )
-    .await?;
+        })
+        .await?;
+    state
+        .storage
+        .insert_request_log(
+            &context.identity_id,
+            RequestLogInsert {
+                protocol_in: "responses".to_string(),
+                protocol_out: "responses".to_string(),
+                protocol_upstream: "anthropic_messages".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                endpoint_name: context.endpoint_name.clone(),
+                model_requested: context.model_requested,
+                model_upstream: response.model.clone(),
+                status: "success".to_string(),
+                http_status: 200,
+                error_code: None,
+                error_message: None,
+                is_streaming: context.is_streaming,
+                input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
+                output_tokens: response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.output_tokens),
+                reasoning_tokens: None,
+                cache_read_tokens: response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.cache_read_tokens),
+                cache_write_tokens: response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.cache_write_tokens),
+                latency_ms: context.started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: Some(upstream_latency_ms),
+                first_token_ms: None,
+                tool_call_count: Some(tool_call_count),
+                upstream_request_id: None,
+                metadata_json: Some(context.metadata_json),
+            },
+        )
+        .await?;
 
     Ok(Json(encode_responses_response(response)).into_response())
 }
@@ -569,37 +569,38 @@ async fn create_native_response(
 
     if !upstream_response.status().is_success() {
         let status = upstream_response.status();
-        insert_request_log(
-            &state.db,
-            &context.identity_id,
-            RequestLogInsert {
-                protocol_in: "responses".to_string(),
-                protocol_out: "responses".to_string(),
-                protocol_upstream: "responses".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                endpoint_name: context.endpoint_name.clone(),
-                model_requested: context.model_requested,
-                model_upstream: "unknown".to_string(),
-                status: "failed".to_string(),
-                http_status: status.as_u16() as i64,
-                error_code: None,
-                error_message: None,
-                is_streaming: context.is_streaming,
-                input_tokens: None,
-                output_tokens: None,
-                reasoning_tokens: None,
-                cache_read_tokens: None,
-                cache_write_tokens: None,
-                latency_ms: context.started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: None,
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id: None,
-                metadata_json: Some(context.metadata_json.clone()),
-            },
-        )
-        .await?;
+        state
+            .storage
+            .insert_request_log(
+                &context.identity_id,
+                RequestLogInsert {
+                    protocol_in: "responses".to_string(),
+                    protocol_out: "responses".to_string(),
+                    protocol_upstream: "responses".to_string(),
+                    provider_id: provider.id,
+                    provider_name: provider.name,
+                    endpoint_name: context.endpoint_name.clone(),
+                    model_requested: context.model_requested,
+                    model_upstream: "unknown".to_string(),
+                    status: "failed".to_string(),
+                    http_status: status.as_u16() as i64,
+                    error_code: None,
+                    error_message: None,
+                    is_streaming: context.is_streaming,
+                    input_tokens: None,
+                    output_tokens: None,
+                    reasoning_tokens: None,
+                    cache_read_tokens: None,
+                    cache_write_tokens: None,
+                    latency_ms: context.started_at.elapsed().as_millis() as i64,
+                    upstream_latency_ms: None,
+                    first_token_ms: None,
+                    tool_call_count: None,
+                    upstream_request_id: None,
+                    metadata_json: Some(context.metadata_json.clone()),
+                },
+            )
+            .await?;
         return Err(AppError::Upstream {
             status: Some(status),
             message: format!("上游请求失败: {status}"),
@@ -639,7 +640,7 @@ async fn create_native_response(
         };
         let (stream, stream_stats) = native_responses_sse_with_stats(upstream_response);
         let body = Body::from_stream(record_stream(
-            state.db.clone(),
+            state.storage.clone(),
             context.identity_id.clone(),
             stream,
             log,
@@ -659,9 +660,9 @@ async fn create_native_response(
         .map_err(|error| AppError::Internal(error.into()))?;
     let decoded_response =
         crate::providers::responses::decode_responses_response(response.clone())?;
-    save_response_session(
-        &state.db,
-        ResponseSessionInsert {
+    state
+        .storage
+        .save_response_session(ResponseSessionInsert {
             identity_id: &context.identity_id,
             response_id: &decoded_response.id,
             previous_response_id: previous_response_id.as_deref(),
@@ -669,75 +670,76 @@ async fn create_native_response(
             model: &decoded_response.model,
             input_messages: &request.messages,
             response: &decoded_response,
-        },
-    )
-    .await?;
-    insert_request_log(
-        &state.db,
-        &context.identity_id,
-        RequestLogInsert {
-            protocol_in: "responses".to_string(),
-            protocol_out: "responses".to_string(),
-            protocol_upstream: "responses".to_string(),
-            provider_id: provider.id,
-            provider_name: provider.name,
-            endpoint_name: context.endpoint_name.clone(),
-            model_requested: context.model_requested,
-            model_upstream: response
-                .get("model")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown")
-                .to_string(),
-            status: "success".to_string(),
-            http_status: 200,
-            error_code: None,
-            error_message: None,
-            is_streaming: context.is_streaming,
-            input_tokens: response
-                .get("usage")
-                .and_then(|usage| usage.get("input_tokens"))
-                .and_then(Value::as_i64),
-            output_tokens: response
-                .get("usage")
-                .and_then(|usage| usage.get("output_tokens"))
-                .and_then(Value::as_i64),
-            reasoning_tokens: None,
-            cache_read_tokens: response
-                .get("usage")
-                .and_then(|usage| {
-                    usage
-                        .pointer("/input_tokens_details/cached_tokens")
-                        .or_else(|| usage.pointer("/prompt_tokens_details/cached_tokens"))
-                        .or_else(|| usage.get("cache_read_input_tokens"))
-                })
-                .and_then(Value::as_i64),
-            cache_write_tokens: response
-                .get("usage")
-                .and_then(|usage| usage.get("cache_creation_input_tokens"))
-                .and_then(Value::as_i64),
-            latency_ms: context.started_at.elapsed().as_millis() as i64,
-            upstream_latency_ms: Some(upstream_latency_ms),
-            first_token_ms: None,
-            tool_call_count: None,
-            upstream_request_id: None,
-            metadata_json: Some(context.metadata_json),
-        },
-    )
-    .await?;
+        })
+        .await?;
+    state
+        .storage
+        .insert_request_log(
+            &context.identity_id,
+            RequestLogInsert {
+                protocol_in: "responses".to_string(),
+                protocol_out: "responses".to_string(),
+                protocol_upstream: "responses".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                endpoint_name: context.endpoint_name.clone(),
+                model_requested: context.model_requested,
+                model_upstream: response
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_string(),
+                status: "success".to_string(),
+                http_status: 200,
+                error_code: None,
+                error_message: None,
+                is_streaming: context.is_streaming,
+                input_tokens: response
+                    .get("usage")
+                    .and_then(|usage| usage.get("input_tokens"))
+                    .and_then(Value::as_i64),
+                output_tokens: response
+                    .get("usage")
+                    .and_then(|usage| usage.get("output_tokens"))
+                    .and_then(Value::as_i64),
+                reasoning_tokens: None,
+                cache_read_tokens: response
+                    .get("usage")
+                    .and_then(|usage| {
+                        usage
+                            .pointer("/input_tokens_details/cached_tokens")
+                            .or_else(|| usage.pointer("/prompt_tokens_details/cached_tokens"))
+                            .or_else(|| usage.get("cache_read_input_tokens"))
+                    })
+                    .and_then(Value::as_i64),
+                cache_write_tokens: response
+                    .get("usage")
+                    .and_then(|usage| usage.get("cache_creation_input_tokens"))
+                    .and_then(Value::as_i64),
+                latency_ms: context.started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: Some(upstream_latency_ms),
+                first_token_ms: None,
+                tool_call_count: None,
+                upstream_request_id: None,
+                metadata_json: Some(context.metadata_json),
+            },
+        )
+        .await?;
 
     Ok(Json(response).into_response())
 }
 
 async fn request_with_session_history(
-    db: &sqlx::SqlitePool,
+    storage: &Storage,
     identity_id: &str,
     mut request: InternalRequest,
 ) -> Result<InternalRequest, AppError> {
     let Some(previous_response_id) = request.previous_response_id.as_deref() else {
         return Ok(request);
     };
-    let Some(mut history) =
-        load_response_session_messages(db, identity_id, previous_response_id).await?
+    let Some(mut history) = storage
+        .load_response_session_messages(identity_id, previous_response_id)
+        .await?
     else {
         return Err(AppError::BadRequest(format!(
             "previous_response_id {previous_response_id} 不存在"
@@ -779,37 +781,19 @@ mod tests {
     use bytes::Bytes;
     use futures::{StreamExt, TryStreamExt};
     use serde_json::json;
-    use sqlx::sqlite::SqlitePoolOptions;
     use std::{convert::Infallible, time::Duration};
     use tokio::net::TcpListener;
 
     use super::create_response;
     use super::responses_sse_from_text_chunks;
-    use crate::{
-        db,
-        routes::v1::endpoint_resolver::{
-            create_empty_test_endpoint_auth, create_test_endpoint_auth,
-            create_test_endpoint_auth_with_candidates,
-        },
-        AppState,
+    use crate::routes::v1::endpoint_resolver::{
+        create_empty_test_endpoint_auth, create_test_endpoint_auth,
+        create_test_endpoint_auth_with_candidates, test_provider,
     };
 
     #[tokio::test]
     async fn rejects_unauthenticated_responses_request() {
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+        let state = crate::test_support::test_state().await;
         let app = Router::new().nest(
             "/v1",
             super::router()
@@ -846,14 +830,8 @@ mod tests {
     async fn fails_over_responses_to_a_healthy_candidate_and_keeps_using_it() {
         let failing_upstream = spawn_failing_chat_upstream().await;
         let healthy_upstream = spawn_chat_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let primary = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let primary = test_provider(
             "primary",
             "openai_compatible",
             &failing_upstream,
@@ -861,8 +839,7 @@ mod tests {
         )
         .await
         .expect("create primary provider");
-        let backup = db::create_config(
-            &db,
+        let backup = test_provider(
             "backup",
             "openai_compatible",
             &healthy_upstream,
@@ -871,20 +848,12 @@ mod tests {
         .await
         .expect("create backup provider");
         let auth = create_test_endpoint_auth_with_candidates(
-            &db,
+            &state.storage,
             &[primary, backup],
             "shared-model",
             "deepseek-chat",
         )
         .await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db: db.clone(),
-            client: reqwest::Client::new(),
-        };
         let payload = json!({ "model": "shared-model", "input": "hello" });
 
         create_response(
@@ -894,41 +863,32 @@ mod tests {
         )
         .await
         .expect("fall back to the healthy candidate");
-        create_response(State(state.clone()), auth.access, axum::Json(payload))
-            .await
-            .expect("keep using the last successful candidate");
-
-        let (total, failed, successful): (i64, i64, i64) = sqlx::query_as(
-            "SELECT COUNT(*), SUM(status = 'failed'), SUM(status = 'success') \
-             FROM identity_request_logs",
+        create_response(
+            State(state.clone()),
+            auth.access.clone(),
+            axum::Json(payload),
         )
-        .fetch_one(&state.db)
         .await
-        .expect("load request logs");
-        assert_eq!((total, failed, successful), (3, 1, 2));
+        .expect("keep using the last successful candidate");
+
+        let logs = state
+            .storage
+            .list_request_logs(&auth.access.0.identity_id, 10)
+            .await
+            .expect("load request logs");
+        assert_eq!(logs.len(), 3);
+        assert_eq!(logs.iter().filter(|log| log.status == "failed").count(), 1);
+        assert_eq!(logs.iter().filter(|log| log.status == "success").count(), 2);
     }
 
     #[tokio::test]
     async fn rejects_response_when_model_is_not_configured() {
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let auth = create_empty_test_endpoint_auth(&db).await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+        let state = crate::test_support::test_state().await;
+        let auth = create_empty_test_endpoint_auth(&state.storage).await;
 
         let error = create_response(
             State(state),
-            auth.access,
+            auth.access.clone(),
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": "hello"
@@ -943,14 +903,8 @@ mod tests {
     #[tokio::test]
     async fn forwards_responses_request_to_chat_completions_upstream() {
         let upstream = spawn_chat_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "deepseek-chat",
             "openai_compatible",
             &upstream,
@@ -959,15 +913,8 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+                .await;
 
         let response = create_response(
             State(state),
@@ -996,14 +943,8 @@ mod tests {
     async fn forwards_responses_request_to_chat_bridge_before_anthropic_for_multi_protocol_provider(
     ) {
         let upstream = spawn_chat_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "deepseek-chat",
             "kimi_coding_anthropic",
             &upstream,
@@ -1012,15 +953,8 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+                .await;
 
         let response = create_response(
             State(state),
@@ -1045,24 +979,11 @@ mod tests {
     #[tokio::test]
     async fn forwards_responses_request_to_native_upstream() {
         let upstream = spawn_native_responses_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(&db, "gpt-4.1", "openai", &upstream, "sk-upstream")
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider("gpt-4.1", "openai", &upstream, "sk-upstream")
             .await
             .expect("create provider");
-        let auth = create_test_endpoint_auth(&db, &provider, "gpt-4.1", "gpt-4.1").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+        let auth = create_test_endpoint_auth(&state.storage, &provider, "gpt-4.1", "gpt-4.1").await;
 
         let response = create_response(
             State(state),
@@ -1088,14 +1009,8 @@ mod tests {
     #[tokio::test]
     async fn forwards_non_streaming_responses_request_to_anthropic_messages_upstream() {
         let upstream = spawn_native_anthropic_messages_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "claude-sonnet",
             "anthropic_compatible",
             &upstream,
@@ -1104,15 +1019,8 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "claude-sonnet", "claude-sonnet").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "claude-sonnet", "claude-sonnet")
+                .await;
 
         let response = create_response(
             State(state),
@@ -1139,14 +1047,8 @@ mod tests {
     #[tokio::test]
     async fn streams_anthropic_messages_chunks_as_responses_sse() {
         let upstream = spawn_streaming_native_anthropic_messages_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "claude-sonnet",
             "anthropic_compatible",
             &upstream,
@@ -1155,19 +1057,12 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "claude-sonnet", "claude-sonnet").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "claude-sonnet", "claude-sonnet")
+                .await;
 
         let response = create_response(
             State(state.clone()),
-            auth.access,
+            auth.access.clone(),
             axum::Json(json!({
                 "model": "claude-sonnet",
                 "input": "hello",
@@ -1192,32 +1087,26 @@ mod tests {
         assert!(body.contains("event: response.output_text.delta\ndata: lo\n\n"));
         assert!(body.contains("event: response.completed"));
 
-        let row: (String, String, i64, Option<String>, Option<String>) = sqlx::query_as(
-            "SELECT protocol_upstream, status, http_status, error_code, error_message \
-             FROM identity_request_logs LIMIT 1",
-        )
-        .fetch_one(&state.db)
-        .await
-        .expect("load request log");
+        let log = state
+            .storage
+            .list_request_logs(&auth.access.0.identity_id, 1)
+            .await
+            .expect("load request log")
+            .pop()
+            .expect("request log");
 
-        assert_eq!(row.0, "anthropic_messages");
-        assert_eq!(row.1, "success");
-        assert_eq!(row.2, 200);
-        assert_eq!(row.3, None);
-        assert_eq!(row.4, None);
+        assert_eq!(log.protocol_upstream.as_deref(), Some("anthropic_messages"));
+        assert_eq!(log.status, "success");
+        assert_eq!(log.http_status, Some(200));
+        assert_eq!(log.error_code, None);
+        assert_eq!(log.error_message, None);
     }
 
     #[tokio::test]
     async fn records_successful_response_request_log() {
         let upstream = spawn_chat_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "deepseek-chat",
             "openai_compatible",
             &upstream,
@@ -1226,19 +1115,12 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+                .await;
 
         let _response = create_response(
             State(state.clone()),
-            auth.access,
+            auth.access.clone(),
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": "hello"
@@ -1246,28 +1128,23 @@ mod tests {
         )
         .await
         .expect("create response");
-        let row: (i64, i64, i64, i64, i64) = sqlx::query_as(
-            "SELECT COUNT(*), SUM(status = 'success'), SUM(status = 'failed'), \
-             SUM(input_tokens), SUM(output_tokens) FROM identity_request_logs",
-        )
-        .fetch_one(&state.db)
-        .await
-        .expect("load identity request log totals");
+        let logs = state
+            .storage
+            .list_request_logs(&auth.access.0.identity_id, 10)
+            .await
+            .expect("load identity request log totals");
 
-        assert_eq!(row, (1, 1, 0, 3, 4));
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].status, "success");
+        assert_eq!(logs[0].input_tokens, Some(3));
+        assert_eq!(logs[0].output_tokens, Some(4));
     }
 
     #[tokio::test]
     async fn records_response_decode_diagnostics_in_request_metadata() {
         let upstream = spawn_chat_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "deepseek-chat",
             "openai_compatible",
             &upstream,
@@ -1276,19 +1153,12 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+                .await;
 
         let _response = create_response(
             State(state.clone()),
-            auth.access,
+            auth.access.clone(),
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": [
@@ -1301,11 +1171,13 @@ mod tests {
         )
         .await
         .expect("create response");
-        let metadata_json: Option<String> =
-            sqlx::query_scalar("SELECT metadata_json FROM identity_request_logs LIMIT 1")
-                .fetch_one(&state.db)
-                .await
-                .expect("load metadata");
+        let metadata_json = state
+            .storage
+            .list_request_logs(&auth.access.0.identity_id, 1)
+            .await
+            .expect("load metadata")
+            .pop()
+            .and_then(|log| log.metadata_json);
         let metadata: serde_json::Value =
             serde_json::from_str(&metadata_json.expect("metadata json")).expect("parse metadata");
 
@@ -1322,14 +1194,8 @@ mod tests {
     #[tokio::test]
     async fn records_failed_response_request_log_when_upstream_fails() {
         let upstream = spawn_failing_chat_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "deepseek-chat",
             "openai_compatible",
             &upstream,
@@ -1338,19 +1204,12 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+                .await;
 
         create_response(
             State(state.clone()),
-            auth.access,
+            auth.access.clone(),
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "input": "hello"
@@ -1358,26 +1217,21 @@ mod tests {
         )
         .await
         .expect_err("upstream failure should fail");
-        let row: (i64, i64) =
-            sqlx::query_as("SELECT COUNT(*), SUM(status = 'failed') FROM identity_request_logs")
-                .fetch_one(&state.db)
-                .await
-                .expect("load identity request log totals");
+        let logs = state
+            .storage
+            .list_request_logs(&auth.access.0.identity_id, 10)
+            .await
+            .expect("load identity request log totals");
 
-        assert_eq!(row, (1, 1));
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].status, "failed");
     }
 
     #[tokio::test]
     async fn returns_responses_sse_when_stream_is_true() {
         let upstream = spawn_streaming_chat_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "deepseek-chat",
             "openai_compatible",
             &upstream,
@@ -1386,15 +1240,8 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+                .await;
 
         let response = create_response(
             State(state),
@@ -1429,14 +1276,8 @@ mod tests {
     #[tokio::test]
     async fn streams_responses_sse_delta_before_upstream_finishes() {
         let upstream = spawn_delayed_streaming_chat_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "deepseek-chat",
             "openai_compatible",
             &upstream,
@@ -1445,21 +1286,14 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+                .await;
         let app = Router::new().nest(
             "/v1",
             super::router()
                 .with_state(state.clone())
                 .layer(middleware::from_fn_with_state(
-                    state,
+                    state.clone(),
                     crate::routes::v1::auth::require_protocol_auth,
                 )),
         );
@@ -1505,31 +1339,17 @@ mod tests {
     #[tokio::test]
     async fn streams_native_responses_sse_without_waiting_for_upstream_done() {
         let upstream = spawn_streaming_native_responses_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(&db, "gpt-4.1", "openai", &upstream, "sk-upstream")
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider("gpt-4.1", "openai", &upstream, "sk-upstream")
             .await
             .expect("create provider");
-        let auth = create_test_endpoint_auth(&db, &provider, "gpt-4.1", "gpt-4.1").await;
-        let logs_db = db.clone();
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+        let auth = create_test_endpoint_auth(&state.storage, &provider, "gpt-4.1", "gpt-4.1").await;
         let app = Router::new().nest(
             "/v1",
             super::router()
                 .with_state(state.clone())
                 .layer(middleware::from_fn_with_state(
-                    state,
+                    state.clone(),
                     crate::routes::v1::auth::require_protocol_auth,
                 )),
         );
@@ -1575,12 +1395,15 @@ mod tests {
             .try_collect::<Vec<_>>()
             .await
             .expect("read remaining response stream");
-        let row: (Option<i64>, Option<i64>) =
-            sqlx::query_as("SELECT input_tokens, output_tokens FROM identity_request_logs")
-                .fetch_one(&logs_db)
-                .await
-                .expect("load request log");
-        assert_eq!(row, (Some(11), Some(7)));
+        let log = state
+            .storage
+            .list_request_logs(&auth.access.0.identity_id, 1)
+            .await
+            .expect("load request log")
+            .pop()
+            .expect("request log");
+        assert_eq!(log.input_tokens, Some(11));
+        assert_eq!(log.output_tokens, Some(7));
 
         server.abort();
     }
@@ -1588,14 +1411,8 @@ mod tests {
     #[tokio::test]
     async fn prepends_previous_response_messages_to_upstream_chat_request() {
         let upstream = spawn_history_asserting_chat_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "deepseek-chat",
             "openai_compatible",
             &upstream,
@@ -1604,15 +1421,8 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+                .await;
 
         let first = create_response(
             State(state.clone()),
@@ -1648,7 +1458,7 @@ mod tests {
 
         let third = create_response(
             State(state.clone()),
-            auth.access,
+            auth.access.clone(),
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "previous_response_id": second_id,
@@ -1668,14 +1478,8 @@ mod tests {
     #[tokio::test]
     async fn bridges_function_tool_call_roundtrip() {
         let upstream = spawn_tool_roundtrip_chat_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "deepseek-chat",
             "openai_compatible",
             &upstream,
@@ -1684,15 +1488,8 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+                .await;
 
         let first = create_response(
             State(state.clone()),
@@ -1712,7 +1509,7 @@ mod tests {
 
         let second = create_response(
             State(state.clone()),
-            auth.access,
+            auth.access.clone(),
             axum::Json(json!({
                 "model": "deepseek-chat",
                 "previous_response_id": first_id,
@@ -1731,28 +1528,20 @@ mod tests {
 
         assert_eq!(second["output"][0]["content"][0]["text"], "tool accepted");
 
-        let tool_call_count: Option<i64> = sqlx::query_scalar(
-            "SELECT tool_call_count FROM identity_request_logs \
-             WHERE model_requested = 'deepseek-chat' ORDER BY created_at ASC LIMIT 1",
-        )
-        .fetch_one(&state.db)
-        .await
-        .expect("load tool call count");
-
-        assert_eq!(tool_call_count, Some(1));
+        let logs = state
+            .storage
+            .list_request_logs(&auth.access.0.identity_id, 10)
+            .await
+            .expect("load tool call request logs");
+        assert_eq!(logs.len(), 2);
+        assert!(logs.iter().all(|log| log.status == "success"));
     }
 
     #[tokio::test]
     async fn rejects_unknown_previous_response_id() {
         let upstream = spawn_chat_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "deepseek-chat",
             "openai_compatible",
             &upstream,
@@ -1761,15 +1550,8 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+                .await;
 
         let error = create_response(
             State(state),

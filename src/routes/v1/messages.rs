@@ -29,7 +29,6 @@ use crate::{
     routes::v1::auth::CurrentProtocolAccess,
     routes::v1::endpoint_resolver::{resolve_endpoint_model_candidates, ResolvedEndpointProvider},
     stats::RequestLogInsert,
-    storage::stats::insert as insert_request_log,
     AppState,
 };
 
@@ -188,37 +187,38 @@ async fn create_message_with_candidate(
 
     if !upstream_response.status().is_success() {
         let status = upstream_response.status();
-        insert_request_log(
-            &state.db,
-            &context.identity_id,
-            RequestLogInsert {
-                protocol_in: "anthropic_messages".to_string(),
-                protocol_out: "anthropic_messages".to_string(),
-                protocol_upstream: "chat_completions".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                endpoint_name: context.endpoint_name.clone(),
-                model_requested: context.model_requested,
-                model_upstream: request.model,
-                status: "failed".to_string(),
-                http_status: status.as_u16() as i64,
-                error_code: None,
-                error_message: None,
-                is_streaming: context.is_streaming,
-                input_tokens: None,
-                output_tokens: None,
-                reasoning_tokens: None,
-                cache_read_tokens: None,
-                cache_write_tokens: None,
-                latency_ms: context.started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: None,
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id: None,
-                metadata_json: Some(context.metadata_json.clone()),
-            },
-        )
-        .await?;
+        state
+            .storage
+            .insert_request_log(
+                &context.identity_id,
+                RequestLogInsert {
+                    protocol_in: "anthropic_messages".to_string(),
+                    protocol_out: "anthropic_messages".to_string(),
+                    protocol_upstream: "chat_completions".to_string(),
+                    provider_id: provider.id,
+                    provider_name: provider.name,
+                    endpoint_name: context.endpoint_name.clone(),
+                    model_requested: context.model_requested,
+                    model_upstream: request.model,
+                    status: "failed".to_string(),
+                    http_status: status.as_u16() as i64,
+                    error_code: None,
+                    error_message: None,
+                    is_streaming: context.is_streaming,
+                    input_tokens: None,
+                    output_tokens: None,
+                    reasoning_tokens: None,
+                    cache_read_tokens: None,
+                    cache_write_tokens: None,
+                    latency_ms: context.started_at.elapsed().as_millis() as i64,
+                    upstream_latency_ms: None,
+                    first_token_ms: None,
+                    tool_call_count: None,
+                    upstream_request_id: None,
+                    metadata_json: Some(context.metadata_json.clone()),
+                },
+            )
+            .await?;
         return Err(AppError::Upstream {
             status: Some(status),
             message: format!("上游请求失败: {status}"),
@@ -259,7 +259,7 @@ async fn create_message_with_candidate(
         return Response::builder()
             .header(header::CONTENT_TYPE, "text/event-stream")
             .body(Body::from_stream(record_stream(
-                state.db.clone(),
+                state.storage.clone(),
                 context.identity_id,
                 stream,
                 log,
@@ -279,46 +279,47 @@ async fn create_message_with_candidate(
         .as_ref()
         .and_then(|usage| usage.reasoning_tokens);
     let tool_call_count = count_tool_calls(&response);
-    insert_request_log(
-        &state.db,
-        &context.identity_id,
-        RequestLogInsert {
-            protocol_in: "anthropic_messages".to_string(),
-            protocol_out: "anthropic_messages".to_string(),
-            protocol_upstream: "chat_completions".to_string(),
-            provider_id: provider.id,
-            provider_name: provider.name,
-            endpoint_name: context.endpoint_name.clone(),
-            model_requested: context.model_requested,
-            model_upstream: response.model.clone(),
-            status: "success".to_string(),
-            http_status: 200,
-            error_code: None,
-            error_message: None,
-            is_streaming: context.is_streaming,
-            input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
-            output_tokens: response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.output_tokens),
-            reasoning_tokens,
-            cache_read_tokens: response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.cache_read_tokens),
-            cache_write_tokens: response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.cache_write_tokens),
-            latency_ms: context.started_at.elapsed().as_millis() as i64,
-            upstream_latency_ms: Some(upstream_latency_ms),
-            first_token_ms: None,
-            tool_call_count: Some(tool_call_count),
-            upstream_request_id: None,
-            metadata_json: Some(context.metadata_json),
-        },
-    )
-    .await?;
+    state
+        .storage
+        .insert_request_log(
+            &context.identity_id,
+            RequestLogInsert {
+                protocol_in: "anthropic_messages".to_string(),
+                protocol_out: "anthropic_messages".to_string(),
+                protocol_upstream: "chat_completions".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                endpoint_name: context.endpoint_name.clone(),
+                model_requested: context.model_requested,
+                model_upstream: response.model.clone(),
+                status: "success".to_string(),
+                http_status: 200,
+                error_code: None,
+                error_message: None,
+                is_streaming: context.is_streaming,
+                input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
+                output_tokens: response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.output_tokens),
+                reasoning_tokens,
+                cache_read_tokens: response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.cache_read_tokens),
+                cache_write_tokens: response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.cache_write_tokens),
+                latency_ms: context.started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: Some(upstream_latency_ms),
+                first_token_ms: None,
+                tool_call_count: Some(tool_call_count),
+                upstream_request_id: None,
+                metadata_json: Some(context.metadata_json),
+            },
+        )
+        .await?;
 
     Ok(Json(encode_anthropic_response(response)).into_response())
 }
@@ -347,37 +348,38 @@ async fn create_responses_anthropic_message(
 
     if !upstream_response.status().is_success() {
         let status = upstream_response.status();
-        insert_request_log(
-            &state.db,
-            &context.identity_id,
-            RequestLogInsert {
-                protocol_in: "anthropic_messages".to_string(),
-                protocol_out: "anthropic_messages".to_string(),
-                protocol_upstream: "responses".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                endpoint_name: context.endpoint_name.clone(),
-                model_requested: context.model_requested,
-                model_upstream: request.model,
-                status: "failed".to_string(),
-                http_status: status.as_u16() as i64,
-                error_code: None,
-                error_message: None,
-                is_streaming: context.is_streaming,
-                input_tokens: None,
-                output_tokens: None,
-                reasoning_tokens: None,
-                cache_read_tokens: None,
-                cache_write_tokens: None,
-                latency_ms: context.started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: None,
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id: None,
-                metadata_json: Some(context.metadata_json.clone()),
-            },
-        )
-        .await?;
+        state
+            .storage
+            .insert_request_log(
+                &context.identity_id,
+                RequestLogInsert {
+                    protocol_in: "anthropic_messages".to_string(),
+                    protocol_out: "anthropic_messages".to_string(),
+                    protocol_upstream: "responses".to_string(),
+                    provider_id: provider.id,
+                    provider_name: provider.name,
+                    endpoint_name: context.endpoint_name.clone(),
+                    model_requested: context.model_requested,
+                    model_upstream: request.model,
+                    status: "failed".to_string(),
+                    http_status: status.as_u16() as i64,
+                    error_code: None,
+                    error_message: None,
+                    is_streaming: context.is_streaming,
+                    input_tokens: None,
+                    output_tokens: None,
+                    reasoning_tokens: None,
+                    cache_read_tokens: None,
+                    cache_write_tokens: None,
+                    latency_ms: context.started_at.elapsed().as_millis() as i64,
+                    upstream_latency_ms: None,
+                    first_token_ms: None,
+                    tool_call_count: None,
+                    upstream_request_id: None,
+                    metadata_json: Some(context.metadata_json.clone()),
+                },
+            )
+            .await?;
         return Err(AppError::Upstream {
             status: Some(status),
             message: format!("上游请求失败: {status}"),
@@ -418,7 +420,7 @@ async fn create_responses_anthropic_message(
         return Response::builder()
             .header(header::CONTENT_TYPE, "text/event-stream")
             .body(Body::from_stream(record_stream(
-                state.db.clone(),
+                state.storage.clone(),
                 context.identity_id,
                 stream,
                 log,
@@ -438,46 +440,47 @@ async fn create_responses_anthropic_message(
         .as_ref()
         .and_then(|usage| usage.reasoning_tokens);
     let tool_call_count = count_tool_calls(&response);
-    insert_request_log(
-        &state.db,
-        &context.identity_id,
-        RequestLogInsert {
-            protocol_in: "anthropic_messages".to_string(),
-            protocol_out: "anthropic_messages".to_string(),
-            protocol_upstream: "responses".to_string(),
-            provider_id: provider.id,
-            provider_name: provider.name,
-            endpoint_name: context.endpoint_name.clone(),
-            model_requested: context.model_requested,
-            model_upstream: response.model.clone(),
-            status: "success".to_string(),
-            http_status: 200,
-            error_code: None,
-            error_message: None,
-            is_streaming: context.is_streaming,
-            input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
-            output_tokens: response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.output_tokens),
-            reasoning_tokens,
-            cache_read_tokens: response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.cache_read_tokens),
-            cache_write_tokens: response
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.cache_write_tokens),
-            latency_ms: context.started_at.elapsed().as_millis() as i64,
-            upstream_latency_ms: Some(upstream_latency_ms),
-            first_token_ms: None,
-            tool_call_count: Some(tool_call_count),
-            upstream_request_id: None,
-            metadata_json: Some(context.metadata_json),
-        },
-    )
-    .await?;
+    state
+        .storage
+        .insert_request_log(
+            &context.identity_id,
+            RequestLogInsert {
+                protocol_in: "anthropic_messages".to_string(),
+                protocol_out: "anthropic_messages".to_string(),
+                protocol_upstream: "responses".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                endpoint_name: context.endpoint_name.clone(),
+                model_requested: context.model_requested,
+                model_upstream: response.model.clone(),
+                status: "success".to_string(),
+                http_status: 200,
+                error_code: None,
+                error_message: None,
+                is_streaming: context.is_streaming,
+                input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
+                output_tokens: response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.output_tokens),
+                reasoning_tokens,
+                cache_read_tokens: response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.cache_read_tokens),
+                cache_write_tokens: response
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage.cache_write_tokens),
+                latency_ms: context.started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: Some(upstream_latency_ms),
+                first_token_ms: None,
+                tool_call_count: Some(tool_call_count),
+                upstream_request_id: None,
+                metadata_json: Some(context.metadata_json),
+            },
+        )
+        .await?;
 
     Ok(Json(encode_anthropic_response(response)).into_response())
 }
@@ -508,37 +511,38 @@ async fn create_native_anthropic_message(
 
     if !upstream_response.status().is_success() {
         let status = upstream_response.status();
-        insert_request_log(
-            &state.db,
-            &context.identity_id,
-            RequestLogInsert {
-                protocol_in: "anthropic_messages".to_string(),
-                protocol_out: "anthropic_messages".to_string(),
-                protocol_upstream: "anthropic_messages".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                endpoint_name: context.endpoint_name.clone(),
-                model_requested: context.model_requested,
-                model_upstream: "unknown".to_string(),
-                status: "failed".to_string(),
-                http_status: status.as_u16() as i64,
-                error_code: None,
-                error_message: None,
-                is_streaming: context.is_streaming,
-                input_tokens: None,
-                output_tokens: None,
-                reasoning_tokens: None,
-                cache_read_tokens: None,
-                cache_write_tokens: None,
-                latency_ms: context.started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: None,
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id: None,
-                metadata_json: Some(context.metadata_json.clone()),
-            },
-        )
-        .await?;
+        state
+            .storage
+            .insert_request_log(
+                &context.identity_id,
+                RequestLogInsert {
+                    protocol_in: "anthropic_messages".to_string(),
+                    protocol_out: "anthropic_messages".to_string(),
+                    protocol_upstream: "anthropic_messages".to_string(),
+                    provider_id: provider.id,
+                    provider_name: provider.name,
+                    endpoint_name: context.endpoint_name.clone(),
+                    model_requested: context.model_requested,
+                    model_upstream: "unknown".to_string(),
+                    status: "failed".to_string(),
+                    http_status: status.as_u16() as i64,
+                    error_code: None,
+                    error_message: None,
+                    is_streaming: context.is_streaming,
+                    input_tokens: None,
+                    output_tokens: None,
+                    reasoning_tokens: None,
+                    cache_read_tokens: None,
+                    cache_write_tokens: None,
+                    latency_ms: context.started_at.elapsed().as_millis() as i64,
+                    upstream_latency_ms: None,
+                    first_token_ms: None,
+                    tool_call_count: None,
+                    upstream_request_id: None,
+                    metadata_json: Some(context.metadata_json.clone()),
+                },
+            )
+            .await?;
         return Err(AppError::Upstream {
             status: Some(status),
             message: format!("上游请求失败: {status}"),
@@ -581,7 +585,7 @@ async fn create_native_anthropic_message(
         return Response::builder()
             .header(header::CONTENT_TYPE, "text/event-stream")
             .body(Body::from_stream(record_first_chunk(
-                state.db.clone(),
+                state.storage.clone(),
                 context.identity_id,
                 upstream_response
                     .bytes_stream()
@@ -596,53 +600,54 @@ async fn create_native_anthropic_message(
         .json::<Value>()
         .await
         .map_err(|error| AppError::Internal(error.into()))?;
-    insert_request_log(
-        &state.db,
-        &context.identity_id,
-        RequestLogInsert {
-            protocol_in: "anthropic_messages".to_string(),
-            protocol_out: "anthropic_messages".to_string(),
-            protocol_upstream: "anthropic_messages".to_string(),
-            provider_id: provider.id,
-            provider_name: provider.name,
-            endpoint_name: context.endpoint_name.clone(),
-            model_requested: context.model_requested,
-            model_upstream: response
-                .get("model")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown")
-                .to_string(),
-            status: "success".to_string(),
-            http_status: 200,
-            error_code: None,
-            error_message: None,
-            is_streaming: context.is_streaming,
-            input_tokens: response
-                .get("usage")
-                .and_then(|usage| usage.get("input_tokens"))
-                .and_then(Value::as_i64),
-            output_tokens: response
-                .get("usage")
-                .and_then(|usage| usage.get("output_tokens"))
-                .and_then(Value::as_i64),
-            reasoning_tokens: None,
-            cache_read_tokens: response
-                .get("usage")
-                .and_then(|usage| usage.get("cache_read_input_tokens"))
-                .and_then(Value::as_i64),
-            cache_write_tokens: response
-                .get("usage")
-                .and_then(|usage| usage.get("cache_creation_input_tokens"))
-                .and_then(Value::as_i64),
-            latency_ms: context.started_at.elapsed().as_millis() as i64,
-            upstream_latency_ms: Some(upstream_latency_ms),
-            first_token_ms: None,
-            tool_call_count: None,
-            upstream_request_id: None,
-            metadata_json: Some(context.metadata_json),
-        },
-    )
-    .await?;
+    state
+        .storage
+        .insert_request_log(
+            &context.identity_id,
+            RequestLogInsert {
+                protocol_in: "anthropic_messages".to_string(),
+                protocol_out: "anthropic_messages".to_string(),
+                protocol_upstream: "anthropic_messages".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                endpoint_name: context.endpoint_name.clone(),
+                model_requested: context.model_requested,
+                model_upstream: response
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_string(),
+                status: "success".to_string(),
+                http_status: 200,
+                error_code: None,
+                error_message: None,
+                is_streaming: context.is_streaming,
+                input_tokens: response
+                    .get("usage")
+                    .and_then(|usage| usage.get("input_tokens"))
+                    .and_then(Value::as_i64),
+                output_tokens: response
+                    .get("usage")
+                    .and_then(|usage| usage.get("output_tokens"))
+                    .and_then(Value::as_i64),
+                reasoning_tokens: None,
+                cache_read_tokens: response
+                    .get("usage")
+                    .and_then(|usage| usage.get("cache_read_input_tokens"))
+                    .and_then(Value::as_i64),
+                cache_write_tokens: response
+                    .get("usage")
+                    .and_then(|usage| usage.get("cache_creation_input_tokens"))
+                    .and_then(Value::as_i64),
+                latency_ms: context.started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: Some(upstream_latency_ms),
+                first_token_ms: None,
+                tool_call_count: None,
+                upstream_request_id: None,
+                metadata_json: Some(context.metadata_json),
+            },
+        )
+        .await?;
 
     Ok(Json(response).into_response())
 }
@@ -660,34 +665,16 @@ mod tests {
     use axum::{extract::State, middleware, routing::post, Json, Router};
     use futures::{StreamExt, TryStreamExt};
     use serde_json::json;
-    use sqlx::sqlite::SqlitePoolOptions;
     use tokio::net::TcpListener;
 
     use super::create_message;
-    use crate::{
-        db,
-        routes::v1::endpoint_resolver::{
-            create_test_endpoint_auth, create_test_endpoint_auth_with_candidates,
-        },
-        AppState,
+    use crate::routes::v1::endpoint_resolver::{
+        create_test_endpoint_auth, create_test_endpoint_auth_with_candidates, test_provider,
     };
 
     #[tokio::test]
     async fn rejects_unauthenticated_anthropic_messages_request() {
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+        let state = crate::test_support::test_state().await;
         let app = Router::new().nest(
             "/v1",
             super::router()
@@ -726,14 +713,8 @@ mod tests {
     #[tokio::test]
     async fn forwards_anthropic_messages_request_to_chat_completions_upstream() {
         let upstream = spawn_chat_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "deepseek-chat",
             "openai_compatible",
             &upstream,
@@ -742,15 +723,8 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+                .await;
         let app = Router::new().nest(
             "/v1",
             super::router()
@@ -805,14 +779,8 @@ mod tests {
     async fn fails_over_messages_to_a_healthy_candidate_and_keeps_using_it() {
         let failing_upstream = spawn_failing_chat_upstream().await;
         let healthy_upstream = spawn_user_only_chat_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let primary = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let primary = test_provider(
             "primary",
             "openai_compatible",
             &failing_upstream,
@@ -820,8 +788,7 @@ mod tests {
         )
         .await
         .expect("create primary provider");
-        let backup = db::create_config(
-            &db,
+        let backup = test_provider(
             "backup",
             "openai_compatible",
             &healthy_upstream,
@@ -830,20 +797,12 @@ mod tests {
         .await
         .expect("create backup provider");
         let auth = create_test_endpoint_auth_with_candidates(
-            &db,
+            &state.storage,
             &[primary, backup],
             "shared-model",
             "deepseek-chat",
         )
         .await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db: db.clone(),
-            client: reqwest::Client::new(),
-        };
         let payload = json!({
             "model": "shared-model",
             "max_tokens": 1024,
@@ -857,41 +816,32 @@ mod tests {
         )
         .await
         .expect("fall back to the healthy candidate");
-        create_message(State(state.clone()), auth.access, axum::Json(payload))
-            .await
-            .expect("keep using the last successful candidate");
-
-        let (total, failed, successful): (i64, i64, i64) = sqlx::query_as(
-            "SELECT COUNT(*), SUM(status = 'failed'), SUM(status = 'success') \
-             FROM identity_request_logs",
+        create_message(
+            State(state.clone()),
+            auth.access.clone(),
+            axum::Json(payload),
         )
-        .fetch_one(&state.db)
         .await
-        .expect("load request logs");
-        assert_eq!((total, failed, successful), (3, 1, 2));
+        .expect("keep using the last successful candidate");
+
+        let logs = state
+            .storage
+            .list_request_logs(&auth.access.0.identity_id, 10)
+            .await
+            .expect("load request logs");
+        assert_eq!(logs.len(), 3);
+        assert_eq!(logs.iter().filter(|log| log.status == "failed").count(), 1);
+        assert_eq!(logs.iter().filter(|log| log.status == "success").count(), 2);
     }
 
     #[tokio::test]
     async fn forwards_anthropic_messages_request_to_responses_upstream_for_openai_provider() {
         let upstream = spawn_responses_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(&db, "gpt-4.1", "openai", &upstream, "sk-upstream")
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider("gpt-4.1", "openai", &upstream, "sk-upstream")
             .await
             .expect("create provider");
-        let auth = create_test_endpoint_auth(&db, &provider, "gpt-4.1", "gpt-4.1").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+        let auth = create_test_endpoint_auth(&state.storage, &provider, "gpt-4.1", "gpt-4.1").await;
         let app = Router::new().nest(
             "/v1",
             super::router()
@@ -933,15 +883,16 @@ mod tests {
         assert_eq!(body["usage"]["input_tokens"], 3);
         assert_eq!(body["usage"]["output_tokens"], 4);
 
-        let row: (String, Option<i64>, Option<i64>) = sqlx::query_as(
-            "SELECT protocol_upstream, input_tokens, output_tokens FROM identity_request_logs LIMIT 1",
-        )
-        .fetch_one(&state.db)
-        .await
-        .expect("load request log");
-        assert_eq!(row.0, "responses");
-        assert_eq!(row.1, Some(3));
-        assert_eq!(row.2, Some(4));
+        let log = state
+            .storage
+            .list_request_logs(&auth.access.0.identity_id, 1)
+            .await
+            .expect("load request log")
+            .pop()
+            .expect("request log");
+        assert_eq!(log.protocol_upstream.as_deref(), Some("responses"));
+        assert_eq!(log.input_tokens, Some(3));
+        assert_eq!(log.output_tokens, Some(4));
 
         server.abort();
     }
@@ -949,24 +900,11 @@ mod tests {
     #[tokio::test]
     async fn streams_responses_sse_as_anthropic_messages_sse() {
         let upstream = spawn_streaming_responses_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(&db, "gpt-4.1", "openai", &upstream, "sk-upstream")
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider("gpt-4.1", "openai", &upstream, "sk-upstream")
             .await
             .expect("create provider");
-        let auth = create_test_endpoint_auth(&db, &provider, "gpt-4.1", "gpt-4.1").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+        let auth = create_test_endpoint_auth(&state.storage, &provider, "gpt-4.1", "gpt-4.1").await;
         let app = Router::new().nest(
             "/v1",
             super::router()
@@ -1029,18 +967,18 @@ mod tests {
         assert!(body.contains("lo"));
         assert!(body.contains("event: message_stop"));
 
-        let row: (String, String, i64, Option<i64>) = sqlx::query_as(
-            "SELECT protocol_upstream, status, http_status, first_token_ms \
-             FROM identity_request_logs LIMIT 1",
-        )
-        .fetch_one(&state.db)
-        .await
-        .expect("load request log");
+        let log = state
+            .storage
+            .list_request_logs(&auth.access.0.identity_id, 1)
+            .await
+            .expect("load request log")
+            .pop()
+            .expect("request log");
 
-        assert_eq!(row.0, "responses");
-        assert_eq!(row.1, "success");
-        assert_eq!(row.2, 200);
-        assert!(row.3.is_some());
+        assert_eq!(log.protocol_upstream.as_deref(), Some("responses"));
+        assert_eq!(log.status, "success");
+        assert_eq!(log.http_status, Some(200));
+        assert!(log.first_token_ms.is_some());
 
         server.abort();
     }
@@ -1048,14 +986,8 @@ mod tests {
     #[tokio::test]
     async fn forwards_anthropic_messages_request_to_native_upstream() {
         let upstream = spawn_native_anthropic_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "claude-sonnet",
             "anthropic_compatible",
             &upstream,
@@ -1064,15 +996,8 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "claude-sonnet", "claude-sonnet").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "claude-sonnet", "claude-sonnet")
+                .await;
         let app = Router::new().nest(
             "/v1",
             super::router()
@@ -1116,14 +1041,8 @@ mod tests {
     #[tokio::test]
     async fn records_successful_anthropic_messages_request_log() {
         let upstream = spawn_user_only_chat_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "deepseek-chat",
             "openai_compatible",
             &upstream,
@@ -1132,15 +1051,8 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+                .await;
         let app = Router::new().nest(
             "/v1",
             super::router()
@@ -1172,15 +1084,16 @@ mod tests {
             .await
             .expect("send request");
         assert_eq!(response.status(), reqwest::StatusCode::OK);
-        let row: (i64, i64, i64, i64) = sqlx::query_as(
-            "SELECT COUNT(*), SUM(status = 'success'), SUM(input_tokens), SUM(output_tokens) \
-             FROM identity_request_logs",
-        )
-        .fetch_one(&state.db)
-        .await
-        .expect("load identity request log totals");
+        let logs = state
+            .storage
+            .list_request_logs(&auth.access.0.identity_id, 10)
+            .await
+            .expect("load identity request log totals");
 
-        assert_eq!(row, (1, 1, 3, 4));
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].status, "success");
+        assert_eq!(logs[0].input_tokens, Some(3));
+        assert_eq!(logs[0].output_tokens, Some(4));
 
         server.abort();
     }
@@ -1188,14 +1101,8 @@ mod tests {
     #[tokio::test]
     async fn records_anthropic_decode_diagnostics_in_request_metadata() {
         let upstream = spawn_user_only_chat_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "deepseek-chat",
             "openai_compatible",
             &upstream,
@@ -1204,15 +1111,8 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+                .await;
         let app = Router::new().nest(
             "/v1",
             super::router()
@@ -1244,11 +1144,13 @@ mod tests {
             .await
             .expect("send request");
         assert_eq!(response.status(), reqwest::StatusCode::OK);
-        let metadata_json: Option<String> =
-            sqlx::query_scalar("SELECT metadata_json FROM identity_request_logs LIMIT 1")
-                .fetch_one(&state.db)
-                .await
-                .expect("load metadata");
+        let metadata_json = state
+            .storage
+            .list_request_logs(&auth.access.0.identity_id, 1)
+            .await
+            .expect("load metadata")
+            .pop()
+            .and_then(|log| log.metadata_json);
         let metadata: serde_json::Value =
             serde_json::from_str(&metadata_json.expect("metadata json")).expect("parse metadata");
 
@@ -1265,14 +1167,8 @@ mod tests {
     #[tokio::test]
     async fn bridges_chat_tool_call_to_anthropic_tool_use() {
         let upstream = spawn_tool_call_chat_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "deepseek-chat",
             "openai_compatible",
             &upstream,
@@ -1281,15 +1177,8 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+                .await;
         let app = Router::new().nest(
             "/v1",
             super::router()
@@ -1347,14 +1236,8 @@ mod tests {
     #[tokio::test]
     async fn bridges_anthropic_tool_result_to_chat_tool_message() {
         let upstream = spawn_tool_result_chat_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "deepseek-chat",
             "openai_compatible",
             &upstream,
@@ -1363,15 +1246,8 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+                .await;
         let app = Router::new().nest(
             "/v1",
             super::router()
@@ -1423,14 +1299,8 @@ mod tests {
     #[tokio::test]
     async fn streams_chat_completions_text_delta_without_waiting_for_upstream_done() {
         let upstream = spawn_streaming_chat_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "deepseek-chat",
             "openai_compatible",
             &upstream,
@@ -1439,15 +1309,8 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "deepseek-chat", "deepseek-chat").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+                .await;
         let app = Router::new().nest(
             "/v1",
             super::router()
@@ -1504,14 +1367,8 @@ mod tests {
     #[tokio::test]
     async fn streams_native_anthropic_messages_sse_without_waiting_for_upstream_done() {
         let upstream = spawn_streaming_native_anthropic_upstream().await;
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "claude-sonnet",
             "anthropic_compatible",
             &upstream,
@@ -1520,15 +1377,8 @@ mod tests {
         .await
         .expect("create provider");
         let auth =
-            create_test_endpoint_auth(&db, &provider, "claude-sonnet", "claude-sonnet").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+            create_test_endpoint_auth(&state.storage, &provider, "claude-sonnet", "claude-sonnet")
+                .await;
         let app = Router::new().nest(
             "/v1",
             super::router()

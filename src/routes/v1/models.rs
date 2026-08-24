@@ -158,21 +158,14 @@ fn downstream_protocols_for_spec(spec: &ProviderSpec) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use axum::{extract::State, middleware, Router};
-    use sqlx::sqlite::SqlitePoolOptions;
 
     use super::list_models;
-    use crate::{db, routes::v1::endpoint_resolver::create_test_endpoint_auth, AppState};
+    use crate::routes::v1::endpoint_resolver::{create_test_endpoint_auth, test_provider};
 
     #[tokio::test]
     async fn lists_identity_endpoint_models_only() {
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let provider = db::create_config(
-            &db,
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider(
             "DeepSeek",
             "openai_compatible",
             "https://api.deepseek.com",
@@ -180,15 +173,8 @@ mod tests {
         )
         .await
         .expect("create legacy provider source");
-        let auth = create_test_endpoint_auth(&db, &provider, "coder", "deepseek-chat").await;
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+        let auth =
+            create_test_endpoint_auth(&state.storage, &provider, "coder", "deepseek-chat").await;
 
         let response = list_models(State(state), auth.access)
             .await
@@ -213,20 +199,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_unauthenticated_models_request() {
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("create sqlite pool");
-        db::init_schema(&db).await.expect("init schema");
-        let state = AppState {
-            storage: crate::storage::Storage::from_pool(
-                db.clone(),
-                crate::storage::MasterKey::from_bytes([0; 32]),
-            ),
-            db,
-            client: reqwest::Client::new(),
-        };
+        let state = crate::test_support::test_state().await;
         let app = Router::new().nest(
             "/v1",
             super::router()

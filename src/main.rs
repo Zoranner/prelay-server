@@ -1,12 +1,14 @@
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use std::{net::SocketAddr, path::Path, str::FromStr};
+use std::{net::SocketAddr, path::Path};
 
 use prelay_server::{
     app,
+    database::{connect, DatabaseConfig},
     identity::cleanup::delete_expired_identities,
+    migration::{ensure_current, MigrationError},
     storage::{MasterKey, Storage, StorageError},
     AppState,
 };
+use sea_orm::DatabaseConnection;
 
 const STARTUP_CLEANUP_FAILURE: &str = "startup identity cleanup failed";
 
@@ -34,6 +36,10 @@ fn load_environment_file(path: &Path) -> anyhow::Result<()> {
     }
 }
 
+async fn ensure_service_database_current(db: &DatabaseConnection) -> Result<(), MigrationError> {
+    ensure_current(db).await
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     load_environment_file(Path::new(".env"))?;
@@ -45,14 +51,10 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    std::fs::create_dir_all("data")?;
-    let db = SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(
-            SqliteConnectOptions::from_str("sqlite:data/relay.db?mode=rwc")?.foreign_keys(true),
-        )
-        .await?;
-    let storage = Storage::initialize(db.clone(), MasterKey::from_environment()?).await?;
+    let database_config = DatabaseConfig::from_environment()?;
+    let db = connect(&database_config).await?;
+    ensure_service_database_current(&db).await?;
+    let storage = Storage::from_connection(db, MasterKey::from_environment()?);
     let deleted = delete_expired_identities(&storage)
         .await
         .map_err(handle_startup_cleanup_failure)?;
@@ -80,11 +82,7 @@ async fn main() -> anyhow::Result<()> {
     let client = reqwest::Client::builder()
         .timeout(upstream_policy.timeout)
         .build()?;
-    let state = AppState {
-        db,
-        storage,
-        client,
-    };
+    let state = AppState { storage, client };
     let app = app::router(state).await?;
 
     let port: u16 = std::env::var("LISTEN_PORT")
@@ -110,7 +108,11 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use prelay_server::storage::StorageError;
+    use prelay_server::{
+        migration::{apply_all, ensure_current, MigrationError},
+        storage::StorageError,
+    };
+    use sea_orm::Database;
     use tracing::{
         field::{Field, Visit},
         Event, Subscriber,
@@ -166,13 +168,41 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn service_startup_rejects_pending_migrations_without_applying_them() {
+        let db = Database::connect("sqlite::memory:")
+            .await
+            .expect("connect to in-memory SQLite");
+
+        assert!(matches!(
+            super::ensure_service_database_current(&db).await,
+            Err(MigrationError::SchemaOutdated { .. })
+        ));
+        assert!(matches!(
+            ensure_current(&db).await,
+            Err(MigrationError::SchemaOutdated { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn service_startup_accepts_a_migrated_database() {
+        let db = Database::connect("sqlite::memory:")
+            .await
+            .expect("connect to in-memory SQLite");
+        apply_all(&db).await.expect("apply migrations");
+
+        super::ensure_service_database_current(&db)
+            .await
+            .expect("migrated database is current");
+    }
+
     #[test]
     fn cleanup_failure_log_excludes_storage_error_details() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let subscriber = Registry::default().with(EventCapture {
             events: Arc::clone(&events),
         });
-        let error = StorageError::Database(sqlx::Error::Protocol(
+        let error = StorageError::Database(sea_orm::DbErr::Custom(
             "SQL database DB crypto provider_key device_credential secret".to_string(),
         ));
 
@@ -192,7 +222,7 @@ mod tests {
         let subscriber = Registry::default().with(EventCapture {
             events: Arc::clone(&events),
         });
-        let error = StorageError::Database(sqlx::Error::Protocol(
+        let error = StorageError::Database(sea_orm::DbErr::Custom(
             "SQL database DB crypto provider_key device_credential secret".to_string(),
         ));
 

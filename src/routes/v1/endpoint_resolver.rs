@@ -56,13 +56,13 @@ pub(crate) struct TestEndpointAuth {
 
 #[cfg(test)]
 pub(crate) async fn create_test_endpoint_auth(
-    db: &sqlx::SqlitePool,
+    storage: &crate::storage::Storage,
     provider: &crate::models::ProviderConfig,
     model_name: &str,
     upstream_model: &str,
 ) -> TestEndpointAuth {
     create_test_endpoint_auth_with_candidates(
-        db,
+        storage,
         std::slice::from_ref(provider),
         model_name,
         upstream_model,
@@ -72,12 +72,11 @@ pub(crate) async fn create_test_endpoint_auth(
 
 #[cfg(test)]
 pub(crate) async fn create_test_endpoint_auth_with_candidates(
-    db: &sqlx::SqlitePool,
+    storage: &crate::storage::Storage,
     providers: &[crate::models::ProviderConfig],
     model_name: &str,
     upstream_model: &str,
 ) -> TestEndpointAuth {
-    let storage = test_storage(db).await;
     let identity = storage
         .register_identity(
             "test-machine",
@@ -126,8 +125,9 @@ pub(crate) async fn create_test_endpoint_auth_with_candidates(
 }
 
 #[cfg(test)]
-pub(crate) async fn create_empty_test_endpoint_auth(db: &sqlx::SqlitePool) -> TestEndpointAuth {
-    let storage = test_storage(db).await;
+pub(crate) async fn create_empty_test_endpoint_auth(
+    storage: &crate::storage::Storage,
+) -> TestEndpointAuth {
     let identity = storage
         .register_identity(
             "test-machine",
@@ -151,10 +151,33 @@ pub(crate) async fn create_empty_test_endpoint_auth(db: &sqlx::SqlitePool) -> Te
 }
 
 #[cfg(test)]
-async fn test_storage(db: &sqlx::SqlitePool) -> crate::storage::Storage {
-    crate::storage::Storage::initialize(db.clone(), crate::storage::MasterKey::from_bytes([0; 32]))
-        .await
-        .expect("initialize identity storage")
+pub(crate) async fn test_provider(
+    name: &str,
+    provider_type: &str,
+    base_url: &str,
+    api_key: &str,
+) -> anyhow::Result<crate::models::ProviderConfig> {
+    test_provider_with_capabilities(name, provider_type, base_url, api_key, None).await
+}
+
+#[cfg(test)]
+pub(crate) async fn test_provider_with_capabilities(
+    name: &str,
+    provider_type: &str,
+    base_url: &str,
+    api_key: &str,
+    capabilities: Option<&crate::models::ProviderCapabilityOverrides>,
+) -> anyhow::Result<crate::models::ProviderConfig> {
+    Ok(crate::models::ProviderConfig {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: name.to_string(),
+        provider_type: provider_type.to_string(),
+        base_url: base_url.to_string(),
+        api_key: api_key.to_string(),
+        token: String::new(),
+        capabilities_json: capabilities.map(serde_json::to_string).transpose()?,
+        created_at: chrono::Utc::now().to_rfc3339(),
+    })
 }
 
 #[cfg(test)]

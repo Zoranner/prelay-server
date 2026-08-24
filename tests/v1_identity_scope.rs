@@ -6,11 +6,12 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use prelay_protocol::{
     CreateEndpointRequest, CreateIdentityRequest, CreateProviderRequest, EndpointModelInput,
 };
-use prelay_server::{app, test_support::test_state};
 use serde_json::Value;
-use sqlx::Row;
 use tokio::net::TcpListener;
 use tower::ServiceExt;
+
+mod support;
+mod test_context;
 
 async fn request(app: &axum::Router, request: Request<Body>) -> (StatusCode, Value) {
     let response = app.clone().oneshot(request).await.expect("route request");
@@ -150,7 +151,8 @@ async fn spawn_chat_upstream() -> String {
 
 #[tokio::test]
 async fn endpoint_token_resolves_only_its_identity_model_mapping() {
-    let app = app::router(test_state().await).await.expect("build app");
+    let context = test_context::test_context().await;
+    let app = context.app;
     let endpoint_a = create_endpoint_for(&app, "machine-a", "S-1-5-21-100", "provider-a").await;
     create_endpoint_for(&app, "machine-b", "S-1-5-21-200", "provider-b").await;
 
@@ -173,9 +175,8 @@ async fn endpoint_token_resolves_only_its_identity_model_mapping() {
 
 #[tokio::test]
 async fn protocol_request_writes_identity_scoped_log_and_response_session() {
-    let state = test_state().await;
-    let db = state.db.clone();
-    let app = app::router(state).await.expect("build app");
+    let context = test_context::test_context().await;
+    let app = context.app;
     let upstream = spawn_chat_upstream().await;
     let endpoint_a =
         create_endpoint_for_url(&app, "machine-a", "S-1-5-21-100", "provider-a", &upstream).await;
@@ -209,25 +210,29 @@ async fn protocol_request_writes_identity_scoped_log_and_response_session() {
     .await;
     assert_eq!(status, StatusCode::OK, "{response}");
 
-    let identity_id = sqlx::query_scalar::<_, String>(
-        "SELECT identity_id FROM identity_endpoint_configs WHERE token = ?",
-    )
-    .bind(token)
-    .fetch_one(&db)
-    .await
-    .expect("load protocol identity");
-    let log_identity = sqlx::query("SELECT identity_id FROM identity_request_logs")
-        .fetch_one(&db)
+    let access = context
+        .storage
+        .authenticate_protocol_access(token)
         .await
-        .expect("load identity log")
-        .get::<String, _>("identity_id");
-    let session_identity = sqlx::query("SELECT identity_id FROM identity_response_sessions")
-        .fetch_one(&db)
+        .expect("authenticate endpoint token")
+        .expect("resolve endpoint access");
+    let logs = context
+        .storage
+        .list_request_logs(&access.identity_id, 10)
         .await
-        .expect("load identity session")
-        .get::<String, _>("identity_id");
-    assert_eq!(log_identity, identity_id);
-    assert_eq!(session_identity, identity_id);
+        .expect("load protocol request logs");
+    assert_eq!(logs.len(), 1);
+    assert_eq!(
+        logs[0].endpoint_name.as_deref(),
+        Some(access.endpoint_name.as_str())
+    );
+    let response_id = response["id"].as_str().expect("response id");
+    assert!(context
+        .storage
+        .load_response_session_messages(&access.identity_id, response_id)
+        .await
+        .expect("load protocol response session")
+        .is_some());
 
     assert!(identity_b.get("credential").is_none());
     let (status, stats) = request(
@@ -241,5 +246,4 @@ async fn protocol_request_writes_identity_scoped_log_and_response_session() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(stats["total_requests"], 0);
-    assert!(response["id"].as_str().is_some());
 }

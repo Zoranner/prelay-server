@@ -9,10 +9,12 @@ use prelay_protocol::{
     CreateIdentityRequest, CreateProviderRequest, ModelStatsSummary, ProviderStatsSummary,
     RequestLogSummary, StatsOverview,
 };
-use prelay_server::{app, test_support::test_state};
+use prelay_server::{app, stats::RequestLogInsert, storage::Storage, test_support::test_state};
 use serde::de::DeserializeOwned;
-use sqlx::SqlitePool;
 use tower::ServiceExt;
+
+mod support;
+mod test_context;
 
 async fn request_json<T: DeserializeOwned>(
     app: &axum::Router,
@@ -100,56 +102,81 @@ struct RequestLogSeed<'a> {
     output_tokens: i64,
 }
 
-async fn seed_request_log(db: &SqlitePool, seed: RequestLogSeed<'_>) {
-    sqlx::query(
-        "INSERT INTO identity_request_logs (\
-            id, identity_id, created_at, protocol_in, protocol_upstream, provider_id, provider_name, \
-            model_requested, status, http_status, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, latency_ms\
-        ) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(seed.id)
-    .bind(seed.identity_id)
-    .bind("chat_completions")
-    .bind("openai")
-    .bind(seed.provider_id)
-    .bind(seed.provider_name)
-    .bind(seed.model_requested)
-    .bind(seed.status)
-    .bind(200_i64)
-    .bind(seed.input_tokens)
-    .bind(seed.output_tokens)
-    .bind(1_i64)
-    .bind(2_i64)
-    .bind(120_i64)
-    .execute(db)
-    .await
-    .expect("seed request log");
+async fn seed_request_log(storage: &Storage, seed: RequestLogSeed<'_>) {
+    storage
+        .insert_request_log_with_id(
+            seed.identity_id,
+            seed.id.to_string(),
+            RequestLogInsert {
+                protocol_in: "chat_completions".to_string(),
+                protocol_out: "chat_completions".to_string(),
+                protocol_upstream: "chat_completions".to_string(),
+                endpoint_name: "Test endpoint".to_string(),
+                provider_id: seed.provider_id.to_string(),
+                provider_name: seed.provider_name.to_string(),
+                model_requested: seed.model_requested.to_string(),
+                model_upstream: seed.model_requested.to_string(),
+                status: seed.status.to_string(),
+                http_status: 200,
+                input_tokens: Some(seed.input_tokens),
+                output_tokens: Some(seed.output_tokens),
+                cache_read_tokens: Some(1),
+                cache_write_tokens: Some(2),
+                latency_ms: 120,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("seed request log");
 }
 
 #[tokio::test]
 async fn cache_rate_uses_normalized_total_input_tokens() {
-    let state = test_state().await;
-    let db = state.db.clone();
-    let app = app::router(state).await.expect("build app");
+    let context = test_context::test_context().await;
+    let app = context.app;
     let identity = register(&app, "cache-machine", "S-1-5-21-300").await;
     let credential = identity["credential"].as_str().expect("credential");
     let identity_id = identity["identity_id"].as_str().expect("identity id");
 
-    sqlx::query(
-        "INSERT INTO identity_request_logs (\
-            id, identity_id, created_at, protocol_in, protocol_upstream, status, http_status, \
-            input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, latency_ms\
-        ) VALUES \
-            ('openai-cache', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'responses', 'responses', 'success', 200, 3, 1, 2, 0, 10), \
-            ('anthropic-cache', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'anthropic_messages', 'anthropic_messages', 'success', 200, 3, 1, 2, 1, 10), \
-            ('unknown-cache', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'unknown', 'future_protocol', 'success', 200, 5, 1, 2, 1, 10)",
-    )
-    .bind(identity_id)
-    .bind(identity_id)
-    .bind(identity_id)
-    .execute(&db)
-    .await
-    .expect("seed cache logs");
+    for (id, protocol_in, protocol_upstream, input_tokens, cache_read_tokens, cache_write_tokens) in [
+        ("openai-cache", "responses", "responses", 3, 2, 0),
+        (
+            "anthropic-cache",
+            "anthropic_messages",
+            "anthropic_messages",
+            3,
+            2,
+            1,
+        ),
+        ("unknown-cache", "unknown", "future_protocol", 5, 2, 1),
+    ] {
+        context
+            .storage
+            .insert_request_log_with_id(
+                identity_id,
+                id.to_string(),
+                RequestLogInsert {
+                    protocol_in: protocol_in.to_string(),
+                    protocol_out: protocol_in.to_string(),
+                    protocol_upstream: protocol_upstream.to_string(),
+                    endpoint_name: "Cache endpoint".to_string(),
+                    provider_id: String::new(),
+                    provider_name: String::new(),
+                    model_requested: "cache-model".to_string(),
+                    model_upstream: "cache-model".to_string(),
+                    status: "success".to_string(),
+                    http_status: 200,
+                    input_tokens: Some(input_tokens),
+                    output_tokens: Some(1),
+                    cache_read_tokens: Some(cache_read_tokens),
+                    cache_write_tokens: Some(cache_write_tokens),
+                    latency_ms: 10,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("seed cache log");
+    }
 
     let (status, overview): (StatusCode, serde_json::Value) = request_json(
         &app,
@@ -408,6 +435,91 @@ async fn management_endpoint_rejects_duplicate_model_names_without_creating_an_i
 }
 
 #[tokio::test]
+async fn management_endpoint_rejects_duplicate_model_names_without_updating_the_interface() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let identity = register(&app, "machine-a", "S-1-5-21-100").await;
+    let credential = identity["credential"].as_str().expect("credential");
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Provider A",
+            "provider_type": "openai_compatible",
+            "base_url": "https://provider-a.example",
+            "api_key": "sk-a",
+            "models": ["model-a"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let provider_id = provider["id"].as_str().expect("provider id");
+
+    let (status, endpoint): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/endpoints",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Endpoint A",
+            "models": [{
+                "provider_id": provider_id,
+                "upstream_model": "model-a",
+                "model_name": "public-model"
+            }]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let endpoint_id = endpoint["id"].as_str().expect("endpoint id");
+
+    let (status, error): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "PATCH",
+        &format!("/api/endpoints/{endpoint_id}"),
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Changed endpoint",
+            "models": [
+                {
+                    "provider_id": provider_id,
+                    "upstream_model": "model-a",
+                    "model_name": "public-model"
+                },
+                {
+                    "provider_id": provider_id,
+                    "upstream_model": " model-a ",
+                    "model_name": " public-model "
+                }
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error["error"]["code"], "validation_failed");
+
+    let (status, endpoint): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "GET",
+        &format!("/api/endpoints/{endpoint_id}"),
+        Some(credential),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(endpoint["name"], "Endpoint A");
+    assert_eq!(
+        endpoint["models"]
+            .as_array()
+            .expect("endpoint models")
+            .len(),
+        1
+    );
+    assert_eq!(endpoint["models"][0]["model_name"], "public-model");
+}
+
+#[tokio::test]
 async fn management_credential_cannot_read_mutate_or_delete_another_identity_interface() {
     let app = app::router(test_state().await).await.expect("build app");
     let identity_a = register(&app, "machine-a", "S-1-5-21-100").await;
@@ -481,9 +593,8 @@ async fn management_credential_cannot_read_mutate_or_delete_another_identity_int
 
 #[tokio::test]
 async fn management_stats_only_return_the_current_identity_request_data() {
-    let state = test_state().await;
-    let db = state.db.clone();
-    let app = app::router(state).await.expect("build app");
+    let context = test_context::test_context().await;
+    let app = context.app;
 
     let identity_a = register(&app, "machine-a", "S-1-5-21-100").await;
     let identity_a_id = identity_a["identity_id"].as_str().expect("identity A id");
@@ -534,7 +645,7 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     let provider_b_id = provider_b["id"].as_str().expect("provider B id");
 
     seed_request_log(
-        &db,
+        &context.storage,
         RequestLogSeed {
             id: "request-a",
             identity_id: identity_a_id,
@@ -548,28 +659,7 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     )
     .await;
     seed_request_log(
-        &db,
-        RequestLogSeed {
-            id: "request-a-last-year",
-            identity_id: identity_a_id,
-            provider_id: provider_a_id,
-            provider_name: "Provider A",
-            model_requested: "model-a",
-            status: "success",
-            input_tokens: 4,
-            output_tokens: 5,
-        },
-    )
-    .await;
-    sqlx::query(
-        "UPDATE identity_request_logs SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 year') WHERE id = ?",
-    )
-    .bind("request-a-last-year")
-    .execute(&db)
-    .await
-    .expect("move historical request");
-    seed_request_log(
-        &db,
+        &context.storage,
         RequestLogSeed {
             id: "request-b",
             identity_id: identity_b_id,
@@ -622,7 +712,7 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     let (status, requests_a): (StatusCode, Vec<RequestLogSummary>) =
         request_json(&app, "GET", "/api/stats/requests", Some(credential_a), None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(requests_a.len(), 2);
+    assert_eq!(requests_a.len(), 1);
     assert_eq!(requests_a[0].id, "request-a");
     assert_eq!(requests_a[0].provider_name.as_deref(), Some("Provider A"));
 
@@ -664,9 +754,9 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(overview_a_all.total_requests, 2);
-    assert_eq!(overview_a_all.input_tokens, 7);
-    assert_eq!(overview_a_all.output_tokens, 9);
+    assert_eq!(overview_a_all.total_requests, 1);
+    assert_eq!(overview_a_all.input_tokens, 3);
+    assert_eq!(overview_a_all.output_tokens, 4);
 
     let (status, timeline_a_all): (StatusCode, Vec<serde_json::Value>) = request_json(
         &app,
@@ -677,13 +767,13 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert!(timeline_a_all.len() >= 13);
+    assert_eq!(timeline_a_all.len(), 1);
     assert_eq!(
         timeline_a_all
             .iter()
             .map(|point| point["input_tokens"].as_i64().expect("input tokens"))
             .sum::<i64>(),
-        7
+        3
     );
 
     let (status, overview_b): (StatusCode, StatsOverview) =

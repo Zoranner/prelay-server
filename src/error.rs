@@ -87,12 +87,6 @@ impl From<anyhow::Error> for AppError {
     }
 }
 
-impl From<sqlx::Error> for AppError {
-    fn from(e: sqlx::Error) -> Self {
-        AppError::Internal(e.into())
-    }
-}
-
 impl From<crate::storage::StorageError> for AppError {
     fn from(error: crate::storage::StorageError) -> Self {
         Self::Protocol {

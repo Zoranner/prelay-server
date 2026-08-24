@@ -1,9 +1,10 @@
 pub mod app;
 pub mod bridge;
-#[cfg(test)]
-pub mod db;
+pub mod database;
+pub mod entity;
 pub mod error;
 pub mod identity;
+pub mod migration;
 pub mod models;
 pub mod observability;
 pub mod providers;
@@ -14,37 +15,31 @@ pub mod upstream;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub db: sqlx::SqlitePool,
     pub storage: storage::Storage,
     pub client: reqwest::Client,
 }
 
 pub mod test_support {
-    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-    use std::str::FromStr;
-
     use crate::{
+        database::{connect, DatabaseConfig},
+        migration::apply_all,
         storage::{MasterKey, Storage},
         AppState,
     };
 
     pub async fn test_state() -> AppState {
-        let db = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(
-                SqliteConnectOptions::from_str("sqlite::memory:")
-                    .expect("valid in-memory SQLite URL")
-                    .foreign_keys(true),
-            )
+        let database_config =
+            DatabaseConfig::from_url("sqlite::memory:").expect("valid in-memory SQLite URL");
+        let db = connect(&database_config)
             .await
-            .expect("create sqlite pool");
-        let storage = Storage::initialize(db.clone(), MasterKey::from_bytes([0; 32]))
+            .expect("connect to in-memory SQLite");
+        apply_all(&db)
             .await
-            .expect("initialize identity storage");
+            .expect("apply test database migrations");
+        let storage = Storage::from_connection(db, MasterKey::from_bytes([0; 32]));
 
         AppState {
             storage,
-            db,
             client: reqwest::Client::new(),
         }
     }

@@ -1,0 +1,45 @@
+use sea_orm::entity::prelude::*;
+
+#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+#[sea_orm(table_name = "identity_model_aliases")]
+pub struct Model {
+    #[sea_orm(primary_key, auto_increment = false)]
+    pub id: String,
+    pub identity_id: String,
+    pub alias: String,
+    pub provider_id: String,
+    pub upstream_model: String,
+    pub downstream_protocols_json: String,
+    pub enabled: bool,
+    pub created_at: String,
+}
+
+#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+pub enum Relation {
+    #[sea_orm(
+        belongs_to = "super::identities::Entity",
+        from = "Column::IdentityId",
+        to = "super::identities::Column::Id"
+    )]
+    Identity,
+    #[sea_orm(
+        belongs_to = "super::identity_provider_configs::Entity",
+        from = "Column::ProviderId",
+        to = "super::identity_provider_configs::Column::Id"
+    )]
+    Provider,
+}
+
+impl Related<super::identities::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Identity.def()
+    }
+}
+
+impl Related<super::identity_provider_configs::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Provider.def()
+    }
+}
+
+impl ActiveModelBehavior for ActiveModel {}
