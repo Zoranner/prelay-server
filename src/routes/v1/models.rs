@@ -157,7 +157,13 @@ fn downstream_protocols_for_spec(spec: &ProviderSpec) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use axum::{extract::State, middleware, Router};
+    use axum::{
+        body::Body,
+        extract::State,
+        http::{Request, StatusCode},
+        middleware, Router,
+    };
+    use tower::ServiceExt;
 
     use super::list_models;
     use crate::routes::v1::endpoint_resolver::{create_test_endpoint_auth, test_provider};
@@ -209,20 +215,16 @@ mod tests {
                     crate::routes::v1::auth::require_protocol_auth,
                 )),
         );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/models")
+                    .body(Body::empty())
+                    .expect("build request"),
+            )
             .await
-            .expect("bind test server");
-        let addr = listener.local_addr().expect("read test server address");
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.expect("serve test app");
-        });
+            .expect("route request");
 
-        let response = reqwest::get(format!("http://{addr}/v1/models"))
-            .await
-            .expect("send request");
-
-        assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
-
-        server.abort();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

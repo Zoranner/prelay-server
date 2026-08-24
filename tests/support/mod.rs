@@ -5,10 +5,9 @@ use std::{
 
 use prelay_server::{
     database::{connect, DatabaseConfig, DatabaseKind},
-    migration::{apply_all, Migrator},
+    schema::initialize,
     storage::{MasterKey, Storage},
 };
-use sea_orm_migration::MigratorTrait;
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 const SQLITE_TEST_DATABASE_URL: &str = "sqlite::memory:";
@@ -65,14 +64,9 @@ pub async fn test_storage() -> TestStorage {
     };
     let connection = connect(&config).await.expect("connect test database");
 
-    if config.kind() == DatabaseKind::Postgres {
-        Migrator::down(&connection, None)
-            .await
-            .expect("reset isolated PostgreSQL test database");
-    }
-    apply_all(&connection)
+    initialize(&connection)
         .await
-        .expect("apply database migrations");
+        .expect("initialize test database schema");
     TestStorage {
         storage: Storage::from_connection(connection, MasterKey::from_bytes([0; 32])),
         _postgres_serial_guard: postgres_serial_guard,

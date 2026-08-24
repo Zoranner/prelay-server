@@ -567,7 +567,7 @@ mod tests {
     use super::{insert_with_id_and_prices, update_stream_with_prices};
     use crate::{
         entity::identity_request_logs,
-        migration::apply_all,
+        schema::initialize,
         stats::{ModelPrice, RequestLogInsert, StatsRange, StreamRequestLogUpdate},
         storage::{MasterKey, Storage, StorageError},
     };
@@ -758,7 +758,7 @@ mod tests {
         let db = Database::connect("sqlite::memory:")
             .await
             .expect("connect test database");
-        apply_all(&db).await.expect("apply test migrations");
+        initialize(&db).await.expect("initialize test schema");
         (
             Storage::from_connection(db.clone(), MasterKey::from_bytes([0; 32])),
             db,

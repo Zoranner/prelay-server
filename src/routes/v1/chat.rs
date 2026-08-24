@@ -281,13 +281,20 @@ async fn create_chat_completion_with_candidate(
 #[cfg(test)]
 mod tests {
     use axum::{
-        body::Body, extract::State, middleware, response::IntoResponse, routing::post, Json, Router,
+        body::Body,
+        extract::State,
+        http::{Request, StatusCode},
+        middleware,
+        response::IntoResponse,
+        routing::post,
+        Json, Router,
     };
     use bytes::Bytes;
     use futures::StreamExt;
     use serde_json::json;
     use std::{convert::Infallible, time::Duration};
     use tokio::net::TcpListener;
+    use tower::ServiceExt;
 
     use super::create_chat_completion;
     use crate::{
@@ -315,29 +322,18 @@ mod tests {
                     crate::routes::v1::auth::require_protocol_auth,
                 )),
         );
-        let listener = TcpListener::bind("127.0.0.1:0")
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/chat/completions")
+                    .body(Body::empty())
+                    .expect("build request"),
+            )
             .await
-            .expect("bind test server");
-        let addr = listener.local_addr().expect("read test server address");
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.expect("serve test app");
-        });
+            .expect("route request");
 
-        let response = reqwest::Client::new()
-            .post(format!("http://{addr}/v1/chat/completions"))
-            .json(&json!({
-                "model": "deepseek-chat",
-                "messages": [
-                    { "role": "user", "content": "hello" }
-                ]
-            }))
-            .send()
-            .await
-            .expect("send request");
-
-        assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
-
-        server.abort();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

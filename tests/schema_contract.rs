@@ -1,7 +1,6 @@
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use sea_orm_migration::MigratorTrait;
 
-use prelay_server::migration::{apply_all, Migrator};
+use prelay_server::schema::initialize;
 
 const IDENTITY_TABLES: [&str; 9] = [
     "identities",
@@ -146,40 +145,29 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
     assert_eq!(row.try_get::<i64>("", "COUNT(*)").unwrap(), 1);
 }
 
-async fn assert_schema_is_removed(db: &DatabaseConnection) {
-    for table in IDENTITY_TABLES {
-        assert!(
-            !table_exists(db, table).await,
-            "table was not dropped: {table}"
-        );
-    }
-}
-
 #[tokio::test]
-async fn applies_the_complete_identity_schema_with_core_constraints() {
+async fn initializes_the_complete_identity_schema_with_core_constraints() {
     let db = Database::connect("sqlite::memory:").await.unwrap();
 
-    apply_all(&db).await.unwrap();
+    initialize(&db).await.unwrap();
     assert_complete_schema(&db).await;
 }
 
 #[tokio::test]
-async fn removes_the_complete_identity_schema_in_reverse_dependency_order() {
+async fn reuses_the_current_identity_schema_without_changes() {
     let db = Database::connect("sqlite::memory:").await.unwrap();
 
-    apply_all(&db).await.unwrap();
-    Migrator::down(&db, None).await.unwrap();
-    assert_schema_is_removed(&db).await;
+    initialize(&db).await.unwrap();
+    initialize(&db).await.unwrap();
+    assert_complete_schema(&db).await;
 }
 
 #[tokio::test]
-#[ignore = "requires TEST_POSTGRES_URL and an isolated PostgreSQL test database"]
-async fn applies_and_removes_the_complete_identity_schema_on_postgres() {
+#[ignore = "requires TEST_POSTGRES_URL and an empty PostgreSQL test database"]
+async fn initializes_the_complete_identity_schema_on_postgres() {
     let url = std::env::var("TEST_POSTGRES_URL").expect("TEST_POSTGRES_URL must be set");
     let db = Database::connect(url).await.unwrap();
 
-    apply_all(&db).await.unwrap();
+    initialize(&db).await.unwrap();
     assert_complete_schema(&db).await;
-    Migrator::down(&db, None).await.unwrap();
-    assert_schema_is_removed(&db).await;
 }

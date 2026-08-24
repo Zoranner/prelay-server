@@ -4,11 +4,11 @@ pub mod database;
 pub mod entity;
 pub mod error;
 pub mod identity;
-pub mod migration;
 pub mod models;
 pub mod observability;
 pub mod providers;
 pub mod routes;
+pub mod schema;
 pub mod stats;
 pub mod storage;
 pub mod upstream;
@@ -22,7 +22,7 @@ pub struct AppState {
 pub mod test_support {
     use crate::{
         database::{connect, DatabaseConfig},
-        migration::apply_all,
+        schema::initialize,
         storage::{MasterKey, Storage},
         AppState,
     };
@@ -33,9 +33,9 @@ pub mod test_support {
         let db = connect(&database_config)
             .await
             .expect("connect to in-memory SQLite");
-        apply_all(&db)
+        initialize(&db)
             .await
-            .expect("apply test database migrations");
+            .expect("initialize test database schema");
         let storage = Storage::from_connection(db, MasterKey::from_bytes([0; 32]));
 
         AppState {

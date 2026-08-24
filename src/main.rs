@@ -4,11 +4,10 @@ use prelay_server::{
     app,
     database::{connect, DatabaseConfig},
     identity::cleanup::delete_expired_identities,
-    migration::{ensure_current, MigrationError},
+    schema::initialize,
     storage::{MasterKey, Storage, StorageError},
     AppState,
 };
-use sea_orm::DatabaseConnection;
 
 const STARTUP_CLEANUP_FAILURE: &str = "startup identity cleanup failed";
 
@@ -36,10 +35,6 @@ fn load_environment_file(path: &Path) -> anyhow::Result<()> {
     }
 }
 
-async fn ensure_service_database_current(db: &DatabaseConnection) -> Result<(), MigrationError> {
-    ensure_current(db).await
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     load_environment_file(Path::new(".env"))?;
@@ -53,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
 
     let database_config = DatabaseConfig::from_environment()?;
     let db = connect(&database_config).await?;
-    ensure_service_database_current(&db).await?;
+    initialize(&db).await?;
     let storage = Storage::from_connection(db, MasterKey::from_environment()?);
     let deleted = delete_expired_identities(&storage)
         .await
@@ -108,11 +103,8 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use prelay_server::{
-        migration::{apply_all, ensure_current, MigrationError},
-        storage::StorageError,
-    };
-    use sea_orm::Database;
+    use prelay_server::{entity::identities, schema::initialize, storage::StorageError};
+    use sea_orm::{Database, EntityTrait};
     use tracing::{
         field::{Field, Visit},
         Event, Subscriber,
@@ -169,31 +161,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn service_startup_rejects_pending_migrations_without_applying_them() {
+    async fn service_startup_initializes_an_empty_database() {
         let db = Database::connect("sqlite::memory:")
             .await
             .expect("connect to in-memory SQLite");
 
-        assert!(matches!(
-            super::ensure_service_database_current(&db).await,
-            Err(MigrationError::SchemaOutdated { .. })
-        ));
-        assert!(matches!(
-            ensure_current(&db).await,
-            Err(MigrationError::SchemaOutdated { .. })
-        ));
-    }
-
-    #[tokio::test]
-    async fn service_startup_accepts_a_migrated_database() {
-        let db = Database::connect("sqlite::memory:")
+        initialize(&db).await.expect("initialize service database");
+        identities::Entity::find()
+            .all(&db)
             .await
-            .expect("connect to in-memory SQLite");
-        apply_all(&db).await.expect("apply migrations");
-
-        super::ensure_service_database_current(&db)
-            .await
-            .expect("migrated database is current");
+            .expect("identities table exists");
     }
 
     #[test]

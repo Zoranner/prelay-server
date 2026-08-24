@@ -662,10 +662,18 @@ fn count_tool_calls(response: &crate::bridge::internal::InternalResponse) -> i64
 
 #[cfg(test)]
 mod tests {
-    use axum::{extract::State, middleware, routing::post, Json, Router};
+    use axum::{
+        body::Body,
+        extract::State,
+        http::{Request, StatusCode},
+        middleware,
+        routing::post,
+        Json, Router,
+    };
     use futures::{StreamExt, TryStreamExt};
     use serde_json::json;
     use tokio::net::TcpListener;
+    use tower::ServiceExt;
 
     use super::create_message;
     use crate::routes::v1::endpoint_resolver::{
@@ -684,30 +692,18 @@ mod tests {
                     crate::routes::v1::auth::require_protocol_auth,
                 )),
         );
-        let listener = TcpListener::bind("127.0.0.1:0")
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/messages")
+                    .body(Body::empty())
+                    .expect("build request"),
+            )
             .await
-            .expect("bind test server");
-        let addr = listener.local_addr().expect("read test server address");
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.expect("serve test app");
-        });
+            .expect("route request");
 
-        let response = reqwest::Client::new()
-            .post(format!("http://{addr}/v1/messages"))
-            .json(&json!({
-                "model": "deepseek-chat",
-                "max_tokens": 1024,
-                "messages": [
-                    { "role": "user", "content": "hello" }
-                ]
-            }))
-            .send()
-            .await
-            .expect("send request");
-
-        assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
-
-        server.abort();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

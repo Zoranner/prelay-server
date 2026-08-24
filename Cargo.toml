@@ -3,6 +3,7 @@ name = "prelay-server"
 version = "0.1.0"
 edition = "2021"
 build = "build.rs"
+default-run = "prelay-server"
 
 [[bin]]
 name = "prelay-server"
@@ -27,7 +28,7 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sea-orm = { version = "2.0.2", features = ["macros", "runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite"] }
-sea-orm-migration = { version = "2.0.2", features = ["runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite"] }
+sea-query = "1.0.2"
 sha2 = "0.10"
 subtle = "2"
 tokio = { version = "1", features = ["full"] }

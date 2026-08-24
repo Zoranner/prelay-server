@@ -113,7 +113,7 @@ mod tests {
             InternalRole,
         },
         entity::identity_response_sessions,
-        migration::apply_all,
+        schema::initialize,
         storage::{MasterKey, Storage},
     };
 
@@ -230,7 +230,7 @@ mod tests {
         let db = Database::connect("sqlite::memory:")
             .await
             .expect("connect test database");
-        apply_all(&db).await.expect("apply test migrations");
+        initialize(&db).await.expect("initialize test schema");
         Storage::from_connection(db, MasterKey::from_bytes([0; 32]))
     }
 

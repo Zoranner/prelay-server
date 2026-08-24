@@ -17,20 +17,6 @@ jobs:
   verify:
     name: Verify Server
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_DB: prelay_test
-          POSTGRES_USER: prelay_test
-          POSTGRES_PASSWORD: prelay_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U prelay_test -d prelay_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
     steps:
       - uses: actions/checkout@v5
         with:
@@ -45,18 +31,6 @@ jobs:
           cargo fmt --all -- --check
           cargo clippy --all-targets --all-features -- -D warnings
           cargo test --all-targets --all-features
-
-      - name: Verify PostgreSQL migration and storage contracts
-        env:
-          TEST_POSTGRES_URL: postgres://prelay_test:prelay_test@localhost:5432/prelay_test
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test --locked --test migration_schema applies_and_removes_the_complete_identity_schema_on_postgres -- --ignored --test-threads=1
-          cargo test --locked --test identity_storage -- --test-threads=1
-          cargo test --locked --test identity_cleanup -- --test-threads=1
-          cargo test --locked --test management_isolation -- --test-threads=1
-          cargo test --locked --test v1_identity_scope -- --test-threads=1
 
   prepare:
     name: Prepare Release

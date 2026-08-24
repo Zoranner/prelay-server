@@ -1,8 +1,8 @@
 use prelay_server::{
     database::{connect, DatabaseConfig, DatabaseConfigError},
-    migration::{apply_all, ensure_current, MigrationError},
+    schema::initialize,
 };
-use sea_orm_migration::SchemaManager;
+use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use std::sync::{Mutex, OnceLock};
 
 fn environment_lock() -> &'static Mutex<()> {
@@ -123,25 +123,24 @@ async fn connects_to_a_supported_sqlite_database() {
 }
 
 #[tokio::test]
-async fn rejects_an_empty_database_until_migrations_are_applied() {
+async fn initializes_an_empty_database_without_migration_history() {
     let config = DatabaseConfig::from_url("sqlite::memory:").expect("SQLite URL is supported");
     let connection = connect(&config).await.expect("connect to in-memory SQLite");
 
-    assert!(matches!(
-        ensure_current(&connection).await,
-        Err(MigrationError::SchemaOutdated { .. })
-    ));
-    let migration_table_exists = SchemaManager::new(&connection)
-        .has_table("seaql_migrations")
+    initialize(&connection)
         .await
-        .expect("inspect SQLite schema after read-only migration check");
-    assert!(
-        !migration_table_exists,
-        "migration validation must not create seaql_migrations"
-    );
-
-    apply_all(&connection).await.expect("apply migrations");
-    ensure_current(&connection)
+        .expect("initialize the current schema");
+    let migration_history = connection
+        .query_one_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'seaql_migrations'"
+                .to_owned(),
+        ))
         .await
-        .expect("migrated database is current");
+        .expect("inspect SQLite schema")
+        .expect("migration history count");
+    assert_eq!(migration_history.try_get::<i64>("", "COUNT(*)").unwrap(), 0);
+    initialize(&connection)
+        .await
+        .expect("reuse the initialized schema");
 }
