@@ -2,6 +2,7 @@ use std::{net::SocketAddr, path::Path};
 
 use prelay_server::{
     app,
+    client_update::ClientUpdateCache,
     database::{connect, DatabaseConfig},
     identity::cleanup::delete_expired_identities,
     schema::initialize,
@@ -77,7 +78,26 @@ async fn main() -> anyhow::Result<()> {
     let client = reqwest::Client::builder()
         .timeout(upstream_policy.timeout)
         .build()?;
-    let state = AppState { storage, client };
+    let client_update = ClientUpdateCache::from_environment(client.clone()).await?;
+    if let Err(error) = client_update.refresh().await {
+        tracing::warn!(error = %error, "failed to refresh client update cache at startup");
+    }
+    let refresh_client_update = client_update.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(6 * 60 * 60));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            if let Err(error) = refresh_client_update.refresh().await {
+                tracing::warn!(error = %error, "failed to refresh client update cache");
+            }
+        }
+    });
+    let state = AppState {
+        storage,
+        client,
+        client_update,
+    };
     let app = app::router(state).await?;
 
     let port: u16 = std::env::var("LISTEN_PORT")

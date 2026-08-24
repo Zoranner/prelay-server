@@ -29,16 +29,10 @@ impl Default for UpstreamPolicy {
 impl UpstreamPolicy {
     pub fn from_environment() -> Result<Self, String> {
         Self::from_values(
-            std::env::var("PRELAY_UPSTREAM_TIMEOUT_SECS")
-                .ok()
-                .as_deref(),
-            std::env::var("PRELAY_UPSTREAM_MAX_RETRIES").ok().as_deref(),
-            std::env::var("PRELAY_UPSTREAM_RETRY_BACKOFF_MS")
-                .ok()
-                .as_deref(),
-            std::env::var("PRELAY_UPSTREAM_MAX_CANDIDATES")
-                .ok()
-                .as_deref(),
+            std::env::var("UPSTREAM_TIMEOUT_SECS").ok().as_deref(),
+            std::env::var("UPSTREAM_MAX_RETRIES").ok().as_deref(),
+            std::env::var("UPSTREAM_RETRY_BACKOFF_MS").ok().as_deref(),
+            std::env::var("UPSTREAM_MAX_CANDIDATES").ok().as_deref(),
         )
     }
 
@@ -48,13 +42,13 @@ impl UpstreamPolicy {
         retry_backoff_ms: Option<&str>,
         max_candidates: Option<&str>,
     ) -> Result<Self, String> {
-        let timeout_secs = parse_positive("PRELAY_UPSTREAM_TIMEOUT_SECS", timeout_secs)?
-            .unwrap_or(DEFAULT_TIMEOUT_SECS);
-        let max_retries = parse_usize("PRELAY_UPSTREAM_MAX_RETRIES", max_retries)?.unwrap_or(0);
-        let retry_backoff_ms = parse_usize("PRELAY_UPSTREAM_RETRY_BACKOFF_MS", retry_backoff_ms)?
+        let timeout_secs =
+            parse_positive("UPSTREAM_TIMEOUT_SECS", timeout_secs)?.unwrap_or(DEFAULT_TIMEOUT_SECS);
+        let max_retries = parse_usize("UPSTREAM_MAX_RETRIES", max_retries)?.unwrap_or(0);
+        let retry_backoff_ms = parse_usize("UPSTREAM_RETRY_BACKOFF_MS", retry_backoff_ms)?
             .unwrap_or(DEFAULT_RETRY_BACKOFF_MS as usize);
-        let max_candidates = parse_positive("PRELAY_UPSTREAM_MAX_CANDIDATES", max_candidates)?
-            .map(|value| value as usize);
+        let max_candidates =
+            parse_positive("UPSTREAM_MAX_CANDIDATES", max_candidates)?.map(|value| value as usize);
 
         Ok(Self {
             timeout: Duration::from_secs(timeout_secs),

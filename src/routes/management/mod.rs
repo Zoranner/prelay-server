@@ -3,6 +3,7 @@ use axum::{middleware, routing::post, Router};
 use crate::AppState;
 
 pub mod auth;
+mod client_update;
 mod endpoints;
 mod identities;
 mod providers;
@@ -13,6 +14,7 @@ pub fn router(state: AppState) -> Router {
         .merge(providers::router())
         .merge(endpoints::router())
         .merge(stats::router())
+        .merge(client_update::router())
         .route(
             "/identity/credential/rotate",
             post(identities::rotate_credential),

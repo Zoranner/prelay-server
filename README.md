@@ -12,7 +12,7 @@
 git submodule update --init --recursive
 ```
 
-服务端必须配置 `PRELAY_MASTER_KEY`。它是 Base64 编码的 32 字节密钥，用于 AES-256-GCM 加密数据库中的 Provider API Key；密钥缺失、格式非法或长度不正确时服务拒绝启动。
+服务端必须配置 `ENCRYPTION_KEY`。它是 Base64 编码的 32 字节密钥，用于 AES-256-GCM 加密数据库中的 Provider API Key；密钥缺失、格式非法或长度不正确时服务拒绝启动。
 
 生成一个密钥：
 
@@ -32,7 +32,7 @@ SQLite 本地运行顺序：
 
 ```powershell
 $env:DATABASE_URL = "sqlite://data/relay.db?mode=rwc"
-$env:PRELAY_MASTER_KEY = "<Base64-encoded-32-byte-key>"
+$env:ENCRYPTION_KEY = "<Base64-encoded-32-byte-key>"
 New-Item -ItemType Directory -Force data
 cargo run
 ```
@@ -41,13 +41,19 @@ PostgreSQL 本地运行时，先准备一个全新空数据库，再直接启动
 
 ```powershell
 $env:DATABASE_URL = "postgresql://<user>:<password>@<host>:5432/<database>"
-$env:PRELAY_MASTER_KEY = "<Base64-encoded-32-byte-key>"
+$env:ENCRYPTION_KEY = "<Base64-encoded-32-byte-key>"
 cargo run
 ```
 
 默认监听地址为 `0.0.0.0:18080`。`LISTEN_PORT` 可覆盖端口，`RUST_LOG` 控制日志过滤。PostgreSQL 可用 `DATABASE_MAX_CONNECTIONS` 覆盖默认连接数；SQLite 始终使用单连接。模型价格可放入 `config/model_prices.json`，或通过 `MODEL_PRICES_PATH` 指定其他文件。
 
 启动时及之后每 24 小时会删除连续 90 天未活动身份及其所有配置、会话和日志。
+
+## 客户端更新
+
+服务启动时会检查 GitHub Release，并每 6 小时刷新一次 Windows NSIS 安装包缓存。默认仓库是 `Zoranner/prelay-client`，缓存目录是 `data/client-updates`；分别可通过 `CLIENT_UPDATE_REPOSITORY`（`owner/repository` 格式）和 `CLIENT_UPDATE_DIR` 覆盖。刷新失败时，服务会继续保留并提供最近一次成功缓存的安装包。
+
+已注册设备可通过 `GET /api/client-update` 查询缓存版本，并通过 `GET /api/client-update/download` 下载安装包。服务尚未获得有效安装包时，这两个接口返回 `client_update_unavailable`；桌面客户端不直接访问 GitHub。
 
 ## 部署
 
@@ -58,7 +64,7 @@ docker network create prelay
 Copy-Item deploy/.env.example deploy/.env
 ```
 
-`docker network create prelay` 只需执行一次。SQLite 部署在 `deploy/.env` 中设置固定的 `PRELAY_MASTER_KEY`，并将 `DATABASE_URL` 设置为 `sqlite:///app/data/relay.db?mode=rwc`；PostgreSQL 占位变量可保留。然后启动 SQLite 编排：
+`docker network create prelay` 只需执行一次。SQLite 部署在 `deploy/.env` 中设置固定的 `ENCRYPTION_KEY`，并将 `DATABASE_URL` 设置为 `sqlite:///app/data/relay.db?mode=rwc`；PostgreSQL 占位变量可保留。然后启动 SQLite 编排：
 
 ```powershell
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --pull always
@@ -66,7 +72,7 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --pull 
 
 SQLite 编排将宿主机 `./data` 挂载给服务。服务首次连接空数据库时初始化当前 schema；已有不完整或不兼容数据库不进行修复或升级。
 
-PostgreSQL 部署由外部 PostgreSQL 实例提供。为服务设置固定的 `PRELAY_MASTER_KEY`，并将 `DATABASE_URL` 设为该实例中一个全新空数据库的连接串；随后以与 SQLite 相同的方式启动服务。现有 Compose 文件不负责创建或管理 PostgreSQL。
+PostgreSQL 部署由外部 PostgreSQL 实例提供。为服务设置固定的 `ENCRYPTION_KEY`，并将 `DATABASE_URL` 设为该实例中一个全新空数据库的连接串；随后以与 SQLite 相同的方式启动服务。现有 Compose 文件不负责创建或管理 PostgreSQL。
 
 SQLite 与 PostgreSQL 是二选一的全新部署方式。切换数据库类型不能只修改现有部署的 `DATABASE_URL`，必须停止原部署并为目标数据库创建新部署和新数据卷或空数据库。本项目不提供 SQLite 与 PostgreSQL 之间的数据迁移；原数据应由原部署独立保留或备份。
 
@@ -76,7 +82,7 @@ Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.1.0`，并以只读方式
 
 - 正式调用入口固定为 `/v1/models`、`/v1/responses`、`/v1/chat/completions` 和 `/v1/messages`，由 Endpoint Token 授权。
 - 管理 API 位于 `/api/*`，由设备凭据授权；`POST /api/identities` 是唯一匿名入口。
-- Provider API Key 只以 `PRELAY_MASTER_KEY` 加密后保存。数据库、`.env`、主密钥、设备凭据、Endpoint Token 和真实 Provider API Key 不得提交或记录到日志。
+- Provider API Key 只以 `ENCRYPTION_KEY` 加密后保存。数据库、`.env`、加密密钥、设备凭据、Endpoint Token 和真实 Provider API Key 不得提交或记录到日志。
 - 服务自身不提供 TLS。暴露到非受信网络时，部署环境必须提供 TLS 与网络访问控制。
 - 通用 `/proxy` 入口已移除，不应恢复。
 
@@ -84,10 +90,10 @@ Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.1.0`，并以只读方式
 
 上游故障转移属于服务端部署策略，不向桌面客户端或最终用户开放。以下变量在启动时读取，修改后需要重启服务：
 
-- `PRELAY_UPSTREAM_TIMEOUT_SECS`：每次上游请求的超时秒数，默认 `300`，必须大于 `0`。
-- `PRELAY_UPSTREAM_MAX_RETRIES`：同一候选上游的额外重试次数，默认 `0`。
-- `PRELAY_UPSTREAM_RETRY_BACKOFF_MS`：重试前等待的毫秒数，默认 `250`，允许为 `0`。
-- `PRELAY_UPSTREAM_MAX_CANDIDATES`：单次请求最多尝试的候选上游数，默认不限制，必须大于 `0`。
+- `UPSTREAM_TIMEOUT_SECS`：每次上游请求的超时秒数，默认 `300`，必须大于 `0`。
+- `UPSTREAM_MAX_RETRIES`：同一候选上游的额外重试次数，默认 `0`。
+- `UPSTREAM_RETRY_BACKOFF_MS`：重试前等待的毫秒数，默认 `250`，允许为 `0`。
+- `UPSTREAM_MAX_CANDIDATES`：单次请求最多尝试的候选上游数，默认不限制，必须大于 `0`。
 
 只有连接失败、超时、HTTP `408`、`429` 和 `5xx` 会触发重试或按接入点候选顺序切换。认证、权限、模型或请求参数错误会直接返回。流式请求仅在上游尚未返回成功响应前切换候选；数据开始向客户端输出后不会重新请求上游。
 

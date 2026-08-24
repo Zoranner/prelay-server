@@ -408,11 +408,11 @@ fn master_key_environment_requires_a_valid_base64_encoded_32_byte_value() {
         .expect("lock master key environment");
     let _restore = MasterKeyEnvironmentRestore::capture();
 
-    std::env::remove_var("PRELAY_MASTER_KEY");
+    std::env::remove_var("ENCRYPTION_KEY");
     assert!(MasterKey::from_environment().is_err());
-    std::env::set_var("PRELAY_MASTER_KEY", "not base64");
+    std::env::set_var("ENCRYPTION_KEY", "not base64");
     assert!(MasterKey::from_environment().is_err());
-    std::env::set_var("PRELAY_MASTER_KEY", "AAAA");
+    std::env::set_var("ENCRYPTION_KEY", "AAAA");
     assert!(MasterKey::from_environment().is_err());
 }
 
@@ -480,7 +480,7 @@ struct MasterKeyEnvironmentRestore {
 impl MasterKeyEnvironmentRestore {
     fn capture() -> Self {
         Self {
-            original: std::env::var_os("PRELAY_MASTER_KEY"),
+            original: std::env::var_os("ENCRYPTION_KEY"),
         }
     }
 }
@@ -488,8 +488,8 @@ impl MasterKeyEnvironmentRestore {
 impl Drop for MasterKeyEnvironmentRestore {
     fn drop(&mut self) {
         match &self.original {
-            Some(value) => std::env::set_var("PRELAY_MASTER_KEY", value),
-            None => std::env::remove_var("PRELAY_MASTER_KEY"),
+            Some(value) => std::env::set_var("ENCRYPTION_KEY", value),
+            None => std::env::remove_var("ENCRYPTION_KEY"),
         }
     }
 }

@@ -33,6 +33,7 @@ impl IntoResponse for AppError {
             AppError::Protocol { code, message } => {
                 let status = match code {
                     ProtocolErrorCode::NotFound => StatusCode::NOT_FOUND,
+                    ProtocolErrorCode::ClientUpdateUnavailable => StatusCode::NOT_FOUND,
                     ProtocolErrorCode::InvalidCredential => StatusCode::UNAUTHORIZED,
                     ProtocolErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
                     ProtocolErrorCode::IdentityAlreadyRegistered

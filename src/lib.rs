@@ -1,5 +1,6 @@
 pub mod app;
 pub mod bridge;
+pub mod client_update;
 pub mod database;
 pub mod entity;
 pub mod error;
@@ -17,10 +18,12 @@ pub mod upstream;
 pub struct AppState {
     pub storage: storage::Storage,
     pub client: reqwest::Client,
+    pub client_update: client_update::ClientUpdateCache,
 }
 
 pub mod test_support {
     use crate::{
+        client_update::ClientUpdateCache,
         database::{connect, DatabaseConfig},
         schema::initialize,
         storage::{MasterKey, Storage},
@@ -41,6 +44,7 @@ pub mod test_support {
         AppState {
             storage,
             client: reqwest::Client::new(),
+            client_update: ClientUpdateCache::unavailable(reqwest::Client::new()),
         }
     }
 }

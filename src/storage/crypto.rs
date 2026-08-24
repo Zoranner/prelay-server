@@ -12,8 +12,8 @@ pub struct MasterKey([u8; 32]);
 
 impl MasterKey {
     pub fn from_environment() -> Result<Self, StorageError> {
-        let value = std::env::var("PRELAY_MASTER_KEY").map_err(|_| {
-            StorageError::InvalidMasterKey("PRELAY_MASTER_KEY is required".to_string())
+        let value = std::env::var("ENCRYPTION_KEY").map_err(|_| {
+            StorageError::InvalidMasterKey("ENCRYPTION_KEY is required".to_string())
         })?;
         Self::from_base64(&value)
     }
