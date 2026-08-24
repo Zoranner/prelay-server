@@ -60,7 +60,7 @@ impl ClientUpdateCache {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(DEFAULT_CACHE_DIRECTORY));
         let cache = Self::new(client, repository, cache_directory);
-        cache.load_manifest().await;
+        cache.load_cached_update().await;
         Ok(cache)
     }
 
@@ -79,6 +79,7 @@ impl ClientUpdateCache {
     }
 
     pub async fn latest(&self) -> Option<CachedClientUpdate> {
+        self.load_cached_update().await;
         self.latest.read().await.clone()
     }
 
@@ -173,21 +174,45 @@ impl ClientUpdateCache {
             .context("publish cached client installer")
     }
 
-    async fn load_manifest(&self) {
+    async fn load_cached_update(&self) {
+        let update = select_newer_update(
+            self.load_manifest_update().await,
+            self.find_installer_in_cache_directory().await,
+        );
+        *self.latest.write().await = update;
+    }
+
+    async fn load_manifest_update(&self) -> Option<CachedClientUpdate> {
         let path = self.manifest_path();
-        let Some(update) = tokio::fs::read(&path)
+        let update = tokio::fs::read(&path)
             .await
             .ok()
-            .and_then(|content| serde_json::from_slice::<CachedClientUpdate>(&content).ok())
-        else {
-            return;
-        };
-        if tokio::fs::try_exists(update.installer_path(&self.cache_directory))
-            .await
-            .unwrap_or(false)
+            .and_then(|content| serde_json::from_slice::<CachedClientUpdate>(&content).ok())?;
+        if is_cached_installer_file_name(&update.file_name, &update.version)
+            && tokio::fs::try_exists(update.installer_path(&self.cache_directory))
+                .await
+                .unwrap_or(false)
         {
-            *self.latest.write().await = Some(update);
+            Some(update)
+        } else {
+            None
         }
+    }
+
+    async fn find_installer_in_cache_directory(&self) -> Option<CachedClientUpdate> {
+        let mut entries = tokio::fs::read_dir(&self.cache_directory).await.ok()?;
+        let mut latest = None;
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if !entry.file_type().await.ok()?.is_file() {
+                continue;
+            }
+            let Some(update) = cached_update_from_file_name(&entry.file_name().to_string_lossy())
+            else {
+                continue;
+            };
+            latest = select_newer_update(latest, Some(update));
+        }
+        latest
     }
 
     async fn write_manifest(&self, update: &CachedClientUpdate) -> Result<()> {
@@ -244,9 +269,57 @@ fn is_windows_nsis_asset(name: &str) -> bool {
     name.to_ascii_lowercase().ends_with("-setup.exe")
 }
 
+fn cached_update_from_file_name(file_name: &str) -> Option<CachedClientUpdate> {
+    let version = file_name
+        .strip_prefix("prelay-client-")?
+        .strip_suffix(".exe")?;
+    parse_version(version)?;
+    Some(CachedClientUpdate {
+        version: version.to_string(),
+        file_name: file_name.to_string(),
+    })
+}
+
+fn is_cached_installer_file_name(file_name: &str, version: &str) -> bool {
+    cached_update_from_file_name(file_name).is_some_and(|update| update.version == version)
+}
+
+fn select_newer_update(
+    first: Option<CachedClientUpdate>,
+    second: Option<CachedClientUpdate>,
+) -> Option<CachedClientUpdate> {
+    match (first, second) {
+        (Some(first), Some(second)) if is_newer_version(&second.version, &first.version) => {
+            Some(second)
+        }
+        (Some(first), _) => Some(first),
+        (None, second) => second,
+    }
+}
+
+fn is_newer_version(candidate: &str, current: &str) -> bool {
+    matches!(
+        (parse_version(candidate), parse_version(current)),
+        (Some(candidate), Some(current)) if candidate > current
+    )
+}
+
+fn parse_version(value: &str) -> Option<[u64; 3]> {
+    let parts = value.split('.').collect::<Vec<_>>();
+    (parts.len() == 3).then_some(())?;
+    Some([
+        parts[0].parse().ok()?,
+        parts[1].parse().ok()?,
+        parts[2].parse().ok()?,
+    ])
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{is_windows_nsis_asset, normalize_version, validate_repository};
+    use super::{
+        cached_update_from_file_name, is_windows_nsis_asset, normalize_version,
+        select_newer_update, validate_repository,
+    };
 
     #[test]
     fn selects_tauri_windows_nsis_installer() {
@@ -261,5 +334,18 @@ mod tests {
         assert!(validate_repository("https://github.com/Zoranner/prelay-client").is_err());
         assert_eq!(normalize_version("v0.2.0").unwrap(), "0.2.0");
         assert!(normalize_version("../../installer").is_err());
+    }
+
+    #[test]
+    fn accepts_manually_cached_installers_and_uses_the_highest_version() {
+        let older = cached_update_from_file_name("prelay-client-0.2.0.exe");
+        let newer = cached_update_from_file_name("prelay-client-0.3.0.exe");
+
+        assert_eq!(
+            select_newer_update(older, newer).map(|update| update.version),
+            Some("0.3.0".to_string())
+        );
+        assert!(cached_update_from_file_name("Prelay_0.3.0_x64-setup.exe").is_none());
+        assert!(cached_update_from_file_name("prelay-client-next.exe").is_none());
     }
 }
