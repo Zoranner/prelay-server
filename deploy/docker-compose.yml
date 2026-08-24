@@ -10,6 +10,7 @@ services:
     volumes:
       - ./app/config:/app/config:ro
       - ./data:/app/data
+      - ./updates:/app/updates
 networks:
   default:
     external: true

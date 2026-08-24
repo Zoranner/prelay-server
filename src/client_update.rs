@@ -13,7 +13,7 @@ use tokio::{
 use uuid::Uuid;
 
 const DEFAULT_REPOSITORY: &str = "Zoranner/prelay-client";
-const DEFAULT_CACHE_DIRECTORY: &str = "data/client-updates";
+const DEFAULT_CACHE_DIRECTORY: &str = "updates";
 const GITHUB_API_BASE_URL: &str = "https://api.github.com";
 const MANIFEST_FILE_NAME: &str = "client-update.json";
 
@@ -318,8 +318,13 @@ fn parse_version(value: &str) -> Option<[u64; 3]> {
 mod tests {
     use super::{
         cached_update_from_file_name, is_windows_nsis_asset, normalize_version,
-        select_newer_update, validate_repository,
+        select_newer_update, validate_repository, DEFAULT_CACHE_DIRECTORY,
     };
+
+    #[test]
+    fn stores_client_updates_outside_the_database_directory_by_default() {
+        assert_eq!(DEFAULT_CACHE_DIRECTORY, "updates");
+    }
 
     #[test]
     fn selects_tauri_windows_nsis_installer() {

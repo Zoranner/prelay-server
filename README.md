@@ -51,7 +51,7 @@ cargo run
 
 ## 客户端更新
 
-服务启动时会检查 GitHub Release，并每 6 小时刷新一次 Windows NSIS 安装包缓存。默认仓库是 `Zoranner/prelay-client`，缓存目录是 `data/client-updates`；分别可通过 `CLIENT_UPDATE_REPOSITORY`（`owner/repository` 格式）和 `CLIENT_UPDATE_DIR` 覆盖。刷新失败时，服务会继续保留并提供最近一次成功缓存的安装包。也可以直接向缓存目录放入 `prelay-client-<版本>.exe`，服务会选择版本最高的有效文件，无需额外清单。
+服务启动时会检查 GitHub Release，并每 6 小时刷新一次 Windows NSIS 安装包缓存。默认仓库是 `Zoranner/prelay-client`，缓存目录是 `updates`；分别可通过 `CLIENT_UPDATE_REPOSITORY`（`owner/repository` 格式）和 `CLIENT_UPDATE_DIR` 覆盖。刷新失败时，服务会继续保留并提供最近一次成功缓存的安装包。也可以直接向缓存目录放入 `prelay-client-<版本>.exe`，服务会选择版本最高的有效文件，无需额外清单。
 
 已注册设备可通过 `GET /api/client-update` 查询缓存版本，并通过 `GET /api/client-update/download` 下载安装包。服务尚未获得有效安装包时，这两个接口返回 `client_update_unavailable`；桌面客户端不直接访问 GitHub。
 
@@ -72,7 +72,7 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --pull 
 
 SQLite 编排将宿主机 `./data` 挂载给服务。服务首次连接空数据库时初始化当前 schema；已有不完整或不兼容数据库不进行修复或升级。
 
-使用该 Compose 文件时，客户端安装包的容器内目录是 `/app/data/client-updates`，对应宿主机的 `deploy/data/client-updates`。GitHub 不可用时，可将 `prelay-client-<版本>.exe` 直接放入该目录。
+使用该 Compose 文件时，客户端安装包的容器内目录是 `/app/updates`，对应宿主机的 `deploy/updates`；`deploy/data` 仅用于 SQLite 数据库。GitHub 不可用时，可将 `prelay-client-<版本>.exe` 直接放入 `deploy/updates`。
 
 PostgreSQL 部署由外部 PostgreSQL 实例提供。为服务设置固定的 `ENCRYPTION_KEY`，并将 `DATABASE_URL` 设为该实例中一个全新空数据库的连接串；随后以与 SQLite 相同的方式启动服务。现有 Compose 文件不负责创建或管理 PostgreSQL。
 
