@@ -18,6 +18,15 @@ pub enum ModelDiscoveryError {
 impl ModelDiscoveryError {
     pub fn public_message(&self) -> String {
         match self {
+            ModelDiscoveryError::UpstreamStatus(StatusCode::UNAUTHORIZED) => {
+                "模型获取失败，上游认证失败，请检查 API Key。".to_string()
+            }
+            ModelDiscoveryError::UpstreamStatus(StatusCode::PAYMENT_REQUIRED) => {
+                "模型获取失败，上游提示账户或额度状态受限。".to_string()
+            }
+            ModelDiscoveryError::UpstreamStatus(StatusCode::FORBIDDEN) => {
+                "模型获取失败，上游拒绝列出模型，可能与套餐、权限或账户状态有关。".to_string()
+            }
             ModelDiscoveryError::UpstreamStatus(status) => {
                 format!("模型获取失败，上游返回状态码 {}", status.as_u16())
             }
@@ -202,9 +211,37 @@ fn normalize_models(models: Vec<ModelItem>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use axum::{http::HeaderMap, routing::get, Json, Router};
+    use reqwest::StatusCode;
     use serde_json::json;
 
-    use super::{discover_models, discovery_attempts, AuthScheme, DiscoveryAttempt};
+    use super::{
+        discover_models, discovery_attempts, AuthScheme, DiscoveryAttempt, ModelDiscoveryError,
+    };
+
+    #[test]
+    fn explains_model_discovery_authorization_and_account_status_failures() {
+        let cases = [
+            (
+                StatusCode::UNAUTHORIZED,
+                "模型获取失败，上游认证失败，请检查 API Key。",
+            ),
+            (
+                StatusCode::PAYMENT_REQUIRED,
+                "模型获取失败，上游提示账户或额度状态受限。",
+            ),
+            (
+                StatusCode::FORBIDDEN,
+                "模型获取失败，上游拒绝列出模型，可能与套餐、权限或账户状态有关。",
+            ),
+        ];
+
+        for (status, message) in cases {
+            assert_eq!(
+                ModelDiscoveryError::UpstreamStatus(status).public_message(),
+                message
+            );
+        }
+    }
 
     #[tokio::test]
     async fn falls_back_to_kimi_coding_openai_models_endpoint_for_anthropic_plan() {
