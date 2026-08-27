@@ -140,6 +140,7 @@ fn protocol_name(protocol: UpstreamProtocol) -> &'static str {
         UpstreamProtocol::Responses => "responses",
         UpstreamProtocol::ChatCompletions => "chat_completions",
         UpstreamProtocol::AnthropicMessages => "anthropic_messages",
+        UpstreamProtocol::ImageGenerations => "images_generations",
     }
 }
 

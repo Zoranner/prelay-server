@@ -6,6 +6,7 @@ pub enum UpstreamProtocol {
     Responses,
     ChatCompletions,
     AnthropicMessages,
+    ImageGenerations,
 }
 
 impl UpstreamProtocol {
@@ -16,6 +17,7 @@ impl UpstreamProtocol {
                 &["responses", "chat_completions", "anthropic_messages"]
             }
             UpstreamProtocol::AnthropicMessages => &["responses", "anthropic_messages"],
+            UpstreamProtocol::ImageGenerations => &["images_generations"],
         }
     }
 
@@ -28,6 +30,7 @@ impl UpstreamProtocol {
             "responses" => Some(UpstreamProtocol::Responses),
             "openai" => Some(UpstreamProtocol::ChatCompletions),
             "anthropic" => Some(UpstreamProtocol::AnthropicMessages),
+            "images_generations" => Some(UpstreamProtocol::ImageGenerations),
             _ => None,
         }
     }
@@ -37,6 +40,7 @@ impl UpstreamProtocol {
             UpstreamProtocol::Responses => "responses",
             UpstreamProtocol::ChatCompletions => "openai",
             UpstreamProtocol::AnthropicMessages => "anthropic",
+            UpstreamProtocol::ImageGenerations => "images_generations",
         }
     }
 }
@@ -229,6 +233,7 @@ impl ProviderSpec {
                 UpstreamProtocol::ChatCompletions,
                 UpstreamProtocol::Responses,
             ][..],
+            "images_generations" => &[UpstreamProtocol::ImageGenerations][..],
             _ => &[][..],
         };
         preference
@@ -267,6 +272,7 @@ pub fn provider_upstream_base_url(
                 UpstreamProtocol::Responses => base_urls.responses.as_deref(),
                 UpstreamProtocol::ChatCompletions => base_urls.openai.as_deref(),
                 UpstreamProtocol::AnthropicMessages => base_urls.anthropic.as_deref(),
+                UpstreamProtocol::ImageGenerations => base_urls.images_generations.as_deref(),
             });
 
     resolve_provider_upstream_base_url(
@@ -290,6 +296,7 @@ pub fn provider_response_upstream_base_url(
                 UpstreamProtocol::Responses => base_urls.responses.as_deref(),
                 UpstreamProtocol::ChatCompletions => base_urls.openai.as_deref(),
                 UpstreamProtocol::AnthropicMessages => base_urls.anthropic.as_deref(),
+                UpstreamProtocol::ImageGenerations => base_urls.images_generations.as_deref(),
             });
 
     resolve_provider_upstream_base_url(
@@ -577,6 +584,34 @@ mod tests {
     }
 
     #[test]
+    fn enables_image_generations_only_when_explicitly_declared() {
+        let mut configured_provider = provider("gotoken");
+        configured_provider.capabilities_json = Some(
+            serde_json::to_string(&ProviderCapabilityOverrides {
+                upstream_protocols: Some(vec!["images_generations".to_string()]),
+                ..ProviderCapabilityOverrides::default()
+            })
+            .expect("encode capabilities"),
+        );
+
+        let explicitly_declared = ProviderSpec::from_provider_config(&configured_provider);
+        assert_eq!(
+            explicitly_declared.upstream_for_downstream("images_generations"),
+            Some(UpstreamProtocol::ImageGenerations)
+        );
+        assert_eq!(
+            ProviderSpec::from_provider_config(&provider("gotoken"))
+                .upstream_for_downstream("images_generations"),
+            None
+        );
+        assert_eq!(
+            ProviderSpec::from_provider_config(&provider("openai"))
+                .upstream_for_downstream("images_generations"),
+            None
+        );
+    }
+
+    #[test]
     fn resolves_protocol_values_from_provider_type_and_capability_overrides() {
         let default_protocols = resolved_upstream_protocols("kimi_coding_anthropic", None);
         assert_eq!(default_protocols, ["openai", "anthropic"]);
@@ -630,6 +665,7 @@ mod tests {
             Some("https://responses.example/v1"),
             Some("https://chat.example/v1"),
             Some("https://anthropic.example"),
+            Some("https://images.example/v1"),
         );
 
         assert_eq!(
@@ -644,12 +680,21 @@ mod tests {
             provider_upstream_base_url(&provider, UpstreamProtocol::AnthropicMessages),
             "https://anthropic.example"
         );
+        assert_eq!(
+            provider_upstream_base_url(&provider, UpstreamProtocol::ImageGenerations),
+            "https://images.example/v1"
+        );
     }
 
     #[test]
     fn falls_back_to_default_base_url_when_protocol_base_url_is_empty() {
-        let provider =
-            provider_with_protocol_base_urls("https://default.example/v1", None, Some(" "), None);
+        let provider = provider_with_protocol_base_urls(
+            "https://default.example/v1",
+            None,
+            Some(" "),
+            None,
+            Some(" "),
+        );
 
         assert_eq!(
             provider_upstream_base_url(&provider, UpstreamProtocol::Responses),
@@ -661,6 +706,10 @@ mod tests {
         );
         assert_eq!(
             provider_upstream_base_url(&provider, UpstreamProtocol::AnthropicMessages),
+            "https://default.example/v1"
+        );
+        assert_eq!(
+            provider_upstream_base_url(&provider, UpstreamProtocol::ImageGenerations),
             "https://default.example/v1"
         );
     }
@@ -699,6 +748,9 @@ mod tests {
         assert!(UpstreamProtocol::ChatCompletions.supports_downstream("responses"));
         assert!(UpstreamProtocol::ChatCompletions.supports_downstream("chat_completions"));
         assert!(UpstreamProtocol::ChatCompletions.supports_downstream("anthropic_messages"));
+
+        assert!(UpstreamProtocol::ImageGenerations.supports_downstream("images_generations"));
+        assert!(!UpstreamProtocol::ImageGenerations.supports_downstream("responses"));
     }
 
     fn provider_with_protocol_base_urls(
@@ -706,6 +758,7 @@ mod tests {
         responses: Option<&str>,
         openai: Option<&str>,
         anthropic: Option<&str>,
+        images_generations: Option<&str>,
     ) -> ProviderConfig {
         let mut provider = provider("openai_compatible");
         provider.base_url = base_url.to_string();
@@ -715,6 +768,7 @@ mod tests {
                     responses: responses.map(str::to_string),
                     openai: openai.map(str::to_string),
                     anthropic: anthropic.map(str::to_string),
+                    images_generations: images_generations.map(str::to_string),
                 }),
                 ..ProviderCapabilityOverrides::default()
             })

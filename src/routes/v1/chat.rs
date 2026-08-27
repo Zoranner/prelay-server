@@ -575,6 +575,7 @@ mod tests {
                     responses: None,
                     openai: Some(chat_upstream),
                     anthropic: None,
+                    ..Default::default()
                 }),
                 ..ProviderCapabilityOverrides::default()
             }),

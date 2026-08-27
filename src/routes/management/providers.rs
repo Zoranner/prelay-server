@@ -221,6 +221,11 @@ async fn run_protocol_test(
             });
         }
     };
+    let Some(response) = response else {
+        return Err(AppError::BadRequest(
+            "图像生成协议不支持连通性测试".to_string(),
+        ));
+    };
     let latency_ms = Some(started_at.elapsed().as_millis() as i64);
     if !response.status().is_success() {
         return Ok(ProviderOperationResponse {
@@ -261,51 +266,49 @@ async fn send_protocol_test_request(
     base_url: &str,
     api_key: &str,
     model: &str,
-) -> Result<reqwest::Response, reqwest::Error> {
+) -> Result<Option<reqwest::Response>, reqwest::Error> {
     match protocol {
-        UpstreamProtocol::Responses => {
-            client
-                .post(format!("{}/responses", base_url.trim_end_matches('/')))
-                .bearer_auth(api_key)
-                .json(&serde_json::json!({
-                    "model": model,
-                    "stream": true,
-                    "input": [{ "role": "user", "content": "ping" }],
-                    "max_output_tokens": 8
-                }))
-                .send()
-                .await
-        }
-        UpstreamProtocol::ChatCompletions => {
-            client
-                .post(format!(
-                    "{}/chat/completions",
-                    base_url.trim_end_matches('/')
-                ))
-                .bearer_auth(api_key)
-                .json(&serde_json::json!({
-                    "model": model,
-                    "stream": true,
-                    "messages": [{ "role": "user", "content": "ping" }],
-                    "max_tokens": 8
-                }))
-                .send()
-                .await
-        }
-        UpstreamProtocol::AnthropicMessages => {
-            client
-                .post(format!("{}/messages", base_url.trim_end_matches('/')))
-                .header("x-api-key", api_key)
-                .header("anthropic-version", "2023-06-01")
-                .json(&serde_json::json!({
-                    "model": model,
-                    "stream": true,
-                    "messages": [{ "role": "user", "content": "ping" }],
-                    "max_tokens": 8
-                }))
-                .send()
-                .await
-        }
+        UpstreamProtocol::Responses => client
+            .post(format!("{}/responses", base_url.trim_end_matches('/')))
+            .bearer_auth(api_key)
+            .json(&serde_json::json!({
+                "model": model,
+                "stream": true,
+                "input": [{ "role": "user", "content": "ping" }],
+                "max_output_tokens": 8
+            }))
+            .send()
+            .await
+            .map(Some),
+        UpstreamProtocol::ChatCompletions => client
+            .post(format!(
+                "{}/chat/completions",
+                base_url.trim_end_matches('/')
+            ))
+            .bearer_auth(api_key)
+            .json(&serde_json::json!({
+                "model": model,
+                "stream": true,
+                "messages": [{ "role": "user", "content": "ping" }],
+                "max_tokens": 8
+            }))
+            .send()
+            .await
+            .map(Some),
+        UpstreamProtocol::AnthropicMessages => client
+            .post(format!("{}/messages", base_url.trim_end_matches('/')))
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&serde_json::json!({
+                "model": model,
+                "stream": true,
+                "messages": [{ "role": "user", "content": "ping" }],
+                "max_tokens": 8
+            }))
+            .send()
+            .await
+            .map(Some),
+        UpstreamProtocol::ImageGenerations => Ok(None),
     }
 }
 
@@ -331,4 +334,29 @@ fn sanitize_protocol_test_error(error: reqwest::Error) -> String {
         return "上游连接失败".to_string();
     }
     "上游测试失败".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run_protocol_test;
+    use crate::error::AppError;
+
+    #[tokio::test]
+    async fn rejects_image_generation_protocol_tests_without_contacting_upstream() {
+        let error = run_protocol_test(
+            &reqwest::Client::new(),
+            "openai_compatible",
+            Some("images_generations"),
+            "http://127.0.0.1:1",
+            "test-key",
+            Some("test-model"),
+        )
+        .await
+        .expect_err("image generation protocol tests must be rejected");
+
+        assert!(matches!(
+            error,
+            AppError::BadRequest(message) if message == "图像生成协议不支持连通性测试"
+        ));
+    }
 }
