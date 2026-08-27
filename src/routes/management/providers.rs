@@ -194,6 +194,11 @@ async fn run_protocol_test(
     let protocol = protocol_value.unwrap_or_default().trim();
     let upstream_protocol = UpstreamProtocol::from_capability_value(protocol)
         .ok_or_else(|| AppError::BadRequest("协议不支持".to_string()))?;
+    if upstream_protocol == UpstreamProtocol::ImageGenerations {
+        return Err(AppError::BadRequest(
+            "图像生成协议不支持连通性测试".to_string(),
+        ));
+    }
     let model = model_value
         .map(str::trim)
         .filter(|model| !model.is_empty())
@@ -353,6 +358,25 @@ mod tests {
         )
         .await
         .expect_err("image generation protocol tests must be rejected");
+
+        assert!(matches!(
+            error,
+            AppError::BadRequest(message) if message == "图像生成协议不支持连通性测试"
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejects_image_generation_protocol_tests_without_a_model() {
+        let error = run_protocol_test(
+            &reqwest::Client::new(),
+            "openai_compatible",
+            Some("images_generations"),
+            "http://127.0.0.1:1",
+            "test-key",
+            None,
+        )
+        .await
+        .expect_err("image generation protocol tests must be rejected before model validation");
 
         assert!(matches!(
             error,
