@@ -1,10 +1,17 @@
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
+
 use axum::{
     body::{to_bytes, Body},
+    extract::State,
     http::{Request, StatusCode},
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use prelay_protocol::{
     CreateEndpointRequest, CreateIdentityRequest, CreateProviderRequest, EndpointModelInput,
+    ProviderCapabilityOverrides,
 };
 use serde_json::Value;
 use tokio::net::TcpListener;
@@ -149,6 +156,93 @@ async fn spawn_chat_upstream() -> String {
     format!("http://{address}")
 }
 
+async fn create_image_endpoint_for_url(
+    app: &axum::Router,
+    machine_id: &str,
+    account_sid: &str,
+    provider_name: &str,
+    base_url: &str,
+) -> Value {
+    let credential = valid_credential(&format!("{machine_id}-{account_sid}"));
+    let identity = management_post(
+        app,
+        "/api/identities",
+        None,
+        serde_json::to_value(CreateIdentityRequest {
+            machine_id: machine_id.to_string(),
+            account_sid: account_sid.to_string(),
+            credential: credential.clone(),
+            display_name: None,
+        })
+        .expect("serialize identity"),
+    )
+    .await;
+    assert!(identity.get("credential").is_none());
+    let provider = management_post(
+        app,
+        "/api/providers",
+        Some(&credential),
+        serde_json::to_value(CreateProviderRequest {
+            name: provider_name.to_string(),
+            provider_type: "custom_image".to_string(),
+            base_url: base_url.to_string(),
+            api_key: format!("sk-{provider_name}"),
+            capabilities: Some(ProviderCapabilityOverrides {
+                upstream_protocols: Some(vec!["images_generations".to_string()]),
+                ..ProviderCapabilityOverrides::default()
+            }),
+            models: vec!["image-upstream".to_string()],
+        })
+        .expect("serialize image provider"),
+    )
+    .await;
+    management_post(
+        app,
+        "/api/endpoints",
+        Some(&credential),
+        serde_json::to_value(CreateEndpointRequest {
+            name: format!("{provider_name} endpoint"),
+            protocol: None,
+            models: vec![EndpointModelInput {
+                model_name: Some("image-public".to_string()),
+                provider_id: provider["id"].as_str().expect("provider id").to_string(),
+                upstream_model: "image-upstream".to_string(),
+            }],
+        })
+        .expect("serialize image endpoint"),
+    )
+    .await
+}
+
+async fn spawn_identity_image_upstream(provider_name: &'static str) -> (String, Arc<AtomicUsize>) {
+    async fn handler(
+        State((provider_name, hits)): State<(&'static str, Arc<AtomicUsize>)>,
+        axum::Json(payload): axum::Json<Value>,
+    ) -> axum::Json<Value> {
+        hits.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(payload["model"], "image-upstream");
+        axum::Json(serde_json::json!({
+            "provider": provider_name,
+            "data": [{ "url": format!("https://{provider_name}.example/result") }]
+        }))
+    }
+
+    let hits = Arc::new(AtomicUsize::new(0));
+    let app = axum::Router::new()
+        .route("/images/generations", axum::routing::post(handler))
+        .with_state((provider_name, Arc::clone(&hits)));
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind image upstream");
+    let address = listener.local_addr().expect("image upstream address");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve image upstream");
+    });
+    (format!("http://{address}"), hits)
+}
+
 #[tokio::test]
 async fn endpoint_token_resolves_only_its_identity_model_mapping() {
     let context = test_context::test_context().await;
@@ -171,6 +265,43 @@ async fn endpoint_token_resolves_only_its_identity_model_mapping() {
     assert_eq!(response["data"][0]["id"], "shared-model");
     assert_eq!(response["data"][0]["provider_name"], "provider-a");
     assert_eq!(response["data"].as_array().expect("models").len(), 1);
+}
+
+#[tokio::test]
+async fn image_generation_endpoint_token_uses_only_its_identity_mapping() {
+    let context = test_context::test_context().await;
+    let app = context.app;
+    let (upstream_a, hits_a) = spawn_identity_image_upstream("provider-a").await;
+    let (upstream_b, hits_b) = spawn_identity_image_upstream("provider-b").await;
+    let endpoint_a =
+        create_image_endpoint_for_url(&app, "machine-a", "S-1-5-21-100", "provider-a", &upstream_a)
+            .await;
+    create_image_endpoint_for_url(&app, "machine-b", "S-1-5-21-200", "provider-b", &upstream_b)
+        .await;
+
+    let token = endpoint_a["token"].as_str().expect("endpoint token");
+    let (status, response) = request(
+        &app,
+        Request::builder()
+            .method("POST")
+            .uri("/v1/images/generations")
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({
+                    "model": "image-public",
+                    "prompt": "private prompt"
+                })
+                .to_string(),
+            ))
+            .expect("build image request"),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(response["provider"], "provider-a");
+    assert_eq!(hits_a.load(Ordering::SeqCst), 1);
+    assert_eq!(hits_b.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

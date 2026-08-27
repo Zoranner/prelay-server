@@ -7,6 +7,7 @@ const MAX_PROTOCOL_REQUEST_BODY_BYTES: usize = 32 * 1024 * 1024;
 pub mod auth;
 mod chat;
 mod endpoint_resolver;
+mod images;
 mod messages;
 mod models;
 mod responses;
@@ -14,6 +15,7 @@ mod responses;
 pub fn router(state: AppState) -> Router {
     Router::new()
         .merge(chat::router())
+        .merge(images::router())
         .merge(messages::router())
         .merge(models::router())
         .merge(responses::router())

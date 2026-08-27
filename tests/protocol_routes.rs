@@ -18,11 +18,32 @@ async fn status(app: &axum::Router, path: &str) -> StatusCode {
         .status()
 }
 
+async fn post_status(app: &axum::Router, path: &str) -> StatusCode {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(path)
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"model":"image-public","prompt":"private prompt"}"#,
+                ))
+                .expect("build request"),
+        )
+        .await
+        .expect("route request")
+        .status()
+}
+
 #[tokio::test]
 async fn v1_models_route_is_registered_without_static_or_proxy_fallback() {
     let app = app::router(test_state().await).await.expect("build app");
 
     assert_eq!(status(&app, "/v1/models").await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        post_status(&app, "/v1/images/generations").await,
+        StatusCode::UNAUTHORIZED
+    );
     assert_eq!(status(&app, "/proxy").await, StatusCode::NOT_FOUND);
     assert_eq!(status(&app, "/").await, StatusCode::NOT_FOUND);
 }
