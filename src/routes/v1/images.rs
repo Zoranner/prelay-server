@@ -127,9 +127,8 @@ async fn create_image_generation_with_candidate(
     let upstream_status = upstream_response.status();
 
     if !upstream_status.is_success() {
-        let observability_headers = upstream_response.headers().clone();
-        let error_body = upstream_response.text().await.ok();
-        let observability = upstream_observability(&observability_headers, error_body.as_deref());
+        let observability = upstream_observability(upstream_response.headers(), None);
+        let safe_error_message = format!("上游请求失败: {upstream_status}");
         state
             .storage
             .insert_request_log(
@@ -145,13 +144,13 @@ async fn create_image_generation_with_candidate(
                     latency_ms: started_at.elapsed().as_millis() as i64,
                     upstream_latency_ms: None,
                     upstream_request_id: observability.request_id,
-                    error_message: observability.error_message,
+                    error_message: Some(safe_error_message.clone()),
                 }),
             )
             .await?;
         return Err(AppError::Upstream {
             status: Some(upstream_status),
-            message: format!("上游请求失败: {upstream_status}"),
+            message: safe_error_message,
         });
     }
 
@@ -287,6 +286,7 @@ fn upstream_response_with_body(
 mod tests {
     use std::{
         convert::Infallible,
+        io,
         sync::{
             atomic::{AtomicUsize, Ordering},
             Arc, Mutex,
@@ -480,31 +480,17 @@ mod tests {
             create_test_endpoint_auth(&state.storage, &provider, "image-public", "image-upstream")
                 .await;
         let identity_id = auth.access.0.identity_id.clone();
-        let app = Router::new().nest(
-            "/v1",
-            super::router()
-                .with_state(state.clone())
-                .layer(middleware::from_fn_with_state(
-                    state.clone(),
-                    crate::routes::v1::auth::require_protocol_auth,
-                )),
-        );
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind test server");
-        let address = listener.local_addr().expect("test server address");
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.expect("serve test app");
-        });
+        let (relay_url, server) = spawn_image_relay(state.clone()).await;
 
         let started = std::time::Instant::now();
         let response = reqwest::Client::new()
-            .post(format!("http://{address}/v1/images/generations"))
+            .post(format!("{relay_url}/v1/images/generations"))
             .bearer_auth(&auth.token)
             .json(&json!({
                 "model": "image-public",
                 "prompt": "private prompt",
-                "stream": true
+                "stream": true,
+                "partial_images": 2
             }))
             .send()
             .await
@@ -529,11 +515,18 @@ mod tests {
             elapsed < Duration::from_millis(200),
             "first image event arrived after {elapsed:?}"
         );
+        let first_event = Bytes::from_static(
+            b"data: {\"type\":\"image_generation.partial_image\",\"b64_json\":\"aGVs\"}\n\n",
+        );
+        assert_eq!(first, first_event);
+
+        let mut complete_stream = first.to_vec();
+        while let Some(chunk) = stream.next().await {
+            complete_stream.extend_from_slice(&chunk.expect("remaining image event bytes"));
+        }
         assert_eq!(
-            first,
-            Bytes::from_static(
-                b"data: {\"type\":\"image_generation.partial_image\",\"b64_json\":\"aGVs\"}\n\n"
-            )
+            complete_stream,
+            b"data: {\"type\":\"image_generation.partial_image\",\"b64_json\":\"aGVs\"}\n\ndata: {\"type\":\"image_generation.completed\"}\n\n"
         );
 
         let logs = state
@@ -551,11 +544,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn marks_image_request_failed_when_upstream_stream_is_interrupted() {
+        let upstream = spawn_interrupted_image_upstream().await;
+        let state = test_state().await;
+        let provider = test_provider_with_capabilities(
+            "Interrupted image provider",
+            "custom_image",
+            &upstream,
+            "sk-image",
+            Some(&image_capabilities()),
+        )
+        .await
+        .expect("create provider");
+        let auth =
+            create_test_endpoint_auth(&state.storage, &provider, "image-public", "image-upstream")
+                .await;
+        let identity_id = auth.access.0.identity_id.clone();
+        let (relay_url, server) = spawn_image_relay(state.clone()).await;
+
+        let response = reqwest::Client::new()
+            .post(format!("{relay_url}/v1/images/generations"))
+            .bearer_auth(&auth.token)
+            .json(&json!({
+                "model": "image-public",
+                "prompt": "private prompt",
+                "stream": true,
+                "partial_images": 2
+            }))
+            .send()
+            .await
+            .expect("send interrupted image request");
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+
+        let mut stream = response.bytes_stream();
+        let first = stream
+            .next()
+            .await
+            .expect("first interrupted image event")
+            .expect("first interrupted image event bytes");
+        assert_eq!(
+            first,
+            Bytes::from_static(
+                b"data: {\"type\":\"image_generation.partial_image\",\"b64_json\":\"aGVs\"}\n\n"
+            )
+        );
+        let stream_error = stream
+            .next()
+            .await
+            .expect("upstream interruption should reach downstream");
+        assert!(stream_error.is_err());
+
+        let logs = state
+            .storage
+            .list_request_logs(&identity_id, 10)
+            .await
+            .expect("load interrupted stream log");
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].status, "failed");
+        assert_eq!(logs[0].http_status, Some(502));
+        assert_eq!(logs[0].error_code.as_deref(), Some("stream_error"));
+
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn records_rate_limit_observability_without_image_or_prompt_content() {
         let upstream = spawn_image_upstream(
             StatusCode::TOO_MANY_REQUESTS,
             Bytes::from_static(
-                br#"{"error":{"message":"provider overloaded"},"prompt":"private prompt","b64_json":"secret-image"}"#,
+                br#"{"error":{"message":"prompt=private prompt url=https://images.example/private-result b64_json=c2VjcmV0LWltYWdl api_key=sk-secret-image-key token=endpoint-secret-token"}}"#,
             ),
             "application/json",
             Some("cf-ray-image-123"),
@@ -600,11 +657,14 @@ mod tests {
         );
         assert_eq!(
             logs[0].error_message.as_deref(),
-            Some("provider overloaded")
+            Some("上游请求失败: 429 Too Many Requests")
         );
         let summary = serde_json::to_string(&logs[0]).expect("serialize request log summary");
         assert!(!summary.contains("private prompt"));
-        assert!(!summary.contains("secret-image"));
+        assert!(!summary.contains("https://images.example/private-result"));
+        assert!(!summary.contains("c2VjcmV0LWltYWdl"));
+        assert!(!summary.contains("sk-secret-image-key"));
+        assert!(!summary.contains("endpoint-secret-token"));
         assert!(!summary.contains("b64_json"));
     }
 
@@ -744,6 +804,7 @@ mod tests {
             assert_eq!(payload["model"], "image-upstream");
             assert_eq!(payload["prompt"], "private prompt");
             assert_eq!(payload["stream"], true);
+            assert_eq!(payload["partial_images"], 2);
             let stream = futures::stream::unfold(0, |step| async move {
                 match step {
                     0 => Some((
@@ -782,5 +843,69 @@ mod tests {
                 .expect("serve streaming image upstream");
         });
         format!("http://{address}")
+    }
+
+    async fn spawn_interrupted_image_upstream() -> String {
+        async fn handler(Json(payload): Json<Value>) -> axum::response::Response {
+            assert_eq!(payload["model"], "image-upstream");
+            assert_eq!(payload["prompt"], "private prompt");
+            assert_eq!(payload["stream"], true);
+            assert_eq!(payload["partial_images"], 2);
+            let stream = futures::stream::unfold(0, |step| async move {
+                match step {
+                    0 => Some((
+                        Ok::<_, io::Error>(Bytes::from_static(
+                            b"data: {\"type\":\"image_generation.partial_image\",\"b64_json\":\"aGVs\"}\n\n",
+                        )),
+                        1,
+                    )),
+                    1 => {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        Some((
+                            Err(io::Error::other("upstream image stream interrupted")),
+                            2,
+                        ))
+                    }
+                    _ => None,
+                }
+            });
+            (
+                [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
+                Body::from_stream(stream),
+            )
+                .into_response()
+        }
+
+        let app = Router::new().route("/images/generations", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind interrupted image upstream");
+        let address = listener.local_addr().expect("image upstream address");
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve interrupted image upstream");
+        });
+        format!("http://{address}")
+    }
+
+    async fn spawn_image_relay(state: AppState) -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new().nest(
+            "/v1",
+            super::router()
+                .with_state(state.clone())
+                .layer(middleware::from_fn_with_state(
+                    state,
+                    crate::routes::v1::auth::require_protocol_auth,
+                )),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let address = listener.local_addr().expect("test server address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+        (format!("http://{address}"), server)
     }
 }
