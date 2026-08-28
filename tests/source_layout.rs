@@ -84,6 +84,30 @@ fn provider_protocol_modules_use_directories_and_stay_within_limit() {
     assert_rust_files_within_limit(&providers_root);
 }
 
+#[test]
+fn chat_and_images_routes_use_protocol_directories_and_stay_within_limit() {
+    let routes_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes/v1");
+    let old_files = ["chat.rs", "images.rs"];
+    let required_directories = ["chat", "images"];
+
+    for old_file in old_files {
+        assert!(
+            !routes_root.join(old_file).exists(),
+            "obsolete protocol route module still exists: {old_file}"
+        );
+    }
+
+    for directory in required_directories {
+        assert!(
+            routes_root.join(directory).is_dir(),
+            "required protocol route directory is missing: {directory}"
+        );
+    }
+
+    assert_rust_files_within_limit(&routes_root.join("chat"));
+    assert_rust_files_within_limit(&routes_root.join("images"));
+}
+
 fn assert_legacy_module_identifiers_absent<I>(module_path: &Path, legacy_modules: I)
 where
     I: IntoIterator<Item = &'static str>,

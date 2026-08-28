@@ -1,0 +1,20 @@
+use axum::{routing::post, Router};
+
+use crate::AppState;
+
+const IMAGE_GENERATIONS_PROTOCOL: &str = "images_generations";
+
+mod candidate;
+mod handler;
+mod request_log;
+
+#[cfg(test)]
+#[path = "tests/mod.rs"]
+mod tests;
+
+pub fn router() -> Router<AppState> {
+    Router::new().route(
+        "/images/generations",
+        post(handler::create_image_generation),
+    )
+}
