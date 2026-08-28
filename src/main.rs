@@ -11,6 +11,7 @@ use prelay_server::{
 };
 
 const STARTUP_CLEANUP_FAILURE: &str = "startup identity cleanup failed";
+const DEFAULT_LISTEN_ADDRESS: &str = "0.0.0.0:18080";
 
 fn log_cleanup_failure(error: &StorageError) {
     tracing::warn!(
@@ -34,6 +35,13 @@ fn load_environment_file(path: &Path) -> anyhow::Result<()> {
         Err(error) if error.not_found() => Ok(()),
         Err(error) => Err(error.into()),
     }
+}
+
+fn listen_address(value: Option<&str>) -> anyhow::Result<SocketAddr> {
+    value
+        .unwrap_or(DEFAULT_LISTEN_ADDRESS)
+        .parse()
+        .map_err(|error| anyhow::anyhow!("LISTEN_ADDRESS must be a valid socket address: {error}"))
 }
 
 #[tokio::main]
@@ -100,11 +108,8 @@ async fn main() -> anyhow::Result<()> {
     };
     let app = app::router(state).await?;
 
-    let port: u16 = std::env::var("LISTEN_PORT")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(18080);
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let configured_listen_address = std::env::var("LISTEN_ADDRESS").ok();
+    let addr = listen_address(configured_listen_address.as_deref())?;
 
     tracing::info!(%addr, "Prelay server listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -262,6 +267,19 @@ mod tests {
         let path = temporary_environment_file();
 
         super::load_environment_file(&path).expect("ignore a missing environment file");
+    }
+
+    #[test]
+    fn listen_address_defaults_and_accepts_a_complete_socket_address() {
+        assert_eq!(
+            super::listen_address(None).expect("use the default listen address"),
+            "0.0.0.0:18080".parse().unwrap(),
+        );
+        assert_eq!(
+            super::listen_address(Some("127.0.0.1:19090"))
+                .expect("parse the configured listen address"),
+            "127.0.0.1:19090".parse().unwrap(),
+        );
     }
 
     fn temporary_environment_file() -> PathBuf {

@@ -17,6 +17,6 @@ WORKDIR /app
 COPY --from=builder /app/target/release/prelay-server ./prelay-server
 RUN mkdir -p /app/data && chown relay:relay /app/data
 EXPOSE 18080
-ENV LISTEN_PORT=18080
+ENV LISTEN_ADDRESS=0.0.0.0:18080
 USER relay
 CMD ["./prelay-server"]

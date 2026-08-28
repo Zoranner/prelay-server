@@ -45,7 +45,7 @@ $env:ENCRYPTION_KEY = "<Base64-encoded-32-byte-key>"
 cargo run
 ```
 
-默认监听地址为 `0.0.0.0:18080`。`LISTEN_PORT` 可覆盖端口，`RUST_LOG` 控制日志过滤。PostgreSQL 可用 `DATABASE_MAX_CONNECTIONS` 覆盖默认连接数；SQLite 始终使用单连接。模型价格可放入 `config/model_prices.json`，或通过 `MODEL_PRICES_PATH` 指定其他文件。
+默认监听地址为 `0.0.0.0:18080`。`LISTEN_ADDRESS` 可覆盖完整监听地址，例如 `127.0.0.1:18080`，`RUST_LOG` 控制日志过滤。PostgreSQL 可用 `DATABASE_MAX_CONNECTIONS` 覆盖默认连接数；SQLite 始终使用单连接。模型价格可放入 `config/model_prices.json`，或通过 `MODEL_PRICES_PATH` 指定其他文件。
 
 启动时及之后每 24 小时会删除连续 90 天未活动身份及其所有配置、会话和日志。
 

@@ -20,7 +20,7 @@
 ## 开发与验证
 
 - 首次获取源码或协议变更后，执行 `git submodule update --init --recursive`。
-- 本地运行需要有效的 `ENCRYPTION_KEY`；可由仓库根 `.env` 加载。默认监听 `0.0.0.0:18080`，`LISTEN_PORT` 可覆盖。
+- 本地运行需要有效的 `ENCRYPTION_KEY`；可由仓库根 `.env` 加载。默认监听 `0.0.0.0:18080`，`LISTEN_ADDRESS` 可覆盖完整地址。
 - 修改 Rust 代码后在仓库根目录执行：
 
 ```text
