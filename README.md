@@ -78,7 +78,7 @@ PostgreSQL 部署由外部 PostgreSQL 实例提供。为服务设置固定的 `E
 
 SQLite 与 PostgreSQL 是二选一的全新部署方式。切换数据库类型不能只修改现有部署的 `DATABASE_URL`，必须停止原部署并为目标数据库创建新部署和新数据卷或空数据库。本项目不提供 SQLite 与 PostgreSQL 之间的数据迁移；原数据应由原部署独立保留或备份。
 
-Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.1.1`，并以只读方式挂载 `app/config/`。模型价格是可选配置；可复制 `config/model_prices.example.json` 为 `app/config/model_prices.json` 后调整内容。
+Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.1.2`，并以只读方式挂载 `app/config/`。模型价格是可选配置；可复制 `config/model_prices.example.json` 为 `app/config/model_prices.json` 后调整内容。
 
 ## 服务边界
 

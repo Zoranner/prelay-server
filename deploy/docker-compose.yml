@@ -1,6 +1,6 @@
 services:
   prelay-server:
-    image: ghcr.io/zoranner/prelay-server:0.1.1
+    image: ghcr.io/zoranner/prelay-server:0.1.2
     container_name: prelay
     restart: always
     env_file:
