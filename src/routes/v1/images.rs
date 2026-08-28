@@ -423,6 +423,7 @@ mod tests {
             client_update: crate::client_update::ClientUpdateCache::unavailable(
                 reqwest::Client::new(),
             ),
+            extensions: crate::extensions::ExtensionCatalog::unavailable(reqwest::Client::new()),
         };
         (state, connection)
     }

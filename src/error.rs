@@ -34,6 +34,14 @@ impl IntoResponse for AppError {
                 let status = match code {
                     ProtocolErrorCode::NotFound => StatusCode::NOT_FOUND,
                     ProtocolErrorCode::ClientUpdateUnavailable => StatusCode::NOT_FOUND,
+                    ProtocolErrorCode::ExtensionCatalogUnavailable => {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    }
+                    ProtocolErrorCode::ExtensionNotFound
+                    | ProtocolErrorCode::ExtensionVersionNotFound => StatusCode::NOT_FOUND,
+                    ProtocolErrorCode::ExtensionInstallUnsupported => {
+                        StatusCode::UNPROCESSABLE_ENTITY
+                    }
                     ProtocolErrorCode::InvalidCredential => StatusCode::UNAUTHORIZED,
                     ProtocolErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
                     ProtocolErrorCode::IdentityAlreadyRegistered

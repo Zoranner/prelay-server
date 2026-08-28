@@ -5,6 +5,7 @@ use crate::AppState;
 pub mod auth;
 mod client_update;
 mod endpoints;
+mod extensions;
 mod identities;
 mod providers;
 mod stats;
@@ -15,6 +16,7 @@ pub fn router(state: AppState) -> Router {
         .merge(endpoints::router())
         .merge(stats::router())
         .merge(client_update::router())
+        .merge(extensions::router())
         .route(
             "/identity/credential/rotate",
             post(identities::rotate_credential),

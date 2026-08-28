@@ -1,2 +1,2 @@
-pub mod management;
+pub mod api;
 pub mod v1;

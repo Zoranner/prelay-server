@@ -4,6 +4,7 @@ pub mod client_update;
 pub mod database;
 pub mod entity;
 pub mod error;
+pub mod extensions;
 pub mod identity;
 pub mod models;
 pub mod observability;
@@ -19,12 +20,14 @@ pub struct AppState {
     pub storage: storage::Storage,
     pub client: reqwest::Client,
     pub client_update: client_update::ClientUpdateCache,
+    pub extensions: extensions::ExtensionCatalog,
 }
 
 pub mod test_support {
     use crate::{
         client_update::ClientUpdateCache,
         database::{connect, DatabaseConfig},
+        extensions::ExtensionCatalog,
         schema::initialize,
         storage::{MasterKey, Storage},
         AppState,
@@ -45,6 +48,7 @@ pub mod test_support {
             storage,
             client: reqwest::Client::new(),
             client_update: ClientUpdateCache::unavailable(reqwest::Client::new()),
+            extensions: ExtensionCatalog::unavailable(reqwest::Client::new()),
         }
     }
 }

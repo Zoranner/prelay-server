@@ -4,6 +4,7 @@ use prelay_server::{
     app,
     client_update::ClientUpdateCache,
     database::{connect, DatabaseConfig},
+    extensions::ExtensionCatalog,
     identity::cleanup::delete_expired_identities,
     schema::initialize,
     storage::{MasterKey, Storage, StorageError},
@@ -101,10 +102,13 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     });
+    let extensions = ExtensionCatalog::from_environment(client.clone())?;
+    extensions.warm();
     let state = AppState {
         storage,
         client,
         client_update,
+        extensions,
     };
     let app = app::router(state).await?;
 
