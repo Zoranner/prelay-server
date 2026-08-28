@@ -14,7 +14,7 @@ use std::{convert::Infallible, time::Duration};
 use tokio::net::TcpListener;
 use tower::ServiceExt;
 
-use super::handler::create_chat_completion;
+use super::{handler::create_chat_completion, router};
 use crate::{
     models::ProviderCapabilityOverrides,
     routes::v1::endpoint_resolver::{
@@ -28,6 +28,11 @@ async fn test_state() -> AppState {
     crate::test_support::test_state().await
 }
 
-include!("cases_a.rs");
-include!("cases_b.rs");
-include!("support.rs");
+mod auth;
+mod candidates;
+mod fixtures;
+mod request_logs;
+mod routing;
+mod streaming;
+
+use fixtures::*;

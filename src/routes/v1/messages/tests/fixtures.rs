@@ -1,5 +1,7 @@
-async fn spawn_chat_upstream() -> String {
-    async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+use super::*;
+
+pub(super) async fn spawn_chat_upstream() -> String {
+    pub(super) async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
         assert_eq!(payload["model"], "deepseek-chat");
         assert_eq!(payload["stream"], false);
         assert_eq!(payload["max_tokens"], 1024);
@@ -36,8 +38,8 @@ async fn spawn_chat_upstream() -> String {
     format!("http://{addr}")
 }
 
-async fn spawn_user_only_chat_upstream() -> String {
-    async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+pub(super) async fn spawn_user_only_chat_upstream() -> String {
+    pub(super) async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
         assert_eq!(payload["model"], "deepseek-chat");
         assert_eq!(payload["stream"], false);
         assert_eq!(payload["max_tokens"], 1024);
@@ -72,8 +74,8 @@ async fn spawn_user_only_chat_upstream() -> String {
     format!("http://{addr}")
 }
 
-async fn spawn_failing_chat_upstream() -> String {
-    async fn handler() -> axum::response::Response {
+pub(super) async fn spawn_failing_chat_upstream() -> String {
+    pub(super) async fn handler() -> axum::response::Response {
         use axum::{http::StatusCode, response::IntoResponse};
 
         (
@@ -94,8 +96,8 @@ async fn spawn_failing_chat_upstream() -> String {
     format!("http://{addr}")
 }
 
-async fn spawn_responses_upstream() -> String {
-    async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+pub(super) async fn spawn_responses_upstream() -> String {
+    pub(super) async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
         assert_eq!(payload["model"], "gpt-4.1");
         assert_eq!(payload["stream"], false);
         assert_eq!(payload["max_output_tokens"], 1024);
@@ -132,8 +134,10 @@ async fn spawn_responses_upstream() -> String {
     format!("http://{addr}")
 }
 
-async fn spawn_streaming_responses_upstream() -> String {
-    async fn handler(Json(payload): Json<serde_json::Value>) -> axum::response::Response {
+pub(super) async fn spawn_streaming_responses_upstream() -> String {
+    pub(super) async fn handler(
+        Json(payload): Json<serde_json::Value>,
+    ) -> axum::response::Response {
         assert_eq!(payload["model"], "gpt-4.1");
         assert_eq!(payload["stream"], true);
         assert_eq!(payload["max_output_tokens"], 1024);
@@ -151,11 +155,11 @@ async fn spawn_streaming_responses_upstream() -> String {
                 1 => {
                     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                     Some((
-                            Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
-                                b"event: response.output_text.delta\ndata: {\"delta\":\"lo\"}\n\nevent: response.completed\ndata: {}\n\ndata: [DONE]\n\n",
-                            )),
-                            2,
-                        ))
+                        Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
+                            b"event: response.output_text.delta\ndata: {\"delta\":\"lo\"}\n\nevent: response.completed\ndata: {}\n\ndata: [DONE]\n\n",
+                        )),
+                        2,
+                    ))
                 }
                 _ => None,
             }
@@ -178,8 +182,8 @@ async fn spawn_streaming_responses_upstream() -> String {
     format!("http://{addr}")
 }
 
-async fn spawn_native_anthropic_upstream() -> String {
-    async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+pub(super) async fn spawn_native_anthropic_upstream() -> String {
+    pub(super) async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
         assert_eq!(payload["model"], "claude-sonnet");
         assert_eq!(payload["max_tokens"], 1024);
         assert_eq!(payload["messages"][0]["role"], "user");
@@ -211,8 +215,8 @@ async fn spawn_native_anthropic_upstream() -> String {
     format!("http://{addr}")
 }
 
-async fn spawn_tool_call_chat_upstream() -> String {
-    async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+pub(super) async fn spawn_tool_call_chat_upstream() -> String {
+    pub(super) async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
         assert_eq!(payload["model"], "deepseek-chat");
         assert_eq!(payload["tools"][0]["type"], "function");
         assert_eq!(payload["tools"][0]["function"]["name"], "read_file");
@@ -255,8 +259,8 @@ async fn spawn_tool_call_chat_upstream() -> String {
     format!("http://{addr}")
 }
 
-async fn spawn_tool_result_chat_upstream() -> String {
-    async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+pub(super) async fn spawn_tool_result_chat_upstream() -> String {
+    pub(super) async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
         assert_eq!(payload["model"], "deepseek-chat");
         assert_eq!(payload["messages"][0]["role"], "tool");
         assert_eq!(payload["messages"][0]["tool_call_id"], "call_1");
@@ -286,8 +290,10 @@ async fn spawn_tool_result_chat_upstream() -> String {
     format!("http://{addr}")
 }
 
-async fn spawn_streaming_chat_upstream() -> String {
-    async fn handler(Json(payload): Json<serde_json::Value>) -> axum::response::Response {
+pub(super) async fn spawn_streaming_chat_upstream() -> String {
+    pub(super) async fn handler(
+        Json(payload): Json<serde_json::Value>,
+    ) -> axum::response::Response {
         assert_eq!(payload["model"], "deepseek-chat");
         assert_eq!(payload["stream"], true);
         assert_eq!(payload["messages"][0]["role"], "user");
@@ -304,11 +310,11 @@ async fn spawn_streaming_chat_upstream() -> String {
                 1 => {
                     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                     Some((
-                            Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
-                                b"data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\ndata: [DONE]\n\n",
-                            )),
-                            2,
-                        ))
+                        Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
+                            b"data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\ndata: [DONE]\n\n",
+                        )),
+                        2,
+                    ))
                 }
                 _ => None,
             }
@@ -331,8 +337,10 @@ async fn spawn_streaming_chat_upstream() -> String {
     format!("http://{addr}")
 }
 
-async fn spawn_streaming_native_anthropic_upstream() -> String {
-    async fn handler(Json(payload): Json<serde_json::Value>) -> axum::response::Response {
+pub(super) async fn spawn_streaming_native_anthropic_upstream() -> String {
+    pub(super) async fn handler(
+        Json(payload): Json<serde_json::Value>,
+    ) -> axum::response::Response {
         assert_eq!(payload["model"], "claude-sonnet");
         assert_eq!(payload["stream"], true);
         assert_eq!(payload["max_tokens"], 1024);
@@ -341,23 +349,23 @@ async fn spawn_streaming_native_anthropic_upstream() -> String {
 
         let stream = futures::stream::unfold(0, |state| async move {
             match state {
-                    0 => Some((
-                        Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
-                            b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_native_stream\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-sonnet\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hel\"}}\n\n",
-                        )),
-                        1,
+                0 => Some((
+                    Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
+                        b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_native_stream\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-sonnet\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hel\"}}\n\n",
                     )),
-                    1 => {
-                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                        Some((
-                            Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
-                                b"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"lo\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
-                            )),
-                            2,
-                        ))
-                    }
-                    _ => None,
+                    1,
+                )),
+                1 => {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    Some((
+                        Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
+                            b"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"lo\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+                        )),
+                        2,
+                    ))
                 }
+                _ => None,
+            }
         });
 
         axum::response::Response::builder()

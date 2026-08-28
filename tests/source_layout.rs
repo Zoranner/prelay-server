@@ -2,6 +2,8 @@ use std::fs;
 use std::path::Path;
 
 const MAX_RUST_LINES: usize = 450;
+const OBSOLETE_SOURCE_FILE_PREFIXES: [&str; 5] =
+    ["identity_", "encode_", "decode_", "extensions_", "schema_"];
 
 #[test]
 fn source_modules_use_domain_directories() {
@@ -9,8 +11,10 @@ fn source_modules_use_domain_directories() {
     let obsolete_files = [
         "bridge/anthropic_decode.rs",
         "bridge/anthropic_encode.rs",
+        "bridge/anthropic/decode_tests.rs",
         "bridge/responses_decode.rs",
         "bridge/responses_encode.rs",
+        "bridge/responses/decode_tests.rs",
         "bridge/stream/decode_anthropic.rs",
         "bridge/stream/decode_chat.rs",
         "bridge/stream/decode_responses.rs",
@@ -31,15 +35,29 @@ fn source_modules_use_domain_directories() {
         "routes/v1/images.rs",
         "routes/v1/messages.rs",
         "routes/v1/responses.rs",
+        "routes/v1/chat/tests/cases_a.rs",
+        "routes/v1/chat/tests/cases_b.rs",
+        "routes/v1/chat/tests/support.rs",
+        "routes/v1/images/tests/cases_a.rs",
+        "routes/v1/images/tests/cases_b.rs",
+        "routes/v1/images/tests/support.rs",
+        "routes/v1/messages/tests/cases_a.rs",
+        "routes/v1/messages/tests/cases_b.rs",
+        "routes/v1/messages/tests/support.rs",
+        "routes/v1/responses/tests/cases_a.rs",
+        "routes/v1/responses/tests/cases_b.rs",
+        "routes/v1/responses/tests/support.rs",
         "schema.rs",
     ];
     let required_files = [
         "bridge/anthropic/mod.rs",
         "bridge/anthropic/decode.rs",
         "bridge/anthropic/encode.rs",
+        "bridge/anthropic/tests.rs",
         "bridge/responses/mod.rs",
         "bridge/responses/decode.rs",
         "bridge/responses/encode.rs",
+        "bridge/responses/tests.rs",
         "bridge/stream/decode/mod.rs",
         "bridge/stream/decode/anthropic.rs",
         "bridge/stream/decode/chat.rs",
@@ -71,16 +89,34 @@ fn source_modules_use_domain_directories() {
         "routes/v1/chat/mod.rs",
         "routes/v1/chat/handler.rs",
         "routes/v1/chat/candidate.rs",
+        "routes/v1/chat/tests/auth.rs",
+        "routes/v1/chat/tests/candidates.rs",
+        "routes/v1/chat/tests/fixtures.rs",
+        "routes/v1/chat/tests/request_logs.rs",
+        "routes/v1/chat/tests/routing.rs",
+        "routes/v1/chat/tests/streaming.rs",
         "routes/v1/images/mod.rs",
         "routes/v1/images/handler.rs",
         "routes/v1/images/candidate.rs",
         "routes/v1/images/request_log.rs",
+        "routes/v1/images/tests/candidates.rs",
+        "routes/v1/images/tests/fixtures.rs",
+        "routes/v1/images/tests/request_logs.rs",
+        "routes/v1/images/tests/routing.rs",
+        "routes/v1/images/tests/streaming.rs",
         "routes/v1/messages/mod.rs",
         "routes/v1/messages/handler.rs",
         "routes/v1/messages/candidate.rs",
         "routes/v1/messages/native.rs",
         "routes/v1/messages/responses.rs",
         "routes/v1/messages/chat.rs",
+        "routes/v1/messages/tests/auth.rs",
+        "routes/v1/messages/tests/candidates.rs",
+        "routes/v1/messages/tests/fixtures.rs",
+        "routes/v1/messages/tests/request_logs.rs",
+        "routes/v1/messages/tests/routing.rs",
+        "routes/v1/messages/tests/streaming.rs",
+        "routes/v1/messages/tests/tools.rs",
         "routes/v1/responses/mod.rs",
         "routes/v1/responses/handler.rs",
         "routes/v1/responses/candidate.rs",
@@ -88,6 +124,13 @@ fn source_modules_use_domain_directories() {
         "routes/v1/responses/anthropic.rs",
         "routes/v1/responses/chat.rs",
         "routes/v1/responses/sessions.rs",
+        "routes/v1/responses/tests/auth.rs",
+        "routes/v1/responses/tests/candidates.rs",
+        "routes/v1/responses/tests/fixtures.rs",
+        "routes/v1/responses/tests/request_logs.rs",
+        "routes/v1/responses/tests/routing.rs",
+        "routes/v1/responses/tests/sessions.rs",
+        "routes/v1/responses/tests/streaming.rs",
         "schema/mod.rs",
         "schema/indexes.rs",
         "schema/tables/mod.rs",
@@ -122,6 +165,14 @@ fn source_modules_use_domain_directories() {
             "encode_responses",
         ],
     );
+    for test_module in [
+        "routes/v1/chat/tests/mod.rs",
+        "routes/v1/images/tests/mod.rs",
+        "routes/v1/messages/tests/mod.rs",
+        "routes/v1/responses/tests/mod.rs",
+    ] {
+        assert_legacy_module_identifiers_absent(&source_root.join(test_module), ["include!"]);
+    }
 }
 
 #[test]
@@ -132,6 +183,7 @@ fn integration_tests_use_domain_directories_and_stay_within_limit() {
         "extensions_routes.rs",
         "identity_cleanup.rs",
         "identity_storage.rs",
+        "identity/storage.rs",
         "management_isolation.rs",
         "protocol_routes.rs",
         "schema_contract.rs",
@@ -144,7 +196,13 @@ fn integration_tests_use_domain_directories_and_stay_within_limit() {
         "extensions/routes.rs",
         "identity.rs",
         "identity/cleanup.rs",
-        "identity/storage.rs",
+        "identity/storage/mod.rs",
+        "identity/storage/candidates.rs",
+        "identity/storage/credentials.rs",
+        "identity/storage/fixtures.rs",
+        "identity/storage/master_key.rs",
+        "identity/storage/sessions.rs",
+        "identity/storage/transactions.rs",
         "management.rs",
         "management/identity.rs",
         "management/providers.rs",
@@ -201,6 +259,33 @@ fn source_rust_files_stay_within_limit() {
         "source line limit violations:\n{}",
         violations.join("\n")
     );
+}
+
+#[test]
+fn source_rust_files_do_not_encode_directory_layers_in_names() {
+    let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut violations = Vec::new();
+
+    collect_obsolete_prefixed_source_files(&source_root, &source_root, &mut violations);
+
+    assert!(
+        violations.is_empty(),
+        "obsolete prefixed source files:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn recognizes_all_obsolete_source_file_prefixes() {
+    for file_name in [
+        "identity_provider.rs",
+        "encode_anthropic.rs",
+        "decode_responses.rs",
+        "extensions_catalog.rs",
+        "schema_tables.rs",
+    ] {
+        assert!(has_obsolete_source_file_prefix(Path::new(file_name)));
+    }
 }
 
 fn assert_paths_absent(root: &Path, relative_paths: &[&str], kind: &str) {
@@ -278,6 +363,38 @@ fn collect_obsolete_prefixed_integration_targets(tests_root: &Path, violations: 
             }
         }
     }
+}
+
+fn collect_obsolete_prefixed_source_files(
+    source_root: &Path,
+    directory: &Path,
+    violations: &mut Vec<String>,
+) {
+    for entry in fs::read_dir(directory).expect("source directory must be readable") {
+        let entry = entry.expect("source directory entries must be readable");
+        let path = entry.path();
+
+        if path.is_dir() {
+            collect_obsolete_prefixed_source_files(source_root, &path, violations);
+        } else if has_obsolete_source_file_prefix(&path) {
+            let relative_path = path
+                .strip_prefix(source_root)
+                .expect("source path must be below source root");
+            violations.push(relative_path.display().to_string());
+        }
+    }
+}
+
+fn has_obsolete_source_file_prefix(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| extension == "rs")
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|file_name| {
+                OBSOLETE_SOURCE_FILE_PREFIXES
+                    .iter()
+                    .any(|prefix| file_name.starts_with(prefix))
+            })
 }
 
 fn collect_oversized_rust_files(directory: &Path, violations: &mut Vec<String>) {

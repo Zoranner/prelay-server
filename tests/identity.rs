@@ -3,5 +3,5 @@ mod support;
 
 #[path = "identity/cleanup.rs"]
 mod cleanup;
-#[path = "identity/storage.rs"]
+#[path = "identity/storage/mod.rs"]
 mod storage;

@@ -322,5 +322,5 @@ fn value_kind(value: &Value) -> Option<String> {
 }
 
 #[cfg(test)]
-#[path = "decode_tests.rs"]
+#[path = "tests.rs"]
 mod tests;

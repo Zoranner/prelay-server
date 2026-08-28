@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use super::handler::create_image_generation;
+use super::{handler::create_image_generation, router};
 use crate::{
     models::ProviderCapabilityOverrides,
     routes::v1::endpoint_resolver::{
@@ -89,6 +89,10 @@ fn image_capabilities() -> ProviderCapabilityOverrides {
     }
 }
 
-include!("cases_a.rs");
-include!("cases_b.rs");
-include!("support.rs");
+mod candidates;
+mod fixtures;
+mod request_logs;
+mod routing;
+mod streaming;
+
+use fixtures::*;

@@ -44,11 +44,11 @@ src/
     mod.rs
   entity/
     identity/
-      providers.rs
+      provider_configs.rs
       provider_models.rs
-      endpoints.rs
+      endpoint_configs.rs
       endpoint_models.rs
-      endpoint_routes.rs
+      endpoint_model_routes.rs
       model_aliases.rs
       request_logs.rs
       response_sessions.rs
@@ -136,6 +136,8 @@ tests/
 
 `routes/v1/chat/`、`images/`、`messages/` 和 `responses/` 各自包含小型路由注册、输入处理、候选执行、协议专属上游调用、请求日志与流式处理。候选循环、`remember_protocol_model_provider`、重试策略和失败语义保持原样；在多个协议中完全相同的无状态操作才进入 `routes/v1/` 公共模块。
 
+各协议的私有测试按认证、候选切换、路由、流式转换、请求日志、会话或工具调用等实际行为组织。`tests/mod.rs` 只保留共享导入、fixture 组织和私有子模块声明；fixture 放在 `tests/fixtures.rs`，不使用 `include!` 拼接测试片段。
+
 不得创建“通用协议 handler”以抹平 Responses、Chat Completions、Anthropic Messages 与图像生成的不同请求、响应和流式语义。
 
 ## 流观测
@@ -157,6 +159,8 @@ tests/
 Cargo 只将 `tests/` 根层文件识别为集成测试 target，因此根层保留短的 `extensions.rs`、`identity.rs`、`management.rs`、`schema.rs` 和 `v1.rs` 作为模块入口；入口使用显式 `#[path]` 声明同名目录中的领域文件，不包含测试逻辑。实际测试按领域放在同名目录。
 
 `tests/support/mod.rs` 保留数据库与环境 fixture，`auth.rs`、`http.rs` 和 `status.rs` 分别保留注册认证、JSON 请求和无响应体状态请求工具。各 integration target 只声明实际需要的 support 模块；support 不承载 Provider、接入点、统计等具体资源域断言。
+
+身份存储测试由 `tests/identity/storage/mod.rs` 组织，按凭据、事务、候选排序、会话作用域和主密钥拆分；共享输入和数据构造放在同目录 `fixtures.rs`。入口不承载测试或 fixture 实现。
 
 新增 `tests/source_layout.rs`，递归检查 `src/` 与 `tests/` 的 Rust 文件物理行数，并检查已迁移区域不得重新出现用于表达下级模块的旧前缀。该测试先以当前结构失败，再随每批迁移逐步缩小失败集合，最终作为长期门禁。
 

@@ -1,4 +1,6 @@
-fn responses_sse_from_text_chunks(chunks: &[&str]) -> String {
+use super::*;
+
+pub(super) fn responses_sse_from_text_chunks(chunks: &[&str]) -> String {
     let mut output = String::new();
     for chunk in chunks {
         output.push_str(
@@ -13,8 +15,8 @@ fn responses_sse_from_text_chunks(chunks: &[&str]) -> String {
     output
 }
 
-async fn spawn_chat_upstream() -> String {
-    async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+pub(super) async fn spawn_chat_upstream() -> String {
+    pub(super) async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
         assert_eq!(payload["model"], "deepseek-chat");
         assert_eq!(payload["messages"][0]["role"], "user");
         assert_eq!(payload["messages"][0]["content"], "hello");
@@ -47,8 +49,10 @@ async fn spawn_chat_upstream() -> String {
     format!("http://{addr}")
 }
 
-async fn spawn_streaming_chat_upstream() -> String {
-    async fn handler(Json(payload): Json<serde_json::Value>) -> axum::response::Response {
+pub(super) async fn spawn_streaming_chat_upstream() -> String {
+    pub(super) async fn handler(
+        Json(payload): Json<serde_json::Value>,
+    ) -> axum::response::Response {
         use axum::response::IntoResponse;
 
         assert_eq!(payload["model"], "deepseek-chat");
@@ -56,8 +60,8 @@ async fn spawn_streaming_chat_upstream() -> String {
         (
             [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
             "data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n\
-                 data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n\
-                 data: [DONE]\n\n",
+             data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n\
+             data: [DONE]\n\n",
         )
             .into_response()
     }
@@ -73,8 +77,10 @@ async fn spawn_streaming_chat_upstream() -> String {
     format!("http://{addr}")
 }
 
-async fn spawn_delayed_streaming_chat_upstream() -> String {
-    async fn handler(Json(payload): Json<serde_json::Value>) -> axum::response::Response {
+pub(super) async fn spawn_delayed_streaming_chat_upstream() -> String {
+    pub(super) async fn handler(
+        Json(payload): Json<serde_json::Value>,
+    ) -> axum::response::Response {
         use axum::response::IntoResponse;
 
         assert_eq!(payload["model"], "deepseek-chat");
@@ -92,7 +98,7 @@ async fn spawn_delayed_streaming_chat_upstream() -> String {
                     Some((
                         Ok::<_, Infallible>(Bytes::from_static(
                             b"data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n\
-                                  data: [DONE]\n\n",
+                              data: [DONE]\n\n",
                         )),
                         2,
                     ))
@@ -118,8 +124,8 @@ async fn spawn_delayed_streaming_chat_upstream() -> String {
     format!("http://{addr}")
 }
 
-async fn spawn_native_responses_upstream() -> String {
-    async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+pub(super) async fn spawn_native_responses_upstream() -> String {
+    pub(super) async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
         assert_eq!(payload["model"], "gpt-4.1");
         assert_eq!(payload["input"], "hello");
         Json(json!({
@@ -156,8 +162,10 @@ async fn spawn_native_responses_upstream() -> String {
     format!("http://{addr}")
 }
 
-async fn spawn_streaming_native_responses_upstream() -> String {
-    async fn handler(Json(payload): Json<serde_json::Value>) -> axum::response::Response {
+pub(super) async fn spawn_streaming_native_responses_upstream() -> String {
+    pub(super) async fn handler(
+        Json(payload): Json<serde_json::Value>,
+    ) -> axum::response::Response {
         use axum::response::IntoResponse;
 
         assert_eq!(payload["model"], "gpt-4.1");
@@ -173,12 +181,12 @@ async fn spawn_streaming_native_responses_upstream() -> String {
                 1 => {
                     tokio::time::sleep(Duration::from_millis(250)).await;
                     Some((
-                            Ok::<_, Infallible>(Bytes::from_static(
-                                b"event: response.output_text.delta\ndata: lo\n\n\
-                                  event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7,\"total_tokens\":18}}}\n\n",
-                            )),
-                            2,
-                        ))
+                        Ok::<_, Infallible>(Bytes::from_static(
+                            b"event: response.output_text.delta\ndata: lo\n\n\
+                              event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7,\"total_tokens\":18}}}\n\n",
+                        )),
+                        2,
+                    ))
                 }
                 _ => None,
             }
@@ -201,8 +209,8 @@ async fn spawn_streaming_native_responses_upstream() -> String {
     format!("http://{addr}")
 }
 
-async fn spawn_native_anthropic_messages_upstream() -> String {
-    async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+pub(super) async fn spawn_native_anthropic_messages_upstream() -> String {
+    pub(super) async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
         assert_eq!(payload["model"], "claude-sonnet");
         assert_eq!(payload["stream"], false);
         assert_eq!(payload["messages"][0]["role"], "user");
@@ -233,8 +241,10 @@ async fn spawn_native_anthropic_messages_upstream() -> String {
     format!("http://{addr}")
 }
 
-async fn spawn_streaming_native_anthropic_messages_upstream() -> String {
-    async fn handler(Json(payload): Json<serde_json::Value>) -> axum::response::Response {
+pub(super) async fn spawn_streaming_native_anthropic_messages_upstream() -> String {
+    pub(super) async fn handler(
+        Json(payload): Json<serde_json::Value>,
+    ) -> axum::response::Response {
         use axum::response::IntoResponse;
 
         assert_eq!(payload["model"], "claude-sonnet");
@@ -243,23 +253,23 @@ async fn spawn_streaming_native_anthropic_messages_upstream() -> String {
         assert_eq!(payload["messages"][0]["content"], "hello");
         let stream = futures::stream::unfold(0, |step| async move {
             match step {
-                    0 => Some((
-                        Ok::<_, Infallible>(Bytes::from_static(
-                            b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_native_stream\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-sonnet\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hel\"}}\n\n",
-                        )),
-                        1,
+                0 => Some((
+                    Ok::<_, Infallible>(Bytes::from_static(
+                        b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_native_stream\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-sonnet\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hel\"}}\n\n",
                     )),
-                    1 => {
-                        tokio::time::sleep(Duration::from_millis(250)).await;
-                        Some((
-                            Ok::<_, Infallible>(Bytes::from_static(
-                                b"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"lo\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
-                            )),
-                            2,
-                        ))
-                    }
-                    _ => None,
+                    1,
+                )),
+                1 => {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    Some((
+                        Ok::<_, Infallible>(Bytes::from_static(
+                            b"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"lo\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+                        )),
+                        2,
+                    ))
                 }
+                _ => None,
+            }
         });
         (
             [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
@@ -279,8 +289,8 @@ async fn spawn_streaming_native_anthropic_messages_upstream() -> String {
     format!("http://{addr}")
 }
 
-async fn spawn_history_asserting_chat_upstream() -> String {
-    async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+pub(super) async fn spawn_history_asserting_chat_upstream() -> String {
+    pub(super) async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
         let messages = payload["messages"].as_array().expect("messages");
         let content = match messages.len() {
             1 => {
@@ -341,8 +351,8 @@ async fn spawn_history_asserting_chat_upstream() -> String {
     format!("http://{addr}")
 }
 
-async fn spawn_tool_roundtrip_chat_upstream() -> String {
-    async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
+pub(super) async fn spawn_tool_roundtrip_chat_upstream() -> String {
+    pub(super) async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
         let messages = payload["messages"].as_array().expect("messages");
         if messages.len() == 1 {
             assert_eq!(messages[0]["role"], "user");
@@ -409,15 +419,15 @@ async fn spawn_tool_roundtrip_chat_upstream() -> String {
     format!("http://{addr}")
 }
 
-async fn response_json(response: axum::response::Response) -> serde_json::Value {
+pub(super) async fn response_json(response: axum::response::Response) -> serde_json::Value {
     let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
         .await
         .expect("read body");
     serde_json::from_slice(&body).expect("json body")
 }
 
-async fn spawn_failing_chat_upstream() -> String {
-    async fn handler() -> (axum::http::StatusCode, Json<serde_json::Value>) {
+pub(super) async fn spawn_failing_chat_upstream() -> String {
+    pub(super) async fn handler() -> (axum::http::StatusCode, Json<serde_json::Value>) {
         (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": { "message": "upstream failed" } })),
