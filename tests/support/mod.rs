@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsString,
     ops::Deref,
     sync::{Arc, Mutex, OnceLock},
 };
@@ -31,12 +32,35 @@ impl Deref for TestStorage {
     }
 }
 
+pub struct EnvironmentVariableRestore {
+    name: &'static str,
+    original: Option<OsString>,
+}
+
+impl EnvironmentVariableRestore {
+    pub fn capture(name: &'static str) -> Self {
+        Self {
+            name,
+            original: std::env::var_os(name),
+        }
+    }
+}
+
+impl Drop for EnvironmentVariableRestore {
+    fn drop(&mut self) {
+        match &self.original {
+            Some(value) => std::env::set_var(self.name, value),
+            None => std::env::remove_var(self.name),
+        }
+    }
+}
+
 #[test]
 fn explicit_postgres_test_url_is_selected_over_sqlite_default() {
     let _lock = test_database_url_environment_lock()
         .lock()
         .expect("lock test database URL environment");
-    let original = std::env::var_os("TEST_POSTGRES_URL");
+    let _restore = EnvironmentVariableRestore::capture("TEST_POSTGRES_URL");
     std::env::set_var(
         "TEST_POSTGRES_URL",
         "postgres://prelay_test:prelay_test@127.0.0.1:5432/prelay_test",
@@ -48,11 +72,6 @@ fn explicit_postgres_test_url_is_selected_over_sqlite_default() {
             .kind(),
         DatabaseKind::Postgres
     );
-
-    match original {
-        Some(value) => std::env::set_var("TEST_POSTGRES_URL", value),
-        None => std::env::remove_var("TEST_POSTGRES_URL"),
-    }
 }
 
 pub async fn test_storage() -> TestStorage {

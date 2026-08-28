@@ -8,7 +8,6 @@ use axum::{
     extract::State,
     http::{Request, StatusCode},
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use prelay_protocol::{
     CreateEndpointRequest, CreateIdentityRequest, CreateProviderRequest, EndpointModelInput,
     ProviderCapabilityOverrides,
@@ -17,8 +16,10 @@ use serde_json::Value;
 use tokio::net::TcpListener;
 use tower::ServiceExt;
 
-mod support;
-mod test_context;
+use crate::{
+    auth::{register, valid_credential},
+    test_context,
+};
 
 async fn request(app: &axum::Router, request: Request<Body>) -> (StatusCode, Value) {
     let response = app.clone().oneshot(request).await.expect("route request");
@@ -79,25 +80,12 @@ async fn create_endpoint_for_url(
     provider_name: &str,
     base_url: &str,
 ) -> Value {
-    let credential = valid_credential(&format!("{machine_id}-{account_sid}"));
-    let identity = management_post(
-        app,
-        "/api/identities",
-        None,
-        serde_json::to_value(CreateIdentityRequest {
-            machine_id: machine_id.to_string(),
-            account_sid: account_sid.to_string(),
-            credential: credential.clone(),
-            display_name: None,
-        })
-        .expect("serialize identity"),
-    )
-    .await;
-    assert!(identity.get("credential").is_none());
+    let identity = register(app, machine_id, account_sid).await;
+    let credential = identity["credential"].as_str().expect("credential");
     let provider = management_post(
         app,
         "/api/providers",
-        Some(&credential),
+        Some(credential),
         serde_json::to_value(CreateProviderRequest {
             name: provider_name.to_string(),
             provider_type: "openai_compatible".to_string(),
@@ -112,7 +100,7 @@ async fn create_endpoint_for_url(
     management_post(
         app,
         "/api/endpoints",
-        Some(&credential),
+        Some(credential),
         serde_json::to_value(CreateEndpointRequest {
             name: format!("{provider_name} endpoint"),
             protocol: None,
@@ -125,14 +113,6 @@ async fn create_endpoint_for_url(
         .expect("serialize endpoint"),
     )
     .await
-}
-
-fn valid_credential(seed: &str) -> String {
-    let mut bytes = [0_u8; 32];
-    for (index, byte) in seed.bytes().take(bytes.len()).enumerate() {
-        bytes[index] = byte;
-    }
-    URL_SAFE_NO_PAD.encode(bytes)
 }
 
 async fn spawn_chat_upstream() -> String {
@@ -163,25 +143,12 @@ async fn create_image_endpoint_for_url(
     provider_name: &str,
     base_url: &str,
 ) -> Value {
-    let credential = valid_credential(&format!("{machine_id}-{account_sid}"));
-    let identity = management_post(
-        app,
-        "/api/identities",
-        None,
-        serde_json::to_value(CreateIdentityRequest {
-            machine_id: machine_id.to_string(),
-            account_sid: account_sid.to_string(),
-            credential: credential.clone(),
-            display_name: None,
-        })
-        .expect("serialize identity"),
-    )
-    .await;
-    assert!(identity.get("credential").is_none());
+    let identity = register(app, machine_id, account_sid).await;
+    let credential = identity["credential"].as_str().expect("credential");
     let provider = management_post(
         app,
         "/api/providers",
-        Some(&credential),
+        Some(credential),
         serde_json::to_value(CreateProviderRequest {
             name: provider_name.to_string(),
             provider_type: "custom_image".to_string(),
@@ -199,7 +166,7 @@ async fn create_image_endpoint_for_url(
     management_post(
         app,
         "/api/endpoints",
-        Some(&credential),
+        Some(credential),
         serde_json::to_value(CreateEndpointRequest {
             name: format!("{provider_name} endpoint"),
             protocol: None,

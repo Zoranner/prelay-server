@@ -1,10 +1,3 @@
-mod support;
-
-use std::{
-    ffi::OsString,
-    sync::{Mutex, OnceLock},
-};
-
 use prelay_protocol::{
     CreateEndpointRequest, CreateProviderRequest, EndpointModelInput, ProtocolErrorCode,
 };
@@ -17,7 +10,7 @@ use prelay_server::{
     storage::{MasterKey, ProtocolAccess, ResponseSessionInsert, Storage, StorageError},
 };
 
-const TEST_MASTER_KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+use crate::support;
 
 fn provider_input(name: &str, api_key: &str) -> CreateProviderRequest {
     CreateProviderRequest {
@@ -289,8 +282,8 @@ async fn provider_keys_and_response_sessions_stay_scoped_to_the_identity() {
         .expect_err("identity A cannot read identity B provider key");
     assert!(matches!(error, StorageError::ProviderNotFound));
 
-    let input_a = vec![message("identity-a input")];
-    let input_b = vec![message("identity-b input")];
+    let input_a = vec![message(InternalRole::User, "identity-a input")];
+    let input_b = vec![message(InternalRole::User, "identity-b input")];
     storage
         .save_response_session(ResponseSessionInsert {
             identity_id: &identity_a,
@@ -322,8 +315,8 @@ async fn provider_keys_and_response_sessions_stay_scoped_to_the_identity() {
             .await
             .expect("load identity A session"),
         Some(vec![
-            message("identity-a input"),
-            assistant_message("identity-a output"),
+            message(InternalRole::User, "identity-a input"),
+            message(InternalRole::Assistant, "identity-a output"),
         ])
     );
     assert_eq!(
@@ -332,8 +325,8 @@ async fn provider_keys_and_response_sessions_stay_scoped_to_the_identity() {
             .await
             .expect("load identity B session"),
         Some(vec![
-            message("identity-b input"),
-            assistant_message("identity-b output"),
+            message(InternalRole::User, "identity-b input"),
+            message(InternalRole::Assistant, "identity-b output"),
         ])
     );
 }
@@ -396,17 +389,14 @@ async fn provider_write_requires_an_existing_identity() {
 
 #[test]
 fn master_key_requires_base64_encoded_32_bytes() {
-    assert!(MasterKey::from_base64(TEST_MASTER_KEY).is_ok());
+    assert!(MasterKey::from_base64("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").is_ok());
     assert!(MasterKey::from_base64("not base64").is_err());
     assert!(MasterKey::from_base64("AAAA").is_err());
 }
 
 #[test]
 fn master_key_environment_requires_a_valid_base64_encoded_32_byte_value() {
-    let _lock = master_key_environment_lock()
-        .lock()
-        .expect("lock master key environment");
-    let _restore = MasterKeyEnvironmentRestore::capture();
+    let _restore = support::EnvironmentVariableRestore::capture("ENCRYPTION_KEY");
 
     std::env::remove_var("ENCRYPTION_KEY");
     assert!(MasterKey::from_environment().is_err());
@@ -435,19 +425,9 @@ async fn seed_identity_and_provider(storage: &Storage, suffix: &str) -> (String,
     (identity.identity_id, provider_id)
 }
 
-fn message(text: &str) -> InternalMessage {
+fn message(role: InternalRole, text: &str) -> InternalMessage {
     InternalMessage {
-        role: InternalRole::User,
-        content: vec![InternalContentPart::Text(text.to_string())],
-        tool_call_id: None,
-        tool_calls: Vec::new(),
-        reasoning_content: None,
-    }
-}
-
-fn assistant_message(text: &str) -> InternalMessage {
-    InternalMessage {
-        role: InternalRole::Assistant,
+        role,
         content: vec![InternalContentPart::Text(text.to_string())],
         tool_call_id: None,
         tool_calls: Vec::new(),
@@ -465,31 +445,5 @@ fn response(id: &str, text: &str) -> InternalResponse {
             content: vec![InternalContentPart::Text(text.to_string())],
         }],
         usage: None,
-    }
-}
-
-fn master_key_environment_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-struct MasterKeyEnvironmentRestore {
-    original: Option<OsString>,
-}
-
-impl MasterKeyEnvironmentRestore {
-    fn capture() -> Self {
-        Self {
-            original: std::env::var_os("ENCRYPTION_KEY"),
-        }
-    }
-}
-
-impl Drop for MasterKeyEnvironmentRestore {
-    fn drop(&mut self) {
-        match &self.original {
-            Some(value) => std::env::set_var("ENCRYPTION_KEY", value),
-            None => std::env::remove_var("ENCRYPTION_KEY"),
-        }
     }
 }

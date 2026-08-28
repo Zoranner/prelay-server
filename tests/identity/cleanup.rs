@@ -1,5 +1,3 @@
-mod support;
-
 use chrono::{Duration, Utc};
 use prelay_protocol::{CreateEndpointRequest, CreateProviderRequest, EndpointModelInput};
 use prelay_server::{
@@ -10,6 +8,8 @@ use prelay_server::{
     stats::RequestLogInsert,
     storage::{ResponseSessionInsert, Storage, StorageError},
 };
+
+use crate::support;
 
 #[tokio::test]
 async fn cleanup_removes_an_inactive_identity_and_all_accessible_owned_resources() {

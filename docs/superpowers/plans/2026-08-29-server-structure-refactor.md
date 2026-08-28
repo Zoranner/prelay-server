@@ -188,23 +188,23 @@
 - Consumes: `SharedStreamStats`、`RequestLogInsert`、`StreamRequestLogUpdate`、`Storage` 和请求元数据更新。
 - Produces: 不变的 `observability::stream_stats::record_first_chunk` 与 `record_stream`，以及原有流日志写入、usage 更新和脱敏失败日志行为。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 添加 `stream_observability_uses_directory_and_stays_within_limit`，断言旧平铺文件不存在，记录入口、状态、持久化辅助和测试文件存在，目录内每个 Rust 文件不超过 450 行。
 
-- [ ] **Step 2: 运行失败测试**
+- [x] **Step 2: 运行失败测试**
 
 运行 `cargo test --test source_layout stream_observability_uses_directory_and_stays_within_limit`；预期因旧 `stream_stats.rs` 存在而失败。
 
-- [ ] **Step 3: 按职责迁移流观测**
+- [x] **Step 3: 按职责迁移流观测**
 
 `record.rs` 保留两个公开入口，`state.rs` 保留首块、结束、错误和最终 usage 状态流转，`persistence.rs` 保留日志写入与脱敏失败记录，`tests.rs` 承接全部既有断言。目录根只声明模块并重新导出原入口，不扩大内部可见性。
 
-- [ ] **Step 4: 更新设计与 SDD 记录**
+- [x] **Step 4: 更新设计与 SDD 记录**
 
 在结构设计、实施计划和 SDD ledger 中记录该补充批次的原因、职责边界、ruling 与验证边界，明确它只为满足既定全树 450 行目标，不改变观测行为。
 
-- [ ] **Step 5: 验证并提交**
+- [x] **Step 5: 验证并提交**
 
 运行流观测单元测试、结构测试、`cargo fmt --all`、`cargo clippy --all-targets --all-features -- -D warnings` 与 `git diff --check`，以“按职责拆分流统计观测模块”提交。
 
@@ -216,6 +216,8 @@
 - Create: `tests/management.rs` 与 `tests/management/{identity.rs,providers.rs,endpoints.rs,stats.rs,provider_operations.rs}`
 - Create: `tests/schema.rs` 与 `tests/schema/{contract.rs,initialization.rs}`
 - Create: `tests/v1.rs` 与 `tests/v1/{identity_scope.rs,routes.rs}`
+- Create: `tests/support/{auth.rs,http.rs,status.rs}`
+- Modify: `tests/support/mod.rs`、`tests/test_context/mod.rs`
 - Modify: `tests/source_layout.rs`
 - Move: 所有 `extensions_*.rs`、`identity_*.rs`、`schema_*.rs`、`management_isolation.rs`、`protocol_routes.rs` 到对应领域目录。
 
@@ -223,23 +225,23 @@
 - Consumes: `tests/support`、`tests/test_context`、当前管理 API、协议路由与数据库行为。
 - Produces: 短的 Cargo integration test 根入口和按稳定资源域组织的测试模块，不丢失任何既有断言。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 添加 `integration_tests_use_domain_directories_and_stay_within_limit`，断言旧前缀测试文件与 `management_isolation.rs` 不存在，根入口和领域目录存在，所有测试文件不超过 450 行。
 
-- [ ] **Step 2: 运行失败测试**
+- [x] **Step 2: 运行失败测试**
 
 运行 `cargo test --test source_layout integration_tests_use_domain_directories_and_stay_within_limit`；预期因旧测试文件和超长测试文件失败。
 
-- [ ] **Step 3: 重组集成测试**
+- [x] **Step 3: 重组集成测试**
 
 每个根入口只 `mod` 对应领域文件。将管理隔离断言按身份、Provider、接入点、统计和 Provider 操作分发；其余前缀测试迁入领域目录。`tests/support/` 只保留跨领域注册、认证与 fixture 工具。
 
-- [ ] **Step 4: 完成全树门禁**
+- [x] **Step 4: 完成全树门禁**
 
 将 `source_layout.rs` 收敛为递归全树检查：每个 `.rs` 文件不超过 450 行，已迁移区域不存在旧前缀路径。删除过渡性 allowlist 和重复批次断言。
 
-- [ ] **Step 5: 运行全量验证并提交**
+- [x] **Step 5: 运行全量验证并提交**
 
 运行：
 

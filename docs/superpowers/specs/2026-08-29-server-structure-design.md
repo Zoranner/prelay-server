@@ -110,6 +110,12 @@ tests/
   schema/
   v1/
   support/
+    mod.rs
+    auth.rs
+    http.rs
+    status.rs
+  test_context/
+    mod.rs
   extensions.rs
   identity.rs
   management.rs
@@ -148,7 +154,9 @@ tests/
 
 ## 集成测试与结构门禁
 
-Cargo 只将 `tests/` 根层文件识别为集成测试 target，因此根层保留短的 `extensions.rs`、`identity.rs`、`management.rs`、`schema.rs` 和 `v1.rs` 作为模块入口；实际测试按领域放在同名目录。`tests/support/` 继续承担共享 fixture 和 HTTP 注册辅助，不承载具体资源域断言。
+Cargo 只将 `tests/` 根层文件识别为集成测试 target，因此根层保留短的 `extensions.rs`、`identity.rs`、`management.rs`、`schema.rs` 和 `v1.rs` 作为模块入口；入口使用显式 `#[path]` 声明同名目录中的领域文件，不包含测试逻辑。实际测试按领域放在同名目录。
+
+`tests/support/mod.rs` 保留数据库与环境 fixture，`auth.rs`、`http.rs` 和 `status.rs` 分别保留注册认证、JSON 请求和无响应体状态请求工具。各 integration target 只声明实际需要的 support 模块；support 不承载 Provider、接入点、统计等具体资源域断言。
 
 新增 `tests/source_layout.rs`，递归检查 `src/` 与 `tests/` 的 Rust 文件物理行数，并检查已迁移区域不得重新出现用于表达下级模块的旧前缀。该测试先以当前结构失败，再随每批迁移逐步缩小失败集合，最终作为长期门禁。
 
