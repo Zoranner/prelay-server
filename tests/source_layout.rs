@@ -63,10 +63,80 @@ where
 
     for legacy_module in legacy_modules {
         assert!(
-            !contents.contains(&format!("mod {legacy_module};")),
+            !contents
+                .lines()
+                .any(|line| line_declares_module(line, legacy_module)),
             "legacy bridge module declaration exists in {}: {legacy_module}",
             module_path.display()
         );
+    }
+}
+
+fn line_declares_module(line: &str, module_name: &str) -> bool {
+    let line = line.split_once("//").map_or(line, |(code, _)| code).trim();
+    let Some(line) = strip_visibility(line) else {
+        return false;
+    };
+    let Some(line) = strip_keyword(line, "mod") else {
+        return false;
+    };
+    let Some(line) = line.trim_start().strip_prefix(module_name) else {
+        return false;
+    };
+
+    !line
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_alphanumeric() || character == '_')
+        && line.trim_start() == ";"
+}
+
+fn strip_visibility(line: &str) -> Option<&str> {
+    let line = line.trim_start();
+    let Some(line) = strip_keyword(line, "pub") else {
+        return Some(line);
+    };
+    let line = line.trim_start();
+
+    if let Some(line) = line.strip_prefix('(') {
+        let closing_parenthesis = line.find(')')?;
+        return Some(line[closing_parenthesis + 1..].trim_start());
+    }
+
+    Some(line)
+}
+
+fn strip_keyword(line: &str, keyword: &str) -> Option<&str> {
+    let line = line.strip_prefix(keyword)?;
+
+    line.chars()
+        .next()
+        .is_none_or(|character| character.is_whitespace() || character == '(')
+        .then_some(line)
+}
+
+#[test]
+fn recognizes_legacy_module_declarations_with_whitespace_and_visibility() {
+    for line in [
+        "mod legacy_name;",
+        "  mod   legacy_name   ;",
+        "pub mod legacy_name;",
+        "pub(crate) mod legacy_name;",
+        "pub ( crate ) mod legacy_name ; // compatibility",
+    ] {
+        assert!(line_declares_module(line, "legacy_name"), "{line}");
+    }
+}
+
+#[test]
+fn ignores_comments_strings_and_nonmatching_module_names() {
+    for line in [
+        "// pub mod legacy_name;",
+        "let example = \"pub mod legacy_name;\";",
+        "mod legacy_name_v2;",
+        "mod legacy_name // incomplete declaration",
+    ] {
+        assert!(!line_declares_module(line, "legacy_name"), "{line}");
     }
 }
 
