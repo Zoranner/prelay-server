@@ -108,6 +108,44 @@ fn chat_and_images_routes_use_protocol_directories_and_stay_within_limit() {
     assert_rust_files_within_limit(&routes_root.join("images"));
 }
 
+#[test]
+fn responses_and_messages_routes_use_protocol_directories_and_stay_within_limit() {
+    let routes_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes/v1");
+    let old_files = ["responses.rs", "messages.rs"];
+    let required_files = [
+        "responses/mod.rs",
+        "responses/handler.rs",
+        "responses/candidate.rs",
+        "responses/native.rs",
+        "responses/anthropic.rs",
+        "responses/chat.rs",
+        "responses/sessions.rs",
+        "messages/mod.rs",
+        "messages/handler.rs",
+        "messages/candidate.rs",
+        "messages/native.rs",
+        "messages/responses.rs",
+        "messages/chat.rs",
+    ];
+
+    for old_file in old_files {
+        assert!(
+            !routes_root.join(old_file).exists(),
+            "obsolete protocol route module still exists: {old_file}"
+        );
+    }
+
+    for required_file in required_files {
+        assert!(
+            routes_root.join(required_file).is_file(),
+            "required protocol route module is missing: {required_file}"
+        );
+    }
+
+    assert_rust_files_within_limit(&routes_root.join("responses"));
+    assert_rust_files_within_limit(&routes_root.join("messages"));
+}
+
 fn assert_legacy_module_identifiers_absent<I>(module_path: &Path, legacy_modules: I)
 where
     I: IntoIterator<Item = &'static str>,
