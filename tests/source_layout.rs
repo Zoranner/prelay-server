@@ -55,6 +55,35 @@ fn bridge_modules_use_directories_and_stay_within_limit() {
     assert_rust_files_within_limit(&bridge_root);
 }
 
+#[test]
+fn provider_protocol_modules_use_directories_and_stay_within_limit() {
+    let providers_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/providers");
+    let old_files = ["chat_completions.rs", "spec.rs"];
+    let required_files = [
+        "chat_completions/request.rs",
+        "chat_completions/response.rs",
+        "chat_completions/stream.rs",
+        "spec/capabilities.rs",
+        "spec/urls.rs",
+    ];
+
+    for old_file in old_files {
+        assert!(
+            !providers_root.join(old_file).exists(),
+            "obsolete provider protocol module still exists: {old_file}"
+        );
+    }
+
+    for required_file in required_files {
+        assert!(
+            providers_root.join(required_file).is_file(),
+            "required provider protocol module is missing: {required_file}"
+        );
+    }
+
+    assert_rust_files_within_limit(&providers_root);
+}
+
 fn assert_legacy_module_identifiers_absent<I>(module_path: &Path, legacy_modules: I)
 where
     I: IntoIterator<Item = &'static str>,
