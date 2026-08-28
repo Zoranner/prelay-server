@@ -15,30 +15,30 @@ pub struct Model {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
-        belongs_to = "super::identities::Entity",
+        belongs_to = "super::super::identities::Entity",
         from = "Column::IdentityId",
-        to = "super::identities::Column::Id"
+        to = "super::super::identities::Column::Id"
     )]
     Identity,
-    #[sea_orm(has_many = "super::identity_endpoint_models::Entity")]
+    #[sea_orm(has_many = "super::endpoint_models::Entity")]
     EndpointModels,
-    #[sea_orm(has_many = "super::identity_endpoint_model_routes::Entity")]
+    #[sea_orm(has_many = "super::endpoint_model_routes::Entity")]
     EndpointModelRoutes,
 }
 
-impl Related<super::identities::Entity> for Entity {
+impl Related<super::super::identities::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Identity.def()
     }
 }
 
-impl Related<super::identity_endpoint_models::Entity> for Entity {
+impl Related<super::endpoint_models::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::EndpointModels.def()
     }
 }
 
-impl Related<super::identity_endpoint_model_routes::Entity> for Entity {
+impl Related<super::endpoint_model_routes::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::EndpointModelRoutes.def()
     }

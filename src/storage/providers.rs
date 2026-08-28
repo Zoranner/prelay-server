@@ -13,13 +13,88 @@ use uuid::Uuid;
 
 use crate::{
     entity::{
-        identities, identity_endpoint_model_routes, identity_endpoint_models,
-        identity_provider_configs, identity_provider_models,
+        identities,
+        identity::{
+            endpoint_model_routes as identity_endpoint_model_routes,
+            endpoint_models as identity_endpoint_models,
+            provider_configs as identity_provider_configs,
+            provider_models as identity_provider_models,
+        },
     },
     providers::spec::resolved_upstream_protocols,
 };
 
-use super::{crypto::KeyCipher, StorageError};
+use super::{crypto::KeyCipher, Storage, StorageError};
+
+impl Storage {
+    pub async fn create_provider(
+        &self,
+        identity_id: &str,
+        input: CreateProviderRequest,
+    ) -> Result<String, StorageError> {
+        create(&self.db, &self.crypto, identity_id, input).await
+    }
+
+    pub async fn raw_provider_key_ciphertext(
+        &self,
+        identity_id: &str,
+        provider_id: &str,
+    ) -> Result<String, StorageError> {
+        raw_key_ciphertext(&self.db, identity_id, provider_id).await
+    }
+
+    pub async fn decrypt_provider_key(
+        &self,
+        identity_id: &str,
+        provider_id: &str,
+    ) -> Result<String, StorageError> {
+        let ciphertext = self
+            .raw_provider_key_ciphertext(identity_id, provider_id)
+            .await?;
+        self.crypto.decrypt(&ciphertext)
+    }
+
+    pub async fn list_providers(
+        &self,
+        identity_id: &str,
+    ) -> Result<Vec<ProviderResponse>, StorageError> {
+        list(&self.db, &self.crypto, identity_id).await
+    }
+
+    pub async fn get_provider(
+        &self,
+        identity_id: &str,
+        provider_id: &str,
+    ) -> Result<ProviderResponse, StorageError> {
+        get(&self.db, &self.crypto, identity_id, provider_id).await
+    }
+
+    pub async fn update_provider(
+        &self,
+        identity_id: &str,
+        provider_id: &str,
+        input: UpdateProviderRequest,
+    ) -> Result<ProviderResponse, StorageError> {
+        update(&self.db, &self.crypto, identity_id, provider_id, input).await
+    }
+
+    pub async fn delete_provider(
+        &self,
+        identity_id: &str,
+        provider_id: &str,
+    ) -> Result<(), StorageError> {
+        delete(&self.db, identity_id, provider_id).await
+    }
+
+    pub async fn add_provider_models(
+        &self,
+        identity_id: &str,
+        provider_id: &str,
+        model_names: &[String],
+    ) -> Result<(), StorageError> {
+        add_models(&self.db, identity_id, provider_id, model_names).await
+    }
+}
 
 pub(crate) async fn create(
     db: &DatabaseConnection,

@@ -15,43 +15,43 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(has_many = "super::identity_provider_configs::Entity")]
+    #[sea_orm(has_many = "super::identity::provider_configs::Entity")]
     ProviderConfigs,
-    #[sea_orm(has_many = "super::identity_endpoint_configs::Entity")]
+    #[sea_orm(has_many = "super::identity::endpoint_configs::Entity")]
     EndpointConfigs,
-    #[sea_orm(has_many = "super::identity_response_sessions::Entity")]
+    #[sea_orm(has_many = "super::identity::response_sessions::Entity")]
     ResponseSessions,
-    #[sea_orm(has_many = "super::identity_request_logs::Entity")]
+    #[sea_orm(has_many = "super::identity::request_logs::Entity")]
     RequestLogs,
-    #[sea_orm(has_many = "super::identity_model_aliases::Entity")]
+    #[sea_orm(has_many = "super::identity::model_aliases::Entity")]
     ModelAliases,
 }
 
-impl Related<super::identity_provider_configs::Entity> for Entity {
+impl Related<super::identity::provider_configs::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::ProviderConfigs.def()
     }
 }
 
-impl Related<super::identity_endpoint_configs::Entity> for Entity {
+impl Related<super::identity::endpoint_configs::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::EndpointConfigs.def()
     }
 }
 
-impl Related<super::identity_response_sessions::Entity> for Entity {
+impl Related<super::identity::response_sessions::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::ResponseSessions.def()
     }
 }
 
-impl Related<super::identity_request_logs::Entity> for Entity {
+impl Related<super::identity::request_logs::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::RequestLogs.def()
     }
 }
 
-impl Related<super::identity_model_aliases::Entity> for Entity {
+impl Related<super::identity::model_aliases::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::ModelAliases.def()
     }

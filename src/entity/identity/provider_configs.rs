@@ -17,54 +17,54 @@ pub struct Model {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
-        belongs_to = "super::identities::Entity",
+        belongs_to = "super::super::identities::Entity",
         from = "Column::IdentityId",
-        to = "super::identities::Column::Id"
+        to = "super::super::identities::Column::Id"
     )]
     Identity,
-    #[sea_orm(has_many = "super::identity_provider_models::Entity")]
+    #[sea_orm(has_many = "super::provider_models::Entity")]
     ProviderModels,
-    #[sea_orm(has_many = "super::identity_endpoint_models::Entity")]
+    #[sea_orm(has_many = "super::endpoint_models::Entity")]
     EndpointModels,
-    #[sea_orm(has_many = "super::identity_endpoint_model_routes::Entity")]
+    #[sea_orm(has_many = "super::endpoint_model_routes::Entity")]
     EndpointModelRoutes,
-    #[sea_orm(has_many = "super::identity_response_sessions::Entity")]
+    #[sea_orm(has_many = "super::response_sessions::Entity")]
     ResponseSessions,
-    #[sea_orm(has_many = "super::identity_model_aliases::Entity")]
+    #[sea_orm(has_many = "super::model_aliases::Entity")]
     ModelAliases,
 }
 
-impl Related<super::identities::Entity> for Entity {
+impl Related<super::super::identities::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Identity.def()
     }
 }
 
-impl Related<super::identity_provider_models::Entity> for Entity {
+impl Related<super::provider_models::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::ProviderModels.def()
     }
 }
 
-impl Related<super::identity_endpoint_models::Entity> for Entity {
+impl Related<super::endpoint_models::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::EndpointModels.def()
     }
 }
 
-impl Related<super::identity_endpoint_model_routes::Entity> for Entity {
+impl Related<super::endpoint_model_routes::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::EndpointModelRoutes.def()
     }
 }
 
-impl Related<super::identity_response_sessions::Entity> for Entity {
+impl Related<super::response_sessions::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::ResponseSessions.def()
     }
 }
 
-impl Related<super::identity_model_aliases::Entity> for Entity {
+impl Related<super::model_aliases::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::ModelAliases.def()
     }

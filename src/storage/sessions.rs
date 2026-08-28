@@ -7,7 +7,10 @@ use sea_orm::{
 use crate::bridge::internal::{
     InternalMessage, InternalOutputItem, InternalResponse, InternalToolCall,
 };
-use crate::{entity::identity_response_sessions, storage::StorageError};
+use crate::{
+    entity::identity::response_sessions as identity_response_sessions,
+    storage::{Storage, StorageError},
+};
 
 pub struct ResponseSessionInsert<'a> {
     pub identity_id: &'a str,
@@ -17,6 +20,23 @@ pub struct ResponseSessionInsert<'a> {
     pub model: &'a str,
     pub input_messages: &'a [InternalMessage],
     pub response: &'a InternalResponse,
+}
+
+impl Storage {
+    pub async fn save_response_session(
+        &self,
+        insert: ResponseSessionInsert<'_>,
+    ) -> Result<(), StorageError> {
+        save_response_session(&self.db, insert).await
+    }
+
+    pub async fn load_response_session_messages(
+        &self,
+        identity_id: &str,
+        response_id: &str,
+    ) -> Result<Option<Vec<InternalMessage>>, StorageError> {
+        load_response_session_messages(&self.db, identity_id, response_id).await
+    }
 }
 
 pub(super) async fn save_response_session(
@@ -112,7 +132,7 @@ mod tests {
             InternalContentPart, InternalMessage, InternalOutputItem, InternalResponse,
             InternalRole,
         },
-        entity::identity_response_sessions,
+        entity::identity::response_sessions as identity_response_sessions,
         schema::initialize,
         storage::{MasterKey, Storage},
     };

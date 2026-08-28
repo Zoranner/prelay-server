@@ -16,26 +16,26 @@ pub struct Model {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
-        belongs_to = "super::identity_endpoint_configs::Entity",
+        belongs_to = "super::endpoint_configs::Entity",
         from = "Column::EndpointId",
-        to = "super::identity_endpoint_configs::Column::Id"
+        to = "super::endpoint_configs::Column::Id"
     )]
     Endpoint,
     #[sea_orm(
-        belongs_to = "super::identity_provider_configs::Entity",
+        belongs_to = "super::provider_configs::Entity",
         from = "Column::ProviderId",
-        to = "super::identity_provider_configs::Column::Id"
+        to = "super::provider_configs::Column::Id"
     )]
     Provider,
 }
 
-impl Related<super::identity_endpoint_configs::Entity> for Entity {
+impl Related<super::endpoint_configs::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Endpoint.def()
     }
 }
 
-impl Related<super::identity_provider_configs::Entity> for Entity {
+impl Related<super::provider_configs::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Provider.def()
     }

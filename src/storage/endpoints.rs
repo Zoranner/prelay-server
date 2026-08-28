@@ -13,13 +13,69 @@ use uuid::Uuid;
 
 use crate::{
     entity::{
-        identities, identity_endpoint_configs, identity_endpoint_model_routes,
-        identity_endpoint_models, identity_provider_configs, identity_provider_models,
+        identities,
+        identity::{
+            endpoint_configs as identity_endpoint_configs,
+            endpoint_model_routes as identity_endpoint_model_routes,
+            endpoint_models as identity_endpoint_models,
+            provider_configs as identity_provider_configs,
+            provider_models as identity_provider_models,
+        },
     },
     identity::credential::generate_credential,
 };
 
-use super::StorageError;
+use super::{Storage, StorageError};
+
+impl Storage {
+    pub async fn create_interface(
+        &self,
+        identity_id: &str,
+        input: CreateEndpointRequest,
+    ) -> Result<EndpointResponse, StorageError> {
+        create(&self.db, identity_id, input).await
+    }
+
+    pub async fn list_endpoints(
+        &self,
+        identity_id: &str,
+    ) -> Result<Vec<EndpointResponse>, StorageError> {
+        list(&self.db, identity_id).await
+    }
+
+    pub async fn get_interface(
+        &self,
+        identity_id: &str,
+        endpoint_id: &str,
+    ) -> Result<EndpointResponse, StorageError> {
+        get(&self.db, identity_id, endpoint_id).await
+    }
+
+    pub async fn update_interface(
+        &self,
+        identity_id: &str,
+        endpoint_id: &str,
+        input: UpdateEndpointRequest,
+    ) -> Result<EndpointResponse, StorageError> {
+        update(&self.db, identity_id, endpoint_id, input).await
+    }
+
+    pub async fn delete_interface(
+        &self,
+        identity_id: &str,
+        endpoint_id: &str,
+    ) -> Result<(), StorageError> {
+        delete(&self.db, identity_id, endpoint_id).await
+    }
+
+    pub async fn regenerate_endpoint_token(
+        &self,
+        identity_id: &str,
+        endpoint_id: &str,
+    ) -> Result<EndpointResponse, StorageError> {
+        regenerate_token(&self.db, identity_id, endpoint_id).await
+    }
+}
 
 pub(crate) async fn create(
     db: &DatabaseConnection,

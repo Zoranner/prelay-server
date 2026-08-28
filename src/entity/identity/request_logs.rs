@@ -39,14 +39,14 @@ pub struct Model {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
-        belongs_to = "super::identities::Entity",
+        belongs_to = "super::super::identities::Entity",
         from = "Column::IdentityId",
-        to = "super::identities::Column::Id"
+        to = "super::super::identities::Column::Id"
     )]
     Identity,
 }
 
-impl Related<super::identities::Entity> for Entity {
+impl Related<super::super::identities::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Identity.def()
     }

@@ -8,19 +8,93 @@ use uuid::Uuid;
 
 use crate::{
     entity::{
-        identities, identity_endpoint_configs, identity_endpoint_model_routes,
-        identity_endpoint_models, identity_model_aliases, identity_provider_configs,
-        identity_provider_models, identity_request_logs, identity_response_sessions,
+        identities,
+        identity::{
+            endpoint_configs as identity_endpoint_configs,
+            endpoint_model_routes as identity_endpoint_model_routes,
+            endpoint_models as identity_endpoint_models, model_aliases as identity_model_aliases,
+            provider_configs as identity_provider_configs,
+            provider_models as identity_provider_models, request_logs as identity_request_logs,
+            response_sessions as identity_response_sessions,
+        },
     },
     identity::credential::{credential_hashes_match, hash_credential, is_valid_device_credential},
 };
 
-use super::StorageError;
+use super::{Storage, StorageError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthenticatedIdentity {
     pub id: String,
     pub credential_hash: String,
+}
+
+impl Storage {
+    pub async fn register_identity(
+        &self,
+        machine_id: &str,
+        account_sid: &str,
+        credential: &str,
+    ) -> Result<CreateIdentityResponse, StorageError> {
+        self.register_identity_with_display_name(machine_id, account_sid, credential, None)
+            .await
+    }
+
+    pub async fn register_identity_with_display_name(
+        &self,
+        machine_id: &str,
+        account_sid: &str,
+        credential: &str,
+        display_name: Option<&str>,
+    ) -> Result<CreateIdentityResponse, StorageError> {
+        register(&self.db, machine_id, account_sid, credential, display_name).await
+    }
+
+    pub async fn authenticate_identity(
+        &self,
+        credential: &str,
+    ) -> Result<Option<AuthenticatedIdentity>, StorageError> {
+        self.authenticate_identity_with_display_name(credential, None)
+            .await
+    }
+
+    pub async fn authenticate_identity_with_display_name(
+        &self,
+        credential: &str,
+        display_name: Option<&str>,
+    ) -> Result<Option<AuthenticatedIdentity>, StorageError> {
+        authenticate(&self.db, credential, display_name).await
+    }
+
+    pub async fn rotate_identity_credential(
+        &self,
+        identity_id: &str,
+        authenticated_credential_hash: &str,
+        new_credential: &str,
+    ) -> Result<RotateCredentialResponse, StorageError> {
+        rotate_credential(
+            &self.db,
+            identity_id,
+            authenticated_credential_hash,
+            new_credential,
+        )
+        .await
+    }
+
+    pub async fn identity_credential_hash(
+        &self,
+        identity_id: &str,
+    ) -> Result<String, StorageError> {
+        credential_hash(&self.db, identity_id).await
+    }
+
+    pub async fn delete_inactive_identities(
+        &self,
+        now: DateTime<Utc>,
+        retention: Duration,
+    ) -> Result<u64, StorageError> {
+        delete_inactive(&self.db, now, retention).await
+    }
 }
 
 pub(crate) async fn register(

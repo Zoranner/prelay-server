@@ -146,6 +146,74 @@ fn responses_and_messages_routes_use_protocol_directories_and_stay_within_limit(
     assert_rust_files_within_limit(&routes_root.join("messages"));
 }
 
+#[test]
+fn persistence_modules_use_domain_directories_and_stay_within_limit() {
+    let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let entity_root = source_root.join("entity");
+    let schema_root = source_root.join("schema");
+    let storage_root = source_root.join("storage");
+    let obsolete_files = [
+        "entity/identity_endpoint_configs.rs",
+        "entity/identity_endpoint_model_routes.rs",
+        "entity/identity_endpoint_models.rs",
+        "entity/identity_model_aliases.rs",
+        "entity/identity_provider_configs.rs",
+        "entity/identity_provider_models.rs",
+        "entity/identity_request_logs.rs",
+        "entity/identity_response_sessions.rs",
+        "schema.rs",
+    ];
+    let required_files = [
+        "entity/identity/mod.rs",
+        "entity/identity/endpoint_configs.rs",
+        "entity/identity/endpoint_model_routes.rs",
+        "entity/identity/endpoint_models.rs",
+        "entity/identity/model_aliases.rs",
+        "entity/identity/provider_configs.rs",
+        "entity/identity/provider_models.rs",
+        "entity/identity/request_logs.rs",
+        "entity/identity/response_sessions.rs",
+        "schema/mod.rs",
+        "schema/indexes.rs",
+        "schema/tables/mod.rs",
+        "schema/tables/identity.rs",
+        "schema/tables/providers.rs",
+        "schema/tables/endpoints.rs",
+        "schema/tables/sessions.rs",
+        "schema/tables/request_logs.rs",
+        "schema/tables/model_aliases.rs",
+        "storage/access.rs",
+        "storage/request_logs.rs",
+    ];
+    let mut violations = Vec::new();
+
+    for obsolete_file in obsolete_files {
+        if source_root.join(obsolete_file).exists() {
+            violations.push(format!(
+                "obsolete persistence module still exists: {obsolete_file}"
+            ));
+        }
+    }
+    for required_file in required_files {
+        if !source_root.join(required_file).is_file() {
+            violations.push(format!(
+                "required persistence module is missing: {required_file}"
+            ));
+        }
+    }
+    for directory in [&entity_root, &schema_root, &storage_root] {
+        if directory.is_dir() {
+            collect_oversized_rust_files(directory, &mut violations);
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "persistence source layout violations:\n{}",
+        violations.join("\n")
+    );
+}
+
 fn assert_legacy_module_identifiers_absent<I>(module_path: &Path, legacy_modules: I)
 where
     I: IntoIterator<Item = &'static str>,
@@ -194,6 +262,26 @@ fn assert_rust_files_within_limit(directory: &Path) {
                 "{} has {line_count} lines; maximum is 450",
                 path.display()
             );
+        }
+    }
+}
+
+fn collect_oversized_rust_files(directory: &Path, violations: &mut Vec<String>) {
+    for entry in fs::read_dir(directory).expect("source directory must be readable") {
+        let entry = entry.expect("source directory entries must be readable");
+        let path = entry.path();
+
+        if path.is_dir() {
+            collect_oversized_rust_files(&path, violations);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            let contents = fs::read_to_string(&path).expect("source file must be readable");
+            let line_count = contents.lines().count();
+            if line_count > 450 {
+                violations.push(format!(
+                    "{} has {line_count} lines; maximum is 450",
+                    path.display()
+                ));
+            }
         }
     }
 }
