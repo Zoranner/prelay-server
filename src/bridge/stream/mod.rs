@@ -1,8 +1,5 @@
-mod decode_anthropic;
-mod decode_chat;
-mod decode_responses;
-mod encode_anthropic;
-mod encode_responses;
+mod decode;
+mod encode;
 mod events;
 mod pipeline;
 mod sse;
@@ -17,10 +14,12 @@ pub(crate) use events::{InternalStreamEvent, StreamUsage};
 pub(crate) use pipeline::SharedStreamStats;
 
 use self::{
-    decode_anthropic::AnthropicMessagesToResponsesSseDecoder,
-    decode_chat::ChatToResponsesSseDecoder,
-    decode_responses::{NativeResponsesSseStatsDecoder, ResponsesSseAnthropicMessagesSseDecoder},
-    encode_anthropic::AnthropicMessagesSseDecoder,
+    decode::{
+        anthropic::AnthropicMessagesToResponsesSseDecoder,
+        chat::ChatToResponsesSseDecoder,
+        responses::{NativeResponsesSseStatsDecoder, ResponsesSseAnthropicMessagesSseDecoder},
+    },
+    encode::anthropic::AnthropicMessagesSseDecoder,
     pipeline::{map_response_stream, map_response_stream_with_stats},
 };
 
@@ -108,9 +107,9 @@ pub(crate) fn anthropic_messages_sse_response_to_responses_sse_with_stats(
 }
 
 pub fn responses_text_delta_sse(delta: &str) -> Bytes {
-    encode_responses::responses_text_delta_sse(delta)
+    encode::responses::responses_text_delta_sse(delta)
 }
 
 pub fn responses_completed_sse() -> Bytes {
-    encode_responses::responses_completed_sse()
+    encode::responses::responses_completed_sse()
 }

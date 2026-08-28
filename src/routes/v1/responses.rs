@@ -12,8 +12,9 @@ use uuid::Uuid;
 use crate::{
     bridge::{
         internal::InternalRequest,
-        responses_decode::decode_responses_request_with_diagnostics,
-        responses_encode::encode_responses_response,
+        responses::{
+            decode::decode_responses_request_with_diagnostics, encode::encode_responses_response,
+        },
         stream::{
             anthropic_messages_sse_response_to_responses_sse_with_stats,
             chat_sse_response_to_responses_sse_with_stats, native_responses_sse_with_stats,

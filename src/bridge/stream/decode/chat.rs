@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use axum::body::Bytes;
 use serde_json::Value;
 
-use super::{
-    encode_responses::{
+use super::super::{
+    encode::responses::{
         responses_function_call_added_sse, responses_function_call_arguments_delta_sse,
         responses_function_call_arguments_done_sse, responses_output_item_done_sse,
     },

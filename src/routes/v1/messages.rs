@@ -11,8 +11,9 @@ use serde_json::Value;
 
 use crate::{
     bridge::{
-        anthropic_decode::decode_anthropic_request_with_diagnostics,
-        anthropic_encode::encode_anthropic_response,
+        anthropic::{
+            decode::decode_anthropic_request_with_diagnostics, encode::encode_anthropic_response,
+        },
         stream::{
             chat_sse_response_to_anthropic_messages_sse_with_stats,
             responses_sse_response_to_anthropic_messages_sse_with_stats,
