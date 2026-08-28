@@ -23,6 +23,26 @@ fn bridge_modules_use_directories_and_stay_within_limit() {
         );
     }
 
+    assert_legacy_module_declarations_absent(
+        &bridge_root.join("mod.rs"),
+        [
+            "anthropic_decode",
+            "anthropic_encode",
+            "responses_decode",
+            "responses_encode",
+        ],
+    );
+    assert_legacy_module_declarations_absent(
+        &bridge_root.join("stream/mod.rs"),
+        [
+            "decode_anthropic",
+            "decode_chat",
+            "decode_responses",
+            "encode_anthropic",
+            "encode_responses",
+        ],
+    );
+
     let required_directories = ["anthropic", "responses", "stream/decode", "stream/encode"];
 
     for directory in required_directories {
@@ -33,6 +53,21 @@ fn bridge_modules_use_directories_and_stay_within_limit() {
     }
 
     assert_rust_files_within_limit(&bridge_root);
+}
+
+fn assert_legacy_module_declarations_absent<I>(module_path: &Path, legacy_modules: I)
+where
+    I: IntoIterator<Item = &'static str>,
+{
+    let contents = fs::read_to_string(module_path).expect("bridge module must be readable");
+
+    for legacy_module in legacy_modules {
+        assert!(
+            !contents.contains(&format!("mod {legacy_module};")),
+            "legacy bridge module declaration exists in {}: {legacy_module}",
+            module_path.display()
+        );
+    }
 }
 
 fn assert_rust_files_within_limit(directory: &Path) {
