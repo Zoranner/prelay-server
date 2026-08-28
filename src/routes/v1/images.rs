@@ -112,42 +112,67 @@ async fn create_image_generation_with_candidate(
         upstream_base_url.trim_end_matches('/')
     );
     let upstream_started_at = std::time::Instant::now();
-    let upstream_response = state
+    let upstream_response = match state
         .client
         .post(upstream_url)
         .bearer_auth(&provider.api_key)
         .json(&payload)
         .send()
         .await
-        .map_err(|error| AppError::Upstream {
-            status: None,
-            message: format!("上游连接失败: {error}"),
-        })?;
+    {
+        Ok(response) => response,
+        Err(_) => {
+            let safe_error_message = "上游连接失败".to_string();
+            insert_image_request_log_best_effort(
+                state,
+                access,
+                image_request_log(ImageRequestLogParams {
+                    access,
+                    provider: &provider,
+                    model_requested: model,
+                    model_upstream,
+                    status: "failed",
+                    http_status: 0,
+                    error_code: Some("upstream_connection"),
+                    is_streaming,
+                    latency_ms: started_at.elapsed().as_millis() as i64,
+                    upstream_latency_ms: None,
+                    upstream_request_id: None,
+                    error_message: Some(safe_error_message.clone()),
+                }),
+            )
+            .await;
+            return Err(AppError::Upstream {
+                status: None,
+                message: safe_error_message,
+            });
+        }
+    };
     let upstream_latency_ms = upstream_started_at.elapsed().as_millis() as i64;
     let upstream_status = upstream_response.status();
 
     if !upstream_status.is_success() {
         let observability = upstream_observability(upstream_response.headers(), None);
         let safe_error_message = format!("上游请求失败: {upstream_status}");
-        state
-            .storage
-            .insert_request_log(
-                &access.identity_id,
-                image_request_log(ImageRequestLogParams {
-                    access,
-                    provider: &provider,
-                    model_requested: model.clone(),
-                    model_upstream,
-                    status: "failed",
-                    http_status: upstream_status.as_u16() as i64,
-                    is_streaming,
-                    latency_ms: started_at.elapsed().as_millis() as i64,
-                    upstream_latency_ms: None,
-                    upstream_request_id: observability.request_id,
-                    error_message: Some(safe_error_message.clone()),
-                }),
-            )
-            .await?;
+        insert_image_request_log_best_effort(
+            state,
+            access,
+            image_request_log(ImageRequestLogParams {
+                access,
+                provider: &provider,
+                model_requested: model.clone(),
+                model_upstream,
+                status: "failed",
+                http_status: upstream_status.as_u16() as i64,
+                error_code: None,
+                is_streaming,
+                latency_ms: started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: None,
+                upstream_request_id: observability.request_id,
+                error_message: Some(safe_error_message.clone()),
+            }),
+        )
+        .await;
         return Err(AppError::Upstream {
             status: Some(upstream_status),
             message: safe_error_message,
@@ -168,6 +193,7 @@ async fn create_image_generation_with_candidate(
             model_upstream,
             status: "success",
             http_status: upstream_status.as_u16() as i64,
+            error_code: None,
             is_streaming: true,
             latency_ms: started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
@@ -190,32 +216,54 @@ async fn create_image_generation_with_candidate(
         ));
     }
 
-    let response_bytes = upstream_response
-        .bytes()
-        .await
-        .map_err(|error| AppError::Upstream {
-            status: None,
-            message: format!("读取上游响应失败: {error}"),
-        })?;
-    state
-        .storage
-        .insert_request_log(
-            &access.identity_id,
-            image_request_log(ImageRequestLogParams {
+    let response_bytes = match upstream_response.bytes().await {
+        Ok(response_bytes) => response_bytes,
+        Err(_) => {
+            let safe_error_message = "读取上游响应失败".to_string();
+            insert_image_request_log_best_effort(
+                state,
                 access,
-                provider: &provider,
-                model_requested: model,
-                model_upstream,
-                status: "success",
-                http_status: upstream_status.as_u16() as i64,
-                is_streaming: false,
-                latency_ms: started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: Some(upstream_latency_ms),
-                upstream_request_id,
-                error_message: None,
-            }),
-        )
-        .await?;
+                image_request_log(ImageRequestLogParams {
+                    access,
+                    provider: &provider,
+                    model_requested: model,
+                    model_upstream,
+                    status: "failed",
+                    http_status: upstream_status.as_u16() as i64,
+                    error_code: Some("upstream_body"),
+                    is_streaming: false,
+                    latency_ms: started_at.elapsed().as_millis() as i64,
+                    upstream_latency_ms: Some(upstream_latency_ms),
+                    upstream_request_id,
+                    error_message: Some(safe_error_message.clone()),
+                }),
+            )
+            .await;
+            return Err(AppError::Upstream {
+                status: None,
+                message: safe_error_message,
+            });
+        }
+    };
+    insert_image_request_log_best_effort(
+        state,
+        access,
+        image_request_log(ImageRequestLogParams {
+            access,
+            provider: &provider,
+            model_requested: model,
+            model_upstream,
+            status: "success",
+            http_status: upstream_status.as_u16() as i64,
+            error_code: None,
+            is_streaming: false,
+            latency_ms: started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            upstream_request_id,
+            error_message: None,
+        }),
+    )
+    .await;
 
     Ok(upstream_response_with_body(
         upstream_status,
@@ -231,6 +279,7 @@ struct ImageRequestLogParams<'a> {
     model_upstream: String,
     status: &'a str,
     http_status: i64,
+    error_code: Option<&'a str>,
     is_streaming: bool,
     latency_ms: i64,
     upstream_latency_ms: Option<i64>,
@@ -250,7 +299,7 @@ fn image_request_log(params: ImageRequestLogParams<'_>) -> RequestLogInsert {
         model_upstream: params.model_upstream,
         status: params.status.to_string(),
         http_status: params.http_status,
-        error_code: None,
+        error_code: params.error_code.map(str::to_string),
         error_message: params.error_message,
         is_streaming: params.is_streaming,
         input_tokens: None,
@@ -264,6 +313,24 @@ fn image_request_log(params: ImageRequestLogParams<'_>) -> RequestLogInsert {
         tool_call_count: None,
         upstream_request_id: params.upstream_request_id,
         metadata_json: None,
+    }
+}
+
+async fn insert_image_request_log_best_effort(
+    state: &AppState,
+    access: &CurrentProtocolAccess,
+    log: RequestLogInsert,
+) {
+    if state
+        .storage
+        .insert_request_log(&access.identity_id, log)
+        .await
+        .is_err()
+    {
+        tracing::warn!(
+            failure_kind = "image_request_log_storage",
+            "failed to persist image request log"
+        );
     }
 }
 
@@ -314,8 +381,9 @@ mod tests {
     };
     use bytes::Bytes;
     use futures::StreamExt;
+    use sea_orm::{ConnectionTrait, DatabaseConnection};
     use serde_json::{json, Value};
-    use tokio::net::TcpListener;
+    use tokio::{net::TcpListener, sync::Notify};
 
     #[derive(Clone)]
     struct UpstreamState {
@@ -335,6 +403,37 @@ mod tests {
 
     async fn test_state() -> AppState {
         crate::test_support::test_state().await
+    }
+
+    async fn test_state_with_connection() -> (AppState, DatabaseConnection) {
+        let config = crate::database::DatabaseConfig::from_url("sqlite::memory:")
+            .expect("valid in-memory SQLite URL");
+        let connection = crate::database::connect(&config)
+            .await
+            .expect("connect to in-memory SQLite");
+        crate::schema::initialize(&connection)
+            .await
+            .expect("initialize test database schema");
+        let state = AppState {
+            storage: crate::storage::Storage::from_connection(
+                connection.clone(),
+                crate::storage::MasterKey::from_bytes([0; 32]),
+            ),
+            client: reqwest::Client::new(),
+            client_update: crate::client_update::ClientUpdateCache::unavailable(
+                reqwest::Client::new(),
+            ),
+        };
+        (state, connection)
+    }
+
+    async fn reject_request_log_inserts(connection: &DatabaseConnection) {
+        connection
+            .execute_unprepared(
+                "CREATE TRIGGER reject_request_log_inserts BEFORE INSERT ON identity_request_logs BEGIN SELECT RAISE(FAIL, 'forced request log failure'); END",
+            )
+            .await
+            .expect("create request log failure trigger");
     }
 
     fn image_capabilities() -> ProviderCapabilityOverrides {
@@ -465,7 +564,7 @@ mod tests {
 
     #[tokio::test]
     async fn streams_image_events_without_waiting_for_upstream_done() {
-        let upstream = spawn_streaming_image_upstream().await;
+        let (upstream, release_second_event) = spawn_streaming_image_upstream().await;
         let state = test_state().await;
         let provider = test_provider_with_capabilities(
             "Streaming image provider",
@@ -482,7 +581,6 @@ mod tests {
         let identity_id = auth.access.0.identity_id.clone();
         let (relay_url, server) = spawn_image_relay(state.clone()).await;
 
-        let started = std::time::Instant::now();
         let response = reqwest::Client::new()
             .post(format!("{relay_url}/v1/images/generations"))
             .bearer_auth(&auth.token)
@@ -505,25 +603,25 @@ mod tests {
         );
 
         let mut stream = response.bytes_stream();
-        let first = stream
-            .next()
+        let first = tokio::time::timeout(Duration::from_secs(5), stream.next())
             .await
+            .expect("receive first image event before releasing upstream")
             .expect("first image event")
             .expect("first image event bytes");
-        let elapsed = started.elapsed();
-        assert!(
-            elapsed < Duration::from_millis(200),
-            "first image event arrived after {elapsed:?}"
-        );
         let first_event = Bytes::from_static(
             b"data: {\"type\":\"image_generation.partial_image\",\"b64_json\":\"aGVs\"}\n\n",
         );
         assert_eq!(first, first_event);
 
+        release_second_event.notify_one();
         let mut complete_stream = first.to_vec();
-        while let Some(chunk) = stream.next().await {
-            complete_stream.extend_from_slice(&chunk.expect("remaining image event bytes"));
-        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(chunk) = stream.next().await {
+                complete_stream.extend_from_slice(&chunk.expect("remaining image event bytes"));
+            }
+        })
+        .await
+        .expect("receive second image event and EOF after releasing upstream");
         assert_eq!(
             complete_stream,
             b"data: {\"type\":\"image_generation.partial_image\",\"b64_json\":\"aGVs\"}\n\ndata: {\"type\":\"image_generation.completed\"}\n\n"
@@ -743,6 +841,248 @@ mod tests {
         assert_eq!(logs.iter().filter(|log| log.status == "success").count(), 1);
     }
 
+    #[tokio::test]
+    async fn fails_over_when_failed_request_log_cannot_be_written() {
+        let primary = spawn_image_upstream(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Bytes::from_static(br#"{"error":{"message":"primary unavailable"}}"#),
+            "application/json",
+            None,
+        )
+        .await;
+        let expected_body = Bytes::from_static(br#"{"data":[{"b64_json":"backup-image-bytes"}]}"#);
+        let backup = spawn_image_upstream(
+            StatusCode::OK,
+            expected_body.clone(),
+            "application/json; charset=utf-8",
+            None,
+        )
+        .await;
+        let (state, connection) = test_state_with_connection().await;
+        let primary_provider = test_provider_with_capabilities(
+            "Primary image provider",
+            "custom_image",
+            &primary.url,
+            "sk-primary",
+            Some(&image_capabilities()),
+        )
+        .await
+        .expect("create primary provider");
+        let backup_provider = test_provider_with_capabilities(
+            "Backup image provider",
+            "custom_image",
+            &backup.url,
+            "sk-backup",
+            Some(&image_capabilities()),
+        )
+        .await
+        .expect("create backup provider");
+        let auth = create_test_endpoint_auth_with_candidates(
+            &state.storage,
+            &[primary_provider, backup_provider],
+            "image-public",
+            "image-upstream",
+        )
+        .await;
+        reject_request_log_inserts(&connection).await;
+
+        let response = create_image_generation(
+            State(state),
+            auth.access,
+            Json(json!({
+                "model": "image-public",
+                "prompt": "private prompt"
+            })),
+        )
+        .await
+        .expect("request log failure must not block candidate failover");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&HeaderValue::from_static("application/json; charset=utf-8"))
+        );
+        assert_eq!(
+            to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("read backup response"),
+            expected_body
+        );
+        assert_eq!(primary.hits.load(Ordering::SeqCst), 1);
+        assert_eq!(backup.hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn returns_success_bytes_when_request_log_cannot_be_written() {
+        let expected_body = Bytes::from_static(
+            br#"{"created":1,"data":[{"url":"https://images.example/private-result"}]}"#,
+        );
+        let upstream = spawn_image_upstream(
+            StatusCode::CREATED,
+            expected_body.clone(),
+            "application/json; charset=utf-8",
+            None,
+        )
+        .await;
+        let (state, connection) = test_state_with_connection().await;
+        let provider = test_provider_with_capabilities(
+            "Image provider",
+            "custom_image",
+            &upstream.url,
+            "sk-image",
+            Some(&image_capabilities()),
+        )
+        .await
+        .expect("create image provider");
+        let auth =
+            create_test_endpoint_auth(&state.storage, &provider, "image-public", "image-upstream")
+                .await;
+        reject_request_log_inserts(&connection).await;
+
+        let response = create_image_generation(
+            State(state),
+            auth.access,
+            Json(json!({
+                "model": "image-public",
+                "prompt": "private prompt"
+            })),
+        )
+        .await
+        .expect("request log failure must not discard a successful image response");
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&HeaderValue::from_static("application/json; charset=utf-8"))
+        );
+        assert_eq!(
+            to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("read successful image response"),
+            expected_body
+        );
+    }
+
+    #[tokio::test]
+    async fn logs_sanitized_failure_when_upstream_connection_fails() {
+        let upstream_url = spawn_connection_failure_upstream().await;
+        let mut state = test_state().await;
+        state.client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("build direct test client");
+        let provider = test_provider_with_capabilities(
+            "Image provider",
+            "custom_image",
+            &upstream_url,
+            "sk-private-provider-key",
+            Some(&image_capabilities()),
+        )
+        .await
+        .expect("create image provider");
+        let auth =
+            create_test_endpoint_auth(&state.storage, &provider, "image-public", "image-upstream")
+                .await;
+        let identity_id = auth.access.0.identity_id.clone();
+
+        let error = create_image_generation(
+            State(state.clone()),
+            auth.access,
+            Json(json!({
+                "model": "image-public",
+                "prompt": "private prompt"
+            })),
+        )
+        .await
+        .expect_err("closed upstream connection must fail");
+
+        match error {
+            crate::error::AppError::Upstream { status, message } => {
+                assert_eq!(status, None, "unexpected upstream response: {message}");
+                assert_eq!(message, "上游连接失败");
+            }
+            other => panic!("expected upstream error, got {other:?}"),
+        }
+        let logs = state
+            .storage
+            .list_request_logs(&identity_id, 10)
+            .await
+            .expect("load connection failure request log");
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].protocol_in.as_deref(), Some("images_generations"));
+        assert_eq!(logs[0].status, "failed");
+        assert_eq!(logs[0].error_code.as_deref(), Some("upstream_connection"));
+        assert_eq!(logs[0].error_message.as_deref(), Some("上游连接失败"));
+        let summary = serde_json::to_string(&logs[0]).expect("serialize request log summary");
+        for secret in [
+            upstream_url.as_str(),
+            "private prompt",
+            auth.token.as_str(),
+            "sk-private-provider-key",
+        ] {
+            assert!(!summary.contains(secret));
+        }
+    }
+
+    #[tokio::test]
+    async fn logs_sanitized_failure_when_non_streaming_body_is_interrupted() {
+        let upstream_url = spawn_interrupted_non_streaming_image_upstream().await;
+        let state = test_state().await;
+        let provider = test_provider_with_capabilities(
+            "Image provider",
+            "custom_image",
+            &upstream_url,
+            "sk-private-provider-key",
+            Some(&image_capabilities()),
+        )
+        .await
+        .expect("create image provider");
+        let auth =
+            create_test_endpoint_auth(&state.storage, &provider, "image-public", "image-upstream")
+                .await;
+        let identity_id = auth.access.0.identity_id.clone();
+
+        let error = create_image_generation(
+            State(state.clone()),
+            auth.access,
+            Json(json!({
+                "model": "image-public",
+                "prompt": "private prompt"
+            })),
+        )
+        .await
+        .expect_err("interrupted upstream body must fail");
+
+        match error {
+            crate::error::AppError::Upstream { status, message } => {
+                assert_eq!(status, None);
+                assert_eq!(message, "读取上游响应失败");
+            }
+            other => panic!("expected upstream error, got {other:?}"),
+        }
+        let logs = state
+            .storage
+            .list_request_logs(&identity_id, 10)
+            .await
+            .expect("load body failure request log");
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].protocol_in.as_deref(), Some("images_generations"));
+        assert_eq!(logs[0].status, "failed");
+        assert_eq!(logs[0].error_code.as_deref(), Some("upstream_body"));
+        assert_eq!(logs[0].error_message.as_deref(), Some("读取上游响应失败"));
+        let summary = serde_json::to_string(&logs[0]).expect("serialize request log summary");
+        for secret in [
+            upstream_url.as_str(),
+            "private prompt",
+            auth.token.as_str(),
+            "sk-private-provider-key",
+            "private-image-base64",
+            "https://images.example/private-result",
+        ] {
+            assert!(!summary.contains(secret));
+        }
+    }
+
     async fn spawn_image_upstream(
         status: StatusCode,
         body: Bytes,
@@ -799,32 +1139,98 @@ mod tests {
         }
     }
 
-    async fn spawn_streaming_image_upstream() -> String {
+    async fn spawn_connection_failure_upstream() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind connection failure upstream");
+        let address = listener
+            .local_addr()
+            .expect("connection failure upstream address");
+        tokio::spawn(async move {
+            loop {
+                let (connection, _) = listener
+                    .accept()
+                    .await
+                    .expect("accept connection failure request");
+                drop(connection);
+            }
+        });
+        format!("http://{address}")
+    }
+
+    async fn spawn_interrupted_non_streaming_image_upstream() -> String {
         async fn handler(Json(payload): Json<Value>) -> axum::response::Response {
             assert_eq!(payload["model"], "image-upstream");
             assert_eq!(payload["prompt"], "private prompt");
-            assert_eq!(payload["stream"], true);
-            assert_eq!(payload["partial_images"], 2);
             let stream = futures::stream::unfold(0, |step| async move {
                 match step {
                     0 => Some((
-                        Ok::<_, Infallible>(Bytes::from_static(
-                            b"data: {\"type\":\"image_generation.partial_image\",\"b64_json\":\"aGVs\"}\n\n",
+                        Ok::<_, io::Error>(Bytes::from_static(
+                            br#"{"data":[{"b64_json":"private-image-base64","url":"https://images.example/private-result"}"#,
                         )),
                         1,
                     )),
                     1 => {
-                        tokio::time::sleep(Duration::from_millis(250)).await;
-                        Some((
-                            Ok::<_, Infallible>(Bytes::from_static(
-                                b"data: {\"type\":\"image_generation.completed\"}\n\n",
-                            )),
-                            2,
-                        ))
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        Some((Err(io::Error::other("forced body interruption")), 2))
                     }
                     _ => None,
                 }
             });
+            (
+                [(header::CONTENT_TYPE, "application/json")],
+                Body::from_stream(stream),
+            )
+                .into_response()
+        }
+
+        let app = Router::new().route("/images/generations", post(handler));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind interrupted non-streaming image upstream");
+        let address = listener
+            .local_addr()
+            .expect("interrupted non-streaming upstream address");
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve interrupted non-streaming image upstream");
+        });
+        format!("http://{address}")
+    }
+
+    async fn spawn_streaming_image_upstream() -> (String, Arc<Notify>) {
+        async fn handler(
+            State(release_second_event): State<Arc<Notify>>,
+            Json(payload): Json<Value>,
+        ) -> axum::response::Response {
+            assert_eq!(payload["model"], "image-upstream");
+            assert_eq!(payload["prompt"], "private prompt");
+            assert_eq!(payload["stream"], true);
+            assert_eq!(payload["partial_images"], 2);
+            let stream = futures::stream::unfold(
+                (0, release_second_event),
+                |(step, release_second_event)| async move {
+                    match step {
+                    0 => Some((
+                        Ok::<_, Infallible>(Bytes::from_static(
+                            b"data: {\"type\":\"image_generation.partial_image\",\"b64_json\":\"aGVs\"}\n\n",
+                        )),
+                        (1, release_second_event),
+                    )),
+                    1 => {
+                        release_second_event.notified().await;
+                        Some((
+                            Ok::<_, Infallible>(Bytes::from_static(
+                                b"data: {\"type\":\"image_generation.completed\"}\n\n",
+                            )),
+                            (2, release_second_event),
+                        ))
+                    }
+                    _ => None,
+                }
+                },
+            );
             (
                 [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
                 Body::from_stream(stream),
@@ -832,7 +1238,10 @@ mod tests {
                 .into_response()
         }
 
-        let app = Router::new().route("/images/generations", post(handler));
+        let release_second_event = Arc::new(Notify::new());
+        let app = Router::new()
+            .route("/images/generations", post(handler))
+            .with_state(Arc::clone(&release_second_event));
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind streaming image upstream");
@@ -842,7 +1251,7 @@ mod tests {
                 .await
                 .expect("serve streaming image upstream");
         });
-        format!("http://{address}")
+        (format!("http://{address}"), release_second_event)
     }
 
     async fn spawn_interrupted_image_upstream() -> String {

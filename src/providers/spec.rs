@@ -209,6 +209,9 @@ impl ProviderSpec {
         };
         spec.capabilities = spec.capabilities.with_overrides(overrides);
         if let Some(protocols) = supported_protocols_from_overrides(overrides) {
+            if let [protocol] = protocols.as_slice() {
+                spec.protocol = *protocol;
+            }
             spec.supported_protocols = protocols;
         }
         spec
@@ -595,6 +598,10 @@ mod tests {
         );
 
         let explicitly_declared = ProviderSpec::from_provider_config(&configured_provider);
+        assert_eq!(
+            explicitly_declared.protocol,
+            UpstreamProtocol::ImageGenerations
+        );
         assert_eq!(
             explicitly_declared.upstream_for_downstream("images_generations"),
             Some(UpstreamProtocol::ImageGenerations)

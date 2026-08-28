@@ -4,7 +4,7 @@ use axum::{
     Json, Router,
 };
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::{
     error::AppError,
@@ -79,24 +79,27 @@ async fn list_models(
             endpoint_name: access.endpoint_name,
         })
         .await?;
-    let mut seen_model_names = HashSet::new();
-    let data = models
-        .into_iter()
-        .filter_map(|model| {
-            if !seen_model_names.insert(model.model.model_name.clone()) {
-                return None;
+    let mut model_indices: HashMap<String, usize> = HashMap::new();
+    let mut data: Vec<ModelEntry> = Vec::new();
+    for model in models {
+        let model_name = model.model.model_name.clone();
+        let spec = ProviderSpec::from_provider_config(&model.provider);
+        if let Some(index) = model_indices.get(&model_name).copied() {
+            for protocol in downstream_protocols_for_spec(&spec) {
+                if !data[index].downstream_protocols.contains(&protocol) {
+                    data[index].downstream_protocols.push(protocol);
+                }
             }
+        } else {
             let mut providers = HashMap::new();
             providers.insert(
                 model.provider.id.clone(),
-                (
-                    model.provider.name.clone(),
-                    ProviderSpec::from_provider_config(&model.provider),
-                ),
+                (model.provider.name.clone(), spec),
             );
-            Some(model_entry_for_endpoint_model(model.model, &providers))
-        })
-        .collect::<Vec<_>>();
+            model_indices.insert(model_name, data.len());
+            data.push(model_entry_for_endpoint_model(model.model, &providers));
+        }
+    }
 
     Ok(Json(ModelsResponse {
         object: "list",
@@ -167,7 +170,20 @@ mod tests {
     use tower::ServiceExt;
 
     use super::list_models;
-    use crate::routes::v1::endpoint_resolver::{create_test_endpoint_auth, test_provider};
+    use crate::{
+        models::ProviderCapabilityOverrides,
+        routes::v1::endpoint_resolver::{
+            create_test_endpoint_auth, create_test_endpoint_auth_with_candidates, test_provider,
+            test_provider_with_capabilities,
+        },
+    };
+
+    fn image_capabilities() -> ProviderCapabilityOverrides {
+        ProviderCapabilityOverrides {
+            upstream_protocols: Some(vec!["images_generations".to_string()]),
+            ..ProviderCapabilityOverrides::default()
+        }
+    }
 
     #[tokio::test]
     async fn lists_identity_endpoint_models_only() {
@@ -202,6 +218,80 @@ mod tests {
             ["responses", "chat_completions", "anthropic_messages"]
         );
         assert!(model.capabilities.tool_calls);
+    }
+
+    #[tokio::test]
+    async fn lists_image_only_model_with_image_protocol_metadata() {
+        let state = crate::test_support::test_state().await;
+        let provider = test_provider_with_capabilities(
+            "Image provider",
+            "custom_image",
+            "https://images.example/v1",
+            "sk-test",
+            Some(&image_capabilities()),
+        )
+        .await
+        .expect("create image provider source");
+        let auth =
+            create_test_endpoint_auth(&state.storage, &provider, "image", "image-upstream").await;
+
+        let response = list_models(State(state), auth.access)
+            .await
+            .expect("list image models");
+        let model = response.0.data.first().expect("image model listed");
+
+        assert_eq!(response.0.data.len(), 1);
+        assert_eq!(model.id, "image");
+        assert_eq!(model.upstream_protocol, "images_generations");
+        assert_eq!(model.downstream_protocols, ["images_generations"]);
+    }
+
+    #[tokio::test]
+    async fn merges_downstream_protocols_across_same_name_candidates() {
+        let state = crate::test_support::test_state().await;
+        let text_provider = test_provider(
+            "Text provider",
+            "openai_compatible",
+            "https://text.example/v1",
+            "sk-text",
+        )
+        .await
+        .expect("create text provider source");
+        let image_provider = test_provider_with_capabilities(
+            "Image provider",
+            "custom_image",
+            "https://images.example/v1",
+            "sk-image",
+            Some(&image_capabilities()),
+        )
+        .await
+        .expect("create image provider source");
+        let auth = create_test_endpoint_auth_with_candidates(
+            &state.storage,
+            &[text_provider, image_provider],
+            "shared-model",
+            "upstream-model",
+        )
+        .await;
+
+        let response = list_models(State(state), auth.access)
+            .await
+            .expect("list merged models");
+        let model = response.0.data.first().expect("merged model listed");
+
+        assert_eq!(response.0.data.len(), 1);
+        assert_eq!(model.id, "shared-model");
+        assert_eq!(model.provider_name, "Text provider");
+        assert_eq!(model.upstream_protocol, "chat_completions");
+        assert_eq!(
+            model.downstream_protocols,
+            [
+                "responses",
+                "chat_completions",
+                "anthropic_messages",
+                "images_generations",
+            ]
+        );
     }
 
     #[tokio::test]
