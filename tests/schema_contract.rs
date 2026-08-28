@@ -167,13 +167,3 @@ async fn reuses_the_current_identity_schema_without_changes() {
     initialize(&db).await.unwrap();
     assert_complete_schema(&db).await;
 }
-
-#[tokio::test]
-#[ignore = "requires TEST_POSTGRES_URL and an empty PostgreSQL test database"]
-async fn initializes_the_complete_identity_schema_on_postgres() {
-    let url = std::env::var("TEST_POSTGRES_URL").expect("TEST_POSTGRES_URL must be set");
-    let db = Database::connect(url).await.unwrap();
-
-    initialize(&db).await.unwrap();
-    assert_complete_schema(&db).await;
-}

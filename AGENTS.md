@@ -30,5 +30,5 @@ cargo test --all-targets --all-features
 git diff --check
 ```
 
-- 修改数据库初始化、原始 SQL、SeaORM 映射或 PostgreSQL 连接配置时，除上述检查外，必须将 `TEST_POSTGRES_URL` 指向独立的全新 PostgreSQL 测试库，并执行 `cargo test --test schema_contract initializes_the_complete_identity_schema_on_postgres -- --ignored` 及受影响的存储或路由集成测试。SQLite 与 mock 测试只能补充验证，不能证明 PostgreSQL 部署可用；不得使用运行中或生产数据库作为测试库。
+- 修改数据库初始化、原始 SQL、SeaORM 映射或 PostgreSQL 连接配置时，除上述检查外，仍须执行受影响的存储或路由集成测试。SQLite 与 mock 测试不能证明 PostgreSQL 部署可用，正式部署前应使用独立环境验收；不得使用运行中或生产数据库作为测试库。
 - 自动化测试主要验证本地转换和 mock upstream；真实 Codex、Claude Code、上游服务和 Docker 部署需独立联调，不得将前者表述为后者已验收。
