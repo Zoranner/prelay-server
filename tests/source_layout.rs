@@ -147,6 +147,36 @@ fn responses_and_messages_routes_use_protocol_directories_and_stay_within_limit(
 }
 
 #[test]
+fn stream_observability_uses_directory_and_stays_within_limit() {
+    let observability_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/observability");
+    let stream_stats_root = observability_root.join("stream_stats");
+
+    assert!(
+        !observability_root.join("stream_stats.rs").exists(),
+        "obsolete stream observability module still exists: stream_stats.rs"
+    );
+    assert!(
+        stream_stats_root.is_dir(),
+        "required stream observability directory is missing: stream_stats"
+    );
+
+    for required_file in [
+        "mod.rs",
+        "record.rs",
+        "state.rs",
+        "persistence.rs",
+        "tests.rs",
+    ] {
+        assert!(
+            stream_stats_root.join(required_file).is_file(),
+            "required stream observability module is missing: {required_file}"
+        );
+    }
+
+    assert_rust_files_within_limit(&stream_stats_root);
+}
+
+#[test]
 fn persistence_modules_use_domain_directories_and_stay_within_limit() {
     let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let entity_root = source_root.join("entity");

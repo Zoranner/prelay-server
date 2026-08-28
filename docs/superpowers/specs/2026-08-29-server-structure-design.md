@@ -55,6 +55,16 @@ src/
       mod.rs
     identities.rs
     mod.rs
+  observability/
+    stream_stats/
+      mod.rs
+      record.rs
+      state.rs
+      persistence.rs
+      tests.rs
+    request_metadata.rs
+    upstream_observability.rs
+    mod.rs
   providers/
     chat_completions/
       request.rs
@@ -122,6 +132,12 @@ tests/
 
 不得创建“通用协议 handler”以抹平 Responses、Chat Completions、Anthropic Messages 与图像生成的不同请求、响应和流式语义。
 
+## 流观测
+
+`observability/stream_stats/` 将公开记录入口、单请求状态、持久化辅助和测试分开。`record.rs` 保留 `record_first_chunk` 与 `record_stream` 的既有签名，目录根只重新导出这两个入口；`state.rs` 继续维护首块、结束、错误和最终 usage 的原有状态流转；`persistence.rs` 只封装请求日志写入和脱敏失败日志。
+
+该目录迁移是为补齐全树 450 行门禁而插入的结构任务，不改变流式响应内容、请求日志字段、错误语义或存储接口，也不新增跨协议观测抽象。
+
 ## 持久化与实体
 
 当前 `identity_*.rs` 实体迁入 `entity/identity/`，路径表达身份作用域下的 Provider、接入点、模型、请求日志与会话关系。SeaORM 的表名、实体字段、关系定义和现有调用结果不得改变。
@@ -138,6 +154,6 @@ Cargo 只将 `tests/` 根层文件识别为集成测试 target，因此根层保
 
 ## 实施顺序
 
-先建立结构门禁和桥接目录，再迁移 Provider 协议与 `/v1` 路由。随后迁移实体、schema 与 Storage，最后重组集成测试。每个批次在提交前都必须满足受影响目录内无文件超过 450 行，并运行对应的聚焦测试；最终执行 `cargo fmt --all`、`cargo clippy --all-targets --all-features -- -D warnings`、`cargo test --all-targets --all-features` 与全树结构门禁。
+先建立结构门禁和桥接目录，再迁移 Provider 协议与 `/v1` 路由。随后迁移实体、schema 与 Storage，并在重组集成测试前补充分流统计观测模块，消除既有超长源码；最后重组集成测试。每个批次在提交前都必须满足受影响目录内无文件超过 450 行，并运行对应的聚焦测试；最终执行 `cargo fmt --all`、`cargo clippy --all-targets --all-features -- -D warnings`、`cargo test --all-targets --all-features` 与全树结构门禁。
 
 由于当前仓库只保留一个工作树，重构直接在现有 `master` 工作树分批提交；不创建额外工作树，也不触及 `prelay-client` 或 `prelay-protocol`。

@@ -175,6 +175,39 @@
 
 运行结构测试、`cargo test --test schema_contract`、`cargo test --test schema_initialization` 和现有身份存储测试；随后运行 `cargo fmt --all`、`git diff --check`，以“按领域重组持久化模块”提交。
 
+### Task 5.5: 流统计观测目录
+
+**Files:**
+- Create: `src/observability/stream_stats/{mod.rs,record.rs,state.rs,persistence.rs,tests.rs}`
+- Modify: `tests/source_layout.rs`
+- Modify: `docs/superpowers/specs/2026-08-29-server-structure-design.md`
+- Modify: `docs/superpowers/plans/2026-08-29-server-structure-refactor.md`
+- Move: `src/observability/stream_stats.rs` 到对应职责目录。
+
+**Interfaces:**
+- Consumes: `SharedStreamStats`、`RequestLogInsert`、`StreamRequestLogUpdate`、`Storage` 和请求元数据更新。
+- Produces: 不变的 `observability::stream_stats::record_first_chunk` 与 `record_stream`，以及原有流日志写入、usage 更新和脱敏失败日志行为。
+
+- [ ] **Step 1: 写失败测试**
+
+添加 `stream_observability_uses_directory_and_stays_within_limit`，断言旧平铺文件不存在，记录入口、状态、持久化辅助和测试文件存在，目录内每个 Rust 文件不超过 450 行。
+
+- [ ] **Step 2: 运行失败测试**
+
+运行 `cargo test --test source_layout stream_observability_uses_directory_and_stays_within_limit`；预期因旧 `stream_stats.rs` 存在而失败。
+
+- [ ] **Step 3: 按职责迁移流观测**
+
+`record.rs` 保留两个公开入口，`state.rs` 保留首块、结束、错误和最终 usage 状态流转，`persistence.rs` 保留日志写入与脱敏失败记录，`tests.rs` 承接全部既有断言。目录根只声明模块并重新导出原入口，不扩大内部可见性。
+
+- [ ] **Step 4: 更新设计与 SDD 记录**
+
+在结构设计、实施计划和 SDD ledger 中记录该补充批次的原因、职责边界、ruling 与验证边界，明确它只为满足既定全树 450 行目标，不改变观测行为。
+
+- [ ] **Step 5: 验证并提交**
+
+运行流观测单元测试、结构测试、`cargo fmt --all`、`cargo clippy --all-targets --all-features -- -D warnings` 与 `git diff --check`，以“按职责拆分流统计观测模块”提交。
+
 ### Task 6: 集成测试按领域组织与全树门禁
 
 **Files:**

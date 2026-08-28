@@ -1,0 +1,240 @@
+use std::{pin::Pin, time::Instant};
+
+use bytes::Bytes;
+use futures::{Stream, StreamExt};
+
+use crate::{
+    bridge::stream::{SharedStreamStats, StreamStatsSnapshot},
+    observability::request_metadata::{update_stream_metadata, StreamMetadataUpdate},
+    stats::{RequestLogInsert, StreamRequestLogUpdate},
+    storage::Storage,
+};
+
+use super::persistence::{insert_stream_log_with_id, update_stream_log};
+
+pub(super) fn record_stream_with_log_id<S>(
+    storage: Storage,
+    identity_id: String,
+    stream: S,
+    log: RequestLogInsert,
+    started_at: Instant,
+    stats: Option<SharedStreamStats>,
+    log_id: String,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>>
+where
+    S: Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
+{
+    let base_metadata_json = log.metadata_json.clone();
+    let upstream_request_id = log.upstream_request_id.clone();
+    let state = StreamRecordState {
+        storage,
+        identity_id,
+        stream: Box::pin(stream),
+        log: Some(log),
+        log_id,
+        started_at,
+        stats,
+        base_metadata_json,
+        upstream_request_id,
+        inserted: false,
+        failed: false,
+        usage_recorded: false,
+    };
+
+    futures::stream::unfold(state, |mut state| async move {
+        let Some(item) = state.stream.next().await else {
+            state.record_stream_end().await;
+            return None;
+        };
+
+        if !state.inserted {
+            state.insert_first_chunk_log(&item).await;
+        } else if let Err(error) = &item {
+            state.record_stream_error(error.to_string()).await;
+        }
+        if state.inserted && !state.failed {
+            state.record_final_usage().await;
+        }
+
+        Some((item, state))
+    })
+}
+
+struct StreamRecordState {
+    storage: Storage,
+    identity_id: String,
+    stream: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
+    log: Option<RequestLogInsert>,
+    log_id: String,
+    started_at: Instant,
+    stats: Option<SharedStreamStats>,
+    base_metadata_json: Option<String>,
+    upstream_request_id: Option<String>,
+    inserted: bool,
+    failed: bool,
+    usage_recorded: bool,
+}
+
+impl StreamRecordState {
+    async fn insert_first_chunk_log(&mut self, item: &Result<Bytes, std::io::Error>) {
+        let Some(mut log) = self.log.take() else {
+            return;
+        };
+        let first_token_ms = self.started_at.elapsed().as_millis() as i64;
+        log.latency_ms = first_token_ms;
+        match item {
+            Ok(_) => {
+                log.first_token_ms = Some(first_token_ms);
+                log.metadata_json = self.metadata(StreamMetadataUpdate {
+                    empty: Some(false),
+                    completed: None,
+                    final_usage_seen: None,
+                });
+            }
+            Err(error) => {
+                self.failed = true;
+                log.status = "failed".to_string();
+                log.http_status = 502;
+                log.error_code = Some("stream_error".to_string());
+                log.error_message = Some(error.to_string());
+                log.first_token_ms = None;
+                log.metadata_json = self.metadata(StreamMetadataUpdate {
+                    empty: Some(false),
+                    completed: Some(false),
+                    final_usage_seen: Some(false),
+                });
+            }
+        }
+        self.inserted =
+            insert_stream_log_with_id(&self.storage, &self.identity_id, &self.log_id, log)
+                .await
+                .is_ok();
+    }
+
+    async fn record_stream_end(&mut self) {
+        let latency_ms = self.started_at.elapsed().as_millis() as i64;
+        if !self.inserted {
+            self.record_empty_stream(latency_ms).await;
+            return;
+        }
+        if self.failed {
+            return;
+        }
+
+        let snapshot = self.stats_snapshot();
+        let completed = snapshot.completed || self.stats.is_none();
+        let metadata_json = self.metadata(StreamMetadataUpdate {
+            empty: Some(false),
+            completed: Some(completed),
+            final_usage_seen: Some(snapshot.final_usage_seen),
+        });
+        let update = StreamRequestLogUpdate {
+            status: "success".to_string(),
+            http_status: 200,
+            error_code: None,
+            error_message: None,
+            input_tokens: snapshot.input_tokens,
+            output_tokens: snapshot.output_tokens,
+            reasoning_tokens: None,
+            cache_read_tokens: snapshot.cache_read_tokens,
+            cache_write_tokens: snapshot.cache_write_tokens,
+            latency_ms,
+            tool_call_count: Some(snapshot.tool_call_count),
+            upstream_request_id: self.upstream_request_id.clone(),
+            metadata_json,
+        };
+        update_stream_log(&self.storage, &self.identity_id, &self.log_id, update).await;
+    }
+
+    async fn record_final_usage(&mut self) {
+        let snapshot = self.stats_snapshot();
+        if self.usage_recorded || !snapshot.final_usage_seen {
+            return;
+        }
+
+        self.usage_recorded = true;
+        let update = StreamRequestLogUpdate {
+            status: "success".to_string(),
+            http_status: 200,
+            error_code: None,
+            error_message: None,
+            input_tokens: snapshot.input_tokens,
+            output_tokens: snapshot.output_tokens,
+            reasoning_tokens: None,
+            cache_read_tokens: snapshot.cache_read_tokens,
+            cache_write_tokens: snapshot.cache_write_tokens,
+            latency_ms: self.started_at.elapsed().as_millis() as i64,
+            tool_call_count: Some(snapshot.tool_call_count),
+            upstream_request_id: self.upstream_request_id.clone(),
+            metadata_json: self.metadata(StreamMetadataUpdate {
+                empty: Some(false),
+                completed: Some(snapshot.completed),
+                final_usage_seen: Some(true),
+            }),
+        };
+        update_stream_log(&self.storage, &self.identity_id, &self.log_id, update).await;
+    }
+
+    async fn record_empty_stream(&mut self, latency_ms: i64) {
+        let Some(mut log) = self.log.take() else {
+            return;
+        };
+        log.status = "failed".to_string();
+        log.http_status = 502;
+        log.latency_ms = latency_ms;
+        log.error_code = Some("empty_stream".to_string());
+        log.error_message = Some("upstream stream finished without chunks".to_string());
+        log.metadata_json = self.metadata(StreamMetadataUpdate {
+            empty: Some(true),
+            completed: Some(false),
+            final_usage_seen: Some(false),
+        });
+        if insert_stream_log_with_id(&self.storage, &self.identity_id, &self.log_id, log)
+            .await
+            .is_ok()
+        {
+            self.inserted = true;
+            self.failed = true;
+        }
+    }
+
+    async fn record_stream_error(&mut self, message: String) {
+        self.failed = true;
+        let latency_ms = self.started_at.elapsed().as_millis() as i64;
+        let snapshot = self.stats_snapshot();
+        let metadata_json = self.metadata(StreamMetadataUpdate {
+            empty: Some(false),
+            completed: Some(false),
+            final_usage_seen: Some(snapshot.final_usage_seen),
+        });
+        let update = StreamRequestLogUpdate {
+            status: "failed".to_string(),
+            http_status: 502,
+            error_code: Some("stream_error".to_string()),
+            error_message: Some(message),
+            input_tokens: snapshot.input_tokens,
+            output_tokens: snapshot.output_tokens,
+            reasoning_tokens: None,
+            cache_read_tokens: snapshot.cache_read_tokens,
+            cache_write_tokens: snapshot.cache_write_tokens,
+            latency_ms,
+            tool_call_count: Some(snapshot.tool_call_count),
+            upstream_request_id: self.upstream_request_id.clone(),
+            metadata_json,
+        };
+        update_stream_log(&self.storage, &self.identity_id, &self.log_id, update).await;
+    }
+
+    fn stats_snapshot(&self) -> StreamStatsSnapshot {
+        self.stats
+            .as_ref()
+            .and_then(|stats| stats.lock().ok().map(|stats| stats.clone()))
+            .unwrap_or_default()
+    }
+
+    fn metadata(&self, update: StreamMetadataUpdate) -> Option<String> {
+        update_stream_metadata(self.base_metadata_json.as_deref(), &update)
+            .ok()
+            .flatten()
+    }
+}
