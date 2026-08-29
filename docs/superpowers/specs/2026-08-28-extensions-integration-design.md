@@ -31,7 +31,7 @@
 | `GET /api/extensions/mcp` | MCP 目录 |
 | `GET /api/extensions/{name}/versions` | 正式版本列表 |
 | `GET /api/extensions/{name}/versions/{tag}/readme` | 固定版本 README |
-| `GET /api/extensions/{name}/versions/{tag}/install` | Rule/Skill 固定版本安装文件包 |
+| `GET /api/extensions/{name}/versions/{tag}/install` | 固定版本安装文件包 |
 
 新增稳定错误码：目录尚无成功快照时的 `extension_catalog_unavailable`、仓库不存在的 `extension_not_found`、版本不存在的 `extension_version_not_found`。Gitea 的 URL、状态码和响应内容不得进入错误响应或日志字段。
 
