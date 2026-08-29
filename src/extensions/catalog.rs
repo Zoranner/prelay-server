@@ -9,7 +9,8 @@ use std::{
 
 use anyhow::Result;
 use prelay_protocol::{
-    ExtensionFile, ExtensionInstallBundle, ExtensionKind, ExtensionSummary, ExtensionVersion,
+    ExtensionFile, ExtensionInstallBundle, ExtensionKind, ExtensionMcpManifest, ExtensionSummary,
+    ExtensionVersion,
 };
 use tokio::sync::{Mutex, RwLock};
 
@@ -24,6 +25,7 @@ use super::{
 const README_PATH: &str = "README.md";
 const RULES_PATH: &str = "AGENTS.md";
 const SKILLS_PREFIX: &str = "skills/";
+const MCP_MANIFEST_PATH: &str = "server.json";
 
 #[derive(Clone)]
 pub struct ExtensionCatalog {
@@ -141,10 +143,15 @@ impl ExtensionCatalog {
                 .into_iter()
                 .filter(|path| path.starts_with(SKILLS_PREFIX) && valid_extension_file_path(path))
                 .collect(),
-            ExtensionKind::Plugin | ExtensionKind::Mcp => {
-                return Err(CatalogError::InstallUnsupported);
+            ExtensionKind::Plugin => paths
+                .into_iter()
+                .filter(|path| valid_extension_file_path(path))
+                .collect(),
+            ExtensionKind::Mcp if paths.iter().any(|path| path == MCP_MANIFEST_PATH) => {
+                vec![MCP_MANIFEST_PATH.to_string()]
             }
             ExtensionKind::Rule => return Err(CatalogError::VersionNotFound),
+            ExtensionKind::Mcp => return Err(CatalogError::VersionNotFound),
         };
         if install_paths.is_empty() {
             return Err(CatalogError::VersionNotFound);
@@ -156,6 +163,10 @@ impl ExtensionCatalog {
                 content: self.file(repository, &version.commit_sha, &path).await?,
                 path,
             });
+        }
+        if entry.kind == ExtensionKind::Mcp {
+            serde_json::from_str::<ExtensionMcpManifest>(&files[0].content)
+                .map_err(|_| CatalogError::VersionNotFound)?;
         }
         Ok(ExtensionInstallBundle {
             name: repository.to_string(),

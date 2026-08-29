@@ -150,3 +150,85 @@ async fn builds_a_rule_install_bundle_from_the_published_commit() {
     assert_eq!(bundle.files[0].path, "AGENTS.md");
     assert_eq!(bundle.files[0].content, "# Managed rules");
 }
+
+#[tokio::test]
+async fn builds_an_mcp_install_bundle_from_a_valid_manifest() {
+    use axum::{routing::get, Json, Router};
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+
+    let commit_sha = "b".repeat(40);
+    let app = Router::new()
+        .route(
+            "/api/v1/orgs/agents/repos",
+            get(|| async { Json(serde_json::json!([{ "name": "research-mcp" }])) }),
+        )
+        .route(
+            "/api/v1/repos/agents/research-mcp/tags",
+            get({
+                let commit_sha = commit_sha.clone();
+                move || {
+                    let commit_sha = commit_sha.clone();
+                    async move {
+                        Json(serde_json::json!([{
+                            "name": "v1.0.0",
+                            "id": commit_sha,
+                            "commit": {
+                                "sha": "b".repeat(40),
+                                "created": "2026-08-28T08:30:00Z"
+                            }
+                        }]))
+                    }
+                }
+            }),
+        )
+        .route(
+            "/api/v1/repos/agents/research-mcp/git/trees/:commit_sha",
+            get(|| async {
+                Json(serde_json::json!({
+                    "tree": [{ "path": "server.json", "type": "blob" }]
+                }))
+            }),
+        )
+        .route(
+            "/api/v1/repos/agents/research-mcp/contents/server.json",
+            get(|| async {
+                Json(serde_json::json!({
+                    "content": BASE64.encode(r#"{
+                      "name": "research",
+                      "transport": {
+                        "type": "stdio",
+                        "command": ["prelay-research", "--stdio"],
+                        "cwd": null,
+                        "environment": {},
+                        "enabled": true,
+                        "timeoutMs": null
+                      }
+                    }"#),
+                    "encoding": "base64"
+                }))
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind Gitea test server");
+    let address = listener.local_addr().expect("read test server address");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve Gitea test server");
+    });
+    let catalog = ExtensionCatalog::new(
+        reqwest::Client::new(),
+        ExtensionCatalogConfig::new(format!("http://{address}"), "agents", None, 300)
+            .expect("valid Gitea test configuration"),
+    );
+
+    let bundle = catalog
+        .install_bundle("research-mcp", "v1.0.0")
+        .await
+        .expect("build MCP install bundle");
+
+    assert_eq!(bundle.kind, ExtensionKind::Mcp);
+    assert_eq!(bundle.files.len(), 1);
+    assert_eq!(bundle.files[0].path, "server.json");
+}
