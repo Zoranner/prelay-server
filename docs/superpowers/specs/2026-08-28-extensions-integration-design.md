@@ -8,7 +8,7 @@
 
 - 扩展目录属于 `/api/extensions/*`，使用设备凭据认证；不进入 `/v1`。
 - 保持规则、Skill、插件、MCP 四个分类目录接口；不提供聚合目录接口。
-- Rule 与 Skill 返回受限的固定版本安装文件包；插件和 MCP 仅支持目录、版本和 README 查询。
+- 所有扩展类型都返回受限的固定版本安装文件包；MCP 在下发前校验 `server.json` 共享清单。
 - 服务端仅接受配置的 Gitea 地址、组织和只读令牌；客户端不能提供上游 URL、仓库路径或令牌。
 - 不创建数据库表，不保存扩展目录快照，不提供独立扩展服务生命周期。
 
@@ -33,7 +33,7 @@
 | `GET /api/extensions/{name}/versions/{tag}/readme` | 固定版本 README |
 | `GET /api/extensions/{name}/versions/{tag}/install` | Rule/Skill 固定版本安装文件包 |
 
-新增稳定错误码：目录尚无成功快照时的 `extension_catalog_unavailable`、仓库不存在的 `extension_not_found`、版本不存在的 `extension_version_not_found`、不可安装类型的 `extension_install_unsupported`。Gitea 的 URL、状态码和响应内容不得进入错误响应或日志字段。
+新增稳定错误码：目录尚无成功快照时的 `extension_catalog_unavailable`、仓库不存在的 `extension_not_found`、版本不存在的 `extension_version_not_found`。Gitea 的 URL、状态码和响应内容不得进入错误响应或日志字段。
 
 ## 服务端结构
 

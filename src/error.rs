@@ -39,9 +39,6 @@ impl IntoResponse for AppError {
                     }
                     ProtocolErrorCode::ExtensionNotFound
                     | ProtocolErrorCode::ExtensionVersionNotFound => StatusCode::NOT_FOUND,
-                    ProtocolErrorCode::ExtensionInstallUnsupported => {
-                        StatusCode::UNPROCESSABLE_ENTITY
-                    }
                     ProtocolErrorCode::InvalidCredential => StatusCode::UNAUTHORIZED,
                     ProtocolErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
                     ProtocolErrorCode::IdentityAlreadyRegistered

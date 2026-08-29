@@ -42,7 +42,6 @@ pub enum CatalogError {
     Unavailable,
     ExtensionNotFound,
     VersionNotFound,
-    InstallUnsupported,
 }
 
 #[derive(Clone)]

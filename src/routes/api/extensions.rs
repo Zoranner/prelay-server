@@ -108,10 +108,6 @@ fn catalog_error(error: CatalogError) -> AppError {
             ProtocolErrorCode::ExtensionVersionNotFound,
             "扩展版本不存在",
         ),
-        CatalogError::InstallUnsupported => (
-            ProtocolErrorCode::ExtensionInstallUnsupported,
-            "当前扩展类型不支持安装",
-        ),
     };
     AppError::Protocol {
         code,
