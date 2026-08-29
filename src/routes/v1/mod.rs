@@ -2,7 +2,7 @@ use axum::{extract::DefaultBodyLimit, middleware, Router};
 
 use crate::AppState;
 
-const MAX_PROTOCOL_REQUEST_BODY_BYTES: usize = 32 * 1024 * 1024;
+const MAX_PROTOCOL_REQUEST_BODY_BYTES: usize = 128 * 1024 * 1024;
 
 pub mod auth;
 mod chat;
@@ -42,8 +42,8 @@ mod tests {
     use super::MAX_PROTOCOL_REQUEST_BODY_BYTES;
 
     #[tokio::test]
-    async fn protocol_body_limit_accepts_image_sized_json_requests() {
-        let payload = format!("{{\"input\":\"{}\"}}", "a".repeat(3 * 1024 * 1024));
+    async fn protocol_body_limit_accepts_screenshot_session_payloads() {
+        let payload = format!("{{\"input\":\"{}\"}}", "a".repeat(33 * 1024 * 1024));
         let app = Router::new()
             .route(
                 "/request",
