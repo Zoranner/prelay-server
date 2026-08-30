@@ -105,6 +105,11 @@ pub(crate) async fn register(
     display_name: Option<&str>,
 ) -> Result<CreateIdentityResponse, StorageError> {
     validate_device_credential(credential)?;
+    let display_name = display_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default()
+        .to_string();
     let identity_id = Uuid::new_v4().to_string();
     let credential_hash = hash_credential(credential);
     let now = Utc::now().to_rfc3339();
@@ -113,11 +118,7 @@ pub(crate) async fn register(
         machine_id: Set(machine_id.to_string()),
         account_sid: Set(account_sid.to_string()),
         credential_hash: Set(credential_hash.clone()),
-        display_name: Set(display_name
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or_default()
-            .to_string()),
+        display_name: Set(display_name.clone()),
         created_at: Set(now.clone()),
         last_active_at: Set(now),
     };
@@ -141,7 +142,20 @@ pub(crate) async fn register(
                         created: false,
                     })
                 }
-                Some(_) => Err(StorageError::IdentityAlreadyRegistered),
+                Some(existing) => {
+                    let identity_id = existing.id.clone();
+                    let mut active = existing.into_active_model();
+                    active.credential_hash = Set(credential_hash);
+                    active.last_active_at = Set(Utc::now().to_rfc3339());
+                    if !display_name.is_empty() {
+                        active.display_name = Set(display_name);
+                    }
+                    active.update(db).await?;
+                    Ok(CreateIdentityResponse {
+                        identity_id,
+                        created: false,
+                    })
+                }
                 None => Err(StorageError::Database(error)),
             }
         }

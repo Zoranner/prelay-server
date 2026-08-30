@@ -56,7 +56,7 @@ async fn identity_credentials_are_hashed_and_provider_keys_are_encrypted() {
 }
 
 #[tokio::test]
-async fn stable_identity_key_retries_only_with_the_same_credential() {
+async fn stable_identity_key_rebinds_new_credential_without_losing_identity_data() {
     let storage = support::test_storage().await;
     let credential_a = generate_credential();
     let credential_b = generate_credential();
@@ -73,12 +73,35 @@ async fn stable_identity_key_retries_only_with_the_same_credential() {
     assert!(created.created);
     assert!(!retried.created);
     assert_eq!(created.identity_id, retried.identity_id);
-    let error = storage
+    let provider_id = storage
+        .create_provider(
+            &created.identity_id,
+            provider_input("Existing provider", "test-provider-key"),
+        )
+        .await
+        .expect("create provider before credential rebind");
+    let rebound = storage
         .register_identity("machine-a", "S-1-5-21-100", &credential_b)
         .await
-        .expect_err("reject duplicate stable identity key");
-    assert!(matches!(error, StorageError::IdentityAlreadyRegistered));
-    assert_eq!(error.code(), ProtocolErrorCode::IdentityAlreadyRegistered);
+        .expect("rebind credential for existing stable identity key");
+    assert!(!rebound.created);
+    assert_eq!(rebound.identity_id, created.identity_id);
+    assert!(storage
+        .authenticate_identity(&credential_a)
+        .await
+        .expect("check old credential")
+        .is_none());
+    assert!(storage
+        .authenticate_identity(&credential_b)
+        .await
+        .expect("authenticate rebound credential")
+        .is_some());
+    let providers = storage
+        .list_providers(&created.identity_id)
+        .await
+        .expect("list providers after credential rebind");
+    assert_eq!(providers.len(), 1);
+    assert_eq!(providers[0].id, provider_id);
 }
 
 #[tokio::test]
