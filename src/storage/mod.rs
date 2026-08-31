@@ -2,6 +2,7 @@ mod access;
 mod activities;
 mod crypto;
 mod identities;
+mod memories;
 mod sessions;
 mod stats;
 
@@ -44,6 +45,7 @@ pub enum StorageError {
     ProviderNotFound,
     EndpointNotFound,
     ActivityNotFound,
+    MemoryNotFound,
     ValidationFailed(String),
     InvalidTimestamp(String),
     InvalidMasterKey(String),
@@ -60,7 +62,8 @@ impl StorageError {
             Self::IdentityNotFound
             | Self::ProviderNotFound
             | Self::EndpointNotFound
-            | Self::ActivityNotFound => ProtocolErrorCode::NotFound,
+            | Self::ActivityNotFound
+            | Self::MemoryNotFound => ProtocolErrorCode::NotFound,
             Self::InvalidMasterKey(_) | Self::ValidationFailed(_) => {
                 ProtocolErrorCode::ValidationFailed
             }
@@ -83,6 +86,7 @@ impl fmt::Display for StorageError {
             Self::ProviderNotFound => formatter.write_str("provider does not exist for identity"),
             Self::EndpointNotFound => formatter.write_str("endpoint does not exist for identity"),
             Self::ActivityNotFound => formatter.write_str("activity does not exist for identity"),
+            Self::MemoryNotFound => formatter.write_str("memory does not exist"),
             Self::ValidationFailed(message) => formatter.write_str(message),
             Self::InvalidTimestamp(message) => {
                 write!(formatter, "invalid stored timestamp: {message}")

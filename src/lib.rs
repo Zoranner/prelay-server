@@ -6,6 +6,7 @@ pub mod entity;
 pub mod error;
 pub mod extensions;
 pub mod identity;
+pub mod memory;
 pub mod models;
 pub mod observability;
 pub mod providers;
