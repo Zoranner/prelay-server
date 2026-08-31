@@ -2,7 +2,7 @@ use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statemen
 
 use prelay_server::schema::initialize;
 
-const IDENTITY_TABLES: [&str; 9] = [
+const TABLES: [&str; 12] = [
     "identities",
     "identity_provider_configs",
     "identity_provider_models",
@@ -10,8 +10,11 @@ const IDENTITY_TABLES: [&str; 9] = [
     "identity_endpoint_models",
     "identity_endpoint_model_routes",
     "identity_response_sessions",
-    "identity_request_logs",
+    "identity_activities",
     "identity_model_aliases",
+    "activity_contents",
+    "memories",
+    "memory_sources",
 ];
 const COUNT_COLUMN: &str = "result_count";
 
@@ -57,8 +60,16 @@ async fn column_type(db: &DatabaseConnection, table: &str, column: &str) -> Stri
     row.try_get("", column_name).unwrap()
 }
 
+async fn assert_string_column(db: &DatabaseConnection, table: &str, column: &str) {
+    let column_type = column_type(db, table, column).await.to_ascii_uppercase();
+    assert!(
+        matches!(column_type.as_str(), "TEXT" | "VARCHAR"),
+        "{table}.{column} must be stored as text, got {column_type}"
+    );
+}
+
 async fn assert_complete_schema(db: &DatabaseConnection) {
-    for table in IDENTITY_TABLES {
+    for table in TABLES {
         assert!(table_exists(db, table).await, "missing table: {table}");
     }
 
@@ -103,7 +114,7 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
             _ => unreachable!("only SQLite and PostgreSQL are supported"),
         };
         assert!(
-            column_type(db, "identity_request_logs", column)
+            column_type(db, "identity_activities", column)
                 .await
                 .eq_ignore_ascii_case(expected_type),
             "{column} must map to an i64-compatible {expected_type}"
@@ -115,7 +126,7 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
         _ => unreachable!("only SQLite and PostgreSQL are supported"),
     };
     assert_eq!(
-        column_type(db, "identity_request_logs", "is_streaming")
+        column_type(db, "identity_activities", "is_streaming")
             .await
             .to_ascii_uppercase(),
         "BOOLEAN"
@@ -133,16 +144,98 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
         "BOOLEAN"
     );
 
+    for column in [
+        "activity_id",
+        "input_text",
+        "output_text",
+        "content_hash",
+        "status",
+        "next_attempt_at",
+        "lease_owner",
+        "lease_expires_at",
+        "last_error",
+        "completed_at",
+    ] {
+        assert_string_column(db, "activity_contents", column).await;
+    }
+    assert_eq!(
+        column_type(db, "activity_contents", "is_truncated")
+            .await
+            .to_ascii_uppercase(),
+        "BOOLEAN"
+    );
+    assert_eq!(
+        column_type(db, "activity_contents", "attempts")
+            .await
+            .to_ascii_uppercase(),
+        "INTEGER"
+    );
+    for column in [
+        "normalized_key",
+        "conflict_key",
+        "kind",
+        "status",
+        "content",
+        "created_at",
+        "updated_at",
+    ] {
+        assert_string_column(db, "memories", column).await;
+    }
+    let confidence_type = column_type(db, "memories", "confidence")
+        .await
+        .to_ascii_uppercase();
+    assert!(
+        matches!(confidence_type.as_str(), "DOUBLE" | "REAL"),
+        "memories.confidence must be stored as a floating-point value, got {confidence_type}"
+    );
+    for column in [
+        "memory_id",
+        "identity_id",
+        "evidence",
+        "evidence_hash",
+        "observed_at",
+    ] {
+        assert_string_column(db, "memory_sources", column).await;
+    }
+
+    let activity_content_without_activity = db
+        .execute_unprepared(
+            "INSERT INTO activity_contents (id, activity_id, input_text, output_text, content_hash, status, is_truncated, attempts, created_at, updated_at) \
+             VALUES ('content-1', 'missing', '', '', 'hash', 'pending', 0, 0, '2026-08-31T00:00:00Z', '2026-08-31T00:00:00Z')",
+        )
+        .await;
+    assert!(activity_content_without_activity.is_err());
+
+    db.execute_unprepared(
+        "INSERT INTO memories (id, normalized_key, kind, status, content, confidence, created_at, updated_at) \
+         VALUES ('memory-1', 'preference:example', 'preference', 'active', 'example', 0.9, '2026-08-31T00:00:00Z', '2026-08-31T00:00:00Z')",
+    )
+    .await
+    .unwrap();
+    db.execute_unprepared(
+        "INSERT INTO memory_sources (id, memory_id, identity_id, evidence, evidence_hash, observed_at, created_at) \
+         VALUES ('source-1', 'memory-1', 'deleted-identity', 'evidence', 'evidence-hash', '2026-08-31T00:00:00Z', '2026-08-31T00:00:00Z')",
+    )
+    .await
+    .unwrap();
+    let duplicate_memory = db
+        .execute_unprepared(
+            "INSERT INTO memories (id, normalized_key, kind, status, content, confidence, created_at, updated_at) \
+             VALUES ('memory-2', 'preference:example', 'preference', 'active', 'other', 0.8, '2026-08-31T00:00:00Z', '2026-08-31T00:00:00Z')",
+        )
+        .await;
+    assert!(duplicate_memory.is_err());
+
     let index_sql = match db.get_database_backend() {
         DbBackend::Sqlite => {
-            "SELECT COUNT(*) AS result_count FROM pragma_index_list('identity_request_logs') \
-             WHERE name = 'idx_identity_request_logs_identity_created_at'"
+            "SELECT COUNT(*) AS result_count FROM pragma_index_list('identity_activities') \
+             WHERE name = 'idx_identity_activities_identity_created_at'"
                 .to_owned()
         }
         DbBackend::Postgres => "SELECT COUNT(*) AS result_count FROM pg_indexes \
              WHERE schemaname = current_schema() \
-             AND tablename = 'identity_request_logs' \
-             AND indexname = 'idx_identity_request_logs_identity_created_at'"
+             AND tablename = 'identity_activities' \
+             AND indexname = 'idx_identity_activities_identity_created_at'"
             .to_owned(),
         _ => unreachable!("only SQLite and PostgreSQL are supported"),
     };

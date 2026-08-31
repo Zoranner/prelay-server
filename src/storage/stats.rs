@@ -6,7 +6,7 @@ use sea_orm::{
 };
 
 use crate::{
-    entity::identity::request_logs as identity_request_logs,
+    entity::identity::activities as identity_activities,
     stats::{
         all_timeline_bounds, timeline_buckets, ModelStatsSummary, ProviderStatsSummary,
         StatsOverview, StatsRange, TimeBounds, TokenUsageTimelinePoint,
@@ -55,32 +55,32 @@ async fn overview(
 ) -> Result<StatsOverview, StorageError> {
     let row = aggregate_query(identity_id, range.bounds(Utc::now()))
         .select_only()
-        .column_as(identity_request_logs::Column::Id.count(), "total_requests")
+        .column_as(identity_activities::Column::Id.count(), "total_requests")
         .column_as(success_count_expr(), "successful_requests")
         .column_as(failed_count_expr(), "failed_requests")
         .column_as(
-            integer_sum(identity_request_logs::Column::InputTokens.sum()),
+            integer_sum(identity_activities::Column::InputTokens.sum()),
             "input_tokens",
         )
         .column_as(total_input_tokens_expr(), "total_input_tokens")
         .column_as(
-            integer_sum(identity_request_logs::Column::OutputTokens.sum()),
+            integer_sum(identity_activities::Column::OutputTokens.sum()),
             "output_tokens",
         )
         .column_as(
-            integer_sum(identity_request_logs::Column::CacheReadTokens.sum()),
+            integer_sum(identity_activities::Column::CacheReadTokens.sum()),
             "cache_read_tokens",
         )
         .column_as(
-            integer_sum(identity_request_logs::Column::CacheWriteTokens.sum()),
+            integer_sum(identity_activities::Column::CacheWriteTokens.sum()),
             "cache_write_tokens",
         )
         .column_as(
-            integer_sum(identity_request_logs::Column::LatencyMs.sum()),
+            integer_sum(identity_activities::Column::LatencyMs.sum()),
             "latency_total",
         )
         .column_as(
-            identity_request_logs::Column::LatencyMs.count(),
+            identity_activities::Column::LatencyMs.count(),
             "latency_count",
         )
         .into_model::<OverviewAggregate>()
@@ -107,31 +107,31 @@ async fn list_model_stats(
 ) -> Result<Vec<ModelStatsSummary>, StorageError> {
     let rows = aggregate_query(identity_id, range.bounds(Utc::now()))
         .select_only()
-        .column(identity_request_logs::Column::ModelRequested)
-        .column_as(identity_request_logs::Column::Id.count(), "total_requests")
+        .column(identity_activities::Column::ModelRequested)
+        .column_as(identity_activities::Column::Id.count(), "total_requests")
         .column_as(success_count_expr(), "successful_requests")
         .column_as(failed_count_expr(), "failed_requests")
         .column_as(
-            integer_sum(identity_request_logs::Column::InputTokens.sum()),
+            integer_sum(identity_activities::Column::InputTokens.sum()),
             "input_tokens",
         )
         .column_as(
-            integer_sum(identity_request_logs::Column::OutputTokens.sum()),
+            integer_sum(identity_activities::Column::OutputTokens.sum()),
             "output_tokens",
         )
         .column_as(
-            identity_request_logs::Column::EstimatedCost.sum(),
+            identity_activities::Column::EstimatedCost.sum(),
             "estimated_cost",
         )
         .column_as(
-            integer_sum(identity_request_logs::Column::LatencyMs.sum()),
+            integer_sum(identity_activities::Column::LatencyMs.sum()),
             "latency_total",
         )
         .column_as(
-            identity_request_logs::Column::LatencyMs.count(),
+            identity_activities::Column::LatencyMs.count(),
             "latency_count",
         )
-        .group_by(identity_request_logs::Column::ModelRequested)
+        .group_by(identity_activities::Column::ModelRequested)
         .into_model::<ModelAggregate>()
         .all(db)
         .await?;
@@ -164,41 +164,41 @@ async fn list_provider_stats(
 ) -> Result<Vec<ProviderStatsSummary>, StorageError> {
     let rows = aggregate_query(identity_id, range.bounds(Utc::now()))
         .select_only()
-        .column(identity_request_logs::Column::ProviderId)
-        .column(identity_request_logs::Column::ProviderName)
-        .column_as(identity_request_logs::Column::Id.count(), "total_requests")
+        .column(identity_activities::Column::ProviderId)
+        .column(identity_activities::Column::ProviderName)
+        .column_as(identity_activities::Column::Id.count(), "total_requests")
         .column_as(success_count_expr(), "successful_requests")
         .column_as(failed_count_expr(), "failed_requests")
         .column_as(
-            integer_sum(identity_request_logs::Column::InputTokens.sum()),
+            integer_sum(identity_activities::Column::InputTokens.sum()),
             "input_tokens",
         )
         .column_as(
-            integer_sum(identity_request_logs::Column::OutputTokens.sum()),
+            integer_sum(identity_activities::Column::OutputTokens.sum()),
             "output_tokens",
         )
         .column_as(
-            identity_request_logs::Column::EstimatedCost.sum(),
+            identity_activities::Column::EstimatedCost.sum(),
             "estimated_cost",
         )
         .column_as(
-            integer_sum(identity_request_logs::Column::LatencyMs.sum()),
+            integer_sum(identity_activities::Column::LatencyMs.sum()),
             "latency_total",
         )
         .column_as(
-            identity_request_logs::Column::LatencyMs.count(),
+            identity_activities::Column::LatencyMs.count(),
             "latency_count",
         )
         .column_as(
-            integer_sum(identity_request_logs::Column::FirstTokenMs.sum()),
+            integer_sum(identity_activities::Column::FirstTokenMs.sum()),
             "first_token_total",
         )
         .column_as(
-            identity_request_logs::Column::FirstTokenMs.count(),
+            identity_activities::Column::FirstTokenMs.count(),
             "first_token_count",
         )
-        .group_by(identity_request_logs::Column::ProviderId)
-        .group_by(identity_request_logs::Column::ProviderName)
+        .group_by(identity_activities::Column::ProviderId)
+        .group_by(identity_activities::Column::ProviderName)
         .into_model::<ProviderAggregate>()
         .all(db)
         .await?;
@@ -265,10 +265,10 @@ async fn earliest_log_time(
         created_at: Option<String>,
     }
 
-    let earliest = identity_request_logs::Entity::find()
-        .filter(identity_request_logs::Column::IdentityId.eq(identity_id))
+    let earliest = identity_activities::Entity::find()
+        .filter(identity_activities::Column::IdentityId.eq(identity_id))
         .select_only()
-        .column_as(identity_request_logs::Column::CreatedAt.min(), "created_at")
+        .column_as(identity_activities::Column::CreatedAt.min(), "created_at")
         .into_model::<Earliest>()
         .one(db)
         .await?
@@ -290,20 +290,20 @@ async fn token_totals(
     Ok(aggregate_query(identity_id, Some(bounds))
         .select_only()
         .column_as(
-            integer_sum(identity_request_logs::Column::InputTokens.sum()),
+            integer_sum(identity_activities::Column::InputTokens.sum()),
             "input_tokens",
         )
         .column_as(total_input_tokens_expr(), "total_input_tokens")
         .column_as(
-            integer_sum(identity_request_logs::Column::OutputTokens.sum()),
+            integer_sum(identity_activities::Column::OutputTokens.sum()),
             "output_tokens",
         )
         .column_as(
-            integer_sum(identity_request_logs::Column::CacheReadTokens.sum()),
+            integer_sum(identity_activities::Column::CacheReadTokens.sum()),
             "cache_read_tokens",
         )
         .column_as(
-            integer_sum(identity_request_logs::Column::CacheWriteTokens.sum()),
+            integer_sum(identity_activities::Column::CacheWriteTokens.sum()),
             "cache_write_tokens",
         )
         .into_model::<TokenAggregate>()
@@ -315,20 +315,20 @@ async fn token_totals(
 fn aggregate_query(
     identity_id: &str,
     bounds: Option<TimeBounds>,
-) -> Select<identity_request_logs::Entity> {
-    let mut query = identity_request_logs::Entity::find()
-        .filter(identity_request_logs::Column::IdentityId.eq(identity_id));
+) -> Select<identity_activities::Entity> {
+    let mut query = identity_activities::Entity::find()
+        .filter(identity_activities::Column::IdentityId.eq(identity_id));
     if let Some(bounds) = bounds {
         query = query
-            .filter(identity_request_logs::Column::CreatedAt.gte(bounds.start.to_rfc3339()))
-            .filter(identity_request_logs::Column::CreatedAt.lt(bounds.end.to_rfc3339()));
+            .filter(identity_activities::Column::CreatedAt.gte(bounds.start.to_rfc3339()))
+            .filter(identity_activities::Column::CreatedAt.lt(bounds.end.to_rfc3339()));
     }
     query
 }
 
 fn success_count_expr() -> Expr {
     let case: Expr = Expr::case(
-        Expr::col(identity_request_logs::Column::Status).eq("success"),
+        Expr::col(identity_activities::Column::Status).eq("success"),
         1,
     )
     .finally(0)
@@ -338,7 +338,7 @@ fn success_count_expr() -> Expr {
 
 fn failed_count_expr() -> Expr {
     let case: Expr = Expr::case(
-        Expr::col(identity_request_logs::Column::Status).ne("success"),
+        Expr::col(identity_activities::Column::Status).ne("success"),
         1,
     )
     .finally(0)
@@ -351,10 +351,10 @@ fn integer_sum(expr: Expr) -> Expr {
 }
 
 fn total_input_tokens_expr() -> Expr {
-    let input = Expr::col(identity_request_logs::Column::InputTokens).if_null(0);
-    let cache_read = Expr::col(identity_request_logs::Column::CacheReadTokens).if_null(0);
-    let cache_write = Expr::col(identity_request_logs::Column::CacheWriteTokens).if_null(0);
-    let use_reported_input = Expr::col(identity_request_logs::Column::ProtocolUpstream)
+    let input = Expr::col(identity_activities::Column::InputTokens).if_null(0);
+    let cache_read = Expr::col(identity_activities::Column::CacheReadTokens).if_null(0);
+    let cache_write = Expr::col(identity_activities::Column::CacheWriteTokens).if_null(0);
+    let use_reported_input = Expr::col(identity_activities::Column::ProtocolUpstream)
         .is_in(["responses", "chat_completions"])
         .and(input.clone().gte(cache_read.clone()));
     let normalized: Expr = Expr::case(use_reported_input, input.clone())

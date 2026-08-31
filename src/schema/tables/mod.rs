@@ -1,6 +1,9 @@
+pub(super) mod activities;
+pub(super) mod activity_contents;
 pub(super) mod endpoints;
 pub(super) mod identity;
+pub(super) mod memories;
+pub(super) mod memory_sources;
 pub(super) mod model_aliases;
 pub(super) mod providers;
-pub(super) mod request_logs;
 pub(super) mod sessions;

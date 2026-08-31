@@ -2,7 +2,7 @@ use sea_orm::Database;
 
 use crate::{
     schema::initialize,
-    stats::{RequestLogInsert, StatsRange},
+    stats::{ActivityInsert, StatsRange},
     storage::{MasterKey, Storage},
 };
 
@@ -12,7 +12,7 @@ async fn overview_is_scoped_to_one_identity() {
     let identity_a = register_identity(&storage, "stats-a").await;
     let identity_b = register_identity(&storage, "stats-b").await;
     storage
-        .insert_request_log_with_id(
+        .insert_activity_with_id(
             &identity_a,
             "stats-a-success".to_string(),
             test_log(Some(3), Some(4)),
@@ -23,7 +23,7 @@ async fn overview_is_scoped_to_one_identity() {
     failed.status = "failed".to_string();
     failed.http_status = 502;
     storage
-        .insert_request_log_with_id(&identity_b, "stats-b-failed".to_string(), failed)
+        .insert_activity_with_id(&identity_b, "stats-b-failed".to_string(), failed)
         .await
         .expect("insert identity B log");
 
@@ -44,7 +44,7 @@ async fn today_timeline_fills_empty_beijing_hour_buckets() {
     let storage = test_storage().await;
     let identity = register_identity(&storage, "timeline").await;
     storage
-        .insert_request_log_with_id(
+        .insert_activity_with_id(
             &identity,
             "timeline-log".to_string(),
             test_log(Some(3), Some(4)),
@@ -94,8 +94,8 @@ async fn register_identity(storage: &Storage, suffix: &str) -> String {
         .identity_id
 }
 
-fn test_log(input_tokens: Option<i64>, output_tokens: Option<i64>) -> RequestLogInsert {
-    RequestLogInsert {
+fn test_log(input_tokens: Option<i64>, output_tokens: Option<i64>) -> ActivityInsert {
+    ActivityInsert {
         protocol_in: "responses".to_string(),
         protocol_out: "responses".to_string(),
         protocol_upstream: "chat_completions".to_string(),

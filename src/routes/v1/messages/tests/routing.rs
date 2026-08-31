@@ -116,11 +116,11 @@ async fn forwards_anthropic_messages_request_to_responses_upstream_for_openai_pr
 
     let log = state
         .storage
-        .list_request_logs(&auth.access.0.identity_id, 1)
+        .list_activities(&auth.access.0.identity_id, 1)
         .await
-        .expect("load request log")
+        .expect("load activity")
         .pop()
-        .expect("request log");
+        .expect("activity");
     assert_eq!(log.protocol_upstream.as_deref(), Some("responses"));
     assert_eq!(log.input_tokens, Some(3));
     assert_eq!(log.output_tokens, Some(4));

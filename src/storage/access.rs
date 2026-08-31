@@ -6,8 +6,8 @@ use sea_orm::{
 };
 
 use crate::entity::identity::{
-    endpoint_configs, endpoint_model_routes, endpoint_models, provider_configs, provider_models,
-    request_logs,
+    activities, endpoint_configs, endpoint_model_routes, endpoint_models, provider_configs,
+    provider_models,
 };
 
 use super::{identities, ProtocolAccess, ProtocolModel, Storage, StorageError};
@@ -106,11 +106,11 @@ impl Storage {
         if provider_ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let rows = request_logs::Entity::find()
-            .filter(request_logs::Column::IdentityId.eq(identity_id))
-            .filter(request_logs::Column::Status.eq("success"))
-            .filter(request_logs::Column::ProviderId.is_in(provider_ids))
-            .filter(request_logs::Column::UpstreamLatencyMs.is_not_null())
+        let rows = activities::Entity::find()
+            .filter(activities::Column::IdentityId.eq(identity_id))
+            .filter(activities::Column::Status.eq("success"))
+            .filter(activities::Column::ProviderId.is_in(provider_ids))
+            .filter(activities::Column::UpstreamLatencyMs.is_not_null())
             .all(&self.db)
             .await?;
         let mut totals = HashMap::<String, (i128, u64)>::new();

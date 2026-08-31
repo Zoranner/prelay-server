@@ -18,7 +18,7 @@ use super::{
 use crate::{
     bridge::stream::StreamStatsSnapshot,
     observability::request_metadata::build_request_metadata,
-    stats::RequestLogInsert,
+    stats::ActivityInsert,
     storage::{Storage, StorageError},
 };
 
@@ -42,7 +42,7 @@ async fn record_first_chunk_updates_completed_metadata_on_eof() {
     assert_eq!(chunks, vec![Bytes::from_static(b"hello")]);
 
     let logs = storage
-        .list_request_logs(&identity_id, 10)
+        .list_activities(&identity_id, 10)
         .await
         .expect("load stream log");
     let metadata: serde_json::Value =
@@ -84,7 +84,7 @@ async fn record_stream_updates_usage_and_tool_count_without_normal_stream_metada
     .expect("collect stream");
 
     let logs = storage
-        .list_request_logs(&identity_id, 10)
+        .list_activities(&identity_id, 10)
         .await
         .expect("load stream log");
     let row = &logs[0];
@@ -138,7 +138,7 @@ async fn record_stream_persists_final_usage_before_eof() {
     );
 
     let logs = storage
-        .list_request_logs(&identity_id, 10)
+        .list_activities(&identity_id, 10)
         .await
         .expect("load stream log");
 
@@ -150,7 +150,7 @@ async fn record_stream_persists_final_usage_before_eof() {
 async fn record_stream_does_not_update_existing_row_when_first_insert_fails() {
     let (storage, identity_id) = test_storage().await;
     storage
-        .insert_request_log_with_id(
+        .insert_activity_with_id(
             &identity_id,
             "duplicate-stream-log".to_string(),
             test_log(test_metadata()),
@@ -173,7 +173,7 @@ async fn record_stream_does_not_update_existing_row_when_first_insert_fails() {
     .expect("collect stream");
 
     let logs = storage
-        .list_request_logs(&identity_id, 10)
+        .list_activities(&identity_id, 10)
         .await
         .expect("load duplicate log");
     let row = logs
@@ -215,8 +215,8 @@ fn test_metadata() -> String {
     .expect("metadata for diagnostic")
 }
 
-fn test_log(metadata_json: String) -> RequestLogInsert {
-    RequestLogInsert {
+fn test_log(metadata_json: String) -> ActivityInsert {
+    ActivityInsert {
         protocol_in: "responses".to_string(),
         protocol_out: "responses".to_string(),
         protocol_upstream: "chat_completions".to_string(),

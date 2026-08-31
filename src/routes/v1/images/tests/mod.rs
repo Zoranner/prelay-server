@@ -73,13 +73,13 @@ async fn test_state_with_connection() -> (AppState, DatabaseConnection) {
     (state, connection)
 }
 
-async fn reject_request_log_inserts(connection: &DatabaseConnection) {
+async fn reject_activity_inserts(connection: &DatabaseConnection) {
     connection
             .execute_unprepared(
-                "CREATE TRIGGER reject_request_log_inserts BEFORE INSERT ON identity_request_logs BEGIN SELECT RAISE(FAIL, 'forced request log failure'); END",
+                "CREATE TRIGGER reject_activity_inserts BEFORE INSERT ON identity_activities BEGIN SELECT RAISE(FAIL, 'forced activity failure'); END",
             )
             .await
-            .expect("create request log failure trigger");
+            .expect("create activity failure trigger");
 }
 
 fn image_capabilities() -> ProviderCapabilityOverrides {
@@ -89,9 +89,9 @@ fn image_capabilities() -> ProviderCapabilityOverrides {
     }
 }
 
+mod activities;
 mod candidates;
 mod fixtures;
-mod request_logs;
 mod routing;
 mod streaming;
 

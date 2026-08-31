@@ -15,7 +15,7 @@ use crate::{
     },
     providers::spec::provider_upstream_base_url,
     routes::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
-    stats::RequestLogInsert,
+    stats::ActivityInsert,
     AppState,
 };
 
@@ -59,9 +59,9 @@ pub(super) async fn create_chat_completion_with_candidate(
         let observability = upstream_observability(&observability_headers, error_body.as_deref());
         state
             .storage
-            .insert_request_log(
+            .insert_activity(
                 &access.identity_id,
-                RequestLogInsert {
+                ActivityInsert {
                     protocol_in: "chat_completions".to_string(),
                     protocol_out: "chat_completions".to_string(),
                     protocol_upstream: "chat_completions".to_string(),
@@ -98,7 +98,7 @@ pub(super) async fn create_chat_completion_with_candidate(
     if is_streaming {
         let upstream_request_id =
             upstream_observability(upstream_response.headers(), None).request_id;
-        let log = RequestLogInsert {
+        let log = ActivityInsert {
             protocol_in: "chat_completions".to_string(),
             protocol_out: "chat_completions".to_string(),
             protocol_upstream: "chat_completions".to_string(),
@@ -143,9 +143,9 @@ pub(super) async fn create_chat_completion_with_candidate(
         .map_err(|error| AppError::Internal(error.into()))?;
     state
         .storage
-        .insert_request_log(
+        .insert_activity(
             &access.identity_id,
-            RequestLogInsert {
+            ActivityInsert {
                 protocol_in: "chat_completions".to_string(),
                 protocol_out: "chat_completions".to_string(),
                 protocol_upstream: "chat_completions".to_string(),

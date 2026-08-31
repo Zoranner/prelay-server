@@ -316,9 +316,9 @@ async fn protocol_request_writes_identity_scoped_log_and_response_session() {
         .expect("resolve endpoint access");
     let logs = context
         .storage
-        .list_request_logs(&access.identity_id, 10)
+        .list_activities(&access.identity_id, 10)
         .await
-        .expect("load protocol request logs");
+        .expect("load protocol activities");
     assert_eq!(logs.len(), 1);
     assert_eq!(
         logs[0].endpoint_name.as_deref(),

@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn records_successful_chat_completion_request_log() {
+async fn records_successful_chat_completion_activity() {
     let upstream = spawn_chat_upstream().await;
     let state = test_state().await;
     let provider = test_provider(
@@ -31,9 +31,9 @@ async fn records_successful_chat_completion_request_log() {
     .expect("create chat completion");
     let logs = state
         .storage
-        .list_request_logs(&identity_id, 10)
+        .list_activities(&identity_id, 10)
         .await
-        .expect("load identity request log totals");
+        .expect("load identity activity totals");
 
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].status, "success");
@@ -74,7 +74,7 @@ async fn records_successful_chat_completion_upstream_request_id() {
 
     let upstream_request_id = state
         .storage
-        .list_request_logs(&identity_id, 10)
+        .list_activities(&identity_id, 10)
         .await
         .expect("load upstream request id")[0]
         .upstream_request_id
@@ -116,9 +116,9 @@ async fn records_failed_chat_completion_upstream_request_id_and_error_message() 
     assert!(format!("{error:?}").contains("上游请求失败"));
     let row = state
         .storage
-        .list_request_logs(&identity_id, 10)
+        .list_activities(&identity_id, 10)
         .await
-        .expect("load failed request log");
+        .expect("load failed activity");
 
     assert_eq!(row[0].upstream_request_id.as_deref(), Some("cf-ray-123"));
     assert_eq!(row[0].error_message.as_deref(), Some("provider overloaded"));

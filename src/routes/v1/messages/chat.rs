@@ -18,7 +18,7 @@ use crate::{
         chat_completions::{decode_chat_response, encode_chat_request},
         spec::{provider_upstream_base_url, UpstreamProtocol},
     },
-    stats::RequestLogInsert,
+    stats::ActivityInsert,
     AppState,
 };
 
@@ -54,9 +54,9 @@ pub(super) async fn create_chat_anthropic_message(
         let status = upstream_response.status();
         state
             .storage
-            .insert_request_log(
+            .insert_activity(
                 &context.identity_id,
-                RequestLogInsert {
+                ActivityInsert {
                     protocol_in: "anthropic_messages".to_string(),
                     protocol_out: "anthropic_messages".to_string(),
                     protocol_upstream: "chat_completions".to_string(),
@@ -91,7 +91,7 @@ pub(super) async fn create_chat_anthropic_message(
     }
 
     if context.is_streaming {
-        let log = RequestLogInsert {
+        let log = ActivityInsert {
             protocol_in: "anthropic_messages".to_string(),
             protocol_out: "anthropic_messages".to_string(),
             protocol_upstream: "chat_completions".to_string(),
@@ -146,9 +146,9 @@ pub(super) async fn create_chat_anthropic_message(
     let tool_call_count = count_tool_calls(&response);
     state
         .storage
-        .insert_request_log(
+        .insert_activity(
             &context.identity_id,
-            RequestLogInsert {
+            ActivityInsert {
                 protocol_in: "anthropic_messages".to_string(),
                 protocol_out: "anthropic_messages".to_string(),
                 protocol_upstream: "chat_completions".to_string(),

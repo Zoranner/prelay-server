@@ -1,8 +1,8 @@
-use crate::{routes::v1::auth::CurrentProtocolAccess, stats::RequestLogInsert, AppState};
+use crate::{routes::v1::auth::CurrentProtocolAccess, stats::ActivityInsert, AppState};
 
 use super::IMAGE_GENERATIONS_PROTOCOL;
 
-pub(super) struct ImageRequestLogParams<'a> {
+pub(super) struct ImageActivityParams<'a> {
     pub(super) access: &'a CurrentProtocolAccess,
     pub(super) provider: &'a crate::models::ProviderConfig,
     pub(super) model_requested: String,
@@ -17,8 +17,8 @@ pub(super) struct ImageRequestLogParams<'a> {
     pub(super) error_message: Option<String>,
 }
 
-pub(super) fn image_request_log(params: ImageRequestLogParams<'_>) -> RequestLogInsert {
-    RequestLogInsert {
+pub(super) fn image_activity(params: ImageActivityParams<'_>) -> ActivityInsert {
+    ActivityInsert {
         protocol_in: IMAGE_GENERATIONS_PROTOCOL.to_string(),
         protocol_out: IMAGE_GENERATIONS_PROTOCOL.to_string(),
         protocol_upstream: IMAGE_GENERATIONS_PROTOCOL.to_string(),
@@ -46,20 +46,20 @@ pub(super) fn image_request_log(params: ImageRequestLogParams<'_>) -> RequestLog
     }
 }
 
-pub(super) async fn insert_image_request_log_best_effort(
+pub(super) async fn insert_image_activity_best_effort(
     state: &AppState,
     access: &CurrentProtocolAccess,
-    log: RequestLogInsert,
+    log: ActivityInsert,
 ) {
     if state
         .storage
-        .insert_request_log(&access.identity_id, log)
+        .insert_activity(&access.identity_id, log)
         .await
         .is_err()
     {
         tracing::warn!(
-            failure_kind = "image_request_log_storage",
-            "failed to persist image request log"
+            failure_kind = "image_activity_storage",
+            "failed to persist image activity"
         );
     }
 }

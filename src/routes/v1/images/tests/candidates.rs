@@ -67,7 +67,7 @@ async fn fails_over_from_server_error_to_second_image_candidate() {
     assert_eq!(backup.hits.load(Ordering::SeqCst), 1);
     let logs = state
         .storage
-        .list_request_logs(&identity_id, 10)
+        .list_activities(&identity_id, 10)
         .await
         .expect("load failover logs");
     assert_eq!(logs.len(), 2);
@@ -76,7 +76,7 @@ async fn fails_over_from_server_error_to_second_image_candidate() {
 }
 
 #[tokio::test]
-async fn fails_over_when_failed_request_log_cannot_be_written() {
+async fn fails_over_when_failed_activity_cannot_be_written() {
     let primary = spawn_image_upstream(
         StatusCode::INTERNAL_SERVER_ERROR,
         Bytes::from_static(br#"{"error":{"message":"primary unavailable"}}"#),
@@ -118,7 +118,7 @@ async fn fails_over_when_failed_request_log_cannot_be_written() {
         "image-upstream",
     )
     .await;
-    reject_request_log_inserts(&connection).await;
+    reject_activity_inserts(&connection).await;
 
     let response = create_image_generation(
         State(state),
@@ -129,7 +129,7 @@ async fn fails_over_when_failed_request_log_cannot_be_written() {
         })),
     )
     .await
-    .expect("request log failure must not block candidate failover");
+    .expect("activity failure must not block candidate failover");
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(

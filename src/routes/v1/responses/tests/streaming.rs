@@ -45,11 +45,11 @@ async fn streams_anthropic_messages_chunks_as_responses_sse() {
 
     let log = state
         .storage
-        .list_request_logs(&auth.access.0.identity_id, 1)
+        .list_activities(&auth.access.0.identity_id, 1)
         .await
-        .expect("load request log")
+        .expect("load activity")
         .pop()
-        .expect("request log");
+        .expect("activity");
 
     assert_eq!(log.protocol_upstream.as_deref(), Some("anthropic_messages"));
     assert_eq!(log.status, "success");
@@ -228,11 +228,11 @@ async fn streams_native_responses_sse_without_waiting_for_upstream_done() {
         .expect("read remaining response stream");
     let log = state
         .storage
-        .list_request_logs(&auth.access.0.identity_id, 1)
+        .list_activities(&auth.access.0.identity_id, 1)
         .await
-        .expect("load request log")
+        .expect("load activity")
         .pop()
-        .expect("request log");
+        .expect("activity");
     assert_eq!(log.input_tokens, Some(11));
     assert_eq!(log.output_tokens, Some(7));
 

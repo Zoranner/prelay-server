@@ -4,7 +4,7 @@ use axum::{
     Json, Router,
 };
 use prelay_protocol::{
-    ModelStatsSummary, ProviderStatsSummary, RequestLogSummary, StatsOverview,
+    ActivitySummary, ModelStatsSummary, ProviderStatsSummary, StatsOverview,
     TokenUsageTimelinePoint,
 };
 use serde::Deserialize;
@@ -17,7 +17,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/stats/overview", get(overview))
         .route("/stats/timeline", get(timeline))
-        .route("/stats/requests", get(requests))
+        .route("/stats/activities", get(activities))
         .route("/stats/models", get(models))
         .route("/stats/providers", get(providers))
 }
@@ -64,15 +64,15 @@ struct RequestQuery {
     limit: Option<usize>,
 }
 
-async fn requests(
+async fn activities(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Query(query): Query<RequestQuery>,
-) -> Result<Json<Vec<RequestLogSummary>>, AppError> {
+) -> Result<Json<Vec<ActivitySummary>>, AppError> {
     Ok(Json(
         state
             .storage
-            .list_request_logs(&identity.id, query.limit.unwrap_or(100))
+            .list_activities(&identity.id, query.limit.unwrap_or(100))
             .await?,
     ))
 }

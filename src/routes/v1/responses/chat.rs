@@ -19,7 +19,7 @@ use crate::{
         chat_completions::{decode_chat_response, encode_chat_request},
         spec::{provider_upstream_base_url, UpstreamProtocol},
     },
-    stats::RequestLogInsert,
+    stats::ActivityInsert,
     storage::ResponseSessionInsert,
     AppState,
 };
@@ -69,9 +69,9 @@ pub(super) async fn create_chat_response(
         let status = upstream_response.status();
         state
             .storage
-            .insert_request_log(
+            .insert_activity(
                 &identity_id,
-                RequestLogInsert {
+                ActivityInsert {
                     protocol_in: "responses".to_string(),
                     protocol_out: "responses".to_string(),
                     protocol_upstream: "chat_completions".to_string(),
@@ -106,7 +106,7 @@ pub(super) async fn create_chat_response(
     }
 
     if is_streaming {
-        let log = RequestLogInsert {
+        let log = ActivityInsert {
             protocol_in: "responses".to_string(),
             protocol_out: "responses".to_string(),
             protocol_upstream: "chat_completions".to_string(),
@@ -174,9 +174,9 @@ pub(super) async fn create_chat_response(
         .await?;
     state
         .storage
-        .insert_request_log(
+        .insert_activity(
             &identity_id,
-            RequestLogInsert {
+            ActivityInsert {
                 protocol_in: "responses".to_string(),
                 protocol_out: "responses".to_string(),
                 protocol_upstream: "chat_completions".to_string(),

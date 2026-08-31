@@ -67,12 +67,12 @@ async fn streams_image_events_without_waiting_for_upstream_done() {
 
     let logs = state
         .storage
-        .list_request_logs(&identity_id, 10)
+        .list_activities(&identity_id, 10)
         .await
         .expect("load streaming image log");
     assert_eq!(logs.len(), 1);
     assert!(logs[0].first_token_ms.is_some());
-    let summary = serde_json::to_string(&logs[0]).expect("serialize request log summary");
+    let summary = serde_json::to_string(&logs[0]).expect("serialize activity summary");
     assert!(!summary.contains("private prompt"));
     assert!(!summary.contains("aGVs"));
 
@@ -132,7 +132,7 @@ async fn marks_image_request_failed_when_upstream_stream_is_interrupted() {
 
     let logs = state
         .storage
-        .list_request_logs(&identity_id, 10)
+        .list_activities(&identity_id, 10)
         .await
         .expect("load interrupted stream log");
     assert_eq!(logs.len(), 1);

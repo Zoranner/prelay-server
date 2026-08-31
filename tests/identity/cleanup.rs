@@ -5,7 +5,7 @@ use prelay_server::{
         InternalContentPart, InternalMessage, InternalOutputItem, InternalResponse, InternalRole,
     },
     identity::credential::generate_credential,
-    stats::RequestLogInsert,
+    stats::ActivityInsert,
     storage::{ResponseSessionInsert, Storage, StorageError},
 };
 
@@ -45,9 +45,9 @@ async fn cleanup_removes_an_inactive_identity_and_all_accessible_owned_resources
         .expect("list deleted identity endpoints")
         .is_empty());
     assert!(storage
-        .list_request_logs(&identity.identity_id, 10)
+        .list_activities(&identity.identity_id, 10)
         .await
-        .expect("list deleted identity request logs")
+        .expect("list deleted identity activities")
         .is_empty());
     assert_eq!(
         storage
@@ -113,9 +113,9 @@ async fn cleanup_keeps_an_identity_that_is_newer_than_its_cutoff() {
         .is_ok());
     assert_eq!(
         storage
-            .list_request_logs(&identity.identity_id, 10)
+            .list_activities(&identity.identity_id, 10)
             .await
-            .expect("list active request logs")
+            .expect("list active activities")
             .len(),
         1
     );
@@ -161,10 +161,10 @@ async fn seed_owned_resources(
         .await
         .expect("create endpoint");
     storage
-        .insert_request_log_with_id(
+        .insert_activity_with_id(
             identity_id,
             format!("log-{suffix}"),
-            RequestLogInsert {
+            ActivityInsert {
                 protocol_in: "responses".to_string(),
                 protocol_out: "responses".to_string(),
                 protocol_upstream: "chat_completions".to_string(),
@@ -180,7 +180,7 @@ async fn seed_owned_resources(
             },
         )
         .await
-        .expect("create request log");
+        .expect("create activity");
     let input = vec![InternalMessage {
         role: InternalRole::User,
         content: vec![InternalContentPart::Text("input".to_string())],

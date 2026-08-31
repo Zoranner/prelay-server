@@ -4,7 +4,7 @@ use prelay_server::{
         InternalContentPart, InternalMessage, InternalOutputItem, InternalResponse, InternalRole,
     },
     identity::credential::generate_credential,
-    stats::RequestLogInsert,
+    stats::ActivityInsert,
     storage::Storage,
 };
 
@@ -19,8 +19,8 @@ pub(super) fn provider_input(name: &str, api_key: &str) -> CreateProviderRequest
     }
 }
 
-pub(super) fn request_log(provider_id: &str, upstream_latency_ms: i64) -> RequestLogInsert {
-    RequestLogInsert {
+pub(super) fn activity(provider_id: &str, upstream_latency_ms: i64) -> ActivityInsert {
+    ActivityInsert {
         protocol_in: "responses".to_string(),
         protocol_out: "responses".to_string(),
         protocol_upstream: "chat_completions".to_string(),

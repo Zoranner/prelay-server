@@ -3,12 +3,12 @@ use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDate, TimeZone, Utc
 use serde::Deserialize;
 
 pub use prelay_protocol::{
-    ModelStatsSummary, ProviderStatsSummary, RequestLogSummary, StatsOverview,
+    ActivitySummary, ModelStatsSummary, ProviderStatsSummary, StatsOverview,
     TokenUsageTimelinePoint,
 };
 
 #[derive(Debug, Clone, Default)]
-pub struct RequestLogInsert {
+pub struct ActivityInsert {
     pub protocol_in: String,
     pub protocol_out: String,
     pub protocol_upstream: String,
@@ -36,7 +36,7 @@ pub struct RequestLogInsert {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct StreamRequestLogUpdate {
+pub struct StreamActivityUpdate {
     pub status: String,
     pub http_status: i64,
     pub error_code: Option<String>,
@@ -197,10 +197,7 @@ pub(crate) fn timeline_buckets(
     buckets
 }
 
-pub(crate) fn estimate_cost(
-    log: &RequestLogInsert,
-    prices: &[ModelPrice],
-) -> Option<EstimatedCost> {
+pub(crate) fn estimate_cost(log: &ActivityInsert, prices: &[ModelPrice]) -> Option<EstimatedCost> {
     let price = prices.iter().find(|price| {
         price.provider == log.provider_name
             && (price.model == log.model_upstream || price.model == log.model_requested)
@@ -265,12 +262,12 @@ fn first_day_of_previous_month(date: NaiveDate) -> NaiveDate {
 
 #[cfg(test)]
 mod tests {
-    use super::{estimate_cost, ModelPrice, RequestLogInsert};
+    use super::{estimate_cost, ActivityInsert, ModelPrice};
 
     #[test]
     fn estimates_cost_from_matching_model_price() {
         let cost = estimate_cost(
-            &RequestLogInsert {
+            &ActivityInsert {
                 provider_name: "DeepSeek".to_string(),
                 model_requested: "deepseek-chat".to_string(),
                 model_upstream: "deepseek-chat".to_string(),
@@ -294,6 +291,6 @@ mod tests {
 
     #[test]
     fn leaves_cost_empty_when_price_is_unknown() {
-        assert!(estimate_cost(&RequestLogInsert::default(), &[]).is_none());
+        assert!(estimate_cost(&ActivityInsert::default(), &[]).is_none());
     }
 }

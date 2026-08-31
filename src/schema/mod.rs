@@ -4,7 +4,7 @@ mod tables;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement};
 use sea_query::{IndexCreateStatement, TableCreateStatement};
 
-const TABLES: [&str; 9] = [
+const BASE_TABLES: [&str; 8] = [
     "identities",
     "identity_provider_configs",
     "identity_provider_models",
@@ -12,25 +12,52 @@ const TABLES: [&str; 9] = [
     "identity_endpoint_models",
     "identity_endpoint_model_routes",
     "identity_response_sessions",
-    "identity_request_logs",
     "identity_model_aliases",
 ];
+const LEGACY_ACTIVITY_TABLE: &str = "identity_request_logs";
+const LEGACY_ACTIVITY_INDEX: &str = "idx_identity_request_logs_identity_created_at";
+const MEMORY_TABLES: [&str; 3] = ["activity_contents", "memories", "memory_sources"];
 
 pub async fn initialize(db: &DatabaseConnection) -> Result<(), DbErr> {
     let manager = SchemaInitializer { db };
-    let mut existing_tables = 0;
-    for table in TABLES {
-        existing_tables += usize::from(table_exists(db, table).await?);
-    }
-    if existing_tables == TABLES.len() {
+    let existing_base_tables = table_count(db, BASE_TABLES).await?;
+    let has_current_activities = table_exists(db, "identity_activities").await?;
+    let has_legacy_activities = table_exists(db, LEGACY_ACTIVITY_TABLE).await?;
+    let existing_memory_tables = table_count(db, MEMORY_TABLES).await?;
+
+    if existing_base_tables == 0
+        && !has_current_activities
+        && !has_legacy_activities
+        && existing_memory_tables == 0
+    {
+        initialize_empty_schema(&manager).await?;
         return Ok(());
     }
-    if existing_tables > 0 {
+    if existing_base_tables != BASE_TABLES.len() {
         return Err(DbErr::Custom(
             "database schema is incomplete; create a new database deployment".to_owned(),
         ));
     }
 
+    if !has_current_activities && has_legacy_activities {
+        manager.rename_legacy_activities().await?;
+    }
+    if !has_current_activities && !has_legacy_activities {
+        return Err(DbErr::Custom(
+            "database schema is incomplete; create a new database deployment".to_owned(),
+        ));
+    }
+
+    match existing_memory_tables {
+        0 => initialize_memory_schema(&manager).await,
+        count if count == MEMORY_TABLES.len() => Ok(()),
+        _ => Err(DbErr::Custom(
+            "database schema is incomplete; create a new database deployment".to_owned(),
+        )),
+    }
+}
+
+async fn initialize_empty_schema(manager: &SchemaInitializer<'_>) -> Result<(), DbErr> {
     manager.create_table(tables::identity::statement()).await?;
     manager.create_table(tables::providers::configs()).await?;
     manager.create_table(tables::providers::models()).await?;
@@ -39,14 +66,49 @@ pub async fn initialize(db: &DatabaseConnection) -> Result<(), DbErr> {
     manager.create_table(tables::endpoints::routes()).await?;
     manager.create_table(tables::sessions::statement()).await?;
     manager
-        .create_table(tables::request_logs::statement())
+        .create_table(tables::activities::statement())
         .await?;
     manager
-        .create_index(indexes::request_logs_identity_created_at())
+        .create_index(indexes::activities_identity_created_at())
         .await?;
     manager
         .create_table(tables::model_aliases::statement())
-        .await
+        .await?;
+    initialize_memory_schema(manager).await
+}
+
+async fn initialize_memory_schema(manager: &SchemaInitializer<'_>) -> Result<(), DbErr> {
+    manager
+        .create_table(tables::activity_contents::statement())
+        .await?;
+    manager
+        .create_index(indexes::activity_contents_activity_id())
+        .await?;
+    manager
+        .create_index(indexes::activity_contents_due())
+        .await?;
+    manager.create_table(tables::memories::statement()).await?;
+    manager
+        .create_index(indexes::memories_normalized_key())
+        .await?;
+    manager
+        .create_table(tables::memory_sources::statement())
+        .await?;
+    manager
+        .create_index(indexes::memory_sources_identity_observed_at())
+        .await?;
+    manager.create_index(indexes::memory_sources_unique()).await
+}
+
+async fn table_count<'a>(
+    db: &DatabaseConnection,
+    tables: impl IntoIterator<Item = &'a str>,
+) -> Result<usize, DbErr> {
+    let mut count = 0;
+    for table in tables {
+        count += usize::from(table_exists(db, table).await?);
+    }
+    Ok(count)
 }
 
 struct SchemaInitializer<'a> {
@@ -60,6 +122,19 @@ impl SchemaInitializer<'_> {
 
     async fn create_index(&self, statement: IndexCreateStatement) -> Result<(), DbErr> {
         self.db.execute(&statement).await.map(|_| ())
+    }
+
+    async fn rename_legacy_activities(&self) -> Result<(), DbErr> {
+        self.db
+            .execute_unprepared(&format!("DROP INDEX IF EXISTS {LEGACY_ACTIVITY_INDEX}"))
+            .await?;
+        self.db
+            .execute_unprepared(&format!(
+                "ALTER TABLE {LEGACY_ACTIVITY_TABLE} RENAME TO identity_activities"
+            ))
+            .await?;
+        self.create_index(indexes::activities_identity_created_at())
+            .await
     }
 }
 

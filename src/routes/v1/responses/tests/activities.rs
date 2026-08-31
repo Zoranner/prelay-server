@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn records_successful_response_request_log() {
+async fn records_successful_response_activity() {
     let upstream = spawn_chat_upstream().await;
     let state = crate::test_support::test_state().await;
     let provider = test_provider(
@@ -28,9 +28,9 @@ async fn records_successful_response_request_log() {
     .expect("create response");
     let logs = state
         .storage
-        .list_request_logs(&auth.access.0.identity_id, 10)
+        .list_activities(&auth.access.0.identity_id, 10)
         .await
-        .expect("load identity request log totals");
+        .expect("load identity activity totals");
 
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].status, "success");
@@ -71,7 +71,7 @@ async fn records_response_decode_diagnostics_in_request_metadata() {
     .expect("create response");
     let metadata_json = state
         .storage
-        .list_request_logs(&auth.access.0.identity_id, 1)
+        .list_activities(&auth.access.0.identity_id, 1)
         .await
         .expect("load metadata")
         .pop()
@@ -86,7 +86,7 @@ async fn records_response_decode_diagnostics_in_request_metadata() {
 }
 
 #[tokio::test]
-async fn records_failed_response_request_log_when_upstream_fails() {
+async fn records_failed_response_activity_when_upstream_fails() {
     let upstream = spawn_failing_chat_upstream().await;
     let state = crate::test_support::test_state().await;
     let provider = test_provider(
@@ -113,9 +113,9 @@ async fn records_failed_response_request_log_when_upstream_fails() {
     .expect_err("upstream failure should fail");
     let logs = state
         .storage
-        .list_request_logs(&auth.access.0.identity_id, 10)
+        .list_activities(&auth.access.0.identity_id, 10)
         .await
-        .expect("load identity request log totals");
+        .expect("load identity activity totals");
 
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].status, "failed");

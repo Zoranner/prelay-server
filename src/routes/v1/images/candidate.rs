@@ -12,9 +12,7 @@ use crate::{
     AppState,
 };
 
-use super::request_log::{
-    image_request_log, insert_image_request_log_best_effort, ImageRequestLogParams,
-};
+use super::activity::{image_activity, insert_image_activity_best_effort, ImageActivityParams};
 
 pub(super) async fn create_image_generation_with_candidate(
     state: &AppState,
@@ -46,10 +44,10 @@ pub(super) async fn create_image_generation_with_candidate(
         Ok(response) => response,
         Err(_) => {
             let safe_error_message = "上游连接失败".to_string();
-            insert_image_request_log_best_effort(
+            insert_image_activity_best_effort(
                 state,
                 access,
-                image_request_log(ImageRequestLogParams {
+                image_activity(ImageActivityParams {
                     access,
                     provider: &provider,
                     model_requested: model,
@@ -77,10 +75,10 @@ pub(super) async fn create_image_generation_with_candidate(
     if !upstream_status.is_success() {
         let observability = upstream_observability(upstream_response.headers(), None);
         let safe_error_message = format!("上游请求失败: {upstream_status}");
-        insert_image_request_log_best_effort(
+        insert_image_activity_best_effort(
             state,
             access,
-            image_request_log(ImageRequestLogParams {
+            image_activity(ImageActivityParams {
                 access,
                 provider: &provider,
                 model_requested: model.clone(),
@@ -109,7 +107,7 @@ pub(super) async fn create_image_generation_with_candidate(
     let upstream_request_id = upstream_observability(upstream_response.headers(), None).request_id;
 
     if is_streaming {
-        let log = image_request_log(ImageRequestLogParams {
+        let log = image_activity(ImageActivityParams {
             access,
             provider: &provider,
             model_requested: model,
@@ -143,10 +141,10 @@ pub(super) async fn create_image_generation_with_candidate(
         Ok(response_bytes) => response_bytes,
         Err(_) => {
             let safe_error_message = "读取上游响应失败".to_string();
-            insert_image_request_log_best_effort(
+            insert_image_activity_best_effort(
                 state,
                 access,
-                image_request_log(ImageRequestLogParams {
+                image_activity(ImageActivityParams {
                     access,
                     provider: &provider,
                     model_requested: model,
@@ -168,10 +166,10 @@ pub(super) async fn create_image_generation_with_candidate(
             });
         }
     };
-    insert_image_request_log_best_effort(
+    insert_image_activity_best_effort(
         state,
         access,
-        image_request_log(ImageRequestLogParams {
+        image_activity(ImageActivityParams {
             access,
             provider: &provider,
             model_requested: model,

@@ -50,9 +50,9 @@ async fn fails_over_to_a_healthy_candidate_and_keeps_using_it() {
 
     let logs = state
         .storage
-        .list_request_logs(&identity_id, 10)
+        .list_activities(&identity_id, 10)
         .await
-        .expect("load request logs");
+        .expect("load activities");
     assert_eq!(logs.len(), 3);
     assert_eq!(logs.iter().filter(|log| log.status == "failed").count(), 1);
     assert_eq!(logs.iter().filter(|log| log.status == "success").count(), 2);

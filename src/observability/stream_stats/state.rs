@@ -6,7 +6,7 @@ use futures::{Stream, StreamExt};
 use crate::{
     bridge::stream::{SharedStreamStats, StreamStatsSnapshot},
     observability::request_metadata::{update_stream_metadata, StreamMetadataUpdate},
-    stats::{RequestLogInsert, StreamRequestLogUpdate},
+    stats::{ActivityInsert, StreamActivityUpdate},
     storage::Storage,
 };
 
@@ -16,7 +16,7 @@ pub(super) fn record_stream_with_log_id<S>(
     storage: Storage,
     identity_id: String,
     stream: S,
-    log: RequestLogInsert,
+    log: ActivityInsert,
     started_at: Instant,
     stats: Option<SharedStreamStats>,
     log_id: String,
@@ -64,7 +64,7 @@ struct StreamRecordState {
     storage: Storage,
     identity_id: String,
     stream: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
-    log: Option<RequestLogInsert>,
+    log: Option<ActivityInsert>,
     log_id: String,
     started_at: Instant,
     stats: Option<SharedStreamStats>,
@@ -128,7 +128,7 @@ impl StreamRecordState {
             completed: Some(completed),
             final_usage_seen: Some(snapshot.final_usage_seen),
         });
-        let update = StreamRequestLogUpdate {
+        let update = StreamActivityUpdate {
             status: "success".to_string(),
             http_status: 200,
             error_code: None,
@@ -153,7 +153,7 @@ impl StreamRecordState {
         }
 
         self.usage_recorded = true;
-        let update = StreamRequestLogUpdate {
+        let update = StreamActivityUpdate {
             status: "success".to_string(),
             http_status: 200,
             error_code: None,
@@ -207,7 +207,7 @@ impl StreamRecordState {
             completed: Some(false),
             final_usage_seen: Some(snapshot.final_usage_seen),
         });
-        let update = StreamRequestLogUpdate {
+        let update = StreamActivityUpdate {
             status: "failed".to_string(),
             http_status: 502,
             error_code: Some("stream_error".to_string()),

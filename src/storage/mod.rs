@@ -1,7 +1,7 @@
 mod access;
+mod activities;
 mod crypto;
 mod identities;
-mod request_logs;
 mod sessions;
 mod stats;
 
@@ -43,7 +43,7 @@ pub enum StorageError {
     InvalidCredential,
     ProviderNotFound,
     EndpointNotFound,
-    RequestLogNotFound,
+    ActivityNotFound,
     ValidationFailed(String),
     InvalidTimestamp(String),
     InvalidMasterKey(String),
@@ -60,7 +60,7 @@ impl StorageError {
             Self::IdentityNotFound
             | Self::ProviderNotFound
             | Self::EndpointNotFound
-            | Self::RequestLogNotFound => ProtocolErrorCode::NotFound,
+            | Self::ActivityNotFound => ProtocolErrorCode::NotFound,
             Self::InvalidMasterKey(_) | Self::ValidationFailed(_) => {
                 ProtocolErrorCode::ValidationFailed
             }
@@ -82,9 +82,7 @@ impl fmt::Display for StorageError {
             Self::InvalidCredential => formatter.write_str("device credential is no longer valid"),
             Self::ProviderNotFound => formatter.write_str("provider does not exist for identity"),
             Self::EndpointNotFound => formatter.write_str("endpoint does not exist for identity"),
-            Self::RequestLogNotFound => {
-                formatter.write_str("request log does not exist for identity")
-            }
+            Self::ActivityNotFound => formatter.write_str("activity does not exist for identity"),
             Self::ValidationFailed(message) => formatter.write_str(message),
             Self::InvalidTimestamp(message) => {
                 write!(formatter, "invalid stored timestamp: {message}")

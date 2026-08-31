@@ -6,47 +6,47 @@ use sea_orm::{
 use uuid::Uuid;
 
 use crate::{
-    entity::identity::request_logs,
+    entity::identity::activities,
     stats::{
-        estimate_cost, load_model_prices, ModelPrice, RequestLogInsert, RequestLogSummary,
-        StreamRequestLogUpdate,
+        estimate_cost, load_model_prices, ActivityInsert, ActivitySummary, ModelPrice,
+        StreamActivityUpdate,
     },
 };
 
 use super::{Storage, StorageError};
 
 impl Storage {
-    pub async fn insert_request_log(
+    pub async fn insert_activity(
         &self,
         identity_id: &str,
-        log: RequestLogInsert,
+        log: ActivityInsert,
     ) -> Result<(), StorageError> {
         insert(&self.db, identity_id, log).await
     }
 
-    pub async fn insert_request_log_with_id(
+    pub async fn insert_activity_with_id(
         &self,
         identity_id: &str,
         id: String,
-        log: RequestLogInsert,
+        log: ActivityInsert,
     ) -> Result<(), StorageError> {
         insert_with_id(&self.db, identity_id, id, log).await
     }
 
-    pub async fn update_stream_request_log(
+    pub async fn update_stream_activity(
         &self,
         identity_id: &str,
         id: &str,
-        update: StreamRequestLogUpdate,
+        update: StreamActivityUpdate,
     ) -> Result<(), StorageError> {
         update_stream(&self.db, identity_id, id, update).await
     }
 
-    pub async fn list_request_logs(
+    pub async fn list_activities(
         &self,
         identity_id: &str,
         limit: usize,
-    ) -> Result<Vec<RequestLogSummary>, StorageError> {
+    ) -> Result<Vec<ActivitySummary>, StorageError> {
         list(&self.db, identity_id, limit).await
     }
 }
@@ -54,7 +54,7 @@ impl Storage {
 async fn insert(
     db: &DatabaseConnection,
     identity_id: &str,
-    log: RequestLogInsert,
+    log: ActivityInsert,
 ) -> Result<(), StorageError> {
     insert_with_id(db, identity_id, Uuid::new_v4().to_string(), log).await
 }
@@ -63,7 +63,7 @@ async fn insert_with_id(
     db: &DatabaseConnection,
     identity_id: &str,
     id: String,
-    log: RequestLogInsert,
+    log: ActivityInsert,
 ) -> Result<(), StorageError> {
     let prices = load_model_prices().unwrap_or_default();
     insert_with_id_and_prices(db, identity_id, id, log, &prices).await
@@ -73,11 +73,11 @@ async fn insert_with_id_and_prices(
     db: &DatabaseConnection,
     identity_id: &str,
     id: String,
-    log: RequestLogInsert,
+    log: ActivityInsert,
     prices: &[ModelPrice],
 ) -> Result<(), StorageError> {
     let cost = estimate_cost(&log, prices);
-    request_logs::ActiveModel {
+    activities::ActiveModel {
         id: Set(id),
         identity_id: Set(identity_id.to_string()),
         created_at: Set(Utc::now().to_rfc3339()),
@@ -118,7 +118,7 @@ async fn update_stream(
     db: &DatabaseConnection,
     identity_id: &str,
     id: &str,
-    update: StreamRequestLogUpdate,
+    update: StreamActivityUpdate,
 ) -> Result<(), StorageError> {
     let prices = load_model_prices().unwrap_or_default();
     update_stream_with_prices(db, identity_id, id, update, &prices).await
@@ -128,15 +128,15 @@ async fn update_stream_with_prices(
     db: &DatabaseConnection,
     identity_id: &str,
     id: &str,
-    update: StreamRequestLogUpdate,
+    update: StreamActivityUpdate,
     prices: &[ModelPrice],
 ) -> Result<(), StorageError> {
-    let row = request_logs::Entity::find_by_id(id)
-        .filter(request_logs::Column::IdentityId.eq(identity_id))
+    let row = activities::Entity::find_by_id(id)
+        .filter(activities::Column::IdentityId.eq(identity_id))
         .one(db)
         .await?
-        .ok_or(StorageError::RequestLogNotFound)?;
-    let pricing_log = RequestLogInsert {
+        .ok_or(StorageError::ActivityNotFound)?;
+    let pricing_log = ActivityInsert {
         provider_name: row.provider_name.clone().unwrap_or_default(),
         model_requested: row.model_requested.clone().unwrap_or_default(),
         model_upstream: row.model_upstream.clone().unwrap_or_default(),
@@ -157,7 +157,7 @@ async fn update_stream_with_prices(
         ..Default::default()
     };
     let cost = estimate_cost(&pricing_log, prices);
-    let mut active: request_logs::ActiveModel = row.into();
+    let mut active: activities::ActiveModel = row.into();
     active.status = Set(update.status);
     active.http_status = Set(Some(update.http_status));
     active.error_code = Set(update.error_code);
@@ -183,18 +183,18 @@ async fn list(
     db: &DatabaseConnection,
     identity_id: &str,
     limit: usize,
-) -> Result<Vec<RequestLogSummary>, StorageError> {
-    let rows = request_logs::Entity::find()
-        .filter(request_logs::Column::IdentityId.eq(identity_id))
-        .order_by_desc(request_logs::Column::CreatedAt)
+) -> Result<Vec<ActivitySummary>, StorageError> {
+    let rows = activities::Entity::find()
+        .filter(activities::Column::IdentityId.eq(identity_id))
+        .order_by_desc(activities::Column::CreatedAt)
         .limit(limit.min(500) as u64)
         .all(db)
         .await?;
     Ok(rows.into_iter().map(request_summary).collect())
 }
 
-fn request_summary(row: request_logs::Model) -> RequestLogSummary {
-    RequestLogSummary {
+fn request_summary(row: activities::Model) -> ActivitySummary {
+    ActivitySummary {
         id: row.id,
         created_at: row.created_at,
         protocol_in: row.protocol_in,
@@ -225,9 +225,9 @@ mod tests {
 
     use super::{insert_with_id_and_prices, update_stream_with_prices};
     use crate::{
-        entity::identity::request_logs,
+        entity::identity::activities,
         schema::initialize,
-        stats::{ModelPrice, RequestLogInsert, StreamRequestLogUpdate},
+        stats::{ActivityInsert, ModelPrice, StreamActivityUpdate},
         storage::{MasterKey, Storage, StorageError},
     };
 
@@ -237,15 +237,15 @@ mod tests {
         let identity = register_identity(&storage, "stream").await;
         let other_identity = register_identity(&storage, "other").await;
         storage
-            .insert_request_log_with_id(&identity, "stream-log".to_string(), test_log(None, None))
+            .insert_activity_with_id(&identity, "stream-log".to_string(), test_log(None, None))
             .await
             .expect("insert stream log");
 
         let error = storage
-            .update_stream_request_log(
+            .update_stream_activity(
                 &other_identity,
                 "stream-log",
-                StreamRequestLogUpdate {
+                StreamActivityUpdate {
                     status: "success".to_string(),
                     http_status: 200,
                     input_tokens: Some(99),
@@ -254,13 +254,13 @@ mod tests {
             )
             .await
             .expect_err("another identity cannot update the log");
-        assert!(matches!(error, StorageError::RequestLogNotFound));
+        assert!(matches!(error, StorageError::ActivityNotFound));
 
         storage
-            .update_stream_request_log(
+            .update_stream_activity(
                 &identity,
                 "stream-log",
-                StreamRequestLogUpdate {
+                StreamActivityUpdate {
                     status: "success".to_string(),
                     http_status: 200,
                     input_tokens: Some(11),
@@ -273,8 +273,8 @@ mod tests {
             .await
             .expect("update stream log");
 
-        let rows = request_logs::Entity::find()
-            .filter(request_logs::Column::Id.eq("stream-log"))
+        let rows = activities::Entity::find()
+            .filter(activities::Column::Id.eq("stream-log"))
             .all(&db)
             .await
             .expect("load stream log");
@@ -322,7 +322,7 @@ mod tests {
             &db,
             &identity,
             "stream-price",
-            StreamRequestLogUpdate {
+            StreamActivityUpdate {
                 status: "success".to_string(),
                 http_status: 200,
                 input_tokens: Some(1_000_000),
@@ -334,8 +334,8 @@ mod tests {
         .await
         .expect("complete priced stream log");
 
-        let rows = request_logs::Entity::find()
-            .filter(request_logs::Column::IdentityId.eq(identity))
+        let rows = activities::Entity::find()
+            .filter(activities::Column::IdentityId.eq(identity))
             .all(&db)
             .await
             .expect("load priced logs");
@@ -368,8 +368,8 @@ mod tests {
             .identity_id
     }
 
-    fn test_log(input_tokens: Option<i64>, output_tokens: Option<i64>) -> RequestLogInsert {
-        RequestLogInsert {
+    fn test_log(input_tokens: Option<i64>, output_tokens: Option<i64>) -> ActivityInsert {
+        ActivityInsert {
             protocol_in: "responses".to_string(),
             protocol_out: "responses".to_string(),
             protocol_upstream: "chat_completions".to_string(),

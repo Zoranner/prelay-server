@@ -122,9 +122,9 @@ async fn bridges_function_tool_call_roundtrip() {
 
     let logs = state
         .storage
-        .list_request_logs(&auth.access.0.identity_id, 10)
+        .list_activities(&auth.access.0.identity_id, 10)
         .await
-        .expect("load tool call request logs");
+        .expect("load tool call activities");
     assert_eq!(logs.len(), 2);
     assert!(logs.iter().all(|log| log.status == "success"));
 }

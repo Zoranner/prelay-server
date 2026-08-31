@@ -10,11 +10,11 @@ use crate::{
     entity::{
         identities,
         identity::{
-            endpoint_configs as identity_endpoint_configs,
+            activities as identity_activities, endpoint_configs as identity_endpoint_configs,
             endpoint_model_routes as identity_endpoint_model_routes,
             endpoint_models as identity_endpoint_models, model_aliases as identity_model_aliases,
             provider_configs as identity_provider_configs,
-            provider_models as identity_provider_models, request_logs as identity_request_logs,
+            provider_models as identity_provider_models,
             response_sessions as identity_response_sessions,
         },
     },
@@ -281,8 +281,8 @@ pub(crate) async fn delete_inactive(
         .map(|provider| provider.id)
         .collect::<Vec<_>>();
 
-    identity_request_logs::Entity::delete_many()
-        .filter(identity_request_logs::Column::IdentityId.is_in(identity_ids.clone()))
+    identity_activities::Entity::delete_many()
+        .filter(identity_activities::Column::IdentityId.is_in(identity_ids.clone()))
         .exec(&transaction)
         .await?;
     identity_response_sessions::Entity::delete_many()

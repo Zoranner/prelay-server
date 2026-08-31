@@ -78,9 +78,9 @@ async fn forwards_only_to_image_generation_candidate_and_preserves_json_bytes() 
 
     let logs = state
         .storage
-        .list_request_logs(&identity_id, 10)
+        .list_activities(&identity_id, 10)
         .await
-        .expect("load image request log");
+        .expect("load image activity");
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].protocol_in.as_deref(), Some("images_generations"));
     assert_eq!(
@@ -89,7 +89,7 @@ async fn forwards_only_to_image_generation_candidate_and_preserves_json_bytes() 
     );
     assert_eq!(logs[0].input_tokens, None);
     assert_eq!(logs[0].output_tokens, None);
-    let summary = serde_json::to_string(&logs[0]).expect("serialize request log summary");
+    let summary = serde_json::to_string(&logs[0]).expect("serialize activity summary");
     assert!(!summary.contains("private prompt"));
     assert!(!summary.contains("aGVsbG8="));
     assert!(!summary.contains("https://images.example/private-result"));

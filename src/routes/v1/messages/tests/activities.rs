@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn records_successful_anthropic_messages_request_log() {
+async fn records_successful_anthropic_messages_activity() {
     let upstream = spawn_user_only_chat_upstream().await;
     let state = crate::test_support::test_state().await;
     let provider = test_provider(
@@ -48,9 +48,9 @@ async fn records_successful_anthropic_messages_request_log() {
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     let logs = state
         .storage
-        .list_request_logs(&auth.access.0.identity_id, 10)
+        .list_activities(&auth.access.0.identity_id, 10)
         .await
-        .expect("load identity request log totals");
+        .expect("load identity activity totals");
 
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].status, "success");
@@ -108,7 +108,7 @@ async fn records_anthropic_decode_diagnostics_in_request_metadata() {
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     let metadata_json = state
         .storage
-        .list_request_logs(&auth.access.0.identity_id, 1)
+        .list_activities(&auth.access.0.identity_id, 1)
         .await
         .expect("load metadata")
         .pop()

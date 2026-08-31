@@ -41,3 +41,49 @@ async fn rejects_a_partially_initialized_database() {
         .expect_err("partial schemas require a new database deployment");
     assert!(error.to_string().contains("incomplete"));
 }
+
+#[tokio::test]
+async fn migrates_the_complete_legacy_activity_table_without_losing_rows() {
+    let db = Database::connect("sqlite::memory:")
+        .await
+        .expect("connect to in-memory SQLite");
+    for table in [
+        "identities",
+        "identity_provider_configs",
+        "identity_provider_models",
+        "identity_endpoint_configs",
+        "identity_endpoint_models",
+        "identity_endpoint_model_routes",
+        "identity_response_sessions",
+        "identity_model_aliases",
+    ] {
+        db.execute_unprepared(&format!("CREATE TABLE {table} (id TEXT PRIMARY KEY)"))
+            .await
+            .expect("create legacy companion table");
+    }
+    db.execute_unprepared(
+        "CREATE TABLE identity_activities (id TEXT PRIMARY KEY, identity_id TEXT NOT NULL, created_at TEXT NOT NULL)",
+    )
+    .await
+    .expect("create legacy activity table");
+    db.execute_unprepared(
+        "INSERT INTO identity_activities (id, identity_id, created_at) \
+         VALUES ('activity-1', 'identity-1', '2026-08-31T00:00:00Z')",
+    )
+    .await
+    .expect("seed legacy activity");
+
+    initialize(&db)
+        .await
+        .expect("migrate complete legacy schema");
+
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT id FROM identity_activities WHERE id = 'activity-1'".to_owned(),
+        ))
+        .await
+        .expect("query migrated activity")
+        .expect("legacy activity remains available");
+    assert_eq!(row.try_get::<String>("", "id").unwrap(), "activity-1");
+}

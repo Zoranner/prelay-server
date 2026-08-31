@@ -1,13 +1,12 @@
 use axum::http::StatusCode;
 use prelay_protocol::{
-    CreateProviderRequest, ModelStatsSummary, ProviderStatsSummary, RequestLogSummary,
-    StatsOverview,
+    ActivitySummary, CreateProviderRequest, ModelStatsSummary, ProviderStatsSummary, StatsOverview,
 };
-use prelay_server::{stats::RequestLogInsert, storage::Storage};
+use prelay_server::{stats::ActivityInsert, storage::Storage};
 
 use crate::{auth::register, http::request_json, test_context};
 
-struct RequestLogSeed<'a> {
+struct ActivitySeed<'a> {
     id: &'a str,
     identity_id: &'a str,
     provider_id: &'a str,
@@ -18,12 +17,12 @@ struct RequestLogSeed<'a> {
     output_tokens: i64,
 }
 
-async fn seed_request_log(storage: &Storage, seed: RequestLogSeed<'_>) {
+async fn seed_activity(storage: &Storage, seed: ActivitySeed<'_>) {
     storage
-        .insert_request_log_with_id(
+        .insert_activity_with_id(
             seed.identity_id,
             seed.id.to_string(),
-            RequestLogInsert {
+            ActivityInsert {
                 protocol_in: "chat_completions".to_string(),
                 protocol_out: "chat_completions".to_string(),
                 protocol_upstream: "chat_completions".to_string(),
@@ -43,7 +42,7 @@ async fn seed_request_log(storage: &Storage, seed: RequestLogSeed<'_>) {
             },
         )
         .await
-        .expect("seed request log");
+        .expect("seed activity");
 }
 
 #[tokio::test]
@@ -68,10 +67,10 @@ async fn cache_rate_uses_normalized_total_input_tokens() {
     ] {
         context
             .storage
-            .insert_request_log_with_id(
+            .insert_activity_with_id(
                 identity_id,
                 id.to_string(),
-                RequestLogInsert {
+                ActivityInsert {
                     protocol_in: protocol_in.to_string(),
                     protocol_out: protocol_in.to_string(),
                     protocol_upstream: protocol_upstream.to_string(),
@@ -179,9 +178,9 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     assert_eq!(status, StatusCode::CREATED);
     let provider_b_id = provider_b["id"].as_str().expect("provider B id");
 
-    seed_request_log(
+    seed_activity(
         &context.storage,
-        RequestLogSeed {
+        ActivitySeed {
             id: "request-a",
             identity_id: identity_a_id,
             provider_id: provider_a_id,
@@ -193,9 +192,9 @@ async fn management_stats_only_return_the_current_identity_request_data() {
         },
     )
     .await;
-    seed_request_log(
+    seed_activity(
         &context.storage,
-        RequestLogSeed {
+        ActivitySeed {
             id: "request-b",
             identity_id: identity_b_id,
             provider_id: provider_b_id,
@@ -244,12 +243,18 @@ async fn management_stats_only_return_the_current_identity_request_data() {
         3
     );
 
-    let (status, requests_a): (StatusCode, Vec<RequestLogSummary>) =
-        request_json(&app, "GET", "/api/stats/requests", Some(credential_a), None).await;
+    let (status, activities_a): (StatusCode, Vec<ActivitySummary>) = request_json(
+        &app,
+        "GET",
+        "/api/stats/activities",
+        Some(credential_a),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(requests_a.len(), 1);
-    assert_eq!(requests_a[0].id, "request-a");
-    assert_eq!(requests_a[0].provider_name.as_deref(), Some("Provider A"));
+    assert_eq!(activities_a.len(), 1);
+    assert_eq!(activities_a[0].id, "request-a");
+    assert_eq!(activities_a[0].provider_name.as_deref(), Some("Provider A"));
 
     let (status, models_a): (StatusCode, Vec<ModelStatsSummary>) = request_json(
         &app,
@@ -323,12 +328,18 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     assert_eq!(overview_b.cache_write_tokens, 2);
     assert_eq!(overview_b.average_latency_ms, Some(120));
 
-    let (status, requests_b): (StatusCode, Vec<RequestLogSummary>) =
-        request_json(&app, "GET", "/api/stats/requests", Some(credential_b), None).await;
+    let (status, activities_b): (StatusCode, Vec<ActivitySummary>) = request_json(
+        &app,
+        "GET",
+        "/api/stats/activities",
+        Some(credential_b),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(requests_b.len(), 1);
-    assert_eq!(requests_b[0].id, "request-b");
-    assert_eq!(requests_b[0].provider_name.as_deref(), Some("Provider B"));
+    assert_eq!(activities_b.len(), 1);
+    assert_eq!(activities_b[0].id, "request-b");
+    assert_eq!(activities_b[0].provider_name.as_deref(), Some("Provider B"));
 
     let (status, models_b): (StatusCode, Vec<ModelStatsSummary>) =
         request_json(&app, "GET", "/api/stats/models", Some(credential_b), None).await;

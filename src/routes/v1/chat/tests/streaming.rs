@@ -75,9 +75,9 @@ async fn streams_chat_completion_without_waiting_for_upstream_done() {
 
     let logs = state
         .storage
-        .list_request_logs(&identity_id, 10)
+        .list_activities(&identity_id, 10)
         .await
-        .expect("load stream request log");
+        .expect("load stream activity");
     assert_eq!(logs.len(), 1);
     let first_token_ms = logs[0].first_token_ms;
     assert!(

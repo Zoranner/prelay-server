@@ -28,10 +28,10 @@ async fn test_state() -> AppState {
     crate::test_support::test_state().await
 }
 
+mod activities;
 mod auth;
 mod candidates;
 mod fixtures;
-mod request_logs;
 mod routing;
 mod streaming;
 

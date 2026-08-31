@@ -4,7 +4,7 @@ use bytes::Bytes;
 use futures::Stream;
 use uuid::Uuid;
 
-use crate::{bridge::stream::SharedStreamStats, stats::RequestLogInsert, storage::Storage};
+use crate::{bridge::stream::SharedStreamStats, stats::ActivityInsert, storage::Storage};
 
 use super::state::record_stream_with_log_id;
 
@@ -12,7 +12,7 @@ pub fn record_first_chunk<S>(
     storage: Storage,
     identity_id: String,
     stream: S,
-    log: RequestLogInsert,
+    log: ActivityInsert,
     started_at: Instant,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>>
 where
@@ -25,7 +25,7 @@ pub fn record_stream<S>(
     storage: Storage,
     identity_id: String,
     stream: S,
-    log: RequestLogInsert,
+    log: ActivityInsert,
     started_at: Instant,
     stats: SharedStreamStats,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>>
@@ -39,7 +39,7 @@ fn record_stream_with_optional_stats<S>(
     storage: Storage,
     identity_id: String,
     stream: S,
-    log: RequestLogInsert,
+    log: ActivityInsert,
     started_at: Instant,
     stats: Option<SharedStreamStats>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>>

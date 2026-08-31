@@ -3,7 +3,7 @@ use prelay_server::{identity::credential::generate_credential, storage::Protocol
 
 use crate::support;
 
-use super::fixtures::{provider_input, request_log};
+use super::fixtures::{activity, provider_input};
 
 #[tokio::test]
 async fn model_candidates_keep_mapping_order_then_prefer_observed_latency() {
@@ -66,18 +66,18 @@ async fn model_candidates_keep_mapping_order_then_prefer_observed_latency() {
     assert_eq!(candidates[1].provider.id, backup_provider_id);
 
     storage
-        .insert_request_log_with_id(
+        .insert_activity_with_id(
             &access.identity_id,
             "primary-latency".to_string(),
-            request_log(&primary_provider_id, 120),
+            activity(&primary_provider_id, 120),
         )
         .await
         .expect("record primary latency");
     storage
-        .insert_request_log_with_id(
+        .insert_activity_with_id(
             &access.identity_id,
             "backup-latency".to_string(),
-            request_log(&backup_provider_id, 20),
+            activity(&backup_provider_id, 20),
         )
         .await
         .expect("record backup latency");

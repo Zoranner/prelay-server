@@ -11,7 +11,7 @@ use crate::{
     error::AppError,
     observability::stream_stats::record_first_chunk,
     providers::spec::{provider_upstream_base_url, UpstreamProtocol},
-    stats::RequestLogInsert,
+    stats::ActivityInsert,
     AppState,
 };
 
@@ -45,9 +45,9 @@ pub(super) async fn create_native_anthropic_message(
         let status = upstream_response.status();
         state
             .storage
-            .insert_request_log(
+            .insert_activity(
                 &context.identity_id,
-                RequestLogInsert {
+                ActivityInsert {
                     protocol_in: "anthropic_messages".to_string(),
                     protocol_out: "anthropic_messages".to_string(),
                     protocol_upstream: "anthropic_messages".to_string(),
@@ -87,7 +87,7 @@ pub(super) async fn create_native_anthropic_message(
             .and_then(Value::as_str)
             .unwrap_or("unknown")
             .to_string();
-        let log = RequestLogInsert {
+        let log = ActivityInsert {
             protocol_in: "anthropic_messages".to_string(),
             protocol_out: "anthropic_messages".to_string(),
             protocol_upstream: "anthropic_messages".to_string(),
@@ -134,9 +134,9 @@ pub(super) async fn create_native_anthropic_message(
         .map_err(|error| AppError::Internal(error.into()))?;
     state
         .storage
-        .insert_request_log(
+        .insert_activity(
             &context.identity_id,
-            RequestLogInsert {
+            ActivityInsert {
                 protocol_in: "anthropic_messages".to_string(),
                 protocol_out: "anthropic_messages".to_string(),
                 protocol_upstream: "anthropic_messages".to_string(),

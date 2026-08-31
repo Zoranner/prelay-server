@@ -20,10 +20,10 @@ use crate::routes::v1::endpoint_resolver::{
     create_test_endpoint_auth_with_candidates, test_provider,
 };
 
+mod activities;
 mod auth;
 mod candidates;
 mod fixtures;
-mod request_logs;
 mod routing;
 mod sessions;
 mod streaming;

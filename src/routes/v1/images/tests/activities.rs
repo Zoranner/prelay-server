@@ -40,7 +40,7 @@ async fn records_rate_limit_observability_without_image_or_prompt_content() {
 
     let logs = state
         .storage
-        .list_request_logs(&identity_id, 10)
+        .list_activities(&identity_id, 10)
         .await
         .expect("load failed image log");
     assert_eq!(logs.len(), 1);
@@ -52,7 +52,7 @@ async fn records_rate_limit_observability_without_image_or_prompt_content() {
         logs[0].error_message.as_deref(),
         Some("上游请求失败: 429 Too Many Requests")
     );
-    let summary = serde_json::to_string(&logs[0]).expect("serialize request log summary");
+    let summary = serde_json::to_string(&logs[0]).expect("serialize activity summary");
     assert!(!summary.contains("private prompt"));
     assert!(!summary.contains("https://images.example/private-result"));
     assert!(!summary.contains("c2VjcmV0LWltYWdl"));
@@ -62,7 +62,7 @@ async fn records_rate_limit_observability_without_image_or_prompt_content() {
 }
 
 #[tokio::test]
-async fn returns_success_bytes_when_request_log_cannot_be_written() {
+async fn returns_success_bytes_when_activity_cannot_be_written() {
     let expected_body = Bytes::from_static(
         br#"{"created":1,"data":[{"url":"https://images.example/private-result"}]}"#,
     );
@@ -86,7 +86,7 @@ async fn returns_success_bytes_when_request_log_cannot_be_written() {
     let auth =
         create_test_endpoint_auth(&state.storage, &provider, "image-public", "image-upstream")
             .await;
-    reject_request_log_inserts(&connection).await;
+    reject_activity_inserts(&connection).await;
 
     let response = create_image_generation(
         State(state),
@@ -97,7 +97,7 @@ async fn returns_success_bytes_when_request_log_cannot_be_written() {
         })),
     )
     .await
-    .expect("request log failure must not discard a successful image response");
+    .expect("activity failure must not discard a successful image response");
 
     assert_eq!(response.status(), StatusCode::CREATED);
     assert_eq!(
@@ -154,15 +154,15 @@ async fn logs_sanitized_failure_when_upstream_connection_fails() {
     }
     let logs = state
         .storage
-        .list_request_logs(&identity_id, 10)
+        .list_activities(&identity_id, 10)
         .await
-        .expect("load connection failure request log");
+        .expect("load connection failure activity");
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].protocol_in.as_deref(), Some("images_generations"));
     assert_eq!(logs[0].status, "failed");
     assert_eq!(logs[0].error_code.as_deref(), Some("upstream_connection"));
     assert_eq!(logs[0].error_message.as_deref(), Some("上游连接失败"));
-    let summary = serde_json::to_string(&logs[0]).expect("serialize request log summary");
+    let summary = serde_json::to_string(&logs[0]).expect("serialize activity summary");
     for secret in [
         upstream_url.as_str(),
         "private prompt",
@@ -211,15 +211,15 @@ async fn logs_sanitized_failure_when_non_streaming_body_is_interrupted() {
     }
     let logs = state
         .storage
-        .list_request_logs(&identity_id, 10)
+        .list_activities(&identity_id, 10)
         .await
-        .expect("load body failure request log");
+        .expect("load body failure activity");
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].protocol_in.as_deref(), Some("images_generations"));
     assert_eq!(logs[0].status, "failed");
     assert_eq!(logs[0].error_code.as_deref(), Some("upstream_body"));
     assert_eq!(logs[0].error_message.as_deref(), Some("读取上游响应失败"));
-    let summary = serde_json::to_string(&logs[0]).expect("serialize request log summary");
+    let summary = serde_json::to_string(&logs[0]).expect("serialize activity summary");
     for secret in [
         upstream_url.as_str(),
         "private prompt",

@@ -41,7 +41,8 @@ impl IntoResponse for AppError {
                     | ProtocolErrorCode::ExtensionVersionNotFound => StatusCode::NOT_FOUND,
                     ProtocolErrorCode::InvalidCredential => StatusCode::UNAUTHORIZED,
                     ProtocolErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
-                    ProtocolErrorCode::IdentityAlreadyRegistered
+                    ProtocolErrorCode::ExtensionInstallUnsupported
+                    | ProtocolErrorCode::IdentityAlreadyRegistered
                     | ProtocolErrorCode::ValidationFailed => StatusCode::BAD_REQUEST,
                 };
                 let message = if code == ProtocolErrorCode::Internal {
@@ -253,5 +254,16 @@ mod tests {
         assert!(!body.contains("ciphertext"));
         assert!(!body.contains("nonce-value"));
         assert!(!body.contains("provider-key"));
+    }
+
+    #[tokio::test]
+    async fn unsupported_extension_installation_is_a_bad_request() {
+        let response = AppError::Protocol {
+            code: ProtocolErrorCode::ExtensionInstallUnsupported,
+            message: "扩展类型不支持安装".to_string(),
+        }
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }
