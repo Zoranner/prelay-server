@@ -133,10 +133,13 @@ pub(super) async fn create_native_anthropic_message(
             .map_err(|error| AppError::Internal(error.into()));
     }
 
-    let response = upstream_response
-        .json::<Value>()
-        .await
-        .map_err(|error| AppError::Internal(error.into()))?;
+    let response =
+        upstream_response
+            .json::<Value>()
+            .await
+            .map_err(|_| AppError::UpstreamInvalidResponse {
+                message: "上游响应格式无效".to_string(),
+            })?;
     insert_activity_with_content(
         &state.storage,
         &context.identity_id,

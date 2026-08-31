@@ -56,6 +56,98 @@ async fn fails_over_responses_to_a_healthy_candidate_and_keeps_using_it() {
 }
 
 #[tokio::test]
+async fn fails_over_responses_when_primary_forbids_the_request() {
+    let failing_upstream = spawn_status_chat_upstream(axum::http::StatusCode::FORBIDDEN).await;
+    let healthy_upstream = spawn_chat_upstream().await;
+    let state = crate::test_support::test_state().await;
+    let primary = test_provider(
+        "primary",
+        "openai_compatible",
+        &failing_upstream,
+        "sk-primary",
+    )
+    .await
+    .expect("create primary provider");
+    let backup = test_provider(
+        "backup",
+        "openai_compatible",
+        &healthy_upstream,
+        "sk-backup",
+    )
+    .await
+    .expect("create backup provider");
+    let auth = create_test_endpoint_auth_with_candidates(
+        &state.storage,
+        &[primary, backup],
+        "shared-model",
+        "deepseek-chat",
+    )
+    .await;
+
+    create_response(
+        State(state.clone()),
+        auth.access.clone(),
+        axum::Json(json!({ "model": "shared-model", "input": "hello" })),
+    )
+    .await
+    .expect("forbidden primary should fall back to the healthy candidate");
+
+    let logs = state
+        .storage
+        .list_activities(&auth.access.0.identity_id, 10)
+        .await
+        .expect("load activities");
+    let failed = logs
+        .iter()
+        .find(|activity| activity.status == "failed")
+        .expect("record forbidden primary failure");
+    assert_eq!(failed.http_status, 403);
+    assert_eq!(failed.error_code.as_deref(), Some("upstream_status"));
+    assert_eq!(
+        failed.error_message.as_deref(),
+        Some("上游请求失败: 403 Forbidden")
+    );
+}
+
+#[tokio::test]
+async fn fails_over_responses_when_primary_returns_an_invalid_success_payload() {
+    let failing_upstream = spawn_invalid_chat_upstream().await;
+    let healthy_upstream = spawn_chat_upstream().await;
+    let state = crate::test_support::test_state().await;
+    let primary = test_provider(
+        "primary",
+        "openai_compatible",
+        &failing_upstream,
+        "sk-primary",
+    )
+    .await
+    .expect("create primary provider");
+    let backup = test_provider(
+        "backup",
+        "openai_compatible",
+        &healthy_upstream,
+        "sk-backup",
+    )
+    .await
+    .expect("create backup provider");
+    let auth = create_test_endpoint_auth_with_candidates(
+        &state.storage,
+        &[primary, backup],
+        "shared-model",
+        "deepseek-chat",
+    )
+    .await;
+
+    create_response(
+        State(state),
+        auth.access,
+        axum::Json(json!({ "model": "shared-model", "input": "hello" })),
+    )
+    .await
+    .expect("invalid primary payload should fall back to the healthy candidate");
+}
+
+#[tokio::test]
 async fn rejects_response_when_model_is_not_configured() {
     let state = crate::test_support::test_state().await;
     let auth = create_empty_test_endpoint_auth(&state.storage).await;

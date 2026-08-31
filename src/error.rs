@@ -16,6 +16,9 @@ pub enum AppError {
         status: Option<StatusCode>,
         message: String,
     },
+    UpstreamInvalidResponse {
+        message: String,
+    },
     Protocol {
         code: ProtocolErrorCode,
         message: String,
@@ -29,7 +32,12 @@ impl IntoResponse for AppError {
             AppError::NotFound(message) => (StatusCode::NOT_FOUND, json!(message)),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, json!("Invalid or missing token")),
             AppError::BadRequest(message) => (StatusCode::BAD_REQUEST, json!(message)),
-            AppError::Upstream { message, .. } => (StatusCode::BAD_GATEWAY, json!(message)),
+            AppError::Upstream { status, message } => {
+                (status.unwrap_or(StatusCode::BAD_GATEWAY), json!(message))
+            }
+            AppError::UpstreamInvalidResponse { message } => {
+                (StatusCode::BAD_GATEWAY, json!(message))
+            }
             AppError::Protocol { code, message } => {
                 let status = match code {
                     ProtocolErrorCode::NotFound => StatusCode::NOT_FOUND,
@@ -85,6 +93,13 @@ impl AppError {
             } => matches!(status.as_u16(), 408 | 429 | 500..=599),
             _ => false,
         }
+    }
+
+    pub fn is_failoverable_upstream(&self) -> bool {
+        matches!(
+            self,
+            Self::Upstream { .. } | Self::UpstreamInvalidResponse { .. }
+        )
     }
 }
 
@@ -254,6 +269,24 @@ mod tests {
         assert!(!body.contains("ciphertext"));
         assert!(!body.contains("nonce-value"));
         assert!(!body.contains("provider-key"));
+    }
+
+    #[tokio::test]
+    async fn preserves_a_safe_upstream_http_status_for_clients() {
+        let response = AppError::Upstream {
+            status: Some(StatusCode::FORBIDDEN),
+            message: "上游请求失败: 403 Forbidden".to_string(),
+        }
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("read error response");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).expect("error response is JSON"),
+            json!({ "error": "上游请求失败: 403 Forbidden" })
+        );
     }
 
     #[tokio::test]

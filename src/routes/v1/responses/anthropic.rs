@@ -59,6 +59,7 @@ pub(super) async fn create_anthropic_messages_response(
 
     if !upstream_response.status().is_success() {
         let status = upstream_response.status();
+        let error_message = format!("上游请求失败: {status}");
         state
             .storage
             .insert_activity(
@@ -74,8 +75,8 @@ pub(super) async fn create_anthropic_messages_response(
                     model_upstream: request.model,
                     status: "failed".to_string(),
                     http_status: status.as_u16() as i64,
-                    error_code: None,
-                    error_message: None,
+                    error_code: Some("upstream_status".to_string()),
+                    error_message: Some(error_message.clone()),
                     is_streaming: context.is_streaming,
                     input_tokens: None,
                     output_tokens: None,
@@ -83,7 +84,7 @@ pub(super) async fn create_anthropic_messages_response(
                     cache_read_tokens: None,
                     cache_write_tokens: None,
                     latency_ms: context.started_at.elapsed().as_millis() as i64,
-                    upstream_latency_ms: None,
+                    upstream_latency_ms: Some(upstream_latency_ms),
                     first_token_ms: None,
                     tool_call_count: None,
                     upstream_request_id: None,
@@ -92,7 +93,7 @@ pub(super) async fn create_anthropic_messages_response(
             .await?;
         return Err(AppError::Upstream {
             status: Some(status),
-            message: format!("上游请求失败: {status}"),
+            message: error_message,
         });
     }
 
@@ -141,10 +142,13 @@ pub(super) async fn create_anthropic_messages_response(
             .into_response());
     }
 
-    let upstream_json = upstream_response
-        .json::<Value>()
-        .await
-        .map_err(|error| AppError::Internal(error.into()))?;
+    let upstream_json =
+        upstream_response
+            .json::<Value>()
+            .await
+            .map_err(|_| AppError::UpstreamInvalidResponse {
+                message: "上游响应格式无效".to_string(),
+            })?;
     let mut response = decode_anthropic_messages_response(upstream_json)?;
     response.id = format!("resp_{}", Uuid::new_v4().simple());
     let tool_call_count = count_tool_calls(&response);

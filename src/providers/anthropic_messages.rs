@@ -76,7 +76,9 @@ pub fn decode_anthropic_messages_response(value: Value) -> Result<InternalRespon
     let content_blocks = value
         .get("content")
         .and_then(Value::as_array)
-        .ok_or_else(|| AppError::BadRequest("Anthropic 上游响应缺少 content".to_string()))?;
+        .ok_or_else(|| AppError::UpstreamInvalidResponse {
+            message: "上游响应格式无效".to_string(),
+        })?;
     let mut output = decode_text_content_blocks(content_blocks);
     output.extend(content_blocks.iter().filter_map(decode_tool_use_block));
 

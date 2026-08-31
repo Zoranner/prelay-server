@@ -5,6 +5,7 @@ use crate::AppState;
 const MAX_PROTOCOL_REQUEST_BODY_BYTES: usize = 128 * 1024 * 1024;
 
 pub mod auth;
+mod candidates;
 mod chat;
 mod endpoint_resolver;
 mod images;

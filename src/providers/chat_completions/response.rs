@@ -23,7 +23,9 @@ pub fn decode_chat_response(value: Value) -> Result<InternalResponse, AppError> 
         .and_then(Value::as_array)
         .and_then(|choices| choices.first())
         .and_then(|choice| choice.get("message"))
-        .ok_or_else(|| AppError::BadRequest("上游响应缺少 choices[0].message".to_string()))?;
+        .ok_or_else(|| AppError::UpstreamInvalidResponse {
+            message: "上游响应格式无效".to_string(),
+        })?;
     let reasoning_content = message
         .get("reasoning_content")
         .and_then(Value::as_str)

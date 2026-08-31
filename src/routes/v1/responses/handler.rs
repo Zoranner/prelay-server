@@ -9,7 +9,8 @@ use crate::{
     bridge::{internal::InternalRequest, responses::decode::decode_responses_request},
     error::AppError,
     routes::v1::{
-        auth::CurrentProtocolAccess, endpoint_resolver::resolve_endpoint_model_candidates,
+        auth::CurrentProtocolAccess, candidates::run_endpoint_model_candidates,
+        endpoint_resolver::resolve_endpoint_model_candidates,
     },
     AppState,
 };
@@ -38,14 +39,10 @@ pub(super) async fn create_response(
     let previous_response_id = request.previous_response_id.clone();
     let candidates =
         resolve_endpoint_model_candidates(&state, &access, &request.model, "responses").await?;
-    let mut last_upstream_error = None;
-    for resolved in candidates.into_iter().take(
-        crate::upstream::policy()
-            .max_candidates
-            .unwrap_or(usize::MAX),
-    ) {
-        let provider_id = resolved.provider.id.clone();
-        match crate::upstream::retry_with_policy(crate::upstream::policy(), || {
+    let (response, provider_id) = run_endpoint_model_candidates(
+        candidates,
+        AppError::BadRequest(format!("接入点未配置模型 {model_requested}")),
+        |resolved| {
             create_response_with_candidate(
                 &state,
                 &access,
@@ -59,31 +56,23 @@ pub(super) async fn create_response(
                 },
                 resolved.clone(),
             )
-        })
+        },
+    )
+    .await?;
+    if let Err(error) = state
+        .storage
+        .remember_protocol_model_provider(
+            &crate::storage::ProtocolAccess {
+                identity_id: access.identity_id.clone(),
+                endpoint_id: access.endpoint_id.clone(),
+                endpoint_name: access.endpoint_name.clone(),
+            },
+            &model_requested,
+            &provider_id,
+        )
         .await
-        {
-            Ok(response) => {
-                if let Err(error) = state
-                    .storage
-                    .remember_protocol_model_provider(
-                        &crate::storage::ProtocolAccess {
-                            identity_id: access.identity_id.clone(),
-                            endpoint_id: access.endpoint_id.clone(),
-                            endpoint_name: access.endpoint_name.clone(),
-                        },
-                        &model_requested,
-                        &provider_id,
-                    )
-                    .await
-                {
-                    tracing::warn!(error = %error, "failed to remember active endpoint model provider");
-                }
-                return Ok(response);
-            }
-            Err(error) if error.is_retryable_upstream() => last_upstream_error = Some(error),
-            Err(error) => return Err(error),
-        }
+    {
+        tracing::warn!(error = %error, "failed to remember active endpoint model provider");
     }
-    Err(last_upstream_error
-        .unwrap_or_else(|| AppError::BadRequest(format!("接入点未配置模型 {model_requested}"))))
+    Ok(response)
 }

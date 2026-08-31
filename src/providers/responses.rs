@@ -63,7 +63,9 @@ pub fn decode_responses_response(value: Value) -> Result<InternalResponse, AppEr
     let output = value
         .get("output")
         .and_then(Value::as_array)
-        .ok_or_else(|| AppError::BadRequest("Responses 上游响应缺少 output".to_string()))?
+        .ok_or_else(|| AppError::UpstreamInvalidResponse {
+            message: "上游响应格式无效".to_string(),
+        })?
         .iter()
         .filter_map(decode_output_item)
         .collect::<Vec<_>>();

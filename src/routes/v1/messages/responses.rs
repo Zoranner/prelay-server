@@ -130,10 +130,13 @@ pub(super) async fn create_responses_anthropic_message(
             .map_err(|error| AppError::Internal(error.into()));
     }
 
-    let upstream_json = upstream_response
-        .json::<Value>()
-        .await
-        .map_err(|error| AppError::Internal(error.into()))?;
+    let upstream_json =
+        upstream_response
+            .json::<Value>()
+            .await
+            .map_err(|_| AppError::UpstreamInvalidResponse {
+                message: "上游响应格式无效".to_string(),
+            })?;
     let response = decode_responses_response(upstream_json)?;
     let reasoning_tokens = response
         .usage
