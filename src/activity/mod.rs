@@ -1,5 +1,6 @@
 mod content;
 mod redaction;
+mod stream;
 
 use crate::{
     bridge::internal::{InternalOutputItem, InternalRequest, InternalResponse},
@@ -13,6 +14,7 @@ pub use content::{
     activity_content_from_text, activity_content_from_text_with_media, ActivityContentDraft,
     ActivityMediaMetadata, NormalizedActivityContent,
 };
+pub use stream::{RawStreamContentCapture, RawStreamProtocol};
 
 pub const DEFAULT_ACTIVITY_CONTENT_MAX_BYTES: usize = 64 * 1024;
 

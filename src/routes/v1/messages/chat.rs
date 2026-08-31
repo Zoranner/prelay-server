@@ -14,7 +14,7 @@ use crate::{
     },
     error::AppError,
     models::ProviderConfig,
-    observability::stream_stats::record_stream,
+    observability::stream_stats::record_stream_with_activity_content,
     providers::{
         chat_completions::{decode_chat_response, encode_chat_request},
         spec::{provider_upstream_base_url, UpstreamProtocol},
@@ -122,13 +122,14 @@ pub(super) async fn create_chat_anthropic_message(
         );
         return Response::builder()
             .header(header::CONTENT_TYPE, "text/event-stream")
-            .body(Body::from_stream(record_stream(
+            .body(Body::from_stream(record_stream_with_activity_content(
                 state.storage.clone(),
                 context.identity_id,
                 stream,
                 log,
                 context.started_at,
                 stream_stats,
+                internal_request_text(&request),
             )))
             .map_err(|error| AppError::Internal(error.into()));
     }

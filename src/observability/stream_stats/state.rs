@@ -4,6 +4,7 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt};
 
 use crate::{
+    activity::{enqueue_activity_content_best_effort, RawStreamContentCapture},
     bridge::stream::{SharedStreamStats, StreamStatsSnapshot},
     stats::{ActivityInsert, StreamActivityUpdate},
     storage::Storage,
@@ -11,14 +12,20 @@ use crate::{
 
 use super::persistence::{insert_stream_log_with_id, update_stream_log};
 
+pub(super) struct StreamRecordOptions {
+    pub(super) stats: Option<SharedStreamStats>,
+    pub(super) input_text: String,
+    pub(super) content_capture: Option<RawStreamContentCapture>,
+    pub(super) log_id: String,
+}
+
 pub(super) fn record_stream_with_log_id<S>(
     storage: Storage,
     identity_id: String,
     stream: S,
     log: ActivityInsert,
     started_at: Instant,
-    stats: Option<SharedStreamStats>,
-    log_id: String,
+    options: StreamRecordOptions,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>>
 where
     S: Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
@@ -29,9 +36,11 @@ where
         identity_id,
         stream: Box::pin(stream),
         log: Some(log),
-        log_id,
+        log_id: options.log_id,
         started_at,
-        stats,
+        stats: options.stats,
+        input_text: options.input_text,
+        content_capture: options.content_capture,
         upstream_request_id,
         inserted: false,
         failed: false,
@@ -49,6 +58,9 @@ where
         } else if let Err(error) = &item {
             state.record_stream_error(error.to_string()).await;
         }
+        if let (Ok(chunk), Some(content_capture)) = (&item, &mut state.content_capture) {
+            content_capture.observe_chunk(chunk);
+        }
         if state.inserted && !state.failed {
             state.record_final_usage().await;
         }
@@ -65,6 +77,8 @@ struct StreamRecordState {
     log_id: String,
     started_at: Instant,
     stats: Option<SharedStreamStats>,
+    input_text: String,
+    content_capture: Option<RawStreamContentCapture>,
     upstream_request_id: Option<String>,
     inserted: bool,
     failed: bool,
@@ -123,6 +137,24 @@ impl StreamRecordState {
             upstream_request_id: self.upstream_request_id.clone(),
         };
         update_stream_log(&self.storage, &self.identity_id, &self.log_id, update).await;
+        let output_text = if let Some(content_capture) = self.content_capture.as_mut() {
+            content_capture.finish();
+            content_capture
+                .is_completed()
+                .then(|| content_capture.output_text().to_string())
+        } else {
+            snapshot.completed.then(|| snapshot.output_text.clone())
+        };
+        if let Some(output_text) = output_text {
+            enqueue_activity_content_best_effort(
+                &self.storage,
+                self.log_id.clone(),
+                &self.input_text,
+                &output_text,
+                None,
+            )
+            .await;
+        }
     }
 
     async fn record_final_usage(&mut self) {

@@ -17,7 +17,7 @@ use crate::{
     },
     error::AppError,
     models::ProviderConfig,
-    observability::stream_stats::record_stream,
+    observability::stream_stats::record_stream_with_activity_content,
     providers::{
         chat_completions::{decode_chat_response, encode_chat_request},
         spec::{provider_upstream_base_url, UpstreamProtocol},
@@ -107,6 +107,7 @@ pub(super) async fn create_chat_response(
     }
 
     if is_streaming {
+        let input_text = internal_request_text(&request);
         let log = ActivityInsert {
             protocol_in: "responses".to_string(),
             protocol_out: "responses".to_string(),
@@ -134,13 +135,14 @@ pub(super) async fn create_chat_response(
         };
         let (stream, stream_stats) =
             chat_sse_response_to_responses_sse_with_stats(upstream_response);
-        let body = Body::from_stream(record_stream(
+        let body = Body::from_stream(record_stream_with_activity_content(
             state.storage.clone(),
             identity_id.clone(),
             stream,
             log,
             started_at,
             stream_stats,
+            input_text,
         ));
         return Ok((
             [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],

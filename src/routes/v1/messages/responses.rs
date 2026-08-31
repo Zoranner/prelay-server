@@ -13,7 +13,7 @@ use crate::{
         stream::responses_sse_response_to_anthropic_messages_sse_with_stats,
     },
     error::AppError,
-    observability::stream_stats::record_stream,
+    observability::stream_stats::record_stream_with_activity_content,
     providers::{
         responses::{decode_responses_response, encode_responses_request},
         spec::{provider_upstream_base_url, UpstreamProtocol},
@@ -86,6 +86,7 @@ pub(super) async fn create_responses_anthropic_message(
     }
 
     if context.is_streaming {
+        let input_text = internal_request_text(&request);
         let log = ActivityInsert {
             protocol_in: "anthropic_messages".to_string(),
             protocol_out: "anthropic_messages".to_string(),
@@ -117,13 +118,14 @@ pub(super) async fn create_responses_anthropic_message(
         );
         return Response::builder()
             .header(header::CONTENT_TYPE, "text/event-stream")
-            .body(Body::from_stream(record_stream(
+            .body(Body::from_stream(record_stream_with_activity_content(
                 state.storage.clone(),
                 context.identity_id,
                 stream,
                 log,
                 context.started_at,
                 stream_stats,
+                input_text,
             )))
             .map_err(|error| AppError::Internal(error.into()));
     }

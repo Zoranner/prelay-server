@@ -2,7 +2,7 @@ mod decode;
 mod encode;
 mod events;
 mod pipeline;
-mod sse;
+pub(crate) mod sse;
 
 use axum::body::Bytes;
 use futures::Stream;

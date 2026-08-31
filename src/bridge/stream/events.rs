@@ -1,3 +1,5 @@
+const MAX_CAPTURED_STREAM_TEXT_BYTES: usize = 128 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InternalStreamEvent {
     TextDelta(String),
@@ -34,6 +36,7 @@ pub struct StreamStatsSnapshot {
     pub cache_read_tokens: Option<i64>,
     pub cache_write_tokens: Option<i64>,
     pub tool_call_count: i64,
+    pub output_text: String,
     pub completed: bool,
     pub final_usage_seen: bool,
 }
@@ -56,11 +59,26 @@ impl StreamStatsSnapshot {
                     || usage.cache_read_tokens.is_some()
                     || usage.cache_write_tokens.is_some();
             }
+            InternalStreamEvent::TextDelta(delta) => {
+                self.append_output_text(delta);
+            }
             InternalStreamEvent::Finished(_) => {
                 self.completed = true;
             }
-            InternalStreamEvent::TextDelta(_) | InternalStreamEvent::ToolCallDelta { .. } => {}
+            InternalStreamEvent::ToolCallDelta { .. } => {}
         }
+    }
+
+    fn append_output_text(&mut self, delta: &str) {
+        let remaining = MAX_CAPTURED_STREAM_TEXT_BYTES.saturating_sub(self.output_text.len());
+        if remaining == 0 {
+            return;
+        }
+        let mut end = remaining.min(delta.len());
+        while end > 0 && !delta.is_char_boundary(end) {
+            end -= 1;
+        }
+        self.output_text.push_str(&delta[..end]);
     }
 }
 
@@ -223,8 +241,18 @@ mod tests {
         assert_eq!(stats.total_tokens, Some(8));
         assert_eq!(stats.cache_read_tokens, Some(2));
         assert_eq!(stats.cache_write_tokens, Some(1));
+        assert!(stats.output_text.is_empty());
         assert_eq!(stats.tool_call_count, 1);
         assert!(stats.completed);
         assert!(stats.final_usage_seen);
+    }
+
+    #[test]
+    fn retains_decoded_text_deltas_for_activity_content() {
+        let mut stats = StreamStatsSnapshot::default();
+
+        stats.record_event(&InternalStreamEvent::TextDelta("stream output".to_string()));
+
+        assert_eq!(stats.output_text, "stream output");
     }
 }

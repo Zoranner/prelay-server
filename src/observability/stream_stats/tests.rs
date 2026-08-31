@@ -12,10 +12,12 @@ use tracing::{
 use tracing_subscriber::{layer::Context, prelude::*, Layer, Registry};
 
 use super::{
-    persistence::log_stream_storage_failure, record_first_chunk, record_stream,
-    state::record_stream_with_log_id,
+    persistence::log_stream_storage_failure,
+    record_first_chunk, record_first_chunk_with_activity_content, record_stream,
+    state::{record_stream_with_log_id, StreamRecordOptions},
 };
 use crate::{
+    activity::{RawStreamContentCapture, RawStreamProtocol},
     bridge::stream::StreamStatsSnapshot,
     stats::ActivityInsert,
     storage::{Storage, StorageError},
@@ -48,6 +50,44 @@ async fn record_first_chunk_persists_a_completed_activity_on_eof() {
 }
 
 #[tokio::test]
+async fn record_first_chunk_persists_decoded_chat_stream_content_after_done() {
+    let (storage, identity_id) = test_storage().await;
+    let chunk = Bytes::from_static(
+        b"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\ndata: [DONE]\n\n",
+    );
+    let stream = stream::iter([Ok::<_, std::io::Error>(chunk.clone())]);
+
+    let chunks = record_first_chunk_with_activity_content(
+        storage.clone(),
+        identity_id.clone(),
+        stream,
+        test_log(),
+        std::time::Instant::now(),
+        "stream input".to_string(),
+        RawStreamContentCapture::new(RawStreamProtocol::ChatCompletions),
+    )
+    .try_collect::<Vec<_>>()
+    .await
+    .expect("collect stream");
+
+    assert_eq!(chunks, vec![chunk]);
+    let activity = storage
+        .list_activities(&identity_id, 10)
+        .await
+        .expect("load stream activity")
+        .pop()
+        .expect("stored activity");
+    let content = storage
+        .find_activity_content(&activity.id)
+        .await
+        .expect("load activity content")
+        .expect("stored activity content");
+    assert_eq!(content.input_text, "stream input");
+    assert_eq!(content.output_text, "hello");
+    assert_eq!(content.status, "pending");
+}
+
+#[tokio::test]
 async fn record_stream_updates_usage_and_tool_count() {
     let (storage, identity_id) = test_storage().await;
     let stats = Arc::new(Mutex::new(StreamStatsSnapshot {
@@ -57,6 +97,7 @@ async fn record_stream_updates_usage_and_tool_count() {
         cache_read_tokens: Some(3),
         cache_write_tokens: Some(2),
         tool_call_count: 2,
+        output_text: "stream output".to_string(),
         completed: true,
         final_usage_seen: true,
     }));
@@ -84,6 +125,14 @@ async fn record_stream_updates_usage_and_tool_count() {
     assert_eq!(row.output_tokens, Some(7));
     assert_eq!(row.cache_read_tokens, Some(3));
     assert_eq!(row.cache_write_tokens, Some(2));
+
+    let content = storage
+        .find_activity_content(&row.id)
+        .await
+        .expect("load activity content")
+        .expect("enqueue activity content after stream completion");
+    assert_eq!(content.output_text, "stream output");
+    assert_eq!(content.status, "pending");
 }
 
 #[tokio::test]
@@ -96,6 +145,7 @@ async fn record_stream_persists_final_usage_before_eof() {
         cache_read_tokens: Some(3),
         cache_write_tokens: Some(2),
         tool_call_count: 0,
+        output_text: String::new(),
         completed: true,
         final_usage_seen: true,
     }));
@@ -143,8 +193,12 @@ async fn record_stream_does_not_update_existing_row_when_first_insert_fails() {
         stream,
         test_log(),
         std::time::Instant::now(),
-        None,
-        "duplicate-stream-log".to_string(),
+        StreamRecordOptions {
+            stats: None,
+            input_text: String::new(),
+            content_capture: None,
+            log_id: "duplicate-stream-log".to_string(),
+        },
     )
     .try_collect::<Vec<_>>()
     .await

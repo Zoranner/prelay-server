@@ -3,10 +3,14 @@ use futures::TryStreamExt;
 use serde_json::Value;
 
 use crate::{
-    activity::{enqueue_activity_content_best_effort, media_metadata_from_bytes},
+    activity::{
+        enqueue_activity_content_best_effort, media_metadata_from_bytes, RawStreamContentCapture,
+        RawStreamProtocol,
+    },
     error::AppError,
     observability::{
-        stream_stats::record_first_chunk, upstream_observability::upstream_observability,
+        stream_stats::record_first_chunk_with_activity_content,
+        upstream_observability::upstream_observability,
     },
     providers::spec::provider_upstream_base_url,
     routes::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
@@ -111,6 +115,11 @@ pub(super) async fn create_image_generation_with_candidate(
     let upstream_request_id = upstream_observability(upstream_response.headers(), None).request_id;
 
     if is_streaming {
+        let input_text = payload
+            .get("prompt")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
         let log = image_activity(ImageActivityParams {
             access,
             provider: &provider,
@@ -125,7 +134,7 @@ pub(super) async fn create_image_generation_with_candidate(
             upstream_request_id,
             error_message: None,
         });
-        let body = Body::from_stream(record_first_chunk(
+        let body = Body::from_stream(record_first_chunk_with_activity_content(
             state.storage.clone(),
             access.identity_id.clone(),
             upstream_response
@@ -133,6 +142,8 @@ pub(super) async fn create_image_generation_with_candidate(
                 .map_err(std::io::Error::other),
             log,
             started_at,
+            input_text,
+            RawStreamContentCapture::new(RawStreamProtocol::ImageGeneration),
         ));
         return Ok(upstream_response_with_body(
             upstream_status,

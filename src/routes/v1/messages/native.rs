@@ -8,9 +8,12 @@ use futures::TryStreamExt;
 use serde_json::Value;
 
 use crate::{
-    activity::{anthropic_message_text, anthropic_request_text, insert_activity_with_content},
+    activity::{
+        anthropic_message_text, anthropic_request_text, insert_activity_with_content,
+        RawStreamContentCapture, RawStreamProtocol,
+    },
     error::AppError,
-    observability::stream_stats::record_first_chunk,
+    observability::stream_stats::record_first_chunk_with_activity_content,
     providers::spec::{provider_upstream_base_url, UpstreamProtocol},
     stats::ActivityInsert,
     AppState,
@@ -82,6 +85,7 @@ pub(super) async fn create_native_anthropic_message(
     }
 
     if context.is_streaming {
+        let input_text = anthropic_request_text(&payload);
         let model_upstream = payload
             .get("model")
             .and_then(Value::as_str)
@@ -115,7 +119,7 @@ pub(super) async fn create_native_anthropic_message(
 
         return Response::builder()
             .header(header::CONTENT_TYPE, "text/event-stream")
-            .body(Body::from_stream(record_first_chunk(
+            .body(Body::from_stream(record_first_chunk_with_activity_content(
                 state.storage.clone(),
                 context.identity_id,
                 upstream_response
@@ -123,6 +127,8 @@ pub(super) async fn create_native_anthropic_message(
                     .map_err(std::io::Error::other),
                 log,
                 context.started_at,
+                input_text,
+                RawStreamContentCapture::new(RawStreamProtocol::AnthropicMessages),
             )))
             .map_err(|error| AppError::Internal(error.into()));
     }

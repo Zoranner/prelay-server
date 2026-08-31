@@ -3,7 +3,7 @@ use serde_json::json;
 use super::{
     activity_content_from_text, activity_content_from_text_with_media, anthropic_message_text,
     anthropic_request_text, chat_message_text, chat_response_text, media_metadata_from_bytes,
-    ActivityMediaMetadata,
+    ActivityMediaMetadata, RawStreamContentCapture, RawStreamProtocol,
 };
 
 #[test]
@@ -205,4 +205,36 @@ fn image_metadata_contains_only_type_size_and_hash() {
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     );
     assert!(media.extracted_text.is_none());
+}
+
+#[test]
+fn raw_chat_stream_capture_joins_split_text_and_waits_for_done() {
+    let mut capture = RawStreamContentCapture::new(RawStreamProtocol::ChatCompletions);
+
+    capture.observe_chunk(b"data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n");
+    capture.observe_chunk(
+        b"data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\ndata: [DONE]\n\n",
+    );
+    capture.finish();
+
+    assert!(capture.is_completed());
+    assert_eq!(capture.output_text(), "hello");
+}
+
+#[test]
+fn raw_anthropic_and_image_stream_captures_keep_only_text() {
+    let mut anthropic = RawStreamContentCapture::new(RawStreamProtocol::AnthropicMessages);
+    anthropic.observe_chunk(
+        b"event: content_block_delta\ndata: {\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    );
+    anthropic.finish();
+
+    let mut image = RawStreamContentCapture::new(RawStreamProtocol::ImageGeneration);
+    image.observe_chunk(b"data: {\"type\":\"image_generation.partial_image\",\"b64_json\":\"do-not-store\"}\n\ndata: {\"type\":\"image_generation.completed\"}\n\n");
+    image.finish();
+
+    assert!(anthropic.is_completed());
+    assert_eq!(anthropic.output_text(), "hello");
+    assert!(image.is_completed());
+    assert!(image.output_text().is_empty());
 }

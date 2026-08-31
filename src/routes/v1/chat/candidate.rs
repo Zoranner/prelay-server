@@ -8,10 +8,14 @@ use futures::TryStreamExt;
 use serde_json::Value;
 
 use crate::{
-    activity::{chat_message_text, chat_response_text, insert_activity_with_content},
+    activity::{
+        chat_message_text, chat_response_text, insert_activity_with_content,
+        RawStreamContentCapture, RawStreamProtocol,
+    },
     error::AppError,
     observability::{
-        stream_stats::record_first_chunk, upstream_observability::upstream_observability,
+        stream_stats::record_first_chunk_with_activity_content,
+        upstream_observability::upstream_observability,
     },
     providers::spec::provider_upstream_base_url,
     routes::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
@@ -94,6 +98,7 @@ pub(super) async fn create_chat_completion_with_candidate(
     }
 
     if is_streaming {
+        let input_text = chat_message_text(&payload);
         let upstream_request_id =
             upstream_observability(upstream_response.headers(), None).request_id;
         let log = ActivityInsert {
@@ -121,7 +126,7 @@ pub(super) async fn create_chat_completion_with_candidate(
             tool_call_count: None,
             upstream_request_id,
         };
-        let body = Body::from_stream(record_first_chunk(
+        let body = Body::from_stream(record_first_chunk_with_activity_content(
             state.storage.clone(),
             access.identity_id.clone(),
             upstream_response
@@ -129,6 +134,8 @@ pub(super) async fn create_chat_completion_with_candidate(
                 .map_err(std::io::Error::other),
             log,
             started_at,
+            input_text,
+            RawStreamContentCapture::new(RawStreamProtocol::ChatCompletions),
         ));
         return Ok(([(header::CONTENT_TYPE, "text/event-stream")], body).into_response());
     }
