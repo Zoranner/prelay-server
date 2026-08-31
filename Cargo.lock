@@ -1989,6 +1989,7 @@ dependencies = [
  "futures",
  "prelay-protocol",
  "rand 0.8.7",
+ "regex",
  "reqwest",
  "sea-orm",
  "sea-query",

@@ -51,15 +51,26 @@ pub(super) async fn insert_image_activity_best_effort(
     access: &CurrentProtocolAccess,
     log: ActivityInsert,
 ) {
-    if state
+    let _ = insert_image_activity_with_id_best_effort(state, access, log).await;
+}
+
+pub(super) async fn insert_image_activity_with_id_best_effort(
+    state: &AppState,
+    access: &CurrentProtocolAccess,
+    log: ActivityInsert,
+) -> Option<String> {
+    match state
         .storage
         .insert_activity(&access.identity_id, log)
         .await
-        .is_err()
     {
-        tracing::warn!(
-            failure_kind = "image_activity_storage",
-            "failed to persist image activity"
-        );
+        Ok(activity_id) => Some(activity_id),
+        Err(_) => {
+            tracing::warn!(
+                failure_kind = "image_activity_storage",
+                "failed to persist image activity"
+            );
+            None
+        }
     }
 }

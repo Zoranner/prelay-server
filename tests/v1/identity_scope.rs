@@ -269,6 +269,41 @@ async fn image_generation_endpoint_token_uses_only_its_identity_mapping() {
     assert_eq!(response["provider"], "provider-a");
     assert_eq!(hits_a.load(Ordering::SeqCst), 1);
     assert_eq!(hits_b.load(Ordering::SeqCst), 0);
+
+    let access = context
+        .storage
+        .authenticate_protocol_access(token)
+        .await
+        .expect("authenticate image endpoint token")
+        .expect("resolve image endpoint access");
+    let activities = context
+        .storage
+        .list_activities(&access.identity_id, 10)
+        .await
+        .expect("load image activities");
+    let activity_content = context
+        .storage
+        .find_activity_content(&activities[0].id)
+        .await
+        .expect("load image activity content")
+        .expect("image activity content is persisted");
+    assert_eq!(activity_content.input_text, "private prompt");
+    assert_eq!(activity_content.output_text, "");
+    let media = serde_json::from_str::<Value>(
+        activity_content
+            .media_metadata_json
+            .as_deref()
+            .expect("image media metadata"),
+    )
+    .expect("decode image media metadata");
+    assert_eq!(media["media_type"], "application/json");
+    assert!(media["size_bytes"].as_u64().is_some());
+    assert_eq!(media["sha256"].as_str().expect("media hash").len(), 64);
+    assert!(!activity_content
+        .media_metadata_json
+        .as_deref()
+        .expect("image media metadata")
+        .contains("result"));
 }
 
 #[tokio::test]
@@ -324,6 +359,15 @@ async fn protocol_request_writes_identity_scoped_log_and_response_session() {
         logs[0].endpoint_name.as_deref(),
         Some(access.endpoint_name.as_str())
     );
+    let activity_content = context
+        .storage
+        .find_activity_content(&logs[0].id)
+        .await
+        .expect("load activity content")
+        .expect("activity content is persisted");
+    assert_eq!(activity_content.input_text, "hello");
+    assert_eq!(activity_content.output_text, "hello");
+    assert_eq!(activity_content.status, "pending");
     let response_id = response["id"].as_str().expect("response id");
     assert!(context
         .storage

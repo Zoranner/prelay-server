@@ -7,6 +7,7 @@ use axum::{
 use serde_json::Value;
 
 use crate::{
+    activity::{insert_activity_with_content, internal_request_text, internal_response_text},
     bridge::{
         anthropic::encode::encode_anthropic_response,
         stream::responses_sse_response_to_anthropic_messages_sse_with_stats,
@@ -139,47 +140,49 @@ pub(super) async fn create_responses_anthropic_message(
         .as_ref()
         .and_then(|usage| usage.reasoning_tokens);
     let tool_call_count = count_tool_calls(&response);
-    state
-        .storage
-        .insert_activity(
-            &context.identity_id,
-            ActivityInsert {
-                protocol_in: "anthropic_messages".to_string(),
-                protocol_out: "anthropic_messages".to_string(),
-                protocol_upstream: "responses".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                endpoint_name: context.endpoint_name.clone(),
-                model_requested: context.model_requested,
-                model_upstream: response.model.clone(),
-                status: "success".to_string(),
-                http_status: 200,
-                error_code: None,
-                error_message: None,
-                is_streaming: context.is_streaming,
-                input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
-                output_tokens: response
-                    .usage
-                    .as_ref()
-                    .and_then(|usage| usage.output_tokens),
-                reasoning_tokens,
-                cache_read_tokens: response
-                    .usage
-                    .as_ref()
-                    .and_then(|usage| usage.cache_read_tokens),
-                cache_write_tokens: response
-                    .usage
-                    .as_ref()
-                    .and_then(|usage| usage.cache_write_tokens),
-                latency_ms: context.started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: Some(upstream_latency_ms),
-                first_token_ms: None,
-                tool_call_count: Some(tool_call_count),
-                upstream_request_id: None,
-                metadata_json: context.metadata_json,
-            },
-        )
-        .await?;
+    insert_activity_with_content(
+        &state.storage,
+        &context.identity_id,
+        ActivityInsert {
+            protocol_in: "anthropic_messages".to_string(),
+            protocol_out: "anthropic_messages".to_string(),
+            protocol_upstream: "responses".to_string(),
+            provider_id: provider.id,
+            provider_name: provider.name,
+            endpoint_name: context.endpoint_name.clone(),
+            model_requested: context.model_requested,
+            model_upstream: response.model.clone(),
+            status: "success".to_string(),
+            http_status: 200,
+            error_code: None,
+            error_message: None,
+            is_streaming: context.is_streaming,
+            input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
+            output_tokens: response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.output_tokens),
+            reasoning_tokens,
+            cache_read_tokens: response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.cache_read_tokens),
+            cache_write_tokens: response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.cache_write_tokens),
+            latency_ms: context.started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: Some(tool_call_count),
+            upstream_request_id: None,
+            metadata_json: context.metadata_json,
+        },
+        &internal_request_text(&request),
+        &internal_response_text(&response),
+        None,
+    )
+    .await?;
 
     Ok(Json(encode_anthropic_response(response)).into_response())
 }

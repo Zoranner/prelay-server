@@ -20,7 +20,7 @@ impl Storage {
         &self,
         identity_id: &str,
         log: ActivityInsert,
-    ) -> Result<(), StorageError> {
+    ) -> Result<String, StorageError> {
         insert(&self.db, identity_id, log).await
     }
 
@@ -55,8 +55,10 @@ async fn insert(
     db: &DatabaseConnection,
     identity_id: &str,
     log: ActivityInsert,
-) -> Result<(), StorageError> {
-    insert_with_id(db, identity_id, Uuid::new_v4().to_string(), log).await
+) -> Result<String, StorageError> {
+    let id = Uuid::new_v4().to_string();
+    insert_with_id(db, identity_id, id.clone(), log).await?;
+    Ok(id)
 }
 
 async fn insert_with_id(

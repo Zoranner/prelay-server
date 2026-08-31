@@ -8,6 +8,9 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
+    activity::{
+        enqueue_activity_content_best_effort, internal_request_text, internal_response_text,
+    },
     bridge::{
         internal::InternalRequest, responses::encode::encode_responses_response,
         stream::chat_sse_response_to_responses_sse_with_stats,
@@ -172,7 +175,7 @@ pub(super) async fn create_chat_response(
             response: &response,
         })
         .await?;
-    state
+    let activity_id = state
         .storage
         .insert_activity(
             &identity_id,
@@ -213,6 +216,14 @@ pub(super) async fn create_chat_response(
             },
         )
         .await?;
+    enqueue_activity_content_best_effort(
+        &state.storage,
+        activity_id,
+        &internal_request_text(&request),
+        &internal_response_text(&response),
+        None,
+    )
+    .await;
 
     Ok(Json(encode_responses_response(response)).into_response())
 }

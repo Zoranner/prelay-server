@@ -8,6 +8,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
+    activity::{insert_activity_with_content, internal_request_text, internal_response_text},
     bridge::{
         internal::InternalRequest, responses::encode::encode_responses_response,
         stream::anthropic_messages_sse_response_to_responses_sse_with_stats,
@@ -159,47 +160,49 @@ pub(super) async fn create_anthropic_messages_response(
             response: &response,
         })
         .await?;
-    state
-        .storage
-        .insert_activity(
-            &context.identity_id,
-            ActivityInsert {
-                protocol_in: "responses".to_string(),
-                protocol_out: "responses".to_string(),
-                protocol_upstream: "anthropic_messages".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                endpoint_name: context.endpoint_name.clone(),
-                model_requested: context.model_requested,
-                model_upstream: response.model.clone(),
-                status: "success".to_string(),
-                http_status: 200,
-                error_code: None,
-                error_message: None,
-                is_streaming: context.is_streaming,
-                input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
-                output_tokens: response
-                    .usage
-                    .as_ref()
-                    .and_then(|usage| usage.output_tokens),
-                reasoning_tokens: None,
-                cache_read_tokens: response
-                    .usage
-                    .as_ref()
-                    .and_then(|usage| usage.cache_read_tokens),
-                cache_write_tokens: response
-                    .usage
-                    .as_ref()
-                    .and_then(|usage| usage.cache_write_tokens),
-                latency_ms: context.started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: Some(upstream_latency_ms),
-                first_token_ms: None,
-                tool_call_count: Some(tool_call_count),
-                upstream_request_id: None,
-                metadata_json: context.metadata_json,
-            },
-        )
-        .await?;
+    insert_activity_with_content(
+        &state.storage,
+        &context.identity_id,
+        ActivityInsert {
+            protocol_in: "responses".to_string(),
+            protocol_out: "responses".to_string(),
+            protocol_upstream: "anthropic_messages".to_string(),
+            provider_id: provider.id,
+            provider_name: provider.name,
+            endpoint_name: context.endpoint_name.clone(),
+            model_requested: context.model_requested,
+            model_upstream: response.model.clone(),
+            status: "success".to_string(),
+            http_status: 200,
+            error_code: None,
+            error_message: None,
+            is_streaming: context.is_streaming,
+            input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
+            output_tokens: response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.output_tokens),
+            reasoning_tokens: None,
+            cache_read_tokens: response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.cache_read_tokens),
+            cache_write_tokens: response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.cache_write_tokens),
+            latency_ms: context.started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: Some(tool_call_count),
+            upstream_request_id: None,
+            metadata_json: context.metadata_json,
+        },
+        &internal_request_text(&request),
+        &internal_response_text(&response),
+        None,
+    )
+    .await?;
 
     Ok(Json(encode_responses_response(response)).into_response())
 }

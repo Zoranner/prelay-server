@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod app;
 pub mod bridge;
 pub mod client_update;

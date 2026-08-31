@@ -1,5 +1,6 @@
 mod access;
 mod activities;
+mod activity_contents;
 mod crypto;
 mod identities;
 mod memories;

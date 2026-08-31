@@ -7,6 +7,7 @@ use axum::{
 use serde_json::Value;
 
 use crate::{
+    activity::{insert_activity_with_content, internal_request_text, internal_response_text},
     bridge::{internal::InternalRequest, stream::native_responses_sse_with_stats},
     error::AppError,
     observability::stream_stats::record_stream,
@@ -147,59 +148,61 @@ pub(super) async fn create_native_response(
             response: &decoded_response,
         })
         .await?;
-    state
-        .storage
-        .insert_activity(
-            &context.identity_id,
-            ActivityInsert {
-                protocol_in: "responses".to_string(),
-                protocol_out: "responses".to_string(),
-                protocol_upstream: "responses".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                endpoint_name: context.endpoint_name.clone(),
-                model_requested: context.model_requested,
-                model_upstream: response
-                    .get("model")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown")
-                    .to_string(),
-                status: "success".to_string(),
-                http_status: 200,
-                error_code: None,
-                error_message: None,
-                is_streaming: context.is_streaming,
-                input_tokens: response
-                    .get("usage")
-                    .and_then(|usage| usage.get("input_tokens"))
-                    .and_then(Value::as_i64),
-                output_tokens: response
-                    .get("usage")
-                    .and_then(|usage| usage.get("output_tokens"))
-                    .and_then(Value::as_i64),
-                reasoning_tokens: None,
-                cache_read_tokens: response
-                    .get("usage")
-                    .and_then(|usage| {
-                        usage
-                            .pointer("/input_tokens_details/cached_tokens")
-                            .or_else(|| usage.pointer("/prompt_tokens_details/cached_tokens"))
-                            .or_else(|| usage.get("cache_read_input_tokens"))
-                    })
-                    .and_then(Value::as_i64),
-                cache_write_tokens: response
-                    .get("usage")
-                    .and_then(|usage| usage.get("cache_creation_input_tokens"))
-                    .and_then(Value::as_i64),
-                latency_ms: context.started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: Some(upstream_latency_ms),
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id: None,
-                metadata_json: context.metadata_json,
-            },
-        )
-        .await?;
+    insert_activity_with_content(
+        &state.storage,
+        &context.identity_id,
+        ActivityInsert {
+            protocol_in: "responses".to_string(),
+            protocol_out: "responses".to_string(),
+            protocol_upstream: "responses".to_string(),
+            provider_id: provider.id,
+            provider_name: provider.name,
+            endpoint_name: context.endpoint_name.clone(),
+            model_requested: context.model_requested,
+            model_upstream: response
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string(),
+            status: "success".to_string(),
+            http_status: 200,
+            error_code: None,
+            error_message: None,
+            is_streaming: context.is_streaming,
+            input_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("input_tokens"))
+                .and_then(Value::as_i64),
+            output_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("output_tokens"))
+                .and_then(Value::as_i64),
+            reasoning_tokens: None,
+            cache_read_tokens: response
+                .get("usage")
+                .and_then(|usage| {
+                    usage
+                        .pointer("/input_tokens_details/cached_tokens")
+                        .or_else(|| usage.pointer("/prompt_tokens_details/cached_tokens"))
+                        .or_else(|| usage.get("cache_read_input_tokens"))
+                })
+                .and_then(Value::as_i64),
+            cache_write_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("cache_creation_input_tokens"))
+                .and_then(Value::as_i64),
+            latency_ms: context.started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: None,
+            upstream_request_id: None,
+            metadata_json: context.metadata_json,
+        },
+        &internal_request_text(&request),
+        &internal_response_text(&decoded_response),
+        None,
+    )
+    .await?;
 
     Ok(Json(response).into_response())
 }

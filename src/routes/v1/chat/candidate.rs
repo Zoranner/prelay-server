@@ -8,6 +8,7 @@ use futures::TryStreamExt;
 use serde_json::Value;
 
 use crate::{
+    activity::{chat_message_text, chat_response_text, insert_activity_with_content},
     error::AppError,
     observability::{
         request_metadata::build_request_metadata, stream_stats::record_first_chunk,
@@ -141,62 +142,64 @@ pub(super) async fn create_chat_completion_with_candidate(
         .json::<Value>()
         .await
         .map_err(|error| AppError::Internal(error.into()))?;
-    state
-        .storage
-        .insert_activity(
-            &access.identity_id,
-            ActivityInsert {
-                protocol_in: "chat_completions".to_string(),
-                protocol_out: "chat_completions".to_string(),
-                protocol_upstream: "chat_completions".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                endpoint_name: access.endpoint_name.clone(),
-                model_requested: model,
-                model_upstream: response
-                    .get("model")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown")
-                    .to_string(),
-                status: "success".to_string(),
-                http_status: 200,
-                error_code: None,
-                error_message: None,
-                is_streaming,
-                input_tokens: response
-                    .get("usage")
-                    .and_then(|usage| usage.get("prompt_tokens"))
-                    .and_then(Value::as_i64),
-                output_tokens: response
-                    .get("usage")
-                    .and_then(|usage| usage.get("completion_tokens"))
-                    .and_then(Value::as_i64),
-                reasoning_tokens: response
-                    .get("usage")
-                    .and_then(|usage| usage.get("completion_tokens_details"))
-                    .and_then(|details| details.get("reasoning_tokens"))
-                    .and_then(Value::as_i64),
-                cache_read_tokens: response
-                    .get("usage")
-                    .and_then(|usage| {
-                        usage
-                            .pointer("/prompt_tokens_details/cached_tokens")
-                            .or_else(|| usage.get("cache_read_input_tokens"))
-                    })
-                    .and_then(Value::as_i64),
-                cache_write_tokens: response
-                    .get("usage")
-                    .and_then(|usage| usage.get("cache_creation_input_tokens"))
-                    .and_then(Value::as_i64),
-                latency_ms: started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: Some(upstream_latency_ms),
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id,
-                metadata_json,
-            },
-        )
-        .await?;
+    insert_activity_with_content(
+        &state.storage,
+        &access.identity_id,
+        ActivityInsert {
+            protocol_in: "chat_completions".to_string(),
+            protocol_out: "chat_completions".to_string(),
+            protocol_upstream: "chat_completions".to_string(),
+            provider_id: provider.id,
+            provider_name: provider.name,
+            endpoint_name: access.endpoint_name.clone(),
+            model_requested: model,
+            model_upstream: response
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string(),
+            status: "success".to_string(),
+            http_status: 200,
+            error_code: None,
+            error_message: None,
+            is_streaming,
+            input_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("prompt_tokens"))
+                .and_then(Value::as_i64),
+            output_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("completion_tokens"))
+                .and_then(Value::as_i64),
+            reasoning_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("completion_tokens_details"))
+                .and_then(|details| details.get("reasoning_tokens"))
+                .and_then(Value::as_i64),
+            cache_read_tokens: response
+                .get("usage")
+                .and_then(|usage| {
+                    usage
+                        .pointer("/prompt_tokens_details/cached_tokens")
+                        .or_else(|| usage.get("cache_read_input_tokens"))
+                })
+                .and_then(Value::as_i64),
+            cache_write_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("cache_creation_input_tokens"))
+                .and_then(Value::as_i64),
+            latency_ms: started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: None,
+            upstream_request_id,
+            metadata_json,
+        },
+        &chat_message_text(&payload),
+        &chat_response_text(&response),
+        None,
+    )
+    .await?;
 
     Ok(Json(response).into_response())
 }

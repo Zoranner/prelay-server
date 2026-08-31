@@ -8,6 +8,7 @@ use futures::TryStreamExt;
 use serde_json::Value;
 
 use crate::{
+    activity::{anthropic_message_text, anthropic_request_text, insert_activity_with_content},
     error::AppError,
     observability::stream_stats::record_first_chunk,
     providers::spec::{provider_upstream_base_url, UpstreamProtocol},
@@ -132,54 +133,56 @@ pub(super) async fn create_native_anthropic_message(
         .json::<Value>()
         .await
         .map_err(|error| AppError::Internal(error.into()))?;
-    state
-        .storage
-        .insert_activity(
-            &context.identity_id,
-            ActivityInsert {
-                protocol_in: "anthropic_messages".to_string(),
-                protocol_out: "anthropic_messages".to_string(),
-                protocol_upstream: "anthropic_messages".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                endpoint_name: context.endpoint_name.clone(),
-                model_requested: context.model_requested,
-                model_upstream: response
-                    .get("model")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown")
-                    .to_string(),
-                status: "success".to_string(),
-                http_status: 200,
-                error_code: None,
-                error_message: None,
-                is_streaming: context.is_streaming,
-                input_tokens: response
-                    .get("usage")
-                    .and_then(|usage| usage.get("input_tokens"))
-                    .and_then(Value::as_i64),
-                output_tokens: response
-                    .get("usage")
-                    .and_then(|usage| usage.get("output_tokens"))
-                    .and_then(Value::as_i64),
-                reasoning_tokens: None,
-                cache_read_tokens: response
-                    .get("usage")
-                    .and_then(|usage| usage.get("cache_read_input_tokens"))
-                    .and_then(Value::as_i64),
-                cache_write_tokens: response
-                    .get("usage")
-                    .and_then(|usage| usage.get("cache_creation_input_tokens"))
-                    .and_then(Value::as_i64),
-                latency_ms: context.started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: Some(upstream_latency_ms),
-                first_token_ms: None,
-                tool_call_count: None,
-                upstream_request_id: None,
-                metadata_json: context.metadata_json,
-            },
-        )
-        .await?;
+    insert_activity_with_content(
+        &state.storage,
+        &context.identity_id,
+        ActivityInsert {
+            protocol_in: "anthropic_messages".to_string(),
+            protocol_out: "anthropic_messages".to_string(),
+            protocol_upstream: "anthropic_messages".to_string(),
+            provider_id: provider.id,
+            provider_name: provider.name,
+            endpoint_name: context.endpoint_name.clone(),
+            model_requested: context.model_requested,
+            model_upstream: response
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string(),
+            status: "success".to_string(),
+            http_status: 200,
+            error_code: None,
+            error_message: None,
+            is_streaming: context.is_streaming,
+            input_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("input_tokens"))
+                .and_then(Value::as_i64),
+            output_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("output_tokens"))
+                .and_then(Value::as_i64),
+            reasoning_tokens: None,
+            cache_read_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("cache_read_input_tokens"))
+                .and_then(Value::as_i64),
+            cache_write_tokens: response
+                .get("usage")
+                .and_then(|usage| usage.get("cache_creation_input_tokens"))
+                .and_then(Value::as_i64),
+            latency_ms: context.started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: None,
+            upstream_request_id: None,
+            metadata_json: context.metadata_json,
+        },
+        &anthropic_request_text(&payload),
+        &anthropic_message_text(&response),
+        None,
+    )
+    .await?;
 
     Ok(Json(response).into_response())
 }

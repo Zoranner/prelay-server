@@ -3,6 +3,7 @@ use futures::TryStreamExt;
 use serde_json::Value;
 
 use crate::{
+    activity::{enqueue_activity_content_best_effort, media_metadata_from_bytes},
     error::AppError,
     observability::{
         stream_stats::record_first_chunk, upstream_observability::upstream_observability,
@@ -12,7 +13,10 @@ use crate::{
     AppState,
 };
 
-use super::activity::{image_activity, insert_image_activity_best_effort, ImageActivityParams};
+use super::activity::{
+    image_activity, insert_image_activity_best_effort, insert_image_activity_with_id_best_effort,
+    ImageActivityParams,
+};
 
 pub(super) async fn create_image_generation_with_candidate(
     state: &AppState,
@@ -166,7 +170,16 @@ pub(super) async fn create_image_generation_with_candidate(
             });
         }
     };
-    insert_image_activity_best_effort(
+    let input_text = payload
+        .get("prompt")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let media_type = content_type
+        .as_ref()
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    if let Some(activity_id) = insert_image_activity_with_id_best_effort(
         state,
         access,
         image_activity(ImageActivityParams {
@@ -184,7 +197,17 @@ pub(super) async fn create_image_generation_with_candidate(
             error_message: None,
         }),
     )
-    .await;
+    .await
+    {
+        enqueue_activity_content_best_effort(
+            &state.storage,
+            activity_id,
+            &input_text,
+            "",
+            Some(media_metadata_from_bytes(media_type, &response_bytes)),
+        )
+        .await;
+    }
 
     Ok(upstream_response_with_body(
         upstream_status,
