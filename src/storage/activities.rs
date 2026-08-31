@@ -109,7 +109,7 @@ async fn insert_with_id_and_prices(
         first_token_ms: Set(log.first_token_ms),
         tool_call_count: Set(log.tool_call_count),
         upstream_request_id: Set(log.upstream_request_id),
-        metadata_json: Set(log.metadata_json),
+        metadata_json: Set(None),
     }
     .insert(db)
     .await?;
@@ -155,7 +155,6 @@ async fn update_stream_with_prices(
         latency_ms: update.latency_ms,
         tool_call_count: update.tool_call_count,
         upstream_request_id: update.upstream_request_id.clone(),
-        metadata_json: update.metadata_json.clone(),
         ..Default::default()
     };
     let cost = estimate_cost(&pricing_log, prices);
@@ -176,7 +175,6 @@ async fn update_stream_with_prices(
     if update.upstream_request_id.is_some() {
         active.upstream_request_id = Set(update.upstream_request_id);
     }
-    active.metadata_json = Set(update.metadata_json);
     active.update(db).await?;
     Ok(())
 }
@@ -217,7 +215,6 @@ fn request_summary(row: activities::Model) -> ActivitySummary {
         cache_write_tokens: row.cache_write_tokens,
         latency_ms: row.latency_ms,
         upstream_request_id: row.upstream_request_id,
-        metadata_json: row.metadata_json,
     }
 }
 
@@ -395,7 +392,6 @@ mod tests {
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: None,
         }
     }
 }

@@ -1,22 +1,13 @@
 use serde_json::Value;
 
 use crate::{
-    bridge::{
-        diagnostics::{BridgeDiagnostic, DecodedRequest, DiagnosticAction, DiagnosticSeverity},
-        internal::{
-            InternalContentPart, InternalMessage, InternalRequest, InternalRole, InternalTool,
-        },
+    bridge::internal::{
+        InternalContentPart, InternalMessage, InternalRequest, InternalRole, InternalTool,
     },
     error::AppError,
 };
 
-#[cfg(test)]
 pub fn decode_anthropic_request(value: Value) -> Result<InternalRequest, AppError> {
-    Ok(decode_anthropic_request_with_diagnostics(value)?.request)
-}
-
-pub fn decode_anthropic_request_with_diagnostics(value: Value) -> Result<DecodedRequest, AppError> {
-    let mut diagnostics = Vec::new();
     let model = value
         .get("model")
         .and_then(Value::as_str)
@@ -38,7 +29,7 @@ pub fn decode_anthropic_request_with_diagnostics(value: Value) -> Result<Decoded
     if let Some(system) = value.get("system") {
         decoded.push(InternalMessage {
             role: InternalRole::System,
-            content: decode_content(system, "/system", &mut diagnostics)?,
+            content: decode_content(system)?,
             tool_call_id: None,
             tool_calls: Vec::new(),
             reasoning_content: None,
@@ -47,10 +38,7 @@ pub fn decode_anthropic_request_with_diagnostics(value: Value) -> Result<Decoded
     decoded.extend(
         messages
             .iter()
-            .enumerate()
-            .map(|(index, message)| {
-                decode_message(message, &format!("/messages/{index}"), &mut diagnostics)
-            })
+            .map(decode_message)
             .collect::<Result<Vec<_>, _>>()?,
     );
 
@@ -64,19 +52,13 @@ pub fn decode_anthropic_request_with_diagnostics(value: Value) -> Result<Decoded
         structured_output_requested: false,
         parallel_tool_calls_requested: false,
         streaming_usage_requested: false,
-        tools: decode_tools(value.get("tools"), &mut diagnostics)?,
+        tools: decode_tools(value.get("tools"))?,
         messages: decoded,
     };
-    Ok(DecodedRequest {
-        request,
-        diagnostics,
-    })
+    Ok(request)
 }
 
-fn decode_tools(
-    value: Option<&Value>,
-    diagnostics: &mut Vec<BridgeDiagnostic>,
-) -> Result<Vec<InternalTool>, AppError> {
+fn decode_tools(value: Option<&Value>) -> Result<Vec<InternalTool>, AppError> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
@@ -84,34 +66,14 @@ fn decode_tools(
         return Ok(Vec::new());
     };
 
-    Ok(tools
-        .iter()
-        .enumerate()
-        .filter_map(|(index, tool)| decode_tool(tool, index, diagnostics))
-        .collect())
+    Ok(tools.iter().filter_map(decode_tool).collect())
 }
 
-fn decode_tool(
-    tool: &Value,
-    index: usize,
-    diagnostics: &mut Vec<BridgeDiagnostic>,
-) -> Option<InternalTool> {
-    let Some(name) = tool
+fn decode_tool(tool: &Value) -> Option<InternalTool> {
+    let name = tool
         .get("name")
         .and_then(Value::as_str)
-        .filter(|name| !name.trim().is_empty())
-    else {
-        diagnostics.push(BridgeDiagnostic::new(
-            "anthropic_messages",
-            format!("/tools/{index}"),
-            DiagnosticAction::Ignored,
-            DiagnosticSeverity::Warning,
-            "anthropic.tool.unsupported",
-            "跳过无法映射为 function tool 的工具定义",
-            tool.get("type").and_then(Value::as_str).map(str::to_string),
-        ));
-        return None;
-    };
+        .filter(|name| !name.trim().is_empty())?;
     let name = name.to_string();
     let input_schema = tool
         .get("input_schema")
@@ -129,36 +91,28 @@ fn decode_tool(
     })
 }
 
-fn decode_message(
-    value: &Value,
-    path: &str,
-    diagnostics: &mut Vec<BridgeDiagnostic>,
-) -> Result<InternalMessage, AppError> {
-    if let Some(tool_message) = decode_tool_result_message(value, path, diagnostics)? {
+fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
+    if let Some(tool_message) = decode_tool_result_message(value)? {
         return Ok(tool_message);
     }
 
     let role = value
         .get("role")
         .and_then(Value::as_str)
-        .map(|role| decode_role(role, &format!("{path}/role"), diagnostics))
+        .map(decode_role)
         .unwrap_or(InternalRole::User);
     let content = value.get("content").unwrap_or(value);
 
     Ok(InternalMessage {
         role,
-        content: decode_content(content, &format!("{path}/content"), diagnostics)?,
+        content: decode_content(content)?,
         tool_call_id: None,
         tool_calls: Vec::new(),
         reasoning_content: None,
     })
 }
 
-fn decode_tool_result_message(
-    value: &Value,
-    path: &str,
-    diagnostics: &mut Vec<BridgeDiagnostic>,
-) -> Result<Option<InternalMessage>, AppError> {
+fn decode_tool_result_message(value: &Value) -> Result<Option<InternalMessage>, AppError> {
     let Some(parts) = value.get("content").and_then(Value::as_array) else {
         return Ok(None);
     };
@@ -174,85 +128,44 @@ fn decode_tool_result_message(
         .and_then(Value::as_str)
         .filter(|id| !id.trim().is_empty())
     else {
-        diagnostics.push(BridgeDiagnostic::new(
-            "anthropic_messages",
-            format!("{path}/content"),
-            DiagnosticAction::Textified,
-            DiagnosticSeverity::Warning,
-            "anthropic.tool_result.missing_tool_use_id",
-            "tool_result 缺少 tool_use_id，已按普通文本内容处理",
-            Some("tool_result".to_string()),
-        ));
         return Ok(None);
     };
 
     Ok(Some(InternalMessage {
         role: InternalRole::Tool,
-        content: decode_tool_result_content(
-            tool_result.get("content"),
-            &format!("{path}/content"),
-            diagnostics,
-        )?,
+        content: decode_tool_result_content(tool_result.get("content"))?,
         tool_call_id: Some(tool_call_id.to_string()),
         tool_calls: Vec::new(),
         reasoning_content: None,
     }))
 }
 
-fn decode_tool_result_content(
-    value: Option<&Value>,
-    path: &str,
-    diagnostics: &mut Vec<BridgeDiagnostic>,
-) -> Result<Vec<InternalContentPart>, AppError> {
+fn decode_tool_result_content(value: Option<&Value>) -> Result<Vec<InternalContentPart>, AppError> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
     if let Some(text) = value.as_str() {
         return Ok(vec![InternalContentPart::Text(text.to_string())]);
     }
-    decode_content(value, path, diagnostics)
+    decode_content(value)
 }
 
-fn decode_role(role: &str, path: &str, diagnostics: &mut Vec<BridgeDiagnostic>) -> InternalRole {
+fn decode_role(role: &str) -> InternalRole {
     match role {
         "user" => InternalRole::User,
         "assistant" => InternalRole::Assistant,
         "system" | "developer" => InternalRole::System,
         "tool" => InternalRole::Tool,
-        _ => {
-            diagnostics.push(BridgeDiagnostic::new(
-                "anthropic_messages",
-                path,
-                DiagnosticAction::Mapped,
-                DiagnosticSeverity::Warning,
-                "anthropic.role.unknown",
-                "未知 role 已映射为 user",
-                Some(role.to_string()),
-            ));
-            InternalRole::User
-        }
+        _ => InternalRole::User,
     }
 }
 
-fn decode_content(
-    value: &Value,
-    path: &str,
-    diagnostics: &mut Vec<BridgeDiagnostic>,
-) -> Result<Vec<InternalContentPart>, AppError> {
+fn decode_content(value: &Value) -> Result<Vec<InternalContentPart>, AppError> {
     if let Some(text) = value.as_str() {
         return Ok(vec![InternalContentPart::Text(text.to_string())]);
     }
 
     let Some(parts) = value.as_array() else {
-        diagnostics.push(BridgeDiagnostic::new(
-            "anthropic_messages",
-            path,
-            DiagnosticAction::Textified,
-            DiagnosticSeverity::Info,
-            "anthropic.content.non_text",
-            "非文本 content 已转为 JSON 字符串",
-            value_kind(value),
-        ));
         return Ok(vec![InternalContentPart::Text(value_to_text(value))]);
     };
     let text_parts = parts
@@ -263,19 +176,7 @@ fn decode_content(
     if text_parts.is_empty() {
         return Ok(parts
             .iter()
-            .enumerate()
-            .map(|(index, part)| {
-                diagnostics.push(BridgeDiagnostic::new(
-                    "anthropic_messages",
-                    format!("{path}/{index}"),
-                    DiagnosticAction::Textified,
-                    DiagnosticSeverity::Info,
-                    "anthropic.content_part.non_text",
-                    "非文本 content part 已转为 JSON 字符串",
-                    part.get("type").and_then(Value::as_str).map(str::to_string),
-                ));
-                InternalContentPart::Text(value_to_text(part))
-            })
+            .map(|part| InternalContentPart::Text(value_to_text(part)))
             .collect());
     }
 
@@ -305,20 +206,6 @@ fn value_to_text(value: &Value) -> String {
         .as_str()
         .map(str::to_string)
         .unwrap_or_else(|| value.to_string())
-}
-
-fn value_kind(value: &Value) -> Option<String> {
-    Some(
-        match value {
-            Value::Null => "null",
-            Value::Bool(_) => "bool",
-            Value::Number(_) => "number",
-            Value::String(_) => "string",
-            Value::Array(_) => "array",
-            Value::Object(_) => "object",
-        }
-        .to_string(),
-    )
 }
 
 #[cfg(test)]

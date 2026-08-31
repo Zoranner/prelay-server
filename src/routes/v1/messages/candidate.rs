@@ -3,7 +3,6 @@ use serde_json::Value;
 
 use crate::{
     error::AppError,
-    observability::request_metadata::build_request_metadata,
     providers::spec::UpstreamProtocol,
     routes::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
     AppState,
@@ -19,7 +18,6 @@ pub(super) struct AnthropicMessageRequestContext {
     pub(super) endpoint_name: String,
     pub(super) model_requested: String,
     pub(super) is_streaming: bool,
-    pub(super) metadata_json: Option<String>,
     pub(super) started_at: std::time::Instant,
 }
 
@@ -32,7 +30,6 @@ pub(super) async fn create_message_with_candidate(
     let AnthropicMessageCandidateRequest {
         original_payload,
         request,
-        diagnostics,
         model_requested,
         is_streaming,
         started_at,
@@ -40,7 +37,6 @@ pub(super) async fn create_message_with_candidate(
     let provider = resolved.provider;
     let upstream_protocol = resolved.upstream_protocol;
     let model_upstream = resolved.model_upstream;
-    let metadata_json = build_request_metadata(diagnostics)?;
     let mut upstream_payload = original_payload;
     upstream_payload["model"] = Value::String(model_upstream.clone());
     let mut request = request;
@@ -50,7 +46,6 @@ pub(super) async fn create_message_with_candidate(
         endpoint_name: access.endpoint_name.clone(),
         model_requested,
         is_streaming,
-        metadata_json,
         started_at,
     };
     if upstream_protocol == UpstreamProtocol::AnthropicMessages {

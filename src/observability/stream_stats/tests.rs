@@ -17,22 +17,20 @@ use super::{
 };
 use crate::{
     bridge::stream::StreamStatsSnapshot,
-    observability::request_metadata::build_request_metadata,
     stats::ActivityInsert,
     storage::{Storage, StorageError},
 };
 
 #[tokio::test]
-async fn record_first_chunk_updates_completed_metadata_on_eof() {
+async fn record_first_chunk_persists_a_completed_activity_on_eof() {
     let (storage, identity_id) = test_storage().await;
-    let metadata_json = test_metadata();
     let stream = stream::iter([Ok::<_, std::io::Error>(Bytes::from_static(b"hello"))]);
 
     let chunks = record_first_chunk(
         storage.clone(),
         identity_id.clone(),
         stream,
-        test_log(metadata_json),
+        test_log(),
         std::time::Instant::now(),
     )
     .try_collect::<Vec<_>>()
@@ -45,20 +43,13 @@ async fn record_first_chunk_updates_completed_metadata_on_eof() {
         .list_activities(&identity_id, 10)
         .await
         .expect("load stream log");
-    let metadata: serde_json::Value =
-        serde_json::from_str(logs[0].metadata_json.as_deref().expect("metadata"))
-            .expect("parse metadata");
-
     assert_eq!(logs.len(), 1);
-    assert_eq!(metadata["stream"]["empty"], false);
-    assert_eq!(metadata["stream"]["completed"], true);
-    assert_eq!(metadata["stream"]["final_usage_seen"], false);
+    assert_eq!(logs[0].status, "success");
 }
 
 #[tokio::test]
-async fn record_stream_updates_usage_and_tool_count_without_normal_stream_metadata() {
+async fn record_stream_updates_usage_and_tool_count() {
     let (storage, identity_id) = test_storage().await;
-    let metadata_json = test_metadata();
     let stats = Arc::new(Mutex::new(StreamStatsSnapshot {
         input_tokens: Some(11),
         output_tokens: Some(7),
@@ -75,7 +66,7 @@ async fn record_stream_updates_usage_and_tool_count_without_normal_stream_metada
         storage.clone(),
         identity_id.clone(),
         stream,
-        test_log(metadata_json),
+        test_log(),
         std::time::Instant::now(),
         stats,
     )
@@ -88,20 +79,11 @@ async fn record_stream_updates_usage_and_tool_count_without_normal_stream_metada
         .await
         .expect("load stream log");
     let row = &logs[0];
-    let metadata: serde_json::Value =
-        serde_json::from_str(row.metadata_json.as_deref().expect("metadata"))
-            .expect("parse metadata");
-
     assert_eq!(logs.len(), 1);
     assert_eq!(row.input_tokens, Some(11));
     assert_eq!(row.output_tokens, Some(7));
     assert_eq!(row.cache_read_tokens, Some(3));
     assert_eq!(row.cache_write_tokens, Some(2));
-    assert!(metadata["stream"].is_null());
-    assert_eq!(
-        metadata["diagnostics"][0]["code"],
-        "responses.content.non_text"
-    );
 }
 
 #[tokio::test]
@@ -123,7 +105,7 @@ async fn record_stream_persists_final_usage_before_eof() {
         storage.clone(),
         identity_id.clone(),
         stream,
-        test_log(test_metadata()),
+        test_log(),
         std::time::Instant::now(),
         stats,
     ));
@@ -150,11 +132,7 @@ async fn record_stream_persists_final_usage_before_eof() {
 async fn record_stream_does_not_update_existing_row_when_first_insert_fails() {
     let (storage, identity_id) = test_storage().await;
     storage
-        .insert_activity_with_id(
-            &identity_id,
-            "duplicate-stream-log".to_string(),
-            test_log(test_metadata()),
-        )
+        .insert_activity_with_id(&identity_id, "duplicate-stream-log".to_string(), test_log())
         .await
         .expect("insert existing log");
     let stream = stream::iter([Ok::<_, std::io::Error>(Bytes::from_static(b"hello"))]);
@@ -163,7 +141,7 @@ async fn record_stream_does_not_update_existing_row_when_first_insert_fails() {
         storage.clone(),
         identity_id.clone(),
         stream,
-        test_log(test_metadata()),
+        test_log(),
         std::time::Instant::now(),
         None,
         "duplicate-stream-log".to_string(),
@@ -180,12 +158,8 @@ async fn record_stream_does_not_update_existing_row_when_first_insert_fails() {
         .iter()
         .find(|log| log.id == "duplicate-stream-log")
         .expect("load duplicate log");
-    let metadata: serde_json::Value =
-        serde_json::from_str(row.metadata_json.as_deref().expect("metadata"))
-            .expect("parse metadata");
-
     assert_eq!(logs.len(), 1);
-    assert_eq!(metadata["stream"]["completed"], serde_json::Value::Null);
+    assert_eq!(row.input_tokens, None);
 }
 
 async fn test_storage() -> (Storage, String) {
@@ -201,21 +175,7 @@ async fn test_storage() -> (Storage, String) {
     (storage, identity.identity_id)
 }
 
-fn test_metadata() -> String {
-    build_request_metadata(vec![crate::bridge::diagnostics::BridgeDiagnostic::new(
-        "responses",
-        "/input/0/content",
-        crate::bridge::diagnostics::DiagnosticAction::Textified,
-        crate::bridge::diagnostics::DiagnosticSeverity::Info,
-        "responses.content.non_text",
-        "非文本 content 已转为 JSON 字符串",
-        Some("object".to_string()),
-    )])
-    .expect("build metadata")
-    .expect("metadata for diagnostic")
-}
-
-fn test_log(metadata_json: String) -> ActivityInsert {
+fn test_log() -> ActivityInsert {
     ActivityInsert {
         protocol_in: "responses".to_string(),
         protocol_out: "responses".to_string(),
@@ -240,7 +200,6 @@ fn test_log(metadata_json: String) -> ActivityInsert {
         first_token_ms: None,
         tool_call_count: None,
         upstream_request_id: Some("req_123".to_string()),
-        metadata_json: Some(metadata_json),
     }
 }
 

@@ -45,7 +45,6 @@ pub(super) async fn create_chat_response(
         endpoint_name,
         model_requested,
         is_streaming,
-        metadata_json,
         started_at,
     } = context;
     let request = request_with_session_history(&state.storage, &identity_id, request).await?;
@@ -98,7 +97,6 @@ pub(super) async fn create_chat_response(
                     first_token_ms: None,
                     tool_call_count: None,
                     upstream_request_id: None,
-                    metadata_json: metadata_json.clone(),
                 },
             )
             .await?;
@@ -133,7 +131,6 @@ pub(super) async fn create_chat_response(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: metadata_json.clone(),
         };
         let (stream, stream_stats) =
             chat_sse_response_to_responses_sse_with_stats(upstream_response);
@@ -212,7 +209,6 @@ pub(super) async fn create_chat_response(
                 first_token_ms: None,
                 tool_call_count: Some(tool_call_count),
                 upstream_request_id: None,
-                metadata_json,
             },
         )
         .await?;

@@ -1,10 +1,7 @@
 use serde_json::json;
 
 use super::decode_responses_request;
-use crate::bridge::{
-    diagnostics::{DiagnosticAction, DiagnosticPhase, DiagnosticSeverity},
-    internal::{InternalContentPart, InternalRole},
-};
+use crate::bridge::internal::{InternalContentPart, InternalRole};
 
 #[test]
 fn decodes_string_input_into_user_message() {
@@ -177,86 +174,6 @@ fn decodes_responses_extensions_without_rejecting_request() {
     assert_eq!(
         request.messages[1].tool_calls[0].arguments,
         r#"{"path":"Cargo.toml"}"#
-    );
-}
-
-#[test]
-fn records_diagnostics_for_responses_compatibility_actions() {
-    let decoded = super::decode_responses_request_with_diagnostics(json!({
-        "model": "deepseek-chat",
-        "input": [
-            {
-                "role": "planner",
-                "content": [
-                    {
-                        "type": "input_image",
-                        "image_url": "https://example.com/image.png"
-                    }
-                ]
-            },
-            {
-                "type": "function_call",
-                "name": "read_file",
-                "arguments": { "path": "Cargo.toml" }
-            }
-        ],
-        "tools": [
-            {
-                "type": "web_search_preview"
-            },
-            {
-                "type": "function",
-                "name": "read_file"
-            }
-        ]
-    }))
-    .expect("decode responses request");
-
-    assert_eq!(decoded.request.messages[0].role, InternalRole::User);
-    assert_eq!(decoded.request.messages[1].tool_calls[0].id, "call_unknown");
-    assert_eq!(
-        decoded
-            .diagnostics
-            .iter()
-            .map(|diagnostic| (
-                diagnostic.phase.clone(),
-                diagnostic.action.clone(),
-                diagnostic.severity.clone(),
-                diagnostic.code.as_str()
-            ))
-            .collect::<Vec<_>>(),
-        vec![
-            (
-                DiagnosticPhase::Decode,
-                DiagnosticAction::Ignored,
-                DiagnosticSeverity::Warning,
-                "responses.tool.unsupported"
-            ),
-            (
-                DiagnosticPhase::Decode,
-                DiagnosticAction::Mapped,
-                DiagnosticSeverity::Warning,
-                "responses.role.unknown"
-            ),
-            (
-                DiagnosticPhase::Decode,
-                DiagnosticAction::Textified,
-                DiagnosticSeverity::Info,
-                "responses.content_part.non_text"
-            ),
-            (
-                DiagnosticPhase::Decode,
-                DiagnosticAction::Defaulted,
-                DiagnosticSeverity::Warning,
-                "responses.function_call.call_id_missing"
-            ),
-            (
-                DiagnosticPhase::Decode,
-                DiagnosticAction::Textified,
-                DiagnosticSeverity::Info,
-                "responses.function_call.arguments_non_string"
-            )
-        ]
     );
 }
 

@@ -73,7 +73,6 @@ pub(super) async fn create_native_response(
                     first_token_ms: None,
                     tool_call_count: None,
                     upstream_request_id: None,
-                    metadata_json: context.metadata_json.clone(),
                 },
             )
             .await?;
@@ -112,7 +111,6 @@ pub(super) async fn create_native_response(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: context.metadata_json.clone(),
         };
         let (stream, stream_stats) = native_responses_sse_with_stats(upstream_response);
         let body = Body::from_stream(record_stream(
@@ -196,7 +194,6 @@ pub(super) async fn create_native_response(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: context.metadata_json,
         },
         &internal_request_text(&request),
         &internal_response_text(&decoded_response),

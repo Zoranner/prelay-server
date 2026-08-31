@@ -76,7 +76,6 @@ pub(super) async fn create_responses_anthropic_message(
                     first_token_ms: None,
                     tool_call_count: None,
                     upstream_request_id: None,
-                    metadata_json: context.metadata_json.clone(),
                 },
             )
             .await?;
@@ -111,7 +110,6 @@ pub(super) async fn create_responses_anthropic_message(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: context.metadata_json.clone(),
         };
         let (stream, stream_stats) = responses_sse_response_to_anthropic_messages_sse_with_stats(
             upstream_response,
@@ -176,7 +174,6 @@ pub(super) async fn create_responses_anthropic_message(
             first_token_ms: None,
             tool_call_count: Some(tool_call_count),
             upstream_request_id: None,
-            metadata_json: context.metadata_json,
         },
         &internal_request_text(&request),
         &internal_response_text(&response),

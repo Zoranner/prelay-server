@@ -11,8 +11,7 @@ use crate::{
     activity::{chat_message_text, chat_response_text, insert_activity_with_content},
     error::AppError,
     observability::{
-        request_metadata::build_request_metadata, stream_stats::record_first_chunk,
-        upstream_observability::upstream_observability,
+        stream_stats::record_first_chunk, upstream_observability::upstream_observability,
     },
     providers::spec::provider_upstream_base_url,
     routes::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
@@ -31,7 +30,6 @@ pub(super) async fn create_chat_completion_with_candidate(
 ) -> Result<Response, AppError> {
     let provider = resolved.provider;
     let model_upstream = resolved.model_upstream;
-    let metadata_json = build_request_metadata(Vec::new())?;
 
     payload["model"] = Value::String(model_upstream.clone());
     let upstream_base_url = provider_upstream_base_url(&provider, resolved.upstream_protocol);
@@ -86,7 +84,6 @@ pub(super) async fn create_chat_completion_with_candidate(
                     first_token_ms: None,
                     tool_call_count: None,
                     upstream_request_id: observability.request_id,
-                    metadata_json: metadata_json.clone(),
                 },
             )
             .await?;
@@ -123,7 +120,6 @@ pub(super) async fn create_chat_completion_with_candidate(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id,
-            metadata_json: metadata_json.clone(),
         };
         let body = Body::from_stream(record_first_chunk(
             state.storage.clone(),
@@ -193,7 +189,6 @@ pub(super) async fn create_chat_completion_with_candidate(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id,
-            metadata_json,
         },
         &chat_message_text(&payload),
         &chat_response_text(&response),

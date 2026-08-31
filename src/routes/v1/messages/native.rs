@@ -72,7 +72,6 @@ pub(super) async fn create_native_anthropic_message(
                     first_token_ms: None,
                     tool_call_count: None,
                     upstream_request_id: None,
-                    metadata_json: context.metadata_json.clone(),
                 },
             )
             .await?;
@@ -112,7 +111,6 @@ pub(super) async fn create_native_anthropic_message(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: context.metadata_json.clone(),
         };
 
         return Response::builder()
@@ -176,7 +174,6 @@ pub(super) async fn create_native_anthropic_message(
             first_token_ms: None,
             tool_call_count: None,
             upstream_request_id: None,
-            metadata_json: context.metadata_json,
         },
         &anthropic_request_text(&payload),
         &anthropic_message_text(&response),

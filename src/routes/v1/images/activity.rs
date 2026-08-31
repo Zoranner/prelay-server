@@ -42,7 +42,6 @@ pub(super) fn image_activity(params: ImageActivityParams<'_>) -> ActivityInsert 
         first_token_ms: None,
         tool_call_count: None,
         upstream_request_id: params.upstream_request_id,
-        metadata_json: None,
     }
 }
 

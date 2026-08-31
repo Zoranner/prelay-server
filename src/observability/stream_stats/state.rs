@@ -5,7 +5,6 @@ use futures::{Stream, StreamExt};
 
 use crate::{
     bridge::stream::{SharedStreamStats, StreamStatsSnapshot},
-    observability::request_metadata::{update_stream_metadata, StreamMetadataUpdate},
     stats::{ActivityInsert, StreamActivityUpdate},
     storage::Storage,
 };
@@ -24,7 +23,6 @@ pub(super) fn record_stream_with_log_id<S>(
 where
     S: Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
 {
-    let base_metadata_json = log.metadata_json.clone();
     let upstream_request_id = log.upstream_request_id.clone();
     let state = StreamRecordState {
         storage,
@@ -34,7 +32,6 @@ where
         log_id,
         started_at,
         stats,
-        base_metadata_json,
         upstream_request_id,
         inserted: false,
         failed: false,
@@ -68,7 +65,6 @@ struct StreamRecordState {
     log_id: String,
     started_at: Instant,
     stats: Option<SharedStreamStats>,
-    base_metadata_json: Option<String>,
     upstream_request_id: Option<String>,
     inserted: bool,
     failed: bool,
@@ -85,11 +81,6 @@ impl StreamRecordState {
         match item {
             Ok(_) => {
                 log.first_token_ms = Some(first_token_ms);
-                log.metadata_json = self.metadata(StreamMetadataUpdate {
-                    empty: Some(false),
-                    completed: None,
-                    final_usage_seen: None,
-                });
             }
             Err(error) => {
                 self.failed = true;
@@ -98,11 +89,6 @@ impl StreamRecordState {
                 log.error_code = Some("stream_error".to_string());
                 log.error_message = Some(error.to_string());
                 log.first_token_ms = None;
-                log.metadata_json = self.metadata(StreamMetadataUpdate {
-                    empty: Some(false),
-                    completed: Some(false),
-                    final_usage_seen: Some(false),
-                });
             }
         }
         self.inserted =
@@ -122,12 +108,6 @@ impl StreamRecordState {
         }
 
         let snapshot = self.stats_snapshot();
-        let completed = snapshot.completed || self.stats.is_none();
-        let metadata_json = self.metadata(StreamMetadataUpdate {
-            empty: Some(false),
-            completed: Some(completed),
-            final_usage_seen: Some(snapshot.final_usage_seen),
-        });
         let update = StreamActivityUpdate {
             status: "success".to_string(),
             http_status: 200,
@@ -141,7 +121,6 @@ impl StreamRecordState {
             latency_ms,
             tool_call_count: Some(snapshot.tool_call_count),
             upstream_request_id: self.upstream_request_id.clone(),
-            metadata_json,
         };
         update_stream_log(&self.storage, &self.identity_id, &self.log_id, update).await;
     }
@@ -166,11 +145,6 @@ impl StreamRecordState {
             latency_ms: self.started_at.elapsed().as_millis() as i64,
             tool_call_count: Some(snapshot.tool_call_count),
             upstream_request_id: self.upstream_request_id.clone(),
-            metadata_json: self.metadata(StreamMetadataUpdate {
-                empty: Some(false),
-                completed: Some(snapshot.completed),
-                final_usage_seen: Some(true),
-            }),
         };
         update_stream_log(&self.storage, &self.identity_id, &self.log_id, update).await;
     }
@@ -184,11 +158,6 @@ impl StreamRecordState {
         log.latency_ms = latency_ms;
         log.error_code = Some("empty_stream".to_string());
         log.error_message = Some("upstream stream finished without chunks".to_string());
-        log.metadata_json = self.metadata(StreamMetadataUpdate {
-            empty: Some(true),
-            completed: Some(false),
-            final_usage_seen: Some(false),
-        });
         if insert_stream_log_with_id(&self.storage, &self.identity_id, &self.log_id, log)
             .await
             .is_ok()
@@ -202,11 +171,6 @@ impl StreamRecordState {
         self.failed = true;
         let latency_ms = self.started_at.elapsed().as_millis() as i64;
         let snapshot = self.stats_snapshot();
-        let metadata_json = self.metadata(StreamMetadataUpdate {
-            empty: Some(false),
-            completed: Some(false),
-            final_usage_seen: Some(snapshot.final_usage_seen),
-        });
         let update = StreamActivityUpdate {
             status: "failed".to_string(),
             http_status: 502,
@@ -220,7 +184,6 @@ impl StreamRecordState {
             latency_ms,
             tool_call_count: Some(snapshot.tool_call_count),
             upstream_request_id: self.upstream_request_id.clone(),
-            metadata_json,
         };
         update_stream_log(&self.storage, &self.identity_id, &self.log_id, update).await;
     }
@@ -230,11 +193,5 @@ impl StreamRecordState {
             .as_ref()
             .and_then(|stats| stats.lock().ok().map(|stats| stats.clone()))
             .unwrap_or_default()
-    }
-
-    fn metadata(&self, update: StreamMetadataUpdate) -> Option<String> {
-        update_stream_metadata(self.base_metadata_json.as_deref(), &update)
-            .ok()
-            .flatten()
     }
 }

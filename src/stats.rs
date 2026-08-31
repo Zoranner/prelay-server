@@ -32,7 +32,6 @@ pub struct ActivityInsert {
     pub first_token_ms: Option<i64>,
     pub tool_call_count: Option<i64>,
     pub upstream_request_id: Option<String>,
-    pub metadata_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -49,7 +48,6 @@ pub struct StreamActivityUpdate {
     pub latency_ms: i64,
     pub tool_call_count: Option<i64>,
     pub upstream_request_id: Option<String>,
-    pub metadata_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

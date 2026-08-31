@@ -119,6 +119,5 @@ fn test_log(input_tokens: Option<i64>, output_tokens: Option<i64>) -> ActivityIn
         first_token_ms: None,
         tool_call_count: None,
         upstream_request_id: None,
-        metadata_json: None,
     }
 }
