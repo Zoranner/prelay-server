@@ -1,5 +1,7 @@
 use prelay_server::{
-    activity::ActivityContentDraft,
+    activity::{
+        ActivityContentDraft, ActivityContentPolicy, RawStreamContentCapture, RawStreamProtocol,
+    },
     entity::activity_contents,
     identity::credential::generate_credential,
     schema::initialize,
@@ -7,6 +9,37 @@ use prelay_server::{
     storage::{MasterKey, Storage},
 };
 use sea_orm::{ColumnTrait, Database, EntityTrait, QueryFilter};
+
+#[test]
+fn activity_content_policy_uses_a_positive_configured_size_limit() {
+    assert_eq!(
+        ActivityContentPolicy::from_values(None)
+            .expect("default content policy")
+            .max_bytes,
+        64 * 1024
+    );
+    assert_eq!(
+        ActivityContentPolicy::from_values(Some("1024"))
+            .expect("configured content policy")
+            .max_bytes,
+        1024
+    );
+    assert!(ActivityContentPolicy::from_values(Some("0")).is_err());
+    assert!(ActivityContentPolicy::from_values(Some("invalid")).is_err());
+}
+
+#[test]
+fn raw_stream_capture_drops_an_oversized_event_and_accepts_the_next_one() {
+    let mut capture = RawStreamContentCapture::new(RawStreamProtocol::ImageGeneration);
+
+    capture.observe_chunk(&vec![b'x'; 256 * 1024]);
+    capture.observe_chunk(b"\n\ndata: {\"type\":\"image_generation.completed\"}\n\n");
+    capture.finish();
+
+    assert!(capture.is_truncated());
+    assert!(capture.is_completed());
+    assert!(capture.output_text().is_empty());
+}
 
 #[tokio::test]
 async fn enqueues_one_pending_content_for_a_persisted_activity() {

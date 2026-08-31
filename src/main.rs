@@ -56,6 +56,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    prelay_server::activity::initialize_from_environment().map_err(anyhow::Error::msg)?;
     let database_config = DatabaseConfig::from_environment()?;
     let db = connect(&database_config).await?;
     initialize(&db).await?;

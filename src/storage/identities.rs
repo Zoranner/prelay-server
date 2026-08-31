@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::{
     entity::{
-        identities,
+        activity_contents, identities,
         identity::{
             activities as identity_activities, endpoint_configs as identity_endpoint_configs,
             endpoint_model_routes as identity_endpoint_model_routes,
@@ -280,7 +280,20 @@ pub(crate) async fn delete_inactive(
         .into_iter()
         .map(|provider| provider.id)
         .collect::<Vec<_>>();
+    let activity_ids = identity_activities::Entity::find()
+        .filter(identity_activities::Column::IdentityId.is_in(identity_ids.clone()))
+        .all(&transaction)
+        .await?
+        .into_iter()
+        .map(|activity| activity.id)
+        .collect::<Vec<_>>();
 
+    if !activity_ids.is_empty() {
+        activity_contents::Entity::delete_many()
+            .filter(activity_contents::Column::ActivityId.is_in(activity_ids))
+            .exec(&transaction)
+            .await?;
+    }
     identity_activities::Entity::delete_many()
         .filter(identity_activities::Column::IdentityId.is_in(identity_ids.clone()))
         .exec(&transaction)

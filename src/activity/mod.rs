@@ -1,3 +1,4 @@
+mod config;
 mod content;
 mod redaction;
 mod stream;
@@ -9,6 +10,7 @@ use crate::{
 };
 use serde_json::Value;
 
+pub use config::{initialize_from_environment, policy, ActivityContentPolicy};
 pub use content::media_metadata_from_bytes;
 pub use content::{
     activity_content_from_text, activity_content_from_text_with_media, ActivityContentDraft,
@@ -147,14 +149,31 @@ pub async fn enqueue_activity_content_best_effort(
     output_text: &str,
     media: Option<ActivityMediaMetadata>,
 ) {
-    let Some(content) = activity_content_from_text_with_media(
+    enqueue_activity_content_with_capture_best_effort(
+        storage,
+        activity_id,
         input_text,
         output_text,
         media,
-        DEFAULT_ACTIVITY_CONTENT_MAX_BYTES,
-    ) else {
+        false,
+    )
+    .await;
+}
+
+pub async fn enqueue_activity_content_with_capture_best_effort(
+    storage: &Storage,
+    activity_id: String,
+    input_text: &str,
+    output_text: &str,
+    media: Option<ActivityMediaMetadata>,
+    capture_truncated: bool,
+) {
+    let Some(mut content) =
+        activity_content_from_text_with_media(input_text, output_text, media, policy().max_bytes)
+    else {
         return;
     };
+    content.is_truncated |= capture_truncated;
 
     if storage
         .enqueue_activity_content(content.into_draft(activity_id))

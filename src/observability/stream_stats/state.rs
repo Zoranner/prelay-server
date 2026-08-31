@@ -4,7 +4,7 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt};
 
 use crate::{
-    activity::{enqueue_activity_content_best_effort, RawStreamContentCapture},
+    activity::{enqueue_activity_content_with_capture_best_effort, RawStreamContentCapture},
     bridge::stream::{SharedStreamStats, StreamStatsSnapshot},
     stats::{ActivityInsert, StreamActivityUpdate},
     storage::Storage,
@@ -137,21 +137,27 @@ impl StreamRecordState {
             upstream_request_id: self.upstream_request_id.clone(),
         };
         update_stream_log(&self.storage, &self.identity_id, &self.log_id, update).await;
-        let output_text = if let Some(content_capture) = self.content_capture.as_mut() {
+        let output_content = if let Some(content_capture) = self.content_capture.as_mut() {
             content_capture.finish();
-            content_capture
-                .is_completed()
-                .then(|| content_capture.output_text().to_string())
+            content_capture.is_completed().then(|| {
+                (
+                    content_capture.output_text().to_string(),
+                    content_capture.is_truncated(),
+                )
+            })
         } else {
-            snapshot.completed.then(|| snapshot.output_text.clone())
+            snapshot
+                .completed
+                .then(|| (snapshot.output_text.clone(), false))
         };
-        if let Some(output_text) = output_text {
-            enqueue_activity_content_best_effort(
+        if let Some((output_text, capture_truncated)) = output_content {
+            enqueue_activity_content_with_capture_best_effort(
                 &self.storage,
                 self.log_id.clone(),
                 &self.input_text,
                 &output_text,
                 None,
+                capture_truncated,
             )
             .await;
         }

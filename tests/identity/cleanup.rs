@@ -1,6 +1,7 @@
 use chrono::{Duration, Utc};
 use prelay_protocol::{CreateEndpointRequest, CreateProviderRequest, EndpointModelInput};
 use prelay_server::{
+    activity::ActivityContentDraft,
     bridge::internal::{
         InternalContentPart, InternalMessage, InternalOutputItem, InternalResponse, InternalRole,
     },
@@ -21,6 +22,24 @@ async fn cleanup_removes_an_inactive_identity_and_all_accessible_owned_resources
         .expect("register identity");
     let (provider_id, endpoint_id) =
         seed_owned_resources(&storage, &identity.identity_id, "inactive").await;
+    let activity_id = storage
+        .list_activities(&identity.identity_id, 1)
+        .await
+        .expect("load inactive activity")
+        .pop()
+        .expect("inactive activity")
+        .id;
+    storage
+        .enqueue_activity_content(ActivityContentDraft {
+            activity_id: activity_id.clone(),
+            input_text: "short-lived body".to_string(),
+            output_text: String::new(),
+            media_metadata_json: None,
+            is_truncated: false,
+            content_hash: "inactive-content".to_string(),
+        })
+        .await
+        .expect("store inactive activity content");
 
     assert_eq!(
         storage
@@ -49,6 +68,11 @@ async fn cleanup_removes_an_inactive_identity_and_all_accessible_owned_resources
         .await
         .expect("list deleted identity activities")
         .is_empty());
+    assert!(storage
+        .find_activity_content(&activity_id)
+        .await
+        .expect("load deleted activity content")
+        .is_none());
     assert_eq!(
         storage
             .load_response_session_messages(&identity.identity_id, "response-inactive")
