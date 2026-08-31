@@ -1,5 +1,11 @@
 use super::*;
 
+mod candidates;
+
+pub(super) use candidates::{
+    spawn_failing_chat_upstream, spawn_invalid_chat_upstream, spawn_status_chat_upstream,
+};
+
 pub(super) fn responses_sse_from_text_chunks(chunks: &[&str]) -> String {
     let mut output = String::new();
     for chunk in chunks {
@@ -424,62 +430,4 @@ pub(super) async fn response_json(response: axum::response::Response) -> serde_j
         .await
         .expect("read body");
     serde_json::from_slice(&body).expect("json body")
-}
-
-pub(super) async fn spawn_failing_chat_upstream() -> String {
-    pub(super) async fn handler() -> (axum::http::StatusCode, Json<serde_json::Value>) {
-        (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": { "message": "upstream failed" } })),
-        )
-    }
-
-    let app = Router::new().route("/chat/completions", post(handler));
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind upstream");
-    let addr = listener.local_addr().expect("upstream addr");
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.expect("serve upstream");
-    });
-    format!("http://{addr}")
-}
-
-pub(super) async fn spawn_status_chat_upstream(status: axum::http::StatusCode) -> String {
-    async fn handler(
-        axum::extract::State(status): axum::extract::State<axum::http::StatusCode>,
-    ) -> (axum::http::StatusCode, Json<serde_json::Value>) {
-        (
-            status,
-            Json(json!({ "error": { "message": "upstream failed" } })),
-        )
-    }
-
-    let app = Router::new()
-        .route("/chat/completions", post(handler))
-        .with_state(status);
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind upstream");
-    let addr = listener.local_addr().expect("upstream addr");
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.expect("serve upstream");
-    });
-    format!("http://{addr}")
-}
-
-pub(super) async fn spawn_invalid_chat_upstream() -> String {
-    async fn handler() -> Json<serde_json::Value> {
-        Json(json!({ "model": "deepseek-chat" }))
-    }
-
-    let app = Router::new().route("/chat/completions", post(handler));
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind upstream");
-    let addr = listener.local_addr().expect("upstream addr");
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.expect("serve upstream");
-    });
-    format!("http://{addr}")
 }

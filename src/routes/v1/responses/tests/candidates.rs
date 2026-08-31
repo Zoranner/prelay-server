@@ -101,7 +101,7 @@ async fn fails_over_responses_when_primary_forbids_the_request() {
         .iter()
         .find(|activity| activity.status == "failed")
         .expect("record forbidden primary failure");
-    assert_eq!(failed.http_status, 403);
+    assert_eq!(failed.http_status, Some(403));
     assert_eq!(failed.error_code.as_deref(), Some("upstream_status"));
     assert_eq!(
         failed.error_message.as_deref(),
