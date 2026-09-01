@@ -3,6 +3,7 @@ mod activities;
 mod activity_contents;
 mod crypto;
 mod identities;
+mod leaderboard;
 mod memories;
 mod sessions;
 mod stats;

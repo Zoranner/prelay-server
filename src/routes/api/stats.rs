@@ -4,6 +4,7 @@ use axum::{
     Json, Router,
 };
 use prelay_protocol::{
+    stats::{LeaderboardMetric, UserLeaderboardEntry},
     ActivitySummary, ModelStatsSummary, ProviderStatsSummary, StatsOverview,
     TokenUsageTimelinePoint,
 };
@@ -20,6 +21,7 @@ pub fn router() -> Router<AppState> {
         .route("/stats/activities", get(activities))
         .route("/stats/models", get(models))
         .route("/stats/providers", get(providers))
+        .route("/stats/leaderboard", get(leaderboard))
 }
 
 #[derive(Deserialize)]
@@ -64,6 +66,13 @@ struct RequestQuery {
     limit: Option<usize>,
 }
 
+#[derive(Deserialize)]
+struct LeaderboardQuery {
+    range: Option<StatsRange>,
+    metric: Option<LeaderboardMetric>,
+    limit: Option<usize>,
+}
+
 async fn activities(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
@@ -73,6 +82,23 @@ async fn activities(
         state
             .storage
             .list_activities(&identity.id, query.limit.unwrap_or(100))
+            .await?,
+    ))
+}
+
+async fn leaderboard(
+    State(state): State<AppState>,
+    Extension(_identity): Extension<CurrentIdentity>,
+    Query(query): Query<LeaderboardQuery>,
+) -> Result<Json<Vec<UserLeaderboardEntry>>, AppError> {
+    Ok(Json(
+        state
+            .storage
+            .user_leaderboard(
+                query.range.unwrap_or_default(),
+                query.metric.unwrap_or(LeaderboardMetric::Activities),
+                query.limit.unwrap_or(50),
+            )
             .await?,
     ))
 }

@@ -13,6 +13,8 @@ mod test_context;
 mod endpoints;
 #[path = "management/identity.rs"]
 mod identity;
+#[path = "management/leaderboard.rs"]
+mod leaderboard;
 #[path = "management/provider_operations.rs"]
 mod provider_operations;
 #[path = "management/providers.rs"]

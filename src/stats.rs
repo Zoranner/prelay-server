@@ -2,6 +2,7 @@ use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDate, TimeZone, Utc
 use serde::Deserialize;
 
 pub use prelay_protocol::{
+    stats::{LeaderboardMetric, UserLeaderboardEntry},
     ActivitySummary, ModelStatsSummary, ProviderStatsSummary, StatsOverview,
     TokenUsageTimelinePoint,
 };
