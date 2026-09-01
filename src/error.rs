@@ -45,6 +45,7 @@ impl IntoResponse for AppError {
                     ProtocolErrorCode::ExtensionCatalogUnavailable => {
                         StatusCode::SERVICE_UNAVAILABLE
                     }
+                    ProtocolErrorCode::ExtensionContentInvalid => StatusCode::UNPROCESSABLE_ENTITY,
                     ProtocolErrorCode::ExtensionNotFound
                     | ProtocolErrorCode::ExtensionVersionNotFound => StatusCode::NOT_FOUND,
                     ProtocolErrorCode::InvalidCredential => StatusCode::UNAUTHORIZED,
@@ -298,5 +299,16 @@ mod tests {
         .into_response();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn invalid_extension_content_is_unprocessable() {
+        let response = AppError::Protocol {
+            code: ProtocolErrorCode::ExtensionContentInvalid,
+            message: "扩展内容无效".to_string(),
+        }
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 }

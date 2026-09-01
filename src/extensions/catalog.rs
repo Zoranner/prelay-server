@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::Result;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use prelay_protocol::{
     ExtensionFile, ExtensionInstallBundle, ExtensionKind, ExtensionMcpManifest, ExtensionSummary,
     ExtensionVersion,
@@ -16,7 +17,7 @@ use tokio::sync::{Mutex, RwLock};
 
 use super::{
     config::ExtensionCatalogConfig,
-    gitea::GiteaClient,
+    gitea::{GiteaClient, GiteaFileError},
     package::{
         classify_paths, valid_extension_file_path, valid_repository_name, versions_from_tags,
     },
@@ -32,7 +33,7 @@ pub struct ExtensionCatalog {
     config: ExtensionCatalogConfig,
     gitea: GiteaClient,
     cache: Arc<RwLock<Option<CachedCatalog>>>,
-    files: Arc<RwLock<HashMap<FileCacheKey, String>>>,
+    files: Arc<RwLock<HashMap<FileCacheKey, Vec<u8>>>>,
     refresh_lock: Arc<Mutex<()>>,
     refreshing: Arc<AtomicBool>,
 }
@@ -40,6 +41,7 @@ pub struct ExtensionCatalog {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CatalogError {
     Unavailable,
+    ContentInvalid,
     ExtensionNotFound,
     VersionNotFound,
 }
@@ -118,8 +120,11 @@ impl ExtensionCatalog {
 
     pub async fn readme(&self, repository: &str, tag: &str) -> Result<String, CatalogError> {
         let version = self.version(repository, tag).await?;
-        self.file(repository, &version.commit_sha, README_PATH)
-            .await
+        String::from_utf8(
+            self.file(repository, &version.commit_sha, README_PATH)
+                .await?,
+        )
+        .map_err(|_| CatalogError::ContentInvalid)
     }
 
     pub async fn install_bundle(
@@ -158,13 +163,20 @@ impl ExtensionCatalog {
 
         let mut files = Vec::with_capacity(install_paths.len());
         for path in install_paths {
+            let content = self.file(repository, &version.commit_sha, &path).await?;
+            if requires_utf8_content(entry.kind, &path) && std::str::from_utf8(&content).is_err() {
+                return Err(CatalogError::ContentInvalid);
+            }
             files.push(ExtensionFile {
-                content: self.file(repository, &version.commit_sha, &path).await?,
+                content_base64: BASE64.encode(content),
                 path,
             });
         }
         if entry.kind == ExtensionKind::Mcp {
-            serde_json::from_str::<ExtensionMcpManifest>(&files[0].content)
+            let content = BASE64
+                .decode(&files[0].content_base64)
+                .map_err(|_| CatalogError::ContentInvalid)?;
+            serde_json::from_slice::<ExtensionMcpManifest>(&content)
                 .map_err(|_| CatalogError::VersionNotFound)?;
         }
         Ok(ExtensionInstallBundle {
@@ -272,7 +284,7 @@ impl ExtensionCatalog {
         repository: &str,
         commit_sha: &str,
         path: &str,
-    ) -> Result<String, CatalogError> {
+    ) -> Result<Vec<u8>, CatalogError> {
         if !valid_extension_file_path(path) {
             return Err(CatalogError::VersionNotFound);
         }
@@ -284,12 +296,17 @@ impl ExtensionCatalog {
         if let Some(content) = self.files.read().await.get(&key) {
             return Ok(content.clone());
         }
-        let content = self
-            .gitea
-            .read_file(repository, commit_sha, path)
-            .await
-            .map_err(|_| CatalogError::Unavailable)?;
+        let content = match self.gitea.read_file(repository, commit_sha, path).await {
+            Ok(content) => content,
+            Err(GiteaFileError::Unavailable) => return Err(CatalogError::Unavailable),
+            Err(GiteaFileError::ContentInvalid) => return Err(CatalogError::ContentInvalid),
+        };
         self.files.write().await.insert(key, content.clone());
         Ok(content)
     }
+}
+
+fn requires_utf8_content(kind: ExtensionKind, path: &str) -> bool {
+    matches!(kind, ExtensionKind::Rule | ExtensionKind::Mcp)
+        || (kind == ExtensionKind::Skill && path.ends_with("/SKILL.md"))
 }

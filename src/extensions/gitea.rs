@@ -5,6 +5,12 @@ use serde::Deserialize;
 
 use super::{config::ExtensionCatalogConfig, package::GiteaTag};
 
+#[derive(Debug)]
+pub(super) enum GiteaFileError {
+    Unavailable,
+    ContentInvalid,
+}
+
 #[derive(Clone)]
 pub(super) struct GiteaClient {
     client: Client,
@@ -82,7 +88,7 @@ impl GiteaClient {
         repository: &str,
         commit_sha: &str,
         path: &str,
-    ) -> Result<String> {
+    ) -> Result<Vec<u8>, GiteaFileError> {
         let content: GiteaContent = self
             .get_json(
                 &format!(
@@ -91,14 +97,14 @@ impl GiteaClient {
                 ),
                 &[("ref", commit_sha)],
             )
-            .await?;
+            .await
+            .map_err(|_| GiteaFileError::Unavailable)?;
         if content.encoding != "base64" {
-            anyhow::bail!("Gitea returned an unsupported extension file encoding");
+            return Err(GiteaFileError::ContentInvalid);
         }
-        let bytes = BASE64
+        BASE64
             .decode(content.content.replace(['\r', '\n'], ""))
-            .context("decode Gitea extension file")?;
-        String::from_utf8(bytes).context("Gitea extension file is not UTF-8")
+            .map_err(|_| GiteaFileError::ContentInvalid)
     }
 
     async fn get_json<T: serde::de::DeserializeOwned>(

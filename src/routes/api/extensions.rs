@@ -103,6 +103,9 @@ fn catalog_error(error: CatalogError) -> AppError {
             ProtocolErrorCode::ExtensionCatalogUnavailable,
             "扩展目录暂不可用",
         ),
+        CatalogError::ContentInvalid => {
+            (ProtocolErrorCode::ExtensionContentInvalid, "扩展内容无效")
+        }
         CatalogError::ExtensionNotFound => (ProtocolErrorCode::ExtensionNotFound, "扩展不存在"),
         CatalogError::VersionNotFound => (
             ProtocolErrorCode::ExtensionVersionNotFound,
