@@ -1,4 +1,4 @@
-# 图像生成协议
+# Images Generations 协议
 
 ## 目标
 
@@ -12,7 +12,7 @@ POST /v1/images/generations
 
 ## 供应商协议
 
-图像生成是第四种上游协议，稳定配置值为 `images_generations`：
+Images Generations 是第四种上游协议，稳定配置值为 `images_generations`：
 
 ```text
 responses

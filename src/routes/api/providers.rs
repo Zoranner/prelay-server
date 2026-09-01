@@ -196,7 +196,7 @@ async fn run_protocol_test(
         .ok_or_else(|| AppError::BadRequest("协议不支持".to_string()))?;
     if upstream_protocol == UpstreamProtocol::ImageGenerations {
         return Err(AppError::BadRequest(
-            "图像生成协议不支持连通性测试".to_string(),
+            "Images Generations 协议不支持连通性测试".to_string(),
         ));
     }
     let model = model_value
@@ -228,7 +228,7 @@ async fn run_protocol_test(
     };
     let Some(response) = response else {
         return Err(AppError::BadRequest(
-            "图像生成协议不支持连通性测试".to_string(),
+            "Images Generations 协议不支持连通性测试".to_string(),
         ));
     };
     let latency_ms = Some(started_at.elapsed().as_millis() as i64);
@@ -347,7 +347,7 @@ mod tests {
     use crate::error::AppError;
 
     #[tokio::test]
-    async fn rejects_image_generation_protocol_tests_without_contacting_upstream() {
+    async fn rejects_images_generations_protocol_tests_without_contacting_upstream() {
         let error = run_protocol_test(
             &reqwest::Client::new(),
             "openai_compatible",
@@ -361,12 +361,12 @@ mod tests {
 
         assert!(matches!(
             error,
-            AppError::BadRequest(message) if message == "图像生成协议不支持连通性测试"
+            AppError::BadRequest(message) if message == "Images Generations 协议不支持连通性测试"
         ));
     }
 
     #[tokio::test]
-    async fn rejects_image_generation_protocol_tests_without_a_model() {
+    async fn rejects_images_generations_protocol_tests_without_a_model() {
         let error = run_protocol_test(
             &reqwest::Client::new(),
             "openai_compatible",
@@ -380,7 +380,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            AppError::BadRequest(message) if message == "图像生成协议不支持连通性测试"
+            AppError::BadRequest(message) if message == "Images Generations 协议不支持连通性测试"
         ));
     }
 }
