@@ -17,7 +17,6 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/extensions/rules", get(list_rules))
         .route("/extensions/skills", get(list_skills))
-        .route("/extensions/plugins", get(list_plugins))
         .route("/extensions/mcp", get(list_mcp))
         .route("/extensions/:name/versions", get(list_versions))
         .route("/extensions/:name/versions/:tag/readme", get(readme))
@@ -37,12 +36,6 @@ async fn list_skills(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ExtensionSummary>>, AppError> {
     list(&state.extensions, ExtensionKind::Skill).await
-}
-
-async fn list_plugins(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<ExtensionSummary>>, AppError> {
-    list(&state.extensions, ExtensionKind::Plugin).await
 }
 
 async fn list_mcp(State(state): State<AppState>) -> Result<Json<Vec<ExtensionSummary>>, AppError> {

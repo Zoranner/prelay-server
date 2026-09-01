@@ -26,13 +26,6 @@ impl GiteaTag {
 }
 
 pub fn classify_paths(paths: &[&str]) -> Option<ExtensionKind> {
-    if paths.iter().any(|path| {
-        *path == ".codex-plugin/plugin.json"
-            || (path.starts_with(".opencode/plugins/")
-                && (path.ends_with(".js") || path.ends_with(".ts")))
-    }) {
-        return Some(ExtensionKind::Plugin);
-    }
     if paths.contains(&"server.json") {
         return Some(ExtensionKind::Mcp);
     }

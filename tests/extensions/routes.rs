@@ -26,6 +26,7 @@ async fn extension_catalog_routes_require_a_device_credential() {
     let credential = valid_credential();
     register(&app, &credential).await;
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/api/extensions/rules")
@@ -48,6 +49,18 @@ async fn extension_catalog_routes_require_a_device_credential() {
             }
         })
     );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/extensions/plugins")
+                .header("authorization", format!("Bearer {credential}"))
+                .body(Body::empty())
+                .expect("build removed plugin route request"),
+        )
+        .await
+        .expect("route request");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 async fn register(app: &axum::Router, credential: &str) {

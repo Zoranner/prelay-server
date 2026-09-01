@@ -147,10 +147,6 @@ impl ExtensionCatalog {
                 .into_iter()
                 .filter(|path| path.starts_with(SKILLS_PREFIX) && valid_extension_file_path(path))
                 .collect(),
-            ExtensionKind::Plugin => paths
-                .into_iter()
-                .filter(|path| valid_extension_file_path(path))
-                .collect(),
             ExtensionKind::Mcp if paths.iter().any(|path| path == MCP_MANIFEST_PATH) => {
                 vec![MCP_MANIFEST_PATH.to_string()]
             }

@@ -5,14 +5,7 @@ use prelay_server::extensions::{
 
 #[test]
 fn classifies_extensions_by_their_single_installation_boundary() {
-    assert_eq!(
-        classify_paths(&[
-            ".codex-plugin/plugin.json",
-            "skills/plugin/SKILL.md",
-            "AGENTS.md",
-        ]),
-        Some(ExtensionKind::Plugin)
-    );
+    assert_eq!(classify_paths(&[".codex-plugin/plugin.json"]), None);
     assert_eq!(
         classify_paths(&["server.json", "skills/server/SKILL.md"]),
         Some(ExtensionKind::Mcp)
@@ -234,101 +227,4 @@ async fn builds_an_mcp_install_bundle_from_a_valid_manifest() {
     assert_eq!(bundle.kind, ExtensionKind::Mcp);
     assert_eq!(bundle.files.len(), 1);
     assert_eq!(bundle.files[0].path, "server.json");
-}
-
-#[tokio::test]
-async fn preserves_binary_plugin_assets_from_the_published_commit() {
-    use axum::{routing::get, Json, Router};
-    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-
-    let commit_sha = "c".repeat(40);
-    let icon = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n'];
-    let app = Router::new()
-        .route(
-            "/api/v1/orgs/agents/repos",
-            get(|| async { Json(serde_json::json!([{ "name": "visual-plugin" }])) }),
-        )
-        .route(
-            "/api/v1/repos/agents/visual-plugin/tags",
-            get({
-                let commit_sha = commit_sha.clone();
-                move || {
-                    let commit_sha = commit_sha.clone();
-                    async move {
-                        Json(serde_json::json!([{
-                            "name": "v1.0.0",
-                            "id": commit_sha,
-                            "commit": {
-                                "sha": "c".repeat(40),
-                                "created": "2026-08-28T08:30:00Z"
-                            }
-                        }]))
-                    }
-                }
-            }),
-        )
-        .route(
-            "/api/v1/repos/agents/visual-plugin/git/trees/:commit_sha",
-            get(|| async {
-                Json(serde_json::json!({
-                    "tree": [
-                        { "path": ".codex-plugin/plugin.json", "type": "blob" },
-                        { "path": "assets/app-icon.png", "type": "blob" }
-                    ]
-                }))
-            }),
-        )
-        .route(
-            "/api/v1/repos/agents/visual-plugin/contents/.codex-plugin/plugin.json",
-            get(|| async {
-                Json(serde_json::json!({
-                    "content": BASE64.encode(r#"{ "name": "visual-plugin" }"#),
-                    "encoding": "base64"
-                }))
-            }),
-        )
-        .route(
-            "/api/v1/repos/agents/visual-plugin/contents/assets/app-icon.png",
-            get(move || async move {
-                Json(serde_json::json!({
-                    "content": BASE64.encode(icon),
-                    "encoding": "base64"
-                }))
-            }),
-        );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind Gitea test server");
-    let address = listener.local_addr().expect("read test server address");
-    tokio::spawn(async move {
-        axum::serve(listener, app)
-            .await
-            .expect("serve Gitea test server");
-    });
-    let catalog = ExtensionCatalog::new(
-        reqwest::Client::new(),
-        ExtensionCatalogConfig::new(format!("http://{address}"), "agents", None, 300)
-            .expect("valid Gitea test configuration"),
-    );
-
-    let bundle = catalog
-        .install_bundle("visual-plugin", "v1.0.0")
-        .await
-        .expect("build plugin install bundle");
-
-    assert_eq!(bundle.kind, ExtensionKind::Plugin);
-    assert_eq!(
-        bundle
-            .files
-            .iter()
-            .map(|file| (&file.path, &file.content_base64))
-            .collect::<Vec<_>>(),
-        vec![
-            (
-                &".codex-plugin/plugin.json".to_string(),
-                &BASE64.encode(r#"{ "name": "visual-plugin" }"#),
-            ),
-            (&"assets/app-icon.png".to_string(), &BASE64.encode(icon)),
-        ]
-    );
 }
