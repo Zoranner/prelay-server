@@ -45,7 +45,7 @@ $env:ENCRYPTION_KEY = "<Base64-encoded-32-byte-key>"
 cargo run
 ```
 
-默认监听地址为 `0.0.0.0:18080`。`LISTEN_ADDRESS` 可覆盖完整监听地址，例如 `127.0.0.1:18080`，`RUST_LOG` 控制日志过滤。PostgreSQL 可用 `DATABASE_MAX_CONNECTIONS` 覆盖默认连接数；SQLite 始终使用单连接。模型价格可放入 `config/model_prices.json`，或通过 `MODEL_PRICES_PATH` 指定其他文件。
+默认监听地址为 `0.0.0.0:18080`。`LISTEN_ADDRESS` 可覆盖完整监听地址，例如 `127.0.0.1:18080`，`RUST_LOG` 控制日志过滤。PostgreSQL 可用 `DATABASE_MAX_CONNECTIONS` 覆盖默认连接数；SQLite 始终使用单连接。
 
 启动时及之后每 24 小时会删除连续 90 天未活动身份及其所有配置、会话和日志。
 
@@ -78,7 +78,7 @@ PostgreSQL 部署由外部 PostgreSQL 实例提供。为服务设置固定的 `E
 
 SQLite 与 PostgreSQL 是二选一的全新部署方式。切换数据库类型不能只修改现有部署的 `DATABASE_URL`，必须停止原部署并为目标数据库创建新部署和新数据卷或空数据库。本项目不提供 SQLite 与 PostgreSQL 之间的数据迁移；原数据应由原部署独立保留或备份。
 
-Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.1.5`，并以只读方式挂载 `app/config/`。模型价格是可选配置；可复制 `config/model_prices.example.json` 为 `app/config/model_prices.json` 后调整内容。
+Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.1.5`，并以只读方式挂载 `app/config/`。
 
 ## 服务边界
 

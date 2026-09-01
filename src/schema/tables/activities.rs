@@ -33,8 +33,6 @@ pub(in crate::schema) fn statement() -> TableCreateStatement {
         .col(ColumnDef::new(Activities::ReasoningTokens).big_integer())
         .col(ColumnDef::new(Activities::CacheReadTokens).big_integer())
         .col(ColumnDef::new(Activities::CacheWriteTokens).big_integer())
-        .col(ColumnDef::new(Activities::EstimatedCost).double())
-        .col(ColumnDef::new(Activities::Currency).string())
         .col(ColumnDef::new(Activities::LatencyMs).big_integer())
         .col(ColumnDef::new(Activities::UpstreamLatencyMs).big_integer())
         .col(ColumnDef::new(Activities::FirstTokenMs).big_integer())
@@ -75,8 +73,6 @@ pub(in crate::schema) enum Activities {
     ReasoningTokens,
     CacheReadTokens,
     CacheWriteTokens,
-    EstimatedCost,
-    Currency,
     LatencyMs,
     UpstreamLatencyMs,
     FirstTokenMs,

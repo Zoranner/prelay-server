@@ -7,10 +7,7 @@ use uuid::Uuid;
 
 use crate::{
     entity::identity::activities,
-    stats::{
-        estimate_cost, load_model_prices, ActivityInsert, ActivitySummary, ModelPrice,
-        StreamActivityUpdate,
-    },
+    stats::{ActivityInsert, ActivitySummary, StreamActivityUpdate},
 };
 
 use super::{Storage, StorageError};
@@ -67,18 +64,6 @@ async fn insert_with_id(
     id: String,
     log: ActivityInsert,
 ) -> Result<(), StorageError> {
-    let prices = load_model_prices().unwrap_or_default();
-    insert_with_id_and_prices(db, identity_id, id, log, &prices).await
-}
-
-async fn insert_with_id_and_prices(
-    db: &DatabaseConnection,
-    identity_id: &str,
-    id: String,
-    log: ActivityInsert,
-    prices: &[ModelPrice],
-) -> Result<(), StorageError> {
-    let cost = estimate_cost(&log, prices);
     activities::ActiveModel {
         id: Set(id),
         identity_id: Set(identity_id.to_string()),
@@ -102,8 +87,6 @@ async fn insert_with_id_and_prices(
         reasoning_tokens: Set(log.reasoning_tokens),
         cache_read_tokens: Set(log.cache_read_tokens),
         cache_write_tokens: Set(log.cache_write_tokens),
-        estimated_cost: Set(cost.as_ref().map(|cost| cost.estimated_cost)),
-        currency: Set(cost.map(|cost| cost.currency)),
         latency_ms: Set(Some(log.latency_ms)),
         upstream_latency_ms: Set(log.upstream_latency_ms),
         first_token_ms: Set(log.first_token_ms),
@@ -122,42 +105,11 @@ async fn update_stream(
     id: &str,
     update: StreamActivityUpdate,
 ) -> Result<(), StorageError> {
-    let prices = load_model_prices().unwrap_or_default();
-    update_stream_with_prices(db, identity_id, id, update, &prices).await
-}
-
-async fn update_stream_with_prices(
-    db: &DatabaseConnection,
-    identity_id: &str,
-    id: &str,
-    update: StreamActivityUpdate,
-    prices: &[ModelPrice],
-) -> Result<(), StorageError> {
     let row = activities::Entity::find_by_id(id)
         .filter(activities::Column::IdentityId.eq(identity_id))
         .one(db)
         .await?
         .ok_or(StorageError::ActivityNotFound)?;
-    let pricing_log = ActivityInsert {
-        provider_name: row.provider_name.clone().unwrap_or_default(),
-        model_requested: row.model_requested.clone().unwrap_or_default(),
-        model_upstream: row.model_upstream.clone().unwrap_or_default(),
-        status: update.status.clone(),
-        http_status: update.http_status,
-        error_code: update.error_code.clone(),
-        error_message: update.error_message.clone(),
-        is_streaming: true,
-        input_tokens: update.input_tokens,
-        output_tokens: update.output_tokens,
-        reasoning_tokens: update.reasoning_tokens,
-        cache_read_tokens: update.cache_read_tokens,
-        cache_write_tokens: update.cache_write_tokens,
-        latency_ms: update.latency_ms,
-        tool_call_count: update.tool_call_count,
-        upstream_request_id: update.upstream_request_id.clone(),
-        ..Default::default()
-    };
-    let cost = estimate_cost(&pricing_log, prices);
     let mut active: activities::ActiveModel = row.into();
     active.status = Set(update.status);
     active.http_status = Set(Some(update.http_status));
@@ -168,8 +120,6 @@ async fn update_stream_with_prices(
     active.reasoning_tokens = Set(update.reasoning_tokens);
     active.cache_read_tokens = Set(update.cache_read_tokens);
     active.cache_write_tokens = Set(update.cache_write_tokens);
-    active.estimated_cost = Set(cost.as_ref().map(|cost| cost.estimated_cost));
-    active.currency = Set(cost.map(|cost| cost.currency));
     active.latency_ms = Set(Some(update.latency_ms));
     active.tool_call_count = Set(update.tool_call_count);
     if update.upstream_request_id.is_some() {
@@ -222,11 +172,10 @@ fn request_summary(row: activities::Model) -> ActivitySummary {
 mod tests {
     use sea_orm::{ColumnTrait, Database, EntityTrait, QueryFilter};
 
-    use super::{insert_with_id_and_prices, update_stream_with_prices};
     use crate::{
         entity::identity::activities,
         schema::initialize,
-        stats::{ActivityInsert, ModelPrice, StreamActivityUpdate},
+        stats::{ActivityInsert, StreamActivityUpdate},
         storage::{MasterKey, Storage, StorageError},
     };
 
@@ -286,62 +235,6 @@ mod tests {
             rows[0].upstream_request_id.as_deref(),
             Some("upstream-stream")
         );
-    }
-
-    #[tokio::test]
-    async fn regular_insert_and_stream_completion_calculate_model_price() {
-        let (storage, db) = test_storage().await;
-        let identity = register_identity(&storage, "prices").await;
-        let prices = [ModelPrice {
-            provider: "Provider One".to_string(),
-            model: "model-1".to_string(),
-            input_price_per_1m: Some(1.0),
-            output_price_per_1m: Some(2.0),
-            currency: "USD".to_string(),
-        }];
-        insert_with_id_and_prices(
-            &db,
-            &identity,
-            "regular-price".to_string(),
-            test_log(Some(1_000_000), Some(500_000)),
-            &prices,
-        )
-        .await
-        .expect("insert priced regular log");
-        insert_with_id_and_prices(
-            &db,
-            &identity,
-            "stream-price".to_string(),
-            test_log(None, None),
-            &prices,
-        )
-        .await
-        .expect("insert stream log");
-        update_stream_with_prices(
-            &db,
-            &identity,
-            "stream-price",
-            StreamActivityUpdate {
-                status: "success".to_string(),
-                http_status: 200,
-                input_tokens: Some(1_000_000),
-                output_tokens: Some(500_000),
-                ..Default::default()
-            },
-            &prices,
-        )
-        .await
-        .expect("complete priced stream log");
-
-        let rows = activities::Entity::find()
-            .filter(activities::Column::IdentityId.eq(identity))
-            .all(&db)
-            .await
-            .expect("load priced logs");
-        assert_eq!(rows.len(), 2);
-        assert!(rows.iter().all(|row| {
-            row.estimated_cost == Some(2.0) && row.currency.as_deref() == Some("USD")
-        }));
     }
 
     async fn test_storage() -> (Storage, sea_orm::DatabaseConnection) {

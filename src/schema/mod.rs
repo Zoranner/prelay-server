@@ -47,7 +47,7 @@ pub async fn initialize(db: &DatabaseConnection) -> Result<(), DbErr> {
             "database schema is incomplete; create a new database deployment".to_owned(),
         ));
     }
-
+    manager.drop_legacy_cost_columns().await?;
     match existing_memory_tables {
         0 => initialize_memory_schema(&manager).await,
         count if count == MEMORY_TABLES.len() => Ok(()),
@@ -136,6 +136,19 @@ impl SchemaInitializer<'_> {
         self.create_index(indexes::activities_identity_created_at())
             .await
     }
+
+    async fn drop_legacy_cost_columns(&self) -> Result<(), DbErr> {
+        for column in ["estimated_cost", "currency"] {
+            if column_exists(self.db, "identity_activities", column).await? {
+                self.db
+                    .execute_unprepared(&format!(
+                        "ALTER TABLE identity_activities DROP COLUMN {column}"
+                    ))
+                    .await?;
+            }
+        }
+        Ok(())
+    }
 }
 
 async fn table_exists(db: &DatabaseConnection, table: &str) -> Result<bool, DbErr> {
@@ -158,6 +171,28 @@ async fn table_exists(db: &DatabaseConnection, table: &str) -> Result<bool, DbEr
         .await?
         .ok_or_else(|| DbErr::Custom("database table lookup returned no row".to_owned()))?;
     row.try_get::<i64>("", "table_exists")
+        .map(|count| count == 1)
+}
+
+async fn column_exists(db: &DatabaseConnection, table: &str, column: &str) -> Result<bool, DbErr> {
+    let backend = db.get_database_backend();
+    let sql = match backend {
+        DbBackend::Sqlite => format!(
+            "SELECT COUNT(*) AS column_exists FROM pragma_table_info('{table}') WHERE name = '{column}'"
+        ),
+        DbBackend::Postgres => format!(
+            "SELECT COUNT(*) AS column_exists FROM information_schema.columns \
+             WHERE table_schema = current_schema() \
+             AND table_name = '{table}' \
+             AND column_name = '{column}'"
+        ),
+        _ => unreachable!("only SQLite and PostgreSQL are supported"),
+    };
+    let row = db
+        .query_one_raw(Statement::from_string(backend, sql))
+        .await?
+        .ok_or_else(|| DbErr::Custom("database column lookup returned no row".to_owned()))?;
+    row.try_get::<i64>("", "column_exists")
         .map(|count| count == 1)
 }
 

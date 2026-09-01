@@ -60,6 +60,24 @@ async fn column_type(db: &DatabaseConnection, table: &str, column: &str) -> Stri
     row.try_get("", column_name).unwrap()
 }
 
+async fn column_exists(db: &DatabaseConnection, table: &str, column: &str) -> bool {
+    let sql = match db.get_database_backend() {
+        DbBackend::Sqlite => {
+            format!("SELECT COUNT(*) AS {COUNT_COLUMN} FROM pragma_table_info('{table}') WHERE name = '{column}'")
+        }
+        DbBackend::Postgres => format!(
+            "SELECT COUNT(*) AS {COUNT_COLUMN} FROM information_schema.columns \
+             WHERE table_schema = current_schema() \
+             AND table_name = '{table}' \
+             AND column_name = '{column}'"
+        ),
+        _ => unreachable!("only SQLite and PostgreSQL are supported"),
+    };
+    let statement = Statement::from_string(db.get_database_backend(), sql);
+    let row = db.query_one_raw(statement).await.unwrap().unwrap();
+    row.try_get::<i64>("", COUNT_COLUMN).unwrap() == 1
+}
+
 async fn assert_string_column(db: &DatabaseConnection, table: &str, column: &str) {
     let column_type = column_type(db, table, column).await.to_ascii_uppercase();
     assert!(
@@ -118,6 +136,12 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
                 .await
                 .eq_ignore_ascii_case(expected_type),
             "{column} must map to an i64-compatible {expected_type}"
+        );
+    }
+    for column in ["estimated_cost", "currency"] {
+        assert!(
+            !column_exists(db, "identity_activities", column).await,
+            "identity_activities.{column} must not exist"
         );
     }
     let expected_integer_type = match db.get_database_backend() {

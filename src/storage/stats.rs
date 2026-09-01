@@ -120,10 +120,6 @@ async fn list_model_stats(
             "output_tokens",
         )
         .column_as(
-            identity_activities::Column::EstimatedCost.sum(),
-            "estimated_cost",
-        )
-        .column_as(
             integer_sum(identity_activities::Column::LatencyMs.sum()),
             "latency_total",
         )
@@ -144,7 +140,6 @@ async fn list_model_stats(
             failed_requests: row.failed_requests.unwrap_or_default(),
             input_tokens: row.input_tokens.unwrap_or_default(),
             output_tokens: row.output_tokens.unwrap_or_default(),
-            estimated_cost: row.estimated_cost,
             average_latency_ms: floating_average(row.latency_total, row.latency_count),
         })
         .collect::<Vec<_>>();
@@ -178,10 +173,6 @@ async fn list_provider_stats(
             "output_tokens",
         )
         .column_as(
-            identity_activities::Column::EstimatedCost.sum(),
-            "estimated_cost",
-        )
-        .column_as(
             integer_sum(identity_activities::Column::LatencyMs.sum()),
             "latency_total",
         )
@@ -212,7 +203,6 @@ async fn list_provider_stats(
             failed_requests: row.failed_requests.unwrap_or_default(),
             input_tokens: row.input_tokens.unwrap_or_default(),
             output_tokens: row.output_tokens.unwrap_or_default(),
-            estimated_cost: row.estimated_cost,
             average_latency_ms: floating_average(row.latency_total, row.latency_count),
             average_first_token_ms: floating_average(row.first_token_total, row.first_token_count),
         })
@@ -393,7 +383,6 @@ struct ModelAggregate {
     failed_requests: Option<i64>,
     input_tokens: Option<i64>,
     output_tokens: Option<i64>,
-    estimated_cost: Option<f64>,
     latency_total: Option<i64>,
     latency_count: i64,
 }
@@ -407,7 +396,6 @@ struct ProviderAggregate {
     failed_requests: Option<i64>,
     input_tokens: Option<i64>,
     output_tokens: Option<i64>,
-    estimated_cost: Option<f64>,
     latency_total: Option<i64>,
     latency_count: i64,
     first_token_total: Option<i64>,

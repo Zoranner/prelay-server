@@ -1,4 +1,3 @@
-use anyhow::Result;
 use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDate, TimeZone, Utc};
 use serde::Deserialize;
 
@@ -50,15 +49,6 @@ pub struct StreamActivityUpdate {
     pub upstream_request_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct ModelPrice {
-    pub provider: String,
-    pub model: String,
-    pub input_price_per_1m: Option<f64>,
-    pub output_price_per_1m: Option<f64>,
-    pub currency: String,
-}
-
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum StatsRange {
@@ -72,12 +62,6 @@ pub enum StatsRange {
     ThisYear,
     LastYear,
     All,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct EstimatedCost {
-    pub(crate) estimated_cost: f64,
-    pub(crate) currency: String,
 }
 
 #[derive(Clone, Copy)]
@@ -195,38 +179,6 @@ pub(crate) fn timeline_buckets(
     buckets
 }
 
-pub(crate) fn estimate_cost(log: &ActivityInsert, prices: &[ModelPrice]) -> Option<EstimatedCost> {
-    let price = prices.iter().find(|price| {
-        price.provider == log.provider_name
-            && (price.model == log.model_upstream || price.model == log.model_requested)
-    })?;
-    let input_cost = price
-        .input_price_per_1m
-        .zip(log.input_tokens)
-        .map(|(price, tokens)| tokens as f64 / 1_000_000.0 * price)
-        .unwrap_or(0.0);
-    let output_cost = price
-        .output_price_per_1m
-        .zip(log.output_tokens)
-        .map(|(price, tokens)| tokens as f64 / 1_000_000.0 * price)
-        .unwrap_or(0.0);
-
-    Some(EstimatedCost {
-        estimated_cost: input_cost + output_cost,
-        currency: price.currency.clone(),
-    })
-}
-
-pub(crate) fn load_model_prices() -> Result<Vec<ModelPrice>> {
-    let path = std::env::var("MODEL_PRICES_PATH")
-        .unwrap_or_else(|_| "config/model_prices.json".to_string());
-    if !std::path::Path::new(&path).exists() {
-        return Ok(Vec::new());
-    }
-    let content = std::fs::read_to_string(path)?;
-    Ok(serde_json::from_str(&content)?)
-}
-
 fn beijing_offset() -> FixedOffset {
     FixedOffset::east_opt(8 * 60 * 60).expect("valid Beijing UTC offset")
 }
@@ -255,40 +207,5 @@ fn first_day_of_previous_month(date: NaiveDate) -> NaiveDate {
         NaiveDate::from_ymd_opt(date.year() - 1, 12, 1).expect("valid previous December")
     } else {
         NaiveDate::from_ymd_opt(date.year(), date.month() - 1, 1).expect("valid previous month")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{estimate_cost, ActivityInsert, ModelPrice};
-
-    #[test]
-    fn estimates_cost_from_matching_model_price() {
-        let cost = estimate_cost(
-            &ActivityInsert {
-                provider_name: "DeepSeek".to_string(),
-                model_requested: "deepseek-chat".to_string(),
-                model_upstream: "deepseek-chat".to_string(),
-                input_tokens: Some(1_000_000),
-                output_tokens: Some(500_000),
-                ..Default::default()
-            },
-            &[ModelPrice {
-                provider: "DeepSeek".to_string(),
-                model: "deepseek-chat".to_string(),
-                input_price_per_1m: Some(1.0),
-                output_price_per_1m: Some(2.0),
-                currency: "USD".to_string(),
-            }],
-        )
-        .expect("estimate cost");
-
-        assert_eq!(cost.estimated_cost, 2.0);
-        assert_eq!(cost.currency, "USD");
-    }
-
-    #[test]
-    fn leaves_cost_empty_when_price_is_unknown() {
-        assert!(estimate_cost(&ActivityInsert::default(), &[]).is_none());
     }
 }

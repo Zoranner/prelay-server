@@ -1,9 +1,0 @@
-[
-  {
-    "provider": "DeepSeek",
-    "model": "deepseek-chat",
-    "input_price_per_1m": 0.27,
-    "output_price_per_1m": 1.1,
-    "currency": "USD"
-  }
-]

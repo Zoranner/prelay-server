@@ -26,8 +26,6 @@ pub struct Model {
     pub reasoning_tokens: Option<i64>,
     pub cache_read_tokens: Option<i64>,
     pub cache_write_tokens: Option<i64>,
-    pub estimated_cost: Option<f64>,
-    pub currency: Option<String>,
     pub latency_ms: Option<i64>,
     pub upstream_latency_ms: Option<i64>,
     pub first_token_ms: Option<i64>,
