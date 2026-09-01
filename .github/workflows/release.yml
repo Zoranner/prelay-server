@@ -110,7 +110,6 @@ jobs:
           image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE@$DIGEST")"
           docker image tag "$image_id" "$IMAGE:$VERSION"
           docker image save --output "$archive" "$IMAGE:$VERSION"
-          sha256sum "$archive" > "$archive.sha256"
           mkdir -p digests
           touch "digests/${DIGEST#sha256:}"
 
@@ -120,7 +119,6 @@ jobs:
           name: prelay-server-${{ matrix.archive_suffix }}
           path: |
             prelay-server-${{ needs.prepare.outputs.version }}-${{ matrix.archive_suffix }}.tar
-            prelay-server-${{ needs.prepare.outputs.version }}-${{ matrix.archive_suffix }}.tar.sha256
             digests/*
           if-no-files-found: error
 
@@ -168,9 +166,7 @@ jobs:
           body: |
             Server image: ${{ needs.prepare.outputs.image }}:${{ needs.prepare.outputs.version }}
             Offline images: prelay-server-${{ needs.prepare.outputs.version }}-linux-amd64.tar, prelay-server-${{ needs.prepare.outputs.version }}-linux-arm64.tar
-            Each offline image has a same-name .sha256 file for integrity verification.
           files: |
             artifacts/*.tar
-            artifacts/*.tar.sha256
           fail_on_unmatched_files: true
           overwrite_files: true
