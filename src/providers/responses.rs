@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use crate::{
     bridge::internal::{
         InternalContentPart, InternalMessage, InternalOutputItem, InternalRequest,
-        InternalResponse, InternalRole, InternalUsage,
+        InternalResponse, InternalRole,
     },
     error::AppError,
 };
@@ -13,8 +13,24 @@ pub fn encode_responses_request(request: &InternalRequest) -> Value {
         "model": request.model,
         "stream": request.stream,
         "input": request.messages.iter().map(encode_message).collect::<Vec<_>>(),
+        "store": request.store,
     });
-    if let Some(max_tokens) = request.max_tokens {
+    if let Some(instructions) = &request.instructions {
+        value["instructions"] = json!(instructions);
+    }
+    if let Some(reasoning) = &request.reasoning {
+        value["reasoning"] = reasoning.clone();
+    }
+    if let Some(tool_choice) = &request.tool_choice {
+        value["tool_choice"] = tool_choice.clone();
+    }
+    if let Some(parallel_tool_calls) = request.parallel_tool_calls {
+        value["parallel_tool_calls"] = json!(parallel_tool_calls);
+    }
+    if let Some(text) = &request.text {
+        value["text"] = text.clone();
+    }
+    if let Some(max_tokens) = request.max_completion_tokens.or(request.max_tokens) {
         value["max_output_tokens"] = json!(max_tokens);
     }
     if !request.tools.is_empty() {
@@ -74,7 +90,7 @@ pub fn decode_responses_response(value: Value) -> Result<InternalResponse, AppEr
         id,
         model,
         output,
-        usage: decode_usage(value.get("usage")),
+        usage: crate::bridge::usage::decode_usage(value.get("usage")),
     })
 }
 
@@ -154,32 +170,6 @@ fn join_text_content(content: &[InternalContentPart]) -> String {
         .join("\n")
 }
 
-fn decode_usage(usage: Option<&Value>) -> Option<InternalUsage> {
-    let usage = usage?;
-    Some(InternalUsage {
-        input_tokens: usage
-            .get("input_tokens")
-            .or_else(|| usage.get("prompt_tokens"))
-            .and_then(Value::as_i64),
-        output_tokens: usage
-            .get("output_tokens")
-            .or_else(|| usage.get("completion_tokens"))
-            .and_then(Value::as_i64),
-        reasoning_tokens: usage
-            .get("output_tokens_details")
-            .and_then(|details| details.get("reasoning_tokens"))
-            .and_then(Value::as_i64),
-        cache_read_tokens: usage
-            .pointer("/input_tokens_details/cached_tokens")
-            .or_else(|| usage.pointer("/prompt_tokens_details/cached_tokens"))
-            .or_else(|| usage.get("cache_read_input_tokens"))
-            .and_then(Value::as_i64),
-        cache_write_tokens: usage
-            .get("cache_creation_input_tokens")
-            .and_then(Value::as_i64),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -195,12 +185,19 @@ mod tests {
             model: "gpt-4.1".to_string(),
             stream: false,
             max_tokens: Some(128),
+            max_completion_tokens: None,
             previous_response_id: None,
             reasoning_requested: false,
             tool_choice_requested: false,
             structured_output_requested: false,
             parallel_tool_calls_requested: false,
             streaming_usage_requested: false,
+            instructions: Some("Be concise.".to_string()),
+            store: false,
+            reasoning: Some(json!({ "effort": "high" })),
+            tool_choice: Some(json!("required")),
+            parallel_tool_calls: Some(true),
+            text: Some(json!({ "format": { "type": "json_object" } })),
             tools: Vec::new(),
             messages: vec![InternalMessage {
                 role: InternalRole::User,
@@ -216,6 +213,12 @@ mod tests {
         assert_eq!(encoded["max_output_tokens"], 128);
         assert_eq!(encoded["input"][0]["role"], "user");
         assert_eq!(encoded["input"][0]["content"], "hello");
+        assert_eq!(encoded["instructions"], "Be concise.");
+        assert_eq!(encoded["store"], false);
+        assert_eq!(encoded["reasoning"]["effort"], "high");
+        assert_eq!(encoded["tool_choice"], "required");
+        assert_eq!(encoded["parallel_tool_calls"], true);
+        assert_eq!(encoded["text"]["format"]["type"], "json_object");
     }
 
     #[test]
@@ -224,7 +227,14 @@ mod tests {
             model: "gpt-4.1".to_string(),
             stream: false,
             max_tokens: None,
+            max_completion_tokens: None,
             previous_response_id: None,
+            instructions: None,
+            store: true,
+            reasoning: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            text: None,
             reasoning_requested: false,
             tool_choice_requested: false,
             structured_output_requested: false,

@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::decode_responses_request;
+use super::{decode_responses_request, validate_responses_bridge_payload};
 use crate::bridge::internal::{InternalContentPart, InternalRole};
 
 #[test]
@@ -200,4 +200,43 @@ fn decodes_function_call_output_into_tool_message() {
             "{\"content\":\"file text\"}".to_string()
         )]
     );
+}
+
+#[test]
+fn decodes_responses_request_options_without_input() {
+    let request = decode_responses_request(json!({
+        "model": "gpt-4.1",
+        "store": false,
+        "instructions": "Be concise.",
+        "reasoning": { "effort": "high" },
+        "tool_choice": "required",
+        "parallel_tool_calls": true,
+        "text": { "format": { "type": "json_object" } }
+    }))
+    .expect("decode responses request");
+
+    assert_eq!(request.instructions.as_deref(), Some("Be concise."));
+    assert!(!request.store);
+    assert_eq!(request.reasoning, Some(json!({ "effort": "high" })));
+    assert_eq!(request.tool_choice, Some(json!("required")));
+    assert_eq!(request.parallel_tool_calls, Some(true));
+    assert_eq!(
+        request.text,
+        Some(json!({ "format": { "type": "json_object" } }))
+    );
+    assert!(request.messages.is_empty());
+}
+
+#[test]
+fn rejects_responses_features_that_cannot_be_bridged() {
+    let error = validate_responses_bridge_payload(&json!({
+        "input": [{
+            "role": "user",
+            "content": [{ "type": "input_image", "image_url": "https://example.com/a.png" }]
+        }],
+        "tools": [{ "type": "web_search_preview" }]
+    }))
+    .expect_err("non-text Responses features must not be silently downgraded");
+
+    assert!(format!("{error:?}").contains("Responses bridge does not support"));
 }

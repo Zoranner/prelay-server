@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::decode_anthropic_request;
+use super::{decode_anthropic_request, validate_anthropic_bridge_payload};
 use crate::bridge::internal::{InternalContentPart, InternalRole};
 
 #[test]
@@ -32,6 +32,43 @@ fn decodes_text_messages_to_internal_request() {
             InternalContentPart::Text("world".to_string())
         ]
     );
+}
+
+#[test]
+fn preserves_anthropic_thinking_and_tool_choice_for_bridge() {
+    let request = decode_anthropic_request(json!({
+        "model": "claude-sonnet",
+        "max_tokens": 1024,
+        "thinking": { "type": "enabled", "budget_tokens": 512 },
+        "tool_choice": { "type": "auto" },
+        "messages": [{ "role": "user", "content": "hello" }]
+    }))
+    .expect("decode anthropic request");
+
+    assert_eq!(
+        request.reasoning,
+        Some(json!({ "type": "enabled", "budget_tokens": 512 }))
+    );
+    assert_eq!(request.tool_choice, Some(json!("auto")));
+}
+
+#[test]
+fn rejects_anthropic_features_that_cannot_be_bridged() {
+    let error = validate_anthropic_bridge_payload(&json!({
+        "model": "claude-sonnet",
+        "max_tokens": 1024,
+        "temperature": 0.2,
+        "messages": [{
+            "role": "user",
+            "content": [{
+                "type": "image",
+                "source": { "type": "url", "url": "https://example.com/a.png" }
+            }]
+        }]
+    }))
+    .expect_err("non-text Anthropic features must not be silently downgraded");
+
+    assert!(format!("{error:?}").contains("Anthropic bridge does not support"));
 }
 
 #[test]

@@ -65,6 +65,10 @@ fn encode_usage(usage: InternalUsage) -> Value {
         "input_tokens": usage.input_tokens,
         "output_tokens": usage.output_tokens,
         "total_tokens": usage.input_tokens.unwrap_or(0) + usage.output_tokens.unwrap_or(0),
+        "input_tokens_details": {
+            "cached_tokens": usage.cache_read_tokens.unwrap_or(0),
+            "cache_write_tokens": usage.cache_write_tokens.unwrap_or(0),
+        },
         "output_tokens_details": {
             "reasoning_tokens": usage.reasoning_tokens,
         },
@@ -107,6 +111,11 @@ mod tests {
         assert_eq!(encoded["output"][0]["content"][0]["text"], "hello");
         assert_eq!(encoded["usage"]["input_tokens"], 10);
         assert_eq!(encoded["usage"]["output_tokens"], 5);
+        assert_eq!(encoded["usage"]["input_tokens_details"]["cached_tokens"], 0);
+        assert_eq!(
+            encoded["usage"]["input_tokens_details"]["cache_write_tokens"],
+            0
+        );
         assert_eq!(
             encoded["usage"]["output_tokens_details"]["reasoning_tokens"],
             2

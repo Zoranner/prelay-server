@@ -28,7 +28,14 @@ mod tests {
             model: "deepseek-chat".to_string(),
             stream: false,
             max_tokens: None,
+            max_completion_tokens: None,
             previous_response_id: None,
+            instructions: None,
+            store: true,
+            reasoning: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            text: None,
             reasoning_requested: false,
             tool_choice_requested: false,
             structured_output_requested: false,
@@ -70,7 +77,14 @@ mod tests {
             model: "deepseek-chat".to_string(),
             stream: false,
             max_tokens: None,
+            max_completion_tokens: None,
             previous_response_id: None,
+            instructions: None,
+            store: true,
+            reasoning: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            text: None,
             reasoning_requested: false,
             tool_choice_requested: false,
             structured_output_requested: false,
@@ -92,12 +106,46 @@ mod tests {
     }
 
     #[test]
+    fn encodes_parallel_tool_calls_for_chat_completions() {
+        let encoded = encode_chat_request(&InternalRequest {
+            model: "deepseek-chat".to_string(),
+            stream: false,
+            max_tokens: None,
+            max_completion_tokens: Some(128),
+            previous_response_id: None,
+            instructions: None,
+            store: true,
+            reasoning: None,
+            tool_choice: None,
+            parallel_tool_calls: Some(true),
+            text: None,
+            reasoning_requested: false,
+            tool_choice_requested: false,
+            structured_output_requested: false,
+            parallel_tool_calls_requested: true,
+            streaming_usage_requested: false,
+            tools: Vec::new(),
+            messages: Vec::new(),
+        });
+
+        assert_eq!(encoded["parallel_tool_calls"], true);
+        assert_eq!(encoded["max_completion_tokens"], 128);
+    }
+
+    #[test]
     fn encodes_internal_tools_to_chat_completions_functions() {
         let encoded = encode_chat_request(&InternalRequest {
             model: "deepseek-chat".to_string(),
             stream: false,
             max_tokens: None,
+            max_completion_tokens: None,
             previous_response_id: None,
+            instructions: None,
+            store: true,
+            reasoning: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            text: None,
             reasoning_requested: false,
             tool_choice_requested: false,
             structured_output_requested: false,
@@ -247,6 +295,24 @@ mod tests {
     }
 
     #[test]
+    fn decodes_usage_when_chat_choices_are_empty() {
+        let response = decode_chat_response(json!({
+            "id": "chatcmpl_usage",
+            "model": "deepseek-chat",
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 11,
+                "completion_tokens": 0,
+                "prompt_tokens_details": { "cached_tokens": 4 }
+            }
+        }))
+        .expect("decode usage-only chat response");
+
+        assert!(response.output.is_empty());
+        assert_eq!(response.usage.expect("usage").input_tokens, Some(11));
+    }
+
+    #[test]
     fn decodes_chat_tool_calls_to_internal_output_items() {
         let response = decode_chat_response(json!({
             "id": "chatcmpl_tools",
@@ -322,7 +388,14 @@ mod tests {
             model: "deepseek-chat".to_string(),
             stream: false,
             max_tokens: None,
+            max_completion_tokens: None,
             previous_response_id: None,
+            instructions: None,
+            store: true,
+            reasoning: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            text: None,
             reasoning_requested: false,
             tool_choice_requested: false,
             structured_output_requested: false,
@@ -356,7 +429,14 @@ mod tests {
             model: "deepseek-chat".to_string(),
             stream: false,
             max_tokens: None,
+            max_completion_tokens: None,
             previous_response_id: None,
+            instructions: None,
+            store: true,
+            reasoning: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            text: None,
             reasoning_requested: false,
             tool_choice_requested: false,
             structured_output_requested: false,

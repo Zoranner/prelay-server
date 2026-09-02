@@ -22,35 +22,109 @@ pub fn decode_responses_request(value: Value) -> Result<InternalRequest, AppErro
         .filter(|id| !id.trim().is_empty())
         .map(str::to_string);
     let max_tokens = value.get("max_output_tokens").and_then(Value::as_i64);
-    let reasoning_requested = value.get("reasoning").is_some();
-    let tool_choice_requested = value.get("tool_choice").is_some();
+    let max_completion_tokens = max_tokens;
+    let instructions = value
+        .get("instructions")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let store = value.get("store").and_then(Value::as_bool).unwrap_or(true);
+    let reasoning = value.get("reasoning").cloned();
+    let tool_choice = value.get("tool_choice").cloned();
+    let parallel_tool_calls = value.get("parallel_tool_calls").and_then(Value::as_bool);
+    let text = value.get("text").cloned();
+    let reasoning_requested = reasoning.is_some();
+    let tool_choice_requested = tool_choice.is_some();
     let structured_output_requested = responses_structured_output_requested(&value);
-    let parallel_tool_calls_requested = value
-        .get("parallel_tool_calls")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     let streaming_usage_requested = value
         .pointer("/stream_options/include_usage")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let input = value
-        .get("input")
-        .ok_or_else(|| AppError::BadRequest("input 不能为空".to_string()))?;
+    let input = value.get("input").unwrap_or(&Value::Null);
 
     let request = InternalRequest {
         model,
         stream,
         max_tokens,
+        max_completion_tokens,
         previous_response_id,
+        instructions,
+        store,
+        reasoning,
+        tool_choice,
+        parallel_tool_calls,
+        text,
         reasoning_requested,
         tool_choice_requested,
         structured_output_requested,
-        parallel_tool_calls_requested,
+        parallel_tool_calls_requested: parallel_tool_calls.unwrap_or(false),
         streaming_usage_requested,
         tools: decode_tools(value.get("tools"))?,
         messages: decode_input(input)?,
     };
     Ok(request)
+}
+
+/// Validate the subset of Responses requests that can be represented by the
+/// internal chat/Anthropic bridge without silently changing their meaning.
+pub fn validate_responses_bridge_payload(value: &Value) -> Result<(), AppError> {
+    if value.get("reasoning").is_some() {
+        return Err(unsupported_bridge_feature("reasoning"));
+    }
+    if responses_structured_output_requested(value) {
+        return Err(unsupported_bridge_feature("structured output"));
+    }
+    if let Some(tools) = value.get("tools").and_then(Value::as_array) {
+        for tool in tools {
+            let tool_type = tool
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("function");
+            if tool_type != "function" {
+                return Err(unsupported_bridge_feature(format!(
+                    "tool type `{tool_type}`"
+                )));
+            }
+        }
+    }
+
+    let Some(input) = value.get("input") else {
+        return Ok(());
+    };
+    if let Some(items) = input.as_array() {
+        for item in items {
+            let item_type = item.get("type").and_then(Value::as_str);
+            match item_type {
+                Some("function_call") | Some("function_call_output") | None => {}
+                Some(other) => {
+                    return Err(unsupported_bridge_feature(format!(
+                        "input item type `{other}`"
+                    )));
+                }
+            }
+
+            if let Some(parts) = item.get("content").and_then(Value::as_array) {
+                for part in parts {
+                    let part_type = part.get("type").and_then(Value::as_str).unwrap_or("text");
+                    if !matches!(part_type, "input_text" | "text") {
+                        return Err(unsupported_bridge_feature(format!(
+                            "content part type `{part_type}`"
+                        )));
+                    }
+                }
+            }
+        }
+    } else if !input.is_null() && !input.is_string() {
+        return Err(unsupported_bridge_feature("non-text input value"));
+    }
+
+    Ok(())
+}
+
+fn unsupported_bridge_feature(feature: impl Into<String>) -> AppError {
+    AppError::BadRequest(format!(
+        "Responses bridge does not support {}",
+        feature.into()
+    ))
 }
 
 fn responses_structured_output_requested(value: &Value) -> bool {
@@ -102,6 +176,9 @@ fn decode_tool(tool: &Value) -> Option<InternalTool> {
 }
 
 fn decode_input(input: &Value) -> Result<Vec<InternalMessage>, AppError> {
+    if input.is_null() {
+        return Ok(Vec::new());
+    }
     if let Some(text) = input.as_str() {
         return Ok(vec![InternalMessage {
             role: InternalRole::User,

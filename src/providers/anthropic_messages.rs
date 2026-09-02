@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use crate::{
     bridge::internal::{
         InternalContentPart, InternalMessage, InternalOutputItem, InternalRequest,
-        InternalResponse, InternalRole, InternalUsage,
+        InternalResponse, InternalRole,
     },
     error::AppError,
 };
@@ -86,7 +86,7 @@ pub fn decode_anthropic_messages_response(value: Value) -> Result<InternalRespon
         id,
         model,
         output,
-        usage: decode_usage(value.get("usage")),
+        usage: crate::bridge::usage::decode_usage(value.get("usage")),
     })
 }
 
@@ -134,19 +134,6 @@ fn decode_tool_use_block(block: &Value) -> Option<InternalOutputItem> {
     })
 }
 
-fn decode_usage(usage: Option<&Value>) -> Option<InternalUsage> {
-    let usage = usage?;
-    Some(InternalUsage {
-        input_tokens: usage.get("input_tokens").and_then(Value::as_i64),
-        output_tokens: usage.get("output_tokens").and_then(Value::as_i64),
-        reasoning_tokens: None,
-        cache_read_tokens: usage.get("cache_read_input_tokens").and_then(Value::as_i64),
-        cache_write_tokens: usage
-            .get("cache_creation_input_tokens")
-            .and_then(Value::as_i64),
-    })
-}
-
 fn encode_role(role: &InternalRole) -> &'static str {
     match role {
         InternalRole::User | InternalRole::Tool => "user",
@@ -180,7 +167,14 @@ mod tests {
             model: "claude-sonnet".to_string(),
             stream: false,
             max_tokens: Some(128),
+            max_completion_tokens: None,
             previous_response_id: None,
+            instructions: None,
+            store: true,
+            reasoning: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            text: None,
             reasoning_requested: false,
             tool_choice_requested: false,
             structured_output_requested: false,
@@ -233,7 +227,14 @@ mod tests {
             model: "claude-sonnet".to_string(),
             stream: false,
             max_tokens: None,
+            max_completion_tokens: None,
             previous_response_id: None,
+            instructions: None,
+            store: true,
+            reasoning: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            text: None,
             reasoning_requested: false,
             tool_choice_requested: false,
             structured_output_requested: false,

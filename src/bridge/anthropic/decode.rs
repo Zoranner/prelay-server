@@ -18,9 +18,18 @@ pub fn decode_anthropic_request(value: Value) -> Result<InternalRequest, AppErro
         .get("stream")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let max_tokens = value.get("max_tokens").and_then(Value::as_i64);
-    let reasoning_requested = value.get("thinking").is_some() || value.get("reasoning").is_some();
-    let tool_choice_requested = value.get("tool_choice").is_some();
+    let max_tokens = value
+        .get("max_tokens")
+        .and_then(Value::as_i64)
+        .filter(|tokens| *tokens > 0)
+        .ok_or_else(|| AppError::BadRequest("max_tokens 必须是正整数".to_string()))?;
+    let reasoning = value
+        .get("thinking")
+        .or_else(|| value.get("reasoning"))
+        .cloned();
+    let tool_choice = value.get("tool_choice").map(normalize_tool_choice);
+    let reasoning_requested = reasoning.is_some();
+    let tool_choice_requested = tool_choice.is_some();
     let messages = value
         .get("messages")
         .and_then(Value::as_array)
@@ -45,8 +54,15 @@ pub fn decode_anthropic_request(value: Value) -> Result<InternalRequest, AppErro
     let request = InternalRequest {
         model,
         stream,
-        max_tokens,
+        max_tokens: Some(max_tokens),
+        max_completion_tokens: None,
         previous_response_id: None,
+        instructions: None,
+        store: true,
+        reasoning,
+        tool_choice,
+        parallel_tool_calls: None,
+        text: None,
         reasoning_requested,
         tool_choice_requested,
         structured_output_requested: false,
@@ -56,6 +72,77 @@ pub fn decode_anthropic_request(value: Value) -> Result<InternalRequest, AppErro
         messages: decoded,
     };
     Ok(request)
+}
+
+fn normalize_tool_choice(value: &Value) -> Value {
+    match value.get("type").and_then(Value::as_str) {
+        Some("auto") => Value::String("auto".to_string()),
+        Some("any") => Value::String("required".to_string()),
+        Some("none") => Value::String("none".to_string()),
+        _ => value.clone(),
+    }
+}
+
+pub fn validate_anthropic_bridge_payload(value: &Value) -> Result<(), AppError> {
+    for field in [
+        "temperature",
+        "top_k",
+        "top_p",
+        "stop_sequences",
+        "metadata",
+        "service_tier",
+        "container",
+        "context_management",
+        "output_config",
+    ] {
+        if value.get(field).is_some() {
+            return Err(unsupported_bridge_feature(field));
+        }
+    }
+
+    if value.get("thinking").is_some() || value.get("reasoning").is_some() {
+        return Err(unsupported_bridge_feature("thinking"));
+    }
+
+    if value
+        .pointer("/tool_choice/type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind == "tool")
+    {
+        return Err(unsupported_bridge_feature("named tool_choice"));
+    }
+
+    if let Some(tools) = value.get("tools").and_then(Value::as_array) {
+        for tool in tools {
+            if tool.get("name").and_then(Value::as_str).is_none() {
+                return Err(unsupported_bridge_feature("server-side tool"));
+            }
+        }
+    }
+
+    if let Some(messages) = value.get("messages").and_then(Value::as_array) {
+        for message in messages {
+            if let Some(parts) = message.get("content").and_then(Value::as_array) {
+                for part in parts {
+                    let kind = part.get("type").and_then(Value::as_str).unwrap_or("text");
+                    if !matches!(kind, "text" | "tool_result") {
+                        return Err(unsupported_bridge_feature(format!(
+                            "content block type `{kind}`"
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn unsupported_bridge_feature(feature: impl Into<String>) -> AppError {
+    AppError::BadRequest(format!(
+        "Anthropic bridge does not support {}",
+        feature.into()
+    ))
 }
 
 fn decode_tools(value: Option<&Value>) -> Result<Vec<InternalTool>, AppError> {

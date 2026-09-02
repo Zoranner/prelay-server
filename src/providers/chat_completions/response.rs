@@ -1,9 +1,7 @@
 use serde_json::Value;
 
 use crate::{
-    bridge::internal::{
-        InternalContentPart, InternalOutputItem, InternalResponse, InternalRole, InternalUsage,
-    },
+    bridge::internal::{InternalContentPart, InternalOutputItem, InternalResponse, InternalRole},
     error::AppError,
 };
 
@@ -22,38 +20,91 @@ pub fn decode_chat_response(value: Value) -> Result<InternalResponse, AppError> 
         .get("choices")
         .and_then(Value::as_array)
         .and_then(|choices| choices.first())
-        .and_then(|choice| choice.get("message"))
-        .ok_or_else(|| AppError::UpstreamInvalidResponse {
+        .and_then(|choice| choice.get("message"));
+    let Some(message) = message else {
+        if value
+            .get("choices")
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty)
+        {
+            return Ok(InternalResponse {
+                id,
+                model,
+                output: Vec::new(),
+                usage: crate::bridge::usage::decode_usage(value.get("usage")),
+            });
+        }
+        return Err(AppError::UpstreamInvalidResponse {
             message: "上游响应格式无效".to_string(),
-        })?;
+        });
+    };
     let reasoning_content = message
         .get("reasoning_content")
         .and_then(Value::as_str)
         .filter(|content| !content.trim().is_empty())
         .map(str::to_string);
-    let output = if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
-        tool_calls
-            .iter()
-            .filter_map(|tool_call| decode_tool_call(tool_call, reasoning_content.clone()))
-            .collect::<Vec<_>>()
-    } else {
-        let content = message
-            .get("content")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        vec![InternalOutputItem::Message {
+    let mut output = Vec::new();
+    let content = message_text(message);
+    if !content.is_empty() {
+        output.push(InternalOutputItem::Message {
             id: "msg_0".to_string(),
             role: InternalRole::Assistant,
             content: vec![InternalContentPart::Text(content)],
-        }]
-    };
+        });
+    }
+    if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
+        output.extend(
+            tool_calls
+                .iter()
+                .filter_map(|tool_call| decode_tool_call(tool_call, reasoning_content.clone())),
+        );
+    } else if let Some(function_call) = message.get("function_call") {
+        output.extend(decode_legacy_function_call(function_call));
+    }
+    if output.is_empty() {
+        output.push(InternalOutputItem::Message {
+            id: "msg_0".to_string(),
+            role: InternalRole::Assistant,
+            content: Vec::new(),
+        });
+    }
 
     Ok(InternalResponse {
         id,
         model,
         output,
-        usage: decode_usage(value.get("usage")),
+        usage: crate::bridge::usage::decode_usage(value.get("usage")),
+    })
+}
+
+fn message_text(message: &Value) -> String {
+    if let Some(text) = message.get("content").and_then(Value::as_str) {
+        return text.to_string();
+    }
+    if let Some(text) = message.get("refusal").and_then(Value::as_str) {
+        return text.to_string();
+    }
+    message
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|part| part.get("text").or_else(|| part.get("refusal")))
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn decode_legacy_function_call(value: &Value) -> Option<InternalOutputItem> {
+    Some(InternalOutputItem::FunctionToolCall {
+        id: "call_legacy".to_string(),
+        name: value.get("name").and_then(Value::as_str)?.to_string(),
+        arguments: value
+            .get("arguments")
+            .and_then(Value::as_str)
+            .unwrap_or("{}")
+            .to_string(),
+        reasoning_content: None,
     })
 }
 
@@ -75,24 +126,5 @@ fn decode_tool_call(
         name,
         arguments,
         reasoning_content,
-    })
-}
-
-fn decode_usage(usage: Option<&Value>) -> Option<InternalUsage> {
-    let usage = usage?;
-    Some(InternalUsage {
-        input_tokens: usage.get("prompt_tokens").and_then(Value::as_i64),
-        output_tokens: usage.get("completion_tokens").and_then(Value::as_i64),
-        reasoning_tokens: usage
-            .get("completion_tokens_details")
-            .and_then(|details| details.get("reasoning_tokens"))
-            .and_then(Value::as_i64),
-        cache_read_tokens: usage
-            .pointer("/prompt_tokens_details/cached_tokens")
-            .or_else(|| usage.get("cache_read_input_tokens"))
-            .and_then(Value::as_i64),
-        cache_write_tokens: usage
-            .get("cache_creation_input_tokens")
-            .and_then(Value::as_i64),
     })
 }

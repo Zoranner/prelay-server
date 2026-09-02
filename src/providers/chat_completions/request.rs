@@ -48,7 +48,14 @@ pub fn decode_chat_request(value: Value) -> Result<InternalRequest, AppError> {
         model,
         stream,
         max_tokens,
+        max_completion_tokens: None,
         previous_response_id: None,
+        instructions: None,
+        store: true,
+        reasoning: None,
+        tool_choice: None,
+        parallel_tool_calls: None,
+        text: None,
         reasoning_requested,
         tool_choice_requested,
         structured_output_requested,
@@ -65,13 +72,34 @@ pub fn encode_chat_request(request: &InternalRequest) -> Value {
         "stream": request.stream,
         "messages": request.messages.iter().map(encode_message).collect::<Vec<_>>(),
     });
-    if let Some(max_tokens) = request.max_tokens {
+    if let Some(max_completion_tokens) = request.max_completion_tokens {
+        value["max_completion_tokens"] = json!(max_completion_tokens);
+    } else if let Some(max_tokens) = request.max_tokens {
         value["max_tokens"] = json!(max_tokens);
+    }
+    if let Some(tool_choice) = &request.tool_choice {
+        value["tool_choice"] = normalize_tool_choice(tool_choice);
+    }
+    if let Some(parallel_tool_calls) = request.parallel_tool_calls {
+        value["parallel_tool_calls"] = json!(parallel_tool_calls);
     }
     if !request.tools.is_empty() {
         value["tools"] = json!(request.tools.iter().map(encode_tool).collect::<Vec<_>>());
     }
     value
+}
+
+fn normalize_tool_choice(value: &Value) -> Value {
+    if value.get("type").and_then(Value::as_str) == Some("function")
+        && value.get("name").and_then(Value::as_str).is_some()
+        && value.get("function").is_none()
+    {
+        return json!({
+            "type": "function",
+            "function": { "name": value["name"] }
+        });
+    }
+    value.clone()
 }
 
 #[cfg(test)]
@@ -113,7 +141,6 @@ fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 fn decode_content(value: &Value) -> Result<Vec<InternalContentPart>, AppError> {
     if value.is_null() {
         return Ok(Vec::new());
@@ -139,7 +166,6 @@ fn decode_content(value: &Value) -> Result<Vec<InternalContentPart>, AppError> {
     Ok(text_parts)
 }
 
-#[cfg(test)]
 #[cfg(test)]
 fn decode_tools(value: Option<&Value>) -> Result<Vec<InternalTool>, AppError> {
     let Some(value) = value else {
@@ -176,7 +202,6 @@ fn decode_tools(value: Option<&Value>) -> Result<Vec<InternalTool>, AppError> {
         .collect()
 }
 
-#[cfg(test)]
 #[cfg(test)]
 fn decode_internal_tool_call(value: &Value) -> Option<InternalToolCall> {
     let id = value.get("id").and_then(Value::as_str)?.to_string();
