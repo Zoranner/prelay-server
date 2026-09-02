@@ -107,7 +107,7 @@ impl ProviderCatalog {
         let image_generation_models =
             load_image_generation_models(&models_directory.join("image-generation.toml"))?;
         let providers = load_providers(
-            &directory.join("providers.toml"),
+            &directory.join("provider-catalog.toml"),
             &language_models,
             &image_generation_models,
         )?;

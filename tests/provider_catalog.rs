@@ -25,7 +25,7 @@ fn write_catalog(language_models: &str, image_generation_models: &str, providers
         image_generation_models,
     )
     .expect("write image generation models catalog");
-    fs::write(directory.join("providers.toml"), providers).expect("write providers catalog");
+    fs::write(directory.join("provider-catalog.toml"), providers).expect("write provider catalog");
     directory
 }
 

@@ -4,7 +4,7 @@
 
 **Goal:** 将供应商调用规则和模型白名单迁入服务端只读目录，并把现有 PostgreSQL 供应商、接入点数据事务迁移到目录驱动模型。
 
-**Architecture:** `models.toml` 定义模型名、`text`/`image` 类型和思考档位；`providers.toml` 定义供应商认证方式、协议集合、默认 URL、协议 URL 覆盖及可提供模型。数据库只保留供应商接入的名称、目录供应商 ID、URL 覆盖和加密 API Key；运行时由服务端目录解析认证、协议和模型。迁移保留 Endpoint Token、接入点模型名和候选顺序，不实现旧管理客户端兼容层。
+**Architecture:** `models.toml` 定义模型名、`text`/`image` 类型和思考档位；`provider-catalog.toml` 定义供应商认证方式、协议集合、默认 URL、协议 URL 覆盖及可提供模型。数据库只保留供应商接入的名称、目录供应商 ID、URL 覆盖和加密 API Key；运行时由服务端目录解析认证、协议和模型。迁移保留 Endpoint Token、接入点模型名和候选顺序，不实现旧管理客户端兼容层。
 
 **Tech Stack:** Rust 2021、Axum、SeaORM 2、Sea Query、PostgreSQL、SQLite 测试库、Serde、TOML、prelay-protocol。
 
@@ -17,7 +17,7 @@
 - `/v1/models`、`/v1/responses`、`/v1/chat/completions`、`/v1/messages` 的路径和 Endpoint Token 不变。
 - 协议枚举统一为 `chat_completions`、`responses`、`anthropic_messages`、`images_generations`，配置和 API 输出固定按此顺序排列。
 - 模型只声明 `model_type = "text"` 或 `model_type = "image"`；模型配置不声明协议。
-- 服务端目录文件为 `/app/config/models.toml` 与 `/app/config/providers.toml`；本地与测试通过 `PRELAY_CATALOG_DIR` 指定目录。
+- 服务端目录文件为 `/app/config/models.toml` 与 `/app/config/provider-catalog.toml`；本地与测试通过 `PRELAY_CATALOG_DIR` 指定目录。
 - 已有 PostgreSQL 数据只在全部引用能精确映射到目录供应商和模型时迁移；不猜测旧 `upstream_model` 别名或自定义供应商。
 - Rust 修改后执行 `cargo fmt --all`、`cargo clippy --all-targets --all-features -- -D warnings`、`cargo test --all-targets --all-features` 和 `git diff --check`。
 
@@ -35,7 +35,7 @@
 | `prelay-server` | `src/storage/providers.rs`、`endpoints.rs`、`access.rs` | 目录约束下保存供应商、接入点候选和协议调用数据。 |
 | `prelay-server` | `src/providers/spec/*`、`src/routes/v1/*` | 按目录供应商解析认证、URL、固定协议选择和模型类型。 |
 | `prelay-server` | `src/routes/api/provider_catalog.rs`、`src/routes/api/providers.rs` | 只读目录 API 与新的供应商管理 API。 |
-| `prelay-server` | `config/models.toml`、`config/providers.toml` | 不含密钥的默认目录；部署可用 `/app/config` 挂载覆盖。 |
+| `prelay-server` | `config/models.toml`、`config/provider-catalog.toml` | 不含密钥的默认目录；部署可用 `/app/config` 挂载覆盖。 |
 | `prelay-server` | `tests/provider_catalog.rs`、`tests/provider_catalog_postgres.rs`、`tests/schema/*` | 目录校验、PostgreSQL 迁移、管理 API 和 `/v1` 回归。 |
 
 ## Task 1: 建立管理协议目录契约
@@ -149,7 +149,7 @@
 - Modify: `prelay-server/src/routes/api/mod.rs`
 - Create: `prelay-server/src/routes/api/provider_catalog.rs`
 - Create: `prelay-server/config/models.toml`
-- Create: `prelay-server/config/providers.toml`
+- Create: `prelay-server/config/provider-catalog.toml`
 - Create: `prelay-server/tests/provider_catalog.rs`
 
 **Interfaces:**
@@ -173,7 +173,7 @@
   ```
 
   ```toml
-  # providers.toml
+  # provider-catalog.toml
   [[providers]]
   id = "gotoken"
   name = "GoToken 套餐"
@@ -197,7 +197,7 @@
 
 - [ ] **Step 3: 实现目录加载、排序和严格校验**
 
-  加入 `toml` 依赖。`ProviderCatalog::load` 从 `PRELAY_CATALOG_DIR` 指向目录读取 `models.toml` 与 `providers.toml`，默认目录为 `config`。解析后：
+  加入 `toml` 依赖。`ProviderCatalog::load` 从 `PRELAY_CATALOG_DIR` 指向目录读取 `models.toml` 与 `provider-catalog.toml`，默认目录为 `config`。解析后：
 
   - 将模型和供应商 ID 放入 `BTreeMap`，拒绝重复 ID。
   - 将每个 `protocols` 数组与 `ProviderProtocol::ORDERED` 的非空子序列比较，拒绝乱序或重复。
@@ -209,7 +209,7 @@
 
 - [ ] **Step 4: 增加默认目录和启动测试**
 
-  `config/models.toml` 与 `config/providers.toml` 写入设计文档中当前的 GoToken、DeepSeek、GPT-5.6 和 DeepSeek V4、GPT Image 条目。更新 `main.rs`：在连接数据库前加载目录，目录错误直接终止启动。更新 `test_support::test_state`，使用测试目录创建 `AppState`。
+  `config/models.toml` 与 `config/provider-catalog.toml` 写入设计文档中当前的 GoToken、DeepSeek、GPT-5.6 和 DeepSeek V4、GPT Image 条目。更新 `main.rs`：在连接数据库前加载目录，目录错误直接终止启动。更新 `test_support::test_state`，使用测试目录创建 `AppState`。
 
   Run:
 
@@ -425,7 +425,7 @@
 
 **Interfaces:**
 
-- Docker 容器从只读 `/app/config/models.toml` 与 `/app/config/providers.toml` 读取目录。
+- Docker 容器从只读 `/app/config/models.toml` 与 `/app/config/provider-catalog.toml` 读取目录。
 - PostgreSQL 迁移完成后保留 Endpoint Token、接入点模型名和候选顺序。
 
 - [ ] **Step 1: 写部署与 schema 契约失败测试**
@@ -460,7 +460,7 @@
 
 - [ ] **Step 3: 更新部署与运行文档**
 
-  Dockerfile 创建 `/app/config`；Compose 继续以只读方式挂载 `./app/config:/app/config:ro`。README 说明部署必须同时提供 `models.toml`、`providers.toml`，修改后需重启，并明确旧桌面客户端不能管理新服务端。
+  Dockerfile 创建 `/app/config`；Compose 继续以只读方式挂载 `./app/config:/app/config:ro`。README 说明部署必须同时提供 `models.toml`、`provider-catalog.toml`，修改后需重启，并明确旧桌面客户端不能管理新服务端。
 
   文档删除“新库部署是唯一方式”的表述，改为：当前 PostgreSQL 可执行受目录校验保护的版本化迁移；SQLite 旧库不升级。
 

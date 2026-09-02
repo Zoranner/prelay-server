@@ -16,7 +16,7 @@
 ```text
 models/language.toml
 models/image-generation.toml
-providers.toml
+provider-catalog.toml
 ```
 
 它们不包含 API Key、Endpoint Token、设备凭据或数据库内容。
@@ -82,7 +82,7 @@ priority = 0
 
 ### 供应商
 
-每个 `providers.toml` 条目按两类模型分别引用：
+每个 `provider-catalog.toml` 条目按两类模型分别引用：
 
 ```toml
 [[providers]]
