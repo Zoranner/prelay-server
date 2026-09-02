@@ -74,7 +74,9 @@ pub(crate) struct TimeBounds {
 #[derive(Clone, Copy)]
 pub(crate) enum TimelineGranularity {
     Hour,
+    SixHours,
     Day,
+    HalfMonth,
     Month,
 }
 
@@ -122,10 +124,10 @@ impl StatsRange {
     pub(crate) const fn timeline_granularity(self) -> TimelineGranularity {
         match self {
             Self::Today | Self::Yesterday => TimelineGranularity::Hour,
-            Self::ThisWeek | Self::LastWeek | Self::ThisMonth | Self::LastMonth => {
-                TimelineGranularity::Day
-            }
-            Self::ThisYear | Self::LastYear | Self::All => TimelineGranularity::Month,
+            Self::ThisWeek | Self::LastWeek => TimelineGranularity::SixHours,
+            Self::ThisMonth | Self::LastMonth => TimelineGranularity::Day,
+            Self::ThisYear | Self::LastYear => TimelineGranularity::HalfMonth,
+            Self::All => TimelineGranularity::Month,
         }
     }
 }
@@ -157,16 +159,27 @@ pub(crate) fn timeline_buckets(
     while start < end {
         let next = match granularity {
             TimelineGranularity::Hour => start + Duration::hours(1),
+            TimelineGranularity::SixHours => start + Duration::hours(6),
             TimelineGranularity::Day => start + Duration::days(1),
+            TimelineGranularity::HalfMonth => {
+                let date = start.date_naive();
+                let next_date = if date.day() <= 15 {
+                    date.with_day(16).expect("valid half-month boundary")
+                } else {
+                    first_day_of_next_month(first_day_of_month(date))
+                };
+                beijing_start_of_day(next_date)
+            }
             TimelineGranularity::Month => beijing_start_of_day(first_day_of_next_month(
                 first_day_of_month(start.date_naive()),
             )),
         };
         let label = match granularity {
             TimelineGranularity::Hour => start.format("%Y-%m-%d %H:%M:%S").to_string(),
-            TimelineGranularity::Day | TimelineGranularity::Month => {
-                start.format("%Y-%m-%d").to_string()
-            }
+            TimelineGranularity::SixHours
+            | TimelineGranularity::Day
+            | TimelineGranularity::HalfMonth
+            | TimelineGranularity::Month => start.format("%Y-%m-%d").to_string(),
         };
         buckets.push(TimelineBucket {
             label,

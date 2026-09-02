@@ -74,6 +74,24 @@ async fn today_timeline_fills_empty_beijing_hour_buckets() {
         .all(|pair| pair[0].bucket < pair[1].bucket));
 }
 
+#[tokio::test]
+async fn week_and_year_timelines_use_dense_buckets() {
+    let storage = test_storage().await;
+    let identity = register_identity(&storage, "dense-timeline").await;
+
+    let week = storage
+        .token_usage_timeline(&identity, StatsRange::ThisWeek)
+        .await
+        .expect("load week timeline");
+    let year = storage
+        .token_usage_timeline(&identity, StatsRange::ThisYear)
+        .await
+        .expect("load year timeline");
+
+    assert_eq!(week.len(), 28);
+    assert_eq!(year.len(), 24);
+}
+
 async fn test_storage() -> Storage {
     let db = Database::connect("sqlite::memory:")
         .await
