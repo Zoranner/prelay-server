@@ -9,10 +9,12 @@ protocols = [
   "anthropic_messages",
   "images_generations",
 ]
-models = [
+language_models = [
   "gpt-5.6-luna",
   "gpt-5.6-terra",
   "gpt-5.6-sol",
+]
+image_generation_models = [
   "gpt-image-1",
   "gpt-image-1.5",
   "gpt-image-2",
@@ -29,7 +31,7 @@ name = "DeepSeek 开放平台"
 auth_scheme = "bearer"
 base_url = "https://api.deepseek.com/v1"
 protocols = ["chat_completions", "responses", "anthropic_messages"]
-models = [
+language_models = [
   "deepseek-v4-flash",
   "deepseek-v4-flash-vision-exp",
   "deepseek-v4-pro",
@@ -39,75 +41,53 @@ models = [
 anthropic_messages = "https://api.deepseek.com/anthropic"
 
 [[providers]]
-id = "kimi_code"
-name = "Kimi Code"
-auth_scheme = "anthropic"
-base_url = "https://api.kimi.com/coding"
-protocols = ["chat_completions", "anthropic_messages"]
-models = ["kimi-k2-0711-preview", "kimi-k2-turbo-preview"]
+id = "kimi"
+name = "Kimi"
+auth_scheme = "bearer"
+base_url = "https://api.kimi.com/coding/v1"
+protocols = ["chat_completions", "responses", "anthropic_messages"]
+language_models = [
+  "k3",
+  "k3-256k",
+  "kimi-for-coding",
+  "kimi-for-coding-highspeed",
+]
 
 [providers.protocol_base_urls]
-chat_completions = "https://api.kimi.com/coding/v1"
+anthropic_messages = "https://api.kimi.com/coding/"
 
 [[providers]]
 id = "bigmodel_coding_plan"
 name = "GLM Coding Plan"
-auth_scheme = "anthropic"
-base_url = "https://open.bigmodel.cn/api/anthropic"
-protocols = ["chat_completions", "anthropic_messages"]
-models = []
-
-[providers.protocol_base_urls]
-chat_completions = "https://open.bigmodel.cn/api/coding/paas/v4"
-
-[[providers]]
-id = "minimax_token_plan"
-name = "MiniMax Token Plan"
-auth_scheme = "anthropic"
-base_url = "https://api.minimax.io/anthropic"
-protocols = ["chat_completions", "anthropic_messages"]
-models = ["MiniMax-M2"]
-
-[providers.protocol_base_urls]
-chat_completions = "https://api.minimax.io/v1"
-
-[[providers]]
-id = "bailian"
-name = "阿里云百炼"
 auth_scheme = "bearer"
-base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+base_url = "https://open.bigmodel.cn/api/v1"
 protocols = ["chat_completions", "responses", "anthropic_messages"]
-models = []
-
-[providers.protocol_base_urls]
-anthropic_messages = "https://dashscope.aliyuncs.com/apps/anthropic"
-
-[[providers]]
-id = "kimi"
-name = "Kimi API 开放平台"
-auth_scheme = "bearer"
-base_url = "https://api.moonshot.ai/v1"
-protocols = ["chat_completions"]
-models = ["kimi-k2-0711-preview", "kimi-k2-turbo-preview"]
-
-[[providers]]
-id = "bigmodel"
-name = "智谱 BigModel 平台"
-auth_scheme = "bearer"
-base_url = "https://open.bigmodel.cn/api/paas/v4"
-protocols = ["chat_completions", "anthropic_messages"]
-models = []
+language_models = ["glm-5.3", "glm-5.3-flash", "glm-5-turbo"]
 
 [providers.protocol_base_urls]
 anthropic_messages = "https://open.bigmodel.cn/api/anthropic"
 
 [[providers]]
-id = "minimax"
-name = "MiniMax API 平台"
+id = "qwen_token_plan"
+name = "千问 Token Plan"
 auth_scheme = "bearer"
-base_url = "https://api.minimaxi.com/v1"
+base_url = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
 protocols = ["chat_completions", "responses", "anthropic_messages"]
-models = ["MiniMax-M2"]
+language_models = [
+  "qwen3.8-max",
+  "qwen3.8-flash",
+]
 
 [providers.protocol_base_urls]
-anthropic_messages = "https://api.minimaxi.com/anthropic"
+anthropic_messages = "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic"
+
+[[providers]]
+id = "minimax"
+name = "MiniMax Token Plan"
+auth_scheme = "bearer"
+base_url = "https://api.minimax.cn/v1"
+protocols = ["chat_completions", "responses", "anthropic_messages"]
+language_models = ["MiniMax-M3"]
+
+[providers.protocol_base_urls]
+anthropic_messages = "https://api.minimax.cn/anthropic"

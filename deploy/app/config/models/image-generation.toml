@@ -1,0 +1,68 @@
+# 官方资料未明确时，在模型块内保留对应的英文键名注释；取消注释后直接填写值。
+# 完整字段示例：
+# id = "模型标识" # 上游模型名称
+# display_name = "模型展示名称" # 界面展示名称
+# description = "模型说明" # 模型描述
+# input_modalities = ["text", "image"] # 输入模态
+# output_modalities = ["image"] # 输出模态
+# sizes = ["1024x1024"] # 支持的图像尺寸
+# quality_options = ["standard", "high"] # 图像质量选项
+# background_options = ["transparent", "opaque"] # 背景选项
+# output_formats = ["png", "jpeg"] # 输出格式
+# supports_editing = true # 支持图像编辑
+# supports_mask = true # 支持蒙版编辑
+# supports_reference_images = true # 支持参考图输入
+# visibility = "list" # 模型可见性
+# supported_in_api = true # 可通过接口使用
+# priority = 0 # 模型排序优先级
+
+[[models]]
+id = "gpt-image-1"
+display_name = "GPT Image 1"
+# description =
+input_modalities = ["text"]
+output_modalities = ["image"]
+# sizes =
+# quality_options =
+# background_options =
+# output_formats =
+# supports_editing =
+# supports_mask =
+# supports_reference_images =
+# visibility =
+# supported_in_api =
+# priority =
+
+[[models]]
+id = "gpt-image-1.5"
+display_name = "GPT Image 1.5"
+# description =
+input_modalities = ["text"]
+output_modalities = ["image"]
+# sizes =
+# quality_options =
+# background_options =
+# output_formats =
+# supports_editing =
+# supports_mask =
+# supports_reference_images =
+# visibility =
+# supported_in_api =
+# priority =
+
+[[models]]
+id = "gpt-image-2"
+display_name = "GPT Image 2"
+# description =
+input_modalities = ["text"]
+output_modalities = ["image"]
+# sizes =
+# quality_options =
+# background_options =
+# output_formats =
+# supports_editing =
+# supports_mask =
+# supports_reference_images =
+# visibility =
+# supported_in_api =
+# priority =
