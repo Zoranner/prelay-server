@@ -25,13 +25,13 @@ fn write_catalog(language_models: &str, image_generation_models: &str, providers
         image_generation_models,
     )
     .expect("write image generation models catalog");
-    fs::write(directory.join("provider-catalog.toml"), providers).expect("write provider catalog");
+    fs::write(directory.join("providers.toml"), providers).expect("write provider catalog");
     directory
 }
 
 #[test]
 fn loads_the_deployment_catalog() {
-    ProviderCatalog::load(Path::new("deploy/app/config")).expect("load deployment catalog");
+    ProviderCatalog::load(Path::new("deploy/app/config/catalog")).expect("load deployment catalog");
 }
 
 #[test]

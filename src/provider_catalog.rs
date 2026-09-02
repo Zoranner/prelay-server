@@ -107,7 +107,7 @@ impl ProviderCatalog {
         let image_generation_models =
             load_image_generation_models(&models_directory.join("image-generation.toml"))?;
         let providers = load_providers(
-            &directory.join("provider-catalog.toml"),
+            &directory.join("providers.toml"),
             &language_models,
             &image_generation_models,
         )?;
@@ -148,26 +148,55 @@ impl ProviderCatalog {
         })
     }
 
-    pub fn response(&self) -> ProviderCatalogResponse {
-        let mut language_models = self
+    pub fn language_models(&self) -> Vec<CatalogLanguageModelResponse> {
+        let mut models = self
             .language_models
             .values()
             .map(language_model_response)
             .collect::<Vec<_>>();
-        language_models.sort_by_key(|model| (model.priority.unwrap_or(u32::MAX), model.id.clone()));
+        models.sort_by_key(|model| (model.priority.unwrap_or(u32::MAX), model.id.clone()));
+        models
+    }
 
-        let mut image_generation_models = self
+    pub fn image_generation_models(&self) -> Vec<CatalogImageGenerationModelResponse> {
+        let mut models = self
             .image_generation_models
             .values()
             .map(image_generation_model_response)
             .collect::<Vec<_>>();
-        image_generation_models
-            .sort_by_key(|model| (model.priority.unwrap_or(u32::MAX), model.id.clone()));
+        models.sort_by_key(|model| (model.priority.unwrap_or(u32::MAX), model.id.clone()));
+        models
+    }
 
+    pub fn providers(&self) -> Vec<CatalogProviderResponse> {
+        self.providers.values().map(provider_response).collect()
+    }
+
+    pub fn language_model_response(
+        &self,
+        model_id: &str,
+    ) -> Option<CatalogLanguageModelResponse> {
+        self.language_models.get(model_id).map(language_model_response)
+    }
+
+    pub fn image_generation_model_response(
+        &self,
+        model_id: &str,
+    ) -> Option<CatalogImageGenerationModelResponse> {
+        self.image_generation_models
+            .get(model_id)
+            .map(image_generation_model_response)
+    }
+
+    pub fn provider_response(&self, provider_id: &str) -> Option<CatalogProviderResponse> {
+        self.providers.get(provider_id).map(provider_response)
+    }
+
+    pub fn response(&self) -> ProviderCatalogResponse {
         ProviderCatalogResponse {
-            language_models,
-            image_generation_models,
-            providers: self.providers.values().map(provider_response).collect(),
+            language_models: self.language_models(),
+            image_generation_models: self.image_generation_models(),
+            providers: self.providers(),
         }
     }
 }
