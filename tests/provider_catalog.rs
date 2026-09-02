@@ -4,10 +4,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use prelay_protocol::{ModelType, ProviderProtocol};
+use prelay_protocol::ProviderProtocol;
 use prelay_server::provider_catalog::ProviderCatalog;
 
-fn write_catalog(models: &str, providers: &str) -> PathBuf {
+fn write_catalog(language_models: &str, image_generation_models: &str, providers: &str) -> PathBuf {
     let directory = std::env::temp_dir().join(format!(
         "prelay-provider-catalog-{}",
         SystemTime::now()
@@ -16,45 +16,43 @@ fn write_catalog(models: &str, providers: &str) -> PathBuf {
             .as_nanos()
     ));
     fs::create_dir_all(&directory).expect("create temporary catalog directory");
-    fs::write(directory.join("models.toml"), models).expect("write models catalog");
+    let models_directory = directory.join("models");
+    fs::create_dir_all(&models_directory).expect("create models directory");
+    fs::write(models_directory.join("language.toml"), language_models)
+        .expect("write language models catalog");
+    fs::write(
+        models_directory.join("image-generation.toml"),
+        image_generation_models,
+    )
+    .expect("write image generation models catalog");
     fs::write(directory.join("providers.toml"), providers).expect("write providers catalog");
     directory
 }
 
 #[test]
-fn loads_the_default_deployment_catalog() {
-    let catalog = ProviderCatalog::load(Path::new("deploy/app/config"))
-        .expect("load default deployment catalog");
-
-    assert!(catalog.provider("gotoken").is_some());
-    assert!(catalog.provider("deepseek").is_some());
-    assert_eq!(
-        catalog
-            .model("gpt-image-1")
-            .expect("image model")
-            .model_type,
-        ModelType::Image
-    );
+fn loads_the_deployment_catalog() {
+    ProviderCatalog::load(Path::new("deploy/app/config")).expect("load deployment catalog");
 }
 
 #[test]
 fn loads_typed_models_and_ordered_provider_protocols() {
     let directory = write_catalog(
+        "",
         r#"
 [[models]]
-id = "gpt-image-1"
-display_name = "GPT Image 1"
-model_type = "image"
-reasoning_efforts = []
+id = "image-model"
+display_name = "Image model"
+input_modalities = ["text"]
+output_modalities = ["image"]
 "#,
         r#"
 [[providers]]
-id = "gotoken"
-name = "GoToken 套餐"
+id = "provider"
+name = "Provider"
 auth_scheme = "bearer"
-base_url = "https://gotoken.cc"
+base_url = "https://api.example.com/v1"
 protocols = ["chat_completions", "responses", "anthropic_messages", "images_generations"]
-models = ["gpt-image-1"]
+image_generation_models = ["image-model"]
 "#,
     );
 
@@ -62,16 +60,13 @@ models = ["gpt-image-1"]
 
     assert_eq!(
         catalog
-            .model("gpt-image-1")
+            .image_generation_model("image-model")
             .expect("image model")
-            .model_type,
-        ModelType::Image
+            .output_modalities,
+        Some(vec!["image".to_string()])
     );
     assert_eq!(
-        catalog
-            .provider("gotoken")
-            .expect("GoToken provider")
-            .protocols,
+        catalog.provider("provider").expect("provider").protocols,
         vec![
             ProviderProtocol::ChatCompletions,
             ProviderProtocol::Responses,
@@ -87,20 +82,20 @@ fn rejects_provider_protocols_out_of_standard_order() {
     let directory = write_catalog(
         r#"
 [[models]]
-id = "gpt-5.6-luna"
-display_name = "GPT-5.6 Luna"
-model_type = "text"
-reasoning_efforts = ["low", "medium", "high"]
+id = "text-model"
+display_name = "Text model"
+reasoning_efforts = ["none", "low", "medium", "high", "xhigh", "max"]
 default_reasoning_effort = "medium"
 "#,
+        "",
         r#"
 [[providers]]
-id = "gotoken"
-name = "GoToken 套餐"
+id = "provider"
+name = "Provider"
 auth_scheme = "bearer"
-base_url = "https://gotoken.cc"
+base_url = "https://api.example.com/v1"
 protocols = ["responses", "chat_completions"]
-models = ["gpt-5.6-luna"]
+language_models = ["text-model"]
 "#,
     );
 

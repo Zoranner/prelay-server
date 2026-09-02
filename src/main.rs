@@ -1,4 +1,8 @@
-use std::{net::SocketAddr, path::Path};
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use prelay_server::{
     app,
@@ -6,13 +10,21 @@ use prelay_server::{
     database::{connect, DatabaseConfig},
     extensions::ExtensionCatalog,
     identity::cleanup::delete_expired_identities,
-    schema::initialize,
+    provider_catalog::ProviderCatalog,
+    schema::initialize_with_catalog,
     storage::{MasterKey, Storage, StorageError},
     AppState,
 };
 
 const STARTUP_CLEANUP_FAILURE: &str = "startup identity cleanup failed";
 const DEFAULT_LISTEN_ADDRESS: &str = "0.0.0.0:18080";
+const DEFAULT_CATALOG_DIRECTORY: &str = "deploy/app/config";
+
+fn catalog_directory() -> PathBuf {
+    std::env::var_os("PRELAY_CATALOG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_CATALOG_DIRECTORY))
+}
 
 fn log_cleanup_failure(error: &StorageError) {
     tracing::warn!(
@@ -57,9 +69,10 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     prelay_server::activity::initialize_from_environment().map_err(anyhow::Error::msg)?;
+    let provider_catalog = Arc::new(ProviderCatalog::load(&catalog_directory())?);
     let database_config = DatabaseConfig::from_environment()?;
     let db = connect(&database_config).await?;
-    initialize(&db).await?;
+    initialize_with_catalog(&db, &provider_catalog).await?;
     let storage = Storage::from_connection(db, MasterKey::from_environment()?);
     let deleted = delete_expired_identities(&storage)
         .await
@@ -106,6 +119,7 @@ async fn main() -> anyhow::Result<()> {
     let extensions = ExtensionCatalog::from_environment(client.clone())?;
     extensions.warm();
     let state = AppState {
+        provider_catalog,
         storage,
         client,
         client_update,

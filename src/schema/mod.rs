@@ -1,4 +1,5 @@
 mod indexes;
+mod provider_catalog;
 mod tables;
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement};
@@ -55,6 +56,14 @@ pub async fn initialize(db: &DatabaseConnection) -> Result<(), DbErr> {
             "database schema is incomplete; create a new database deployment".to_owned(),
         )),
     }
+}
+
+pub async fn initialize_with_catalog(
+    db: &DatabaseConnection,
+    catalog: &crate::provider_catalog::ProviderCatalog,
+) -> Result<(), DbErr> {
+    initialize(db).await?;
+    provider_catalog::apply(db, catalog).await
 }
 
 async fn initialize_empty_schema(manager: &SchemaInitializer<'_>) -> Result<(), DbErr> {

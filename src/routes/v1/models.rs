@@ -81,7 +81,16 @@ async fn list_models(
         .await?;
     let mut model_indices: HashMap<String, usize> = HashMap::new();
     let mut data: Vec<ModelEntry> = Vec::new();
-    for model in models {
+    for model in models.into_iter().filter(|model| {
+        state
+            .provider_catalog
+            .language_model(&model.model.upstream_model)
+            .is_some()
+            && state.provider_catalog.provider_supports_language_model(
+                &model.provider.provider_type,
+                &model.model.upstream_model,
+            )
+    }) {
         let model_name = model.model.model_name.clone();
         let spec = ProviderSpec::from_provider_config(&model.provider);
         if let Some(index) = model_indices.get(&model_name).copied() {

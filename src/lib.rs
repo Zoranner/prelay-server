@@ -20,6 +20,7 @@ pub mod upstream;
 
 #[derive(Clone)]
 pub struct AppState {
+    pub provider_catalog: std::sync::Arc<provider_catalog::ProviderCatalog>,
     pub storage: storage::Storage,
     pub client: reqwest::Client,
     pub client_update: client_update::ClientUpdateCache,
@@ -31,6 +32,7 @@ pub mod test_support {
         client_update::ClientUpdateCache,
         database::{connect, DatabaseConfig},
         extensions::ExtensionCatalog,
+        provider_catalog::ProviderCatalog,
         schema::initialize,
         storage::{MasterKey, Storage},
         AppState,
@@ -46,8 +48,17 @@ pub mod test_support {
             .await
             .expect("initialize test database schema");
         let storage = Storage::from_connection(db, MasterKey::from_bytes([0; 32]));
+        let provider_catalog = std::sync::Arc::new(
+            ProviderCatalog::load(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("deploy/app/config")
+                    .as_path(),
+            )
+            .expect("load test provider catalog"),
+        );
 
         AppState {
+            provider_catalog,
             storage,
             client: reqwest::Client::new(),
             client_update: ClientUpdateCache::unavailable(reqwest::Client::new()),
