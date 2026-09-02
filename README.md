@@ -78,12 +78,13 @@ PostgreSQL 部署由外部 PostgreSQL 实例提供。为服务设置固定的 `E
 
 SQLite 与 PostgreSQL 是二选一的全新部署方式。切换数据库类型不能只修改现有部署的 `DATABASE_URL`，必须停止原部署并为目标数据库创建新部署和新数据卷或空数据库。本项目不提供 SQLite 与 PostgreSQL 之间的数据迁移；原数据应由原部署独立保留或备份。
 
-Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.1.5`，并以只读方式挂载 `app/config/`。
+Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.1.5`，并以只读方式挂载 `app/config/catalog/`；目录内必须包含 `providers.toml` 和 `models/` 下的两类模型文件。
 
 ## 服务边界
 
 - 正式调用入口固定为 `/v1/models`、`/v1/responses`、`/v1/chat/completions` 和 `/v1/messages`，由 Endpoint Token 授权。
 - 管理 API 位于 `/api/*`，由设备凭据授权；`POST /api/identities` 是唯一匿名入口。
+- 目录查询位于 `/api/catalog/*`，包括供应商目录和语言模型、图像生成模型目录的列表与详情。
 - Provider API Key 只以 `ENCRYPTION_KEY` 加密后保存。数据库、`.env`、加密密钥、设备凭据、Endpoint Token 和真实 Provider API Key 不得提交或记录到日志。
 - 服务自身不提供 TLS。暴露到非受信网络时，部署环境必须提供 TLS 与网络访问控制。
 - 通用 `/proxy` 入口已移除，不应恢复。

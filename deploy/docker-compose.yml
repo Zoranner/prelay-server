@@ -5,10 +5,12 @@ services:
     restart: always
     env_file:
       - .env
+    environment:
+      - PRELAY_CATALOG_DIR=/app/config/catalog
     ports:
       - 18080:18080
     volumes:
-      - ./app/config:/app/config:ro
+      - ./app/config/catalog:/app/config/catalog:ro
       - ./app/updates:/app/updates
       - ./data:/app/data
   postgres:

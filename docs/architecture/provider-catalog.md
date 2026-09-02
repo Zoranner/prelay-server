@@ -7,7 +7,7 @@
 - 语言模型用于 `/v1/responses`、`/v1/chat/completions`、`/v1/messages` 和 Codex 模型目录生成，拥有上下文窗口、思考档位与工具元数据。
 - 图像生成模型只用于 `/v1/images/generations`，拥有输入输出模态、尺寸、质量、背景、输出格式与编辑能力。
 
-服务启动时读取目录。默认路径为仓库的 `deploy/app/config`；生产镜像通过 `PRELAY_CATALOG_DIR=/app/config` 读取只读挂载目录。目录无效时服务拒绝启动。
+服务启动时读取目录。默认路径为仓库的 `deploy/app/config/catalog`；生产镜像通过 `PRELAY_CATALOG_DIR=/app/config/catalog` 读取只读挂载目录。目录无效时服务拒绝启动。
 
 ## 配置目录
 
@@ -16,7 +16,7 @@
 ```text
 models/language.toml
 models/image-generation.toml
-provider-catalog.toml
+providers.toml
 ```
 
 它们不包含 API Key、Endpoint Token、设备凭据或数据库内容。
@@ -82,7 +82,7 @@ priority = 0
 
 ### 供应商
 
-每个 `provider-catalog.toml` 条目按两类模型分别引用：
+每个 `providers.toml` 条目按两类模型分别引用：
 
 ```toml
 [[providers]]
@@ -103,22 +103,24 @@ images_generations = "https://gotoken.cc/v1"
 
 ## 接口边界
 
-认证后的 `GET /api/provider-catalog` 返回三个并列数组：
+认证后的目录接口分别返回供应商或单类模型数组：
 
 ```text
-language_models
-image_generation_models
-providers
+GET /api/catalog/providers
+GET /api/catalog/providers/{provider_id}
+GET /api/catalog/models/language
+GET /api/catalog/models/language/{model_id}
+GET /api/catalog/models/image-generation
+GET /api/catalog/models/image-generation/{model_id}
 ```
 
-供应商响应同样使用 `language_models` 与 `image_generation_models`，不再返回混合的 `models` 数组。语言模型响应保留完整 Codex 目录元数据；图像生成模型响应只返回图像生成字段。
+供应商目录对象使用 `language_models` 与 `image_generation_models` 引用两类模型。语言模型响应保留完整 Codex 目录元数据；图像生成模型响应只返回图像生成字段。
 
 接入点模型列表也按调用类别拆分：
 
 | 路径 | 内容 |
 | --- | --- |
-| `GET /v1/models` | 当前接入点已配置的语言模型 |
-| `GET /v1/images/models` | 当前接入点已配置的图像生成模型 |
+| `GET /v1/models` | 当前接入点已配置的语言模型，返回 OpenAI 标准模型对象字段 |
 | `POST /v1/images/generations` | 仅解析图像生成模型候选 |
 
 `/v1/responses`、`/v1/chat/completions` 与 `/v1/messages` 仅解析语言模型候选。服务端按候选的上游模型 ID 在启动时加载的目录中判定类别，因此同一接入点别名不会同时进入语言与图像生成链路。

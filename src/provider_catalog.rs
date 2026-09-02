@@ -172,11 +172,10 @@ impl ProviderCatalog {
         self.providers.values().map(provider_response).collect()
     }
 
-    pub fn language_model_response(
-        &self,
-        model_id: &str,
-    ) -> Option<CatalogLanguageModelResponse> {
-        self.language_models.get(model_id).map(language_model_response)
+    pub fn language_model_response(&self, model_id: &str) -> Option<CatalogLanguageModelResponse> {
+        self.language_models
+            .get(model_id)
+            .map(language_model_response)
     }
 
     pub fn image_generation_model_response(
