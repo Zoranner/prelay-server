@@ -1,0 +1,59 @@
+[[models]]
+id = "gpt-5.6-luna"
+display_name = "GPT-5.6 Luna"
+model_type = "text"
+reasoning_efforts = ["low", "medium", "high"]
+default_reasoning_effort = "medium"
+
+[[models]]
+id = "gpt-5.6-terra"
+display_name = "GPT-5.6 Terra"
+model_type = "text"
+reasoning_efforts = ["low", "medium", "high"]
+default_reasoning_effort = "medium"
+
+[[models]]
+id = "gpt-5.6-sol"
+display_name = "GPT-5.6 Sol"
+model_type = "text"
+reasoning_efforts = ["low", "medium", "high"]
+default_reasoning_effort = "medium"
+
+[[models]]
+id = "deepseek-v4-flash"
+display_name = "DeepSeek V4 Flash"
+model_type = "text"
+reasoning_efforts = ["low", "medium", "high"]
+default_reasoning_effort = "medium"
+
+[[models]]
+id = "deepseek-v4-flash-vision-exp"
+display_name = "DeepSeek V4 Flash Vision"
+model_type = "text"
+reasoning_efforts = ["low", "medium", "high"]
+default_reasoning_effort = "medium"
+
+[[models]]
+id = "deepseek-v4-pro"
+display_name = "DeepSeek V4 Pro"
+model_type = "text"
+reasoning_efforts = ["low", "medium", "high"]
+default_reasoning_effort = "medium"
+
+[[models]]
+id = "gpt-image-1"
+display_name = "GPT Image 1"
+model_type = "image"
+reasoning_efforts = []
+
+[[models]]
+id = "gpt-image-1.5"
+display_name = "GPT Image 1.5"
+model_type = "image"
+reasoning_efforts = []
+
+[[models]]
+id = "gpt-image-2"
+display_name = "GPT Image 2"
+model_type = "image"
+reasoning_efforts = []

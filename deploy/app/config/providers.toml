@@ -1,0 +1,39 @@
+[[providers]]
+id = "gotoken"
+name = "GoToken 套餐"
+auth_scheme = "bearer"
+base_url = "https://gotoken.cc"
+protocols = [
+  "chat_completions",
+  "responses",
+  "anthropic_messages",
+  "images_generations",
+]
+models = [
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+  "gpt-image-1",
+  "gpt-image-1.5",
+  "gpt-image-2",
+]
+
+[providers.protocol_base_urls]
+chat_completions = "https://gotoken.cc/v1"
+anthropic_messages = "https://gotoken.cc/v1"
+images_generations = "https://gotoken.cc/v1"
+
+[[providers]]
+id = "deepseek"
+name = "DeepSeek 开放平台"
+auth_scheme = "bearer"
+base_url = "https://api.deepseek.com/v1"
+protocols = ["chat_completions", "responses", "anthropic_messages"]
+models = [
+  "deepseek-v4-flash",
+  "deepseek-v4-flash-vision-exp",
+  "deepseek-v4-pro",
+]
+
+[providers.protocol_base_urls]
+anthropic_messages = "https://api.deepseek.com/anthropic"

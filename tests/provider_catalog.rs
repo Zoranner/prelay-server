@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -19,6 +19,22 @@ fn write_catalog(models: &str, providers: &str) -> PathBuf {
     fs::write(directory.join("models.toml"), models).expect("write models catalog");
     fs::write(directory.join("providers.toml"), providers).expect("write providers catalog");
     directory
+}
+
+#[test]
+fn loads_the_default_deployment_catalog() {
+    let catalog = ProviderCatalog::load(Path::new("deploy/app/config"))
+        .expect("load default deployment catalog");
+
+    assert!(catalog.provider("gotoken").is_some());
+    assert!(catalog.provider("deepseek").is_some());
+    assert_eq!(
+        catalog
+            .model("gpt-image-1")
+            .expect("image model")
+            .model_type,
+        ModelType::Image
+    );
 }
 
 #[test]
