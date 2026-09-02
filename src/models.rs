@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct ProviderConfig {
     pub id: String,
     pub name: String,
-    /// Stable provider template id, such as "openai", "kimi_coding", or "anthropic_compatible".
+    /// Stable provider catalog id, such as "openai", "kimi_coding", or "anthropic_compatible".
     pub provider_type: String,
     /// API base URL, e.g. https://api.openai.com
     pub base_url: String,

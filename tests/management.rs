@@ -15,6 +15,8 @@ mod endpoints;
 mod identity;
 #[path = "management/leaderboard.rs"]
 mod leaderboard;
+#[path = "management/provider_catalog.rs"]
+mod provider_catalog;
 #[path = "management/provider_operations.rs"]
 mod provider_operations;
 #[path = "management/providers.rs"]
