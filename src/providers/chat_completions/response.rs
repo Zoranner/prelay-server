@@ -128,3 +128,28 @@ fn decode_tool_call(
         reasoning_content,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::decode_chat_response;
+
+    #[test]
+    fn decodes_usage_when_chat_choices_are_empty() {
+        let response = decode_chat_response(json!({
+            "id": "chatcmpl_usage",
+            "model": "deepseek-chat",
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 11,
+                "completion_tokens": 0,
+                "prompt_tokens_details": { "cached_tokens": 4 }
+            }
+        }))
+        .expect("decode usage-only chat response");
+
+        assert!(response.output.is_empty());
+        assert_eq!(response.usage.expect("usage").input_tokens, Some(11));
+    }
+}

@@ -8,15 +8,10 @@ pub use response::decode_chat_response;
 #[cfg(test)]
 pub use request::decode_chat_request;
 #[cfg(test)]
-pub use stream::decode_chat_sse_text_deltas;
-
-#[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::{
-        decode_chat_request, decode_chat_response, decode_chat_sse_text_deltas, encode_chat_request,
-    };
+    use super::{decode_chat_request, decode_chat_response, encode_chat_request};
     use crate::bridge::internal::{
         InternalContentPart, InternalMessage, InternalRequest, InternalRole, InternalTool,
         InternalToolCall,
@@ -295,24 +290,6 @@ mod tests {
     }
 
     #[test]
-    fn decodes_usage_when_chat_choices_are_empty() {
-        let response = decode_chat_response(json!({
-            "id": "chatcmpl_usage",
-            "model": "deepseek-chat",
-            "choices": [],
-            "usage": {
-                "prompt_tokens": 11,
-                "completion_tokens": 0,
-                "prompt_tokens_details": { "cached_tokens": 4 }
-            }
-        }))
-        .expect("decode usage-only chat response");
-
-        assert!(response.output.is_empty());
-        assert_eq!(response.usage.expect("usage").input_tokens, Some(11));
-    }
-
-    #[test]
     fn decodes_chat_tool_calls_to_internal_output_items() {
         let response = decode_chat_response(json!({
             "id": "chatcmpl_tools",
@@ -453,16 +430,5 @@ mod tests {
         });
 
         assert!(encoded["messages"][0].get("reasoning_content").is_none());
-    }
-
-    #[test]
-    fn decodes_chat_sse_text_deltas() {
-        let deltas = decode_chat_sse_text_deltas(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n\
-             data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n\
-             data: [DONE]\n\n",
-        );
-
-        assert_eq!(deltas, vec!["hel".to_string(), "lo".to_string()]);
     }
 }

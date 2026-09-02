@@ -19,3 +19,19 @@ pub fn decode_chat_sse_text_deltas(body: &str) -> Vec<String> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::decode_chat_sse_text_deltas;
+
+    #[test]
+    fn decodes_chat_sse_text_deltas() {
+        let deltas = decode_chat_sse_text_deltas(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n\
+             data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n\
+             data: [DONE]\n\n",
+        );
+
+        assert_eq!(deltas, vec!["hel".to_string(), "lo".to_string()]);
+    }
+}
