@@ -310,7 +310,9 @@ fn decode_responses_usage(data: &str) -> Option<StreamUsage> {
             .or_else(|| usage.get("cache_read_input_tokens"))
             .and_then(Value::as_u64),
         cache_write_tokens: usage
-            .get("cache_creation_input_tokens")
+            .pointer("/input_tokens_details/cache_write_tokens")
+            .or_else(|| usage.pointer("/prompt_tokens_details/cache_write_tokens"))
+            .or_else(|| usage.get("cache_creation_input_tokens"))
             .and_then(Value::as_u64),
     })
 }

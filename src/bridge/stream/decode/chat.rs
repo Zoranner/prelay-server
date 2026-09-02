@@ -13,7 +13,7 @@ use super::super::{
         InternalFinishReason,
     },
     pipeline::{ByteStreamDecoder, SharedStreamStats},
-    responses_completed_sse, responses_text_delta_sse,
+    responses_completed_sse_with_usage, responses_text_delta_sse,
     sse::drain_lines,
     InternalStreamEvent, StreamUsage,
 };
@@ -24,6 +24,8 @@ pub(crate) struct ChatToResponsesSseDecoder {
     data_lines: Vec<String>,
     tool_calls: BTreeMap<usize, ChatToolCallState>,
     completed: bool,
+    usage: Option<StreamUsage>,
+    finish_reason: Option<InternalFinishReason>,
     stats: Option<SharedStreamStats>,
 }
 
@@ -64,6 +66,9 @@ impl ChatToResponsesSseDecoder {
 
         let mut output = Vec::new();
         for event in event.to_internal_events() {
+            if let InternalStreamEvent::Usage(usage) = &event {
+                self.usage = Some(usage.clone());
+            }
             self.record_internal_event(&event);
             output.extend(self.internal_event_to_responses_sse(event));
         }
@@ -84,9 +89,9 @@ impl ChatToResponsesSseDecoder {
                 name,
                 arguments,
             }),
-            InternalStreamEvent::Finished(_) => {
-                self.completed = true;
-                self.finish_response()
+            InternalStreamEvent::Finished(reason) => {
+                self.finish_reason = Some(reason);
+                Vec::new()
             }
             InternalStreamEvent::ToolCallDone { .. } | InternalStreamEvent::Usage(_) => Vec::new(),
         }
@@ -148,12 +153,13 @@ impl ChatToResponsesSseDecoder {
         for event in events_to_record {
             self.record_internal_event(&event);
         }
-        let usage_event = InternalStreamEvent::Usage(StreamUsage::default());
+        let usage_event = InternalStreamEvent::Usage(self.usage.clone().unwrap_or_default());
         self.record_internal_event(&usage_event);
         output.extend(self.internal_event_to_responses_sse(usage_event));
-        let finished_event = InternalStreamEvent::Finished(InternalFinishReason::Stop);
+        let finished_event =
+            InternalStreamEvent::Finished(self.finish_reason.unwrap_or(InternalFinishReason::Stop));
         self.record_internal_event(&finished_event);
-        output.push(responses_completed_sse());
+        output.push(responses_completed_sse_with_usage(self.usage.as_ref()));
         output
     }
 }
@@ -203,16 +209,172 @@ impl ByteStreamDecoder for ChatToResponsesSseDecoder {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct ChatSseStatsDecoder {
+    line_buffer: Vec<u8>,
+    data_lines: Vec<String>,
+    tool_calls: BTreeMap<usize, ChatToolCallState>,
+    completed: bool,
+    stats: Option<SharedStreamStats>,
+}
+
+impl ChatSseStatsDecoder {
+    fn process_line(&mut self, line: &[u8]) {
+        if line.is_empty() {
+            self.flush_event();
+            return;
+        }
+        let Ok(line) = std::str::from_utf8(line) else {
+            return;
+        };
+        if let Some(data) = line.strip_prefix("data:") {
+            self.data_lines
+                .push(data.strip_prefix(' ').unwrap_or(data).to_string());
+        }
+    }
+
+    fn flush_event(&mut self) {
+        if self.data_lines.is_empty() {
+            return;
+        }
+        let data = std::mem::take(&mut self.data_lines).join("\n");
+        if data.trim() == "[DONE]" {
+            self.complete();
+            return;
+        }
+        let Some(event) = decode_chat_sse_event(&data) else {
+            return;
+        };
+        for event in event.to_internal_events() {
+            if let InternalStreamEvent::ToolCallDelta {
+                index,
+                id,
+                name,
+                arguments,
+            } = &event
+            {
+                let state = self.tool_calls.entry(*index).or_default();
+                if let Some(id) = id {
+                    state.id = id.clone();
+                }
+                if let Some(name) = name {
+                    state.name = name.clone();
+                }
+                if let Some(arguments) = arguments {
+                    state.arguments.push_str(arguments);
+                }
+            }
+            self.record(&event);
+        }
+    }
+
+    fn complete(&mut self) {
+        if self.completed {
+            return;
+        }
+        self.completed = true;
+        let done_events = self
+            .tool_calls
+            .iter_mut()
+            .filter_map(|(index, state)| {
+                if state.done {
+                    return None;
+                }
+                state.done = true;
+                Some(InternalStreamEvent::ToolCallDone {
+                    index: *index,
+                    id: state.id.clone(),
+                    name: state.name.clone(),
+                    arguments: state.arguments.clone(),
+                })
+            })
+            .collect::<Vec<_>>();
+        for event in done_events {
+            self.record(&event);
+        }
+        self.record(&InternalStreamEvent::Finished(InternalFinishReason::Stop));
+    }
+
+    fn record(&self, event: &InternalStreamEvent) {
+        if let Some(stats) = &self.stats {
+            if let Ok(mut stats) = stats.lock() {
+                stats.record_event(event);
+            }
+        }
+    }
+}
+
+impl ByteStreamDecoder for ChatSseStatsDecoder {
+    fn push_chunk(&mut self, chunk: &[u8]) -> Vec<Bytes> {
+        self.line_buffer.extend_from_slice(chunk);
+        for line in drain_lines(&mut self.line_buffer) {
+            self.process_line(&line);
+        }
+        vec![Bytes::copy_from_slice(chunk)]
+    }
+
+    fn finish(&mut self) -> Vec<Bytes> {
+        if !self.line_buffer.is_empty() {
+            let line = std::mem::take(&mut self.line_buffer);
+            self.process_line(&line);
+        }
+        self.flush_event();
+        if !self.completed {
+            self.complete();
+        }
+        Vec::new()
+    }
+
+    fn set_stats(&mut self, stats: SharedStreamStats) {
+        self.stats = Some(stats);
+    }
+}
+
 pub(crate) fn decode_chat_sse_event(data: &str) -> Option<ChatSseEvent> {
     let value = serde_json::from_str::<Value>(data).ok()?;
+    let usage = value.get("usage").map(|usage| StreamUsage {
+        input_tokens: usage
+            .get("prompt_tokens")
+            .or_else(|| usage.get("input_tokens"))
+            .and_then(Value::as_u64),
+        output_tokens: usage
+            .get("completion_tokens")
+            .or_else(|| usage.get("output_tokens"))
+            .and_then(Value::as_u64),
+        total_tokens: usage.get("total_tokens").and_then(Value::as_u64),
+        cache_read_tokens: usage
+            .pointer("/prompt_tokens_details/cached_tokens")
+            .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
+            .or_else(|| usage.get("cache_read_input_tokens"))
+            .and_then(Value::as_u64),
+        cache_write_tokens: usage
+            .pointer("/prompt_tokens_details/cache_write_tokens")
+            .or_else(|| usage.pointer("/input_tokens_details/cache_write_tokens"))
+            .or_else(|| usage.get("cache_creation_input_tokens"))
+            .and_then(Value::as_u64),
+    });
     let choice = value
         .get("choices")
         .and_then(Value::as_array)
-        .and_then(|choices| choices.first())?;
+        .and_then(|choices| choices.first());
+    if choice.is_none() {
+        return usage.map(|usage| ChatSseEvent {
+            text_delta: None,
+            tool_call_deltas: Vec::new(),
+            finish_reason: None,
+            usage: Some(usage),
+        });
+    }
+    let choice = choice?;
     let delta = choice.get("delta");
     let text_delta = delta
         .and_then(|delta| delta.get("content"))
         .and_then(Value::as_str)
+        .or_else(|| {
+            delta
+                .and_then(|delta| delta.get("refusal"))
+                .and_then(Value::as_str)
+        })
         .map(str::to_string);
     let tool_call_deltas = delta
         .and_then(|delta| delta.get("tool_calls"))
@@ -240,6 +402,7 @@ pub(crate) fn decode_chat_sse_event(data: &str) -> Option<ChatSseEvent> {
         text_delta,
         tool_call_deltas,
         finish_reason,
+        usage,
     })
 }
 
@@ -266,10 +429,13 @@ fn decode_chat_tool_call_delta(value: &Value) -> Option<ChatToolCallDelta> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use super::ChatToResponsesSseDecoder;
     use crate::bridge::stream::{
         pipeline::ByteStreamDecoder, responses_completed_sse, responses_text_delta_sse,
     };
+    use axum::body::Bytes;
 
     #[test]
     fn decodes_chat_sse_events_split_across_chunks() {
@@ -325,7 +491,9 @@ data: [DONE]
         assert!(output.contains("event: response.function_call_arguments.done"));
         assert!(output.contains(r#""arguments":"{\"city\":\"Paris\"}""#));
         assert!(output.contains("event: response.output_item.done"));
-        assert!(output.ends_with("event: response.completed\ndata: {}\n\ndata: [DONE]\n\n"));
+        assert!(output.contains("event: response.completed"));
+        assert!(output.contains("\"type\":\"response.completed\""));
+        assert!(output.ends_with("data: [DONE]\n\n"));
     }
 
     #[test]
@@ -373,5 +541,55 @@ data: [DONE]
                 )
             )
         }));
+    }
+
+    #[test]
+    fn keeps_usage_chunk_received_after_finish_reason() {
+        let mut decoder = ChatToResponsesSseDecoder::default();
+        let chunks = decoder.push_chunk(
+            br#"data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
+
+data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":4,"total_tokens":7,"prompt_tokens_details":{"cached_tokens":1,"cache_write_tokens":2}}}
+
+data: [DONE]
+
+"#,
+        );
+
+        let output = chunks
+            .iter()
+            .map(|chunk| std::str::from_utf8(chunk).expect("utf8 chunk"))
+            .collect::<String>();
+        assert!(output.contains(r#""input_tokens":3"#));
+        assert!(output.contains(r#""output_tokens":4"#));
+        assert!(output.contains(r#""cached_tokens":1"#));
+        assert!(output.contains(r#""cache_write_tokens":2"#));
+    }
+
+    #[test]
+    fn records_native_chat_stream_usage_without_changing_bytes() {
+        let stats = Arc::new(Mutex::new(
+            crate::bridge::stream::StreamStatsSnapshot::default(),
+        ));
+        let mut decoder = super::ChatSseStatsDecoder::default();
+        super::ByteStreamDecoder::set_stats(&mut decoder, stats.clone());
+        let chunk = br#"data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
+
+data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":4,"total_tokens":7,"prompt_tokens_details":{"cached_tokens":1,"cache_write_tokens":2}}}
+
+data: [DONE]
+
+"#;
+
+        let output = super::ByteStreamDecoder::push_chunk(&mut decoder, chunk);
+        assert_eq!(output, vec![Bytes::copy_from_slice(chunk)]);
+        super::ByteStreamDecoder::finish(&mut decoder);
+
+        let snapshot = stats.lock().expect("stream stats").clone();
+        assert_eq!(snapshot.input_tokens, Some(3));
+        assert_eq!(snapshot.output_tokens, Some(4));
+        assert_eq!(snapshot.cache_read_tokens, Some(1));
+        assert_eq!(snapshot.cache_write_tokens, Some(2));
+        assert!(snapshot.completed);
     }
 }

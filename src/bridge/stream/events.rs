@@ -120,9 +120,11 @@ pub(crate) struct ChatSseEvent {
     pub(crate) text_delta: Option<String>,
     pub(crate) tool_call_deltas: Vec<ChatToolCallDelta>,
     pub(crate) finish_reason: Option<InternalFinishReason>,
+    pub(crate) usage: Option<StreamUsage>,
 }
 
 impl ChatSseEvent {
+    #[cfg(test)]
     pub(crate) fn finished(&self) -> bool {
         self.finish_reason.is_some()
     }
@@ -139,6 +141,9 @@ impl ChatSseEvent {
                 name: delta.name.clone(),
                 arguments: delta.arguments.clone(),
             });
+        }
+        if let Some(usage) = &self.usage {
+            events.push(InternalStreamEvent::Usage(usage.clone()));
         }
         if let Some(reason) = self.finish_reason {
             events.push(InternalStreamEvent::Finished(reason));

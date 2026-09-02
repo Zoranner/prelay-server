@@ -17,6 +17,23 @@ fn decodes_anthropic_messages_sse_text_delta_to_responses_sse() {
 }
 
 #[test]
+fn decodes_anthropic_message_start_usage() {
+    let events = super::decode_anthropic_messages_sse_event(
+        r#"{"type":"message_start","message":{"usage":{"input_tokens":7,"cache_read_input_tokens":3,"cache_creation_input_tokens":2}}}"#,
+    );
+
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            InternalStreamEvent::Usage(usage)
+                if usage.input_tokens == Some(7)
+                    && usage.cache_read_tokens == Some(3)
+                    && usage.cache_write_tokens == Some(2)
+        )
+    }));
+}
+
+#[test]
 fn does_not_turn_anthropic_text_block_stop_into_responses_function_call() {
     let mut decoder = AnthropicMessagesToResponsesSseDecoder::default();
 

@@ -7,6 +7,7 @@ pub(crate) mod sse;
 use axum::body::Bytes;
 use futures::Stream;
 
+pub(crate) use encode::responses::responses_completed_sse_with_usage;
 #[cfg(test)]
 pub(crate) use events::InternalFinishReason;
 pub(crate) use events::StreamStatsSnapshot;
@@ -16,7 +17,7 @@ pub(crate) use pipeline::SharedStreamStats;
 use self::{
     decode::{
         anthropic::AnthropicMessagesToResponsesSseDecoder,
-        chat::ChatToResponsesSseDecoder,
+        chat::{ChatSseStatsDecoder, ChatToResponsesSseDecoder},
         responses::{NativeResponsesSseStatsDecoder, ResponsesSseAnthropicMessagesSseDecoder},
     },
     encode::anthropic::AnthropicMessagesSseDecoder,
@@ -95,6 +96,15 @@ pub(crate) fn native_responses_sse_with_stats(
     SharedStreamStats,
 ) {
     map_response_stream_with_stats(response, NativeResponsesSseStatsDecoder::default())
+}
+
+pub(crate) fn native_chat_sse_with_stats(
+    response: reqwest::Response,
+) -> (
+    impl Stream<Item = Result<Bytes, std::io::Error>>,
+    SharedStreamStats,
+) {
+    map_response_stream_with_stats(response, ChatSseStatsDecoder::default())
 }
 
 pub(crate) fn anthropic_messages_sse_response_to_responses_sse_with_stats(

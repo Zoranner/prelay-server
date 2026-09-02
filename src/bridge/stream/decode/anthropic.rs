@@ -13,7 +13,7 @@ use super::super::{
         InternalStreamEvent, StreamUsage,
     },
     pipeline::{ByteStreamDecoder, SharedStreamStats},
-    responses_completed_sse, responses_text_delta_sse,
+    responses_completed_sse_with_usage, responses_text_delta_sse,
     sse::drain_lines,
 };
 
@@ -56,7 +56,7 @@ impl AnthropicMessagesToResponsesSseDecoder {
         }
         if data.trim() == "[DONE]" {
             self.completed = true;
-            return vec![responses_completed_sse()];
+            return vec![responses_completed_sse_with_usage(self.usage.as_ref())];
         }
 
         let mut output = Vec::new();
@@ -124,7 +124,7 @@ impl AnthropicMessagesToResponsesSseDecoder {
             }
             InternalStreamEvent::Finished(_) => {
                 self.completed = true;
-                vec![responses_completed_sse()]
+                vec![responses_completed_sse_with_usage(self.usage.as_ref())]
             }
         }
     }
@@ -221,7 +221,7 @@ impl ByteStreamDecoder for AnthropicMessagesToResponsesSseDecoder {
         if !self.completed {
             self.completed = true;
             self.record_internal_event(&InternalStreamEvent::Finished(InternalFinishReason::Stop));
-            output.push(responses_completed_sse());
+            output.push(responses_completed_sse_with_usage(self.usage.as_ref()));
         }
         output
     }
@@ -240,6 +240,12 @@ fn decode_anthropic_messages_sse_event(data: &str) -> Vec<InternalStreamEvent> {
     };
 
     match event_type {
+        "message_start" => value
+            .get("message")
+            .and_then(decode_anthropic_usage)
+            .into_iter()
+            .map(InternalStreamEvent::Usage)
+            .collect(),
         "content_block_start" => decode_anthropic_tool_content_block_start(&value)
             .into_iter()
             .collect(),

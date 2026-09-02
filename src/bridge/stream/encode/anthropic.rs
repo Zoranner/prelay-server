@@ -84,12 +84,8 @@ impl AnthropicMessagesSseDecoder {
         if let Some(delta) = &event.text_delta {
             output.push(self.text_delta(delta));
         }
-        let finished = event.finished();
         for delta in event.tool_call_deltas {
             output.extend(self.tool_call_delta(delta));
-        }
-        if finished {
-            output.push(self.finish_message());
         }
         output
     }
