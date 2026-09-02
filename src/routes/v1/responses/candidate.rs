@@ -2,6 +2,7 @@ use axum::response::Response;
 use serde_json::Value;
 
 use crate::{
+    bridge::responses::decode::validate_responses_bridge_payload,
     error::AppError,
     providers::{responses::encode_responses_request, spec::UpstreamProtocol},
     routes::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
@@ -67,6 +68,7 @@ pub(super) async fn create_response_with_candidate(
         )
         .await;
     }
+    validate_responses_bridge_payload(&upstream_payload)?;
     if upstream_protocol == UpstreamProtocol::AnthropicMessages {
         return create_anthropic_messages_response(
             state,

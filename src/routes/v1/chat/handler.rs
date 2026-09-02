@@ -9,7 +9,7 @@ use crate::{
     error::AppError,
     routes::v1::{
         auth::CurrentProtocolAccess, candidates::run_endpoint_model_candidates,
-        endpoint_resolver::resolve_endpoint_model_candidates,
+        endpoint_resolver::resolve_language_model_candidates,
     },
     AppState,
 };
@@ -32,7 +32,7 @@ pub(super) async fn create_chat_completion(
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let candidates =
-        resolve_endpoint_model_candidates(&state, &access, &model, "chat_completions").await?;
+        resolve_language_model_candidates(&state, &access, &model, "chat_completions").await?;
     let (response, provider_id) = run_endpoint_model_candidates(
         candidates,
         AppError::BadRequest(format!("接入点未配置模型 {model}")),

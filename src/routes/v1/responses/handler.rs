@@ -10,7 +10,7 @@ use crate::{
     error::AppError,
     routes::v1::{
         auth::CurrentProtocolAccess, candidates::run_endpoint_model_candidates,
-        endpoint_resolver::resolve_endpoint_model_candidates,
+        endpoint_resolver::resolve_language_model_candidates,
     },
     AppState,
 };
@@ -38,7 +38,7 @@ pub(super) async fn create_response(
     let is_streaming = request.stream;
     let previous_response_id = request.previous_response_id.clone();
     let candidates =
-        resolve_endpoint_model_candidates(&state, &access, &request.model, "responses").await?;
+        resolve_language_model_candidates(&state, &access, &request.model, "responses").await?;
     let (response, provider_id) = run_endpoint_model_candidates(
         candidates,
         AppError::BadRequest(format!("接入点未配置模型 {model_requested}")),

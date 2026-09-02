@@ -85,5 +85,19 @@ async fn streams_chat_completion_without_waiting_for_upstream_done() {
         "first_token_ms should be recorded after the first stream chunk"
     );
 
+    while let Some(chunk) = stream.next().await {
+        chunk.expect("remaining stream chunk ok");
+    }
+
+    let logs = state
+        .storage
+        .list_activities(&identity_id, 10)
+        .await
+        .expect("load final stream activity");
+    assert_eq!(logs[0].input_tokens, Some(3));
+    assert_eq!(logs[0].output_tokens, Some(4));
+    assert_eq!(logs[0].cache_read_tokens, Some(1));
+    assert_eq!(logs[0].cache_write_tokens, Some(2));
+
     server.abort();
 }

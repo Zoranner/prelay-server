@@ -43,6 +43,43 @@ async fn records_successful_chat_completion_activity() {
 }
 
 #[tokio::test]
+async fn records_chat_prompt_cache_write_tokens() {
+    let upstream = spawn_chat_upstream().await;
+    let state = test_state().await;
+    let provider = test_provider(
+        "deepseek-chat",
+        "openai_compatible",
+        &upstream,
+        "sk-upstream",
+    )
+    .await
+    .expect("create provider");
+    let auth =
+        create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+            .await;
+    let identity_id = auth.access.0.identity_id.clone();
+
+    create_chat_completion(
+        State(state.clone()),
+        auth.access,
+        axum::Json(json!({
+            "model": "deepseek-chat",
+            "messages": [{ "role": "user", "content": "hello" }]
+        })),
+    )
+    .await
+    .expect("create chat completion");
+
+    let logs = state
+        .storage
+        .list_activities(&identity_id, 10)
+        .await
+        .expect("load activity");
+    assert_eq!(logs[0].cache_read_tokens, Some(1));
+    assert_eq!(logs[0].cache_write_tokens, Some(2));
+}
+
+#[tokio::test]
 async fn records_successful_chat_completion_upstream_request_id() {
     let upstream = spawn_request_id_chat_upstream().await;
     let state = test_state().await;

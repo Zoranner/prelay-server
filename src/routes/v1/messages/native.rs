@@ -47,6 +47,11 @@ pub(super) async fn create_native_anthropic_message(
 
     if !upstream_response.status().is_success() {
         let status = upstream_response.status();
+        let upstream_body = upstream_response.text().await.unwrap_or_default();
+        let error_message =
+            crate::observability::upstream_observability::upstream_error_message(&upstream_body)
+                .map(|message| format!("上游请求失败: {status}: {message}"))
+                .unwrap_or_else(|| format!("上游请求失败: {status}"));
         state
             .storage
             .insert_activity(
@@ -63,7 +68,7 @@ pub(super) async fn create_native_anthropic_message(
                     status: "failed".to_string(),
                     http_status: status.as_u16() as i64,
                     error_code: None,
-                    error_message: None,
+                    error_message: Some(error_message.clone()),
                     is_streaming: context.is_streaming,
                     input_tokens: None,
                     output_tokens: None,
@@ -80,7 +85,7 @@ pub(super) async fn create_native_anthropic_message(
             .await?;
         return Err(AppError::Upstream {
             status: Some(status),
-            message: format!("上游请求失败: {status}"),
+            message: error_message,
         });
     }
 

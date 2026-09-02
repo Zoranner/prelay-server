@@ -139,18 +139,20 @@ pub(super) async fn create_native_response(
             })?;
     let decoded_response =
         crate::providers::responses::decode_responses_response(response.clone())?;
-    state
-        .storage
-        .save_response_session(ResponseSessionInsert {
-            identity_id: &context.identity_id,
-            response_id: &decoded_response.id,
-            previous_response_id: previous_response_id.as_deref(),
-            provider_id: &provider.id,
-            model: &decoded_response.model,
-            input_messages: &request.messages,
-            response: &decoded_response,
-        })
-        .await?;
+    if request.store {
+        state
+            .storage
+            .save_response_session(ResponseSessionInsert {
+                identity_id: &context.identity_id,
+                response_id: &decoded_response.id,
+                previous_response_id: previous_response_id.as_deref(),
+                provider_id: &provider.id,
+                model: &decoded_response.model,
+                input_messages: &request.messages,
+                response: &decoded_response,
+            })
+            .await?;
+    }
     insert_activity_with_content(
         &state.storage,
         &context.identity_id,
@@ -192,7 +194,12 @@ pub(super) async fn create_native_response(
                 .and_then(Value::as_i64),
             cache_write_tokens: response
                 .get("usage")
-                .and_then(|usage| usage.get("cache_creation_input_tokens"))
+                .and_then(|usage| {
+                    usage
+                        .pointer("/input_tokens_details/cache_write_tokens")
+                        .or_else(|| usage.pointer("/prompt_tokens_details/cache_write_tokens"))
+                        .or_else(|| usage.get("cache_creation_input_tokens"))
+                })
                 .and_then(Value::as_i64),
             latency_ms: context.started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),

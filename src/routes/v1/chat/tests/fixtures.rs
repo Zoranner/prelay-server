@@ -18,7 +18,11 @@ pub(super) async fn spawn_chat_upstream() -> String {
             ],
             "usage": {
                 "prompt_tokens": 3,
-                "completion_tokens": 4
+                "completion_tokens": 4,
+                "prompt_tokens_details": {
+                    "cached_tokens": 1,
+                    "cache_write_tokens": 2
+                }
             }
         }))
     }
@@ -169,6 +173,8 @@ pub(super) async fn spawn_streaming_chat_upstream() -> String {
                     Some((
                         Ok::<_, Infallible>(Bytes::from_static(
                             b"data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n\
+                              data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n\
+                              data: {\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":4,\"total_tokens\":7,\"prompt_tokens_details\":{\"cached_tokens\":1,\"cache_write_tokens\":2}}}\n\n\
                               data: [DONE]\n\n",
                         )),
                         2,

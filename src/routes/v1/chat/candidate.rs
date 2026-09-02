@@ -4,17 +4,14 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use futures::TryStreamExt;
 use serde_json::Value;
 
 use crate::{
-    activity::{
-        chat_message_text, chat_response_text, insert_activity_with_content,
-        RawStreamContentCapture, RawStreamProtocol,
-    },
+    activity::{chat_message_text, chat_response_text, insert_activity_with_content},
+    bridge::stream::native_chat_sse_with_stats,
     error::AppError,
     observability::{
-        stream_stats::record_first_chunk_with_activity_content,
+        stream_stats::record_stream_with_activity_content,
         upstream_observability::upstream_observability,
     },
     providers::spec::provider_upstream_base_url,
@@ -126,16 +123,15 @@ pub(super) async fn create_chat_completion_with_candidate(
             tool_call_count: None,
             upstream_request_id,
         };
-        let body = Body::from_stream(record_first_chunk_with_activity_content(
+        let (stream, stream_stats) = native_chat_sse_with_stats(upstream_response);
+        let body = Body::from_stream(record_stream_with_activity_content(
             state.storage.clone(),
             access.identity_id.clone(),
-            upstream_response
-                .bytes_stream()
-                .map_err(std::io::Error::other),
+            stream,
             log,
             started_at,
+            stream_stats,
             input_text,
-            RawStreamContentCapture::new(RawStreamProtocol::ChatCompletions),
         ));
         return Ok(([(header::CONTENT_TYPE, "text/event-stream")], body).into_response());
     }
@@ -148,6 +144,19 @@ pub(super) async fn create_chat_completion_with_candidate(
             .map_err(|_| AppError::UpstreamInvalidResponse {
                 message: "上游响应格式无效".to_string(),
             })?;
+    let usage = crate::bridge::usage::decode_usage(response.get("usage"));
+    let tool_call_count = response
+        .get("choices")
+        .and_then(Value::as_array)
+        .map(|choices| {
+            choices
+                .iter()
+                .filter_map(|choice| choice.pointer("/message/tool_calls"))
+                .filter_map(Value::as_array)
+                .map(Vec::len)
+                .sum::<usize>() as i64
+        })
+        .unwrap_or_default();
     insert_activity_with_content(
         &state.storage,
         &access.identity_id,
@@ -169,35 +178,15 @@ pub(super) async fn create_chat_completion_with_candidate(
             error_code: None,
             error_message: None,
             is_streaming,
-            input_tokens: response
-                .get("usage")
-                .and_then(|usage| usage.get("prompt_tokens"))
-                .and_then(Value::as_i64),
-            output_tokens: response
-                .get("usage")
-                .and_then(|usage| usage.get("completion_tokens"))
-                .and_then(Value::as_i64),
-            reasoning_tokens: response
-                .get("usage")
-                .and_then(|usage| usage.get("completion_tokens_details"))
-                .and_then(|details| details.get("reasoning_tokens"))
-                .and_then(Value::as_i64),
-            cache_read_tokens: response
-                .get("usage")
-                .and_then(|usage| {
-                    usage
-                        .pointer("/prompt_tokens_details/cached_tokens")
-                        .or_else(|| usage.get("cache_read_input_tokens"))
-                })
-                .and_then(Value::as_i64),
-            cache_write_tokens: response
-                .get("usage")
-                .and_then(|usage| usage.get("cache_creation_input_tokens"))
-                .and_then(Value::as_i64),
+            input_tokens: usage.as_ref().and_then(|usage| usage.input_tokens),
+            output_tokens: usage.as_ref().and_then(|usage| usage.output_tokens),
+            reasoning_tokens: usage.as_ref().and_then(|usage| usage.reasoning_tokens),
+            cache_read_tokens: usage.as_ref().and_then(|usage| usage.cache_read_tokens),
+            cache_write_tokens: usage.as_ref().and_then(|usage| usage.cache_write_tokens),
             latency_ms: started_at.elapsed().as_millis() as i64,
             upstream_latency_ms: Some(upstream_latency_ms),
             first_token_ms: None,
-            tool_call_count: None,
+            tool_call_count: Some(tool_call_count),
             upstream_request_id,
         },
         &chat_message_text(&payload),

@@ -152,18 +152,20 @@ pub(super) async fn create_anthropic_messages_response(
     let mut response = decode_anthropic_messages_response(upstream_json)?;
     response.id = format!("resp_{}", Uuid::new_v4().simple());
     let tool_call_count = count_tool_calls(&response);
-    state
-        .storage
-        .save_response_session(ResponseSessionInsert {
-            identity_id: &context.identity_id,
-            response_id: &response.id,
-            previous_response_id: previous_response_id.as_deref(),
-            provider_id: &provider.id,
-            model: &response.model,
-            input_messages: &request.messages,
-            response: &response,
-        })
-        .await?;
+    if request.store {
+        state
+            .storage
+            .save_response_session(ResponseSessionInsert {
+                identity_id: &context.identity_id,
+                response_id: &response.id,
+                previous_response_id: previous_response_id.as_deref(),
+                provider_id: &provider.id,
+                model: &response.model,
+                input_messages: &request.messages,
+                response: &response,
+            })
+            .await?;
+    }
     insert_activity_with_content(
         &state.storage,
         &context.identity_id,

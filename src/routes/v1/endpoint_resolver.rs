@@ -48,6 +48,15 @@ pub async fn resolve_endpoint_model_candidates(
     Ok(candidates)
 }
 
+pub async fn resolve_language_model_candidates(
+    state: &AppState,
+    access: &CurrentProtocolAccess,
+    model: &str,
+    downstream_protocol: &str,
+) -> Result<Vec<ResolvedEndpointProvider>, AppError> {
+    resolve_endpoint_model_candidates(state, access, model, downstream_protocol).await
+}
+
 #[cfg(test)]
 pub(crate) struct TestEndpointAuth {
     pub(crate) access: axum::extract::Extension<CurrentProtocolAccess>,

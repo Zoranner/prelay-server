@@ -166,18 +166,20 @@ pub(super) async fn create_chat_response(
         .as_ref()
         .and_then(|usage| usage.reasoning_tokens);
     let tool_call_count = count_tool_calls(&response);
-    state
-        .storage
-        .save_response_session(ResponseSessionInsert {
-            identity_id: &identity_id,
-            response_id: &response.id,
-            previous_response_id: previous_response_id.as_deref(),
-            provider_id: &provider.id,
-            model: &response.model,
-            input_messages: &request.messages,
-            response: &response,
-        })
-        .await?;
+    if request.store {
+        state
+            .storage
+            .save_response_session(ResponseSessionInsert {
+                identity_id: &identity_id,
+                response_id: &response.id,
+                previous_response_id: previous_response_id.as_deref(),
+                provider_id: &provider.id,
+                model: &response.model,
+                input_messages: &request.messages,
+                response: &response,
+            })
+            .await?;
+    }
     let activity_id = state
         .storage
         .insert_activity(

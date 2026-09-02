@@ -39,8 +39,9 @@ async fn streams_anthropic_messages_chunks_as_responses_sse() {
         .await
         .expect("read stream body");
     let body = String::from_utf8(body.to_vec()).expect("utf8 body");
-    assert!(body.contains("event: response.output_text.delta\ndata: hel\n\n"));
-    assert!(body.contains("event: response.output_text.delta\ndata: lo\n\n"));
+    assert!(body.contains("event: response.output_text.delta"));
+    assert!(body.contains("\"delta\":\"hel\""));
+    assert!(body.contains("\"delta\":\"lo\""));
     assert!(body.contains("event: response.completed"));
 
     let log = state
@@ -99,8 +100,8 @@ async fn returns_responses_sse_when_stream_is_true() {
 
     assert!(content_type.starts_with("text/event-stream"));
     assert!(body.contains("event: response.output_text.delta"));
-    assert!(body.contains("data: hel"));
-    assert!(body.contains("data: lo"));
+    assert!(body.contains("\"delta\":\"hel\""));
+    assert!(body.contains("\"delta\":\"lo\""));
     assert!(body.ends_with("data: [DONE]\n\n"));
 }
 
@@ -162,7 +163,7 @@ async fn streams_responses_sse_delta_before_upstream_finishes() {
         "first relay chunk arrived after {elapsed:?}: {first}"
     );
     assert!(first.contains("event: response.output_text.delta"));
-    assert!(first.contains("data: hel"));
+    assert!(first.contains("\"delta\":\"hel\""));
 
     server.abort();
 }
@@ -243,8 +244,10 @@ async fn streams_native_responses_sse_without_waiting_for_upstream_done() {
 fn encodes_upstream_text_chunks_as_responses_sse_events() {
     let encoded = responses_sse_from_text_chunks(&["hel", "lo"]);
 
-    assert!(encoded.contains("event: response.output_text.delta\ndata: hel\n\n"));
-    assert!(encoded.contains("event: response.output_text.delta\ndata: lo\n\n"));
-    assert!(encoded.contains("event: response.completed\ndata: {}\n\n"));
+    assert!(encoded.contains("event: response.output_text.delta"));
+    assert!(encoded.contains("\"delta\":\"hel\""));
+    assert!(encoded.contains("\"delta\":\"lo\""));
+    assert!(encoded.contains("event: response.completed"));
+    assert!(encoded.contains("\"type\":\"response.completed\""));
     assert!(encoded.ends_with("data: [DONE]\n\n"));
 }
