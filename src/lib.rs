@@ -10,6 +10,7 @@ pub mod identity;
 pub mod memory;
 pub mod models;
 pub mod observability;
+pub mod provider_catalog;
 pub mod providers;
 pub mod routes;
 pub mod schema;
