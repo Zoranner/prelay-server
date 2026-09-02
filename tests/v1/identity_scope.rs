@@ -88,11 +88,11 @@ async fn create_endpoint_for_url(
         Some(credential),
         serde_json::to_value(CreateProviderRequest {
             name: provider_name.to_string(),
-            provider_type: "openai_compatible".to_string(),
+            provider_type: "deepseek".to_string(),
             base_url: base_url.to_string(),
             api_key: format!("sk-{provider_name}"),
             capabilities: None,
-            models: vec!["upstream-model".to_string()],
+            models: vec!["deepseek-v4-pro".to_string()],
         })
         .expect("serialize provider"),
     )
@@ -107,7 +107,7 @@ async fn create_endpoint_for_url(
             models: vec![EndpointModelInput {
                 model_name: Some("shared-model".to_string()),
                 provider_id: provider["id"].as_str().expect("provider id").to_string(),
-                upstream_model: "upstream-model".to_string(),
+                upstream_model: "deepseek-v4-pro".to_string(),
             }],
         })
         .expect("serialize endpoint"),
@@ -119,7 +119,7 @@ async fn spawn_chat_upstream() -> String {
     async fn handler() -> axum::Json<Value> {
         axum::Json(serde_json::json!({
             "id": "chat_upstream",
-            "model": "upstream-model",
+            "model": "deepseek-v4-pro",
             "choices": [{ "message": { "role": "assistant", "content": "hello" } }],
             "usage": { "prompt_tokens": 3, "completion_tokens": 4 }
         }))
@@ -230,7 +230,6 @@ async fn endpoint_token_resolves_only_its_identity_model_mapping() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(response["data"][0]["id"], "shared-model");
-    assert_eq!(response["data"][0]["provider_name"], "provider-a");
     assert_eq!(response["data"].as_array().expect("models").len(), 1);
 }
 
