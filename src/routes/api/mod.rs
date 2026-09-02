@@ -1,4 +1,8 @@
-use axum::{middleware, routing::post, Router};
+use axum::{
+    middleware,
+    routing::{get, post},
+    Router,
+};
 
 use crate::AppState;
 
@@ -21,6 +25,7 @@ pub fn router(state: AppState) -> Router {
             "/identity/credential/rotate",
             post(identities::rotate_credential),
         )
+        .route("/identity", get(identities::current_identity))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_device_credential,

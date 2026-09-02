@@ -7,10 +7,24 @@ use prelay_protocol::{
     CreateIdentityRequest, CreateIdentityResponse, RotateCredentialRequest,
     RotateCredentialResponse,
 };
+use serde::Serialize;
 
 use crate::{error::AppError, AppState};
 
 use super::auth::{extract_display_name, CurrentIdentity};
+
+#[derive(Debug, Serialize)]
+pub struct CurrentIdentityResponse {
+    pub identity_id: String,
+}
+
+pub async fn current_identity(
+    Extension(identity): Extension<CurrentIdentity>,
+) -> Json<CurrentIdentityResponse> {
+    Json(CurrentIdentityResponse {
+        identity_id: identity.id,
+    })
+}
 
 pub async fn create_identity(
     State(state): State<AppState>,
@@ -53,4 +67,22 @@ pub async fn rotate_credential(
             )
             .await?,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::extract::Extension;
+
+    use super::{current_identity, CurrentIdentity};
+
+    #[tokio::test]
+    async fn current_identity_returns_only_identity_id() {
+        let response = current_identity(Extension(CurrentIdentity {
+            id: "identity-a".into(),
+            credential_hash: "hash".into(),
+        }))
+        .await;
+
+        assert_eq!(response.0.identity_id, "identity-a");
+    }
 }
