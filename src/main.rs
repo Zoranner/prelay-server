@@ -18,12 +18,10 @@ use prelay_server::{
 
 const STARTUP_CLEANUP_FAILURE: &str = "startup identity cleanup failed";
 const DEFAULT_LISTEN_ADDRESS: &str = "0.0.0.0:18080";
-const DEFAULT_CATALOG_DIRECTORY: &str = "deploy/app/config/catalog";
+const DEFAULT_CATALOG_DIRECTORY: &str = "config/catalog";
 
 fn catalog_directory() -> PathBuf {
-    std::env::var_os("PRELAY_CATALOG_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_CATALOG_DIRECTORY))
+    PathBuf::from(DEFAULT_CATALOG_DIRECTORY)
 }
 
 fn log_cleanup_failure(error: &StorageError) {

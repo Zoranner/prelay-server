@@ -37,6 +37,8 @@ New-Item -ItemType Directory -Force data
 cargo run
 ```
 
+本地调试时，服务从项目根目录的 `config/catalog/` 读取供应商和模型目录。
+
 PostgreSQL 本地运行时，先准备一个全新空数据库，再直接启动服务：
 
 ```powershell

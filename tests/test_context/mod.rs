@@ -15,7 +15,7 @@ pub async fn test_context() -> TestContext {
     let storage = crate::support::test_storage().await;
     let provider_catalog = ProviderCatalog::load(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("deploy/app/config/catalog")
+            .join("config/catalog")
             .as_path(),
     )
     .expect("load provider catalog");

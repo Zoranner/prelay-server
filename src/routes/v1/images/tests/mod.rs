@@ -65,7 +65,7 @@ async fn test_state_with_connection() -> (AppState, DatabaseConnection) {
         provider_catalog: std::sync::Arc::new(
             crate::provider_catalog::ProviderCatalog::load(
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("deploy/app/config/catalog")
+                    .join("config/catalog")
                     .as_path(),
             )
             .expect("load provider catalog"),

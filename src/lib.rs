@@ -51,7 +51,7 @@ pub mod test_support {
         let provider_catalog = std::sync::Arc::new(
             ProviderCatalog::load(
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("deploy/app/config/catalog")
+                    .join("config/catalog")
                     .as_path(),
             )
             .expect("load test provider catalog"),

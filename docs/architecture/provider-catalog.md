@@ -7,7 +7,7 @@
 - 语言模型用于 `/v1/responses`、`/v1/chat/completions`、`/v1/messages` 和 Codex 模型目录生成，拥有上下文窗口、思考档位与工具元数据。
 - 图像生成模型只用于 `/v1/images/generations`，拥有输入输出模态、尺寸、质量、背景、输出格式与编辑能力。
 
-服务启动时读取目录。默认路径为仓库的 `deploy/app/config/catalog`；生产镜像通过 `PRELAY_CATALOG_DIR=/app/config/catalog` 读取只读挂载目录。目录无效时服务拒绝启动。
+服务启动时从当前工作目录下的 `config/catalog` 读取目录。容器工作目录为 `/app`，因此使用 `/app/config/catalog`；本地调试时使用项目根目录的 `config/catalog`。目录无效时服务拒绝启动。
 
 ## 配置目录
 

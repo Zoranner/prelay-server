@@ -31,7 +31,7 @@ fn write_catalog(language_models: &str, image_generation_models: &str, providers
 
 #[test]
 fn loads_the_deployment_catalog() {
-    ProviderCatalog::load(Path::new("deploy/app/config/catalog")).expect("load deployment catalog");
+    ProviderCatalog::load(Path::new("config/catalog")).expect("load deployment catalog");
 }
 
 #[test]
