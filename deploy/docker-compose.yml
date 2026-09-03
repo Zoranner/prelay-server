@@ -10,7 +10,7 @@ services:
     ports:
       - 18080:18080
     volumes:
-      - ./app/config/catalog:/app/config/catalog:ro
+      - ./app/config:/app/config:ro
       - ./app/updates:/app/updates
       - ./data:/app/data
   postgres:
