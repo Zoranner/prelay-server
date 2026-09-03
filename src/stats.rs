@@ -175,9 +175,10 @@ pub(crate) fn timeline_buckets(
             )),
         };
         let label = match granularity {
-            TimelineGranularity::Hour => start.format("%Y-%m-%d %H:%M:%S").to_string(),
-            TimelineGranularity::SixHours
-            | TimelineGranularity::Day
+            TimelineGranularity::Hour | TimelineGranularity::SixHours => {
+                start.format("%Y-%m-%d %H:%M:%S").to_string()
+            }
+            TimelineGranularity::Day
             | TimelineGranularity::HalfMonth
             | TimelineGranularity::Month => start.format("%Y-%m-%d").to_string(),
         };

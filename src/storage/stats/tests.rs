@@ -140,6 +140,7 @@ async fn week_and_year_timelines_use_dense_buckets() {
         .expect("load year timeline");
 
     assert_eq!(week.len(), 28);
+    assert!(week.iter().any(|point| point.bucket.ends_with(" 06:00:00")));
     assert_eq!(year.len(), 24);
 }
 
