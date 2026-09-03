@@ -36,7 +36,12 @@ async fn list(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
 ) -> Result<Json<Vec<ProviderResponse>>, AppError> {
-    Ok(Json(state.storage.list_providers(&identity.id).await?))
+    Ok(Json(
+        state
+            .storage
+            .list_providers_with_catalog(&identity.id, &state.provider_catalog)
+            .await?,
+    ))
 }
 
 async fn create(
@@ -50,7 +55,7 @@ async fn create(
         Json(
             state
                 .storage
-                .get_provider(&identity.id, &provider_id)
+                .get_provider_with_catalog(&identity.id, &provider_id, &state.provider_catalog)
                 .await?,
         ),
     ))
@@ -64,7 +69,7 @@ async fn get_one(
     Ok(Json(
         state
             .storage
-            .get_provider(&identity.id, &provider_id)
+            .get_provider_with_catalog(&identity.id, &provider_id, &state.provider_catalog)
             .await?,
     ))
 }
@@ -78,7 +83,12 @@ async fn update(
     Ok(Json(
         state
             .storage
-            .update_provider(&identity.id, &provider_id, input)
+            .update_provider_with_catalog(
+                &identity.id,
+                &provider_id,
+                input,
+                &state.provider_catalog,
+            )
             .await?,
     ))
 }
@@ -102,7 +112,7 @@ async fn ping(
 ) -> Result<Json<ProviderOperationResponse>, AppError> {
     let provider = state
         .storage
-        .get_provider(&identity.id, &provider_id)
+        .get_provider_with_catalog(&identity.id, &provider_id, &state.provider_catalog)
         .await?;
     let started_at = std::time::Instant::now();
     let response = state.client.head(&provider.base_url).send().await;

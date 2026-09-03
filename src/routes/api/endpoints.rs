@@ -27,7 +27,12 @@ async fn list(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
 ) -> Result<Json<Vec<EndpointResponse>>, AppError> {
-    Ok(Json(state.storage.list_endpoints(&identity.id).await?))
+    Ok(Json(
+        state
+            .storage
+            .list_endpoints_with_catalog(&identity.id, &state.provider_catalog)
+            .await?,
+    ))
 }
 
 async fn create(
@@ -37,7 +42,12 @@ async fn create(
 ) -> Result<(StatusCode, Json<EndpointResponse>), AppError> {
     Ok((
         StatusCode::CREATED,
-        Json(state.storage.create_interface(&identity.id, input).await?),
+        Json(
+            state
+                .storage
+                .create_interface_with_catalog(&identity.id, input, &state.provider_catalog)
+                .await?,
+        ),
     ))
 }
 
@@ -49,7 +59,7 @@ async fn get_one(
     Ok(Json(
         state
             .storage
-            .get_interface(&identity.id, &endpoint_id)
+            .get_interface_with_catalog(&identity.id, &endpoint_id, &state.provider_catalog)
             .await?,
     ))
 }
@@ -63,7 +73,12 @@ async fn update(
     Ok(Json(
         state
             .storage
-            .update_interface(&identity.id, &endpoint_id, input)
+            .update_interface_with_catalog(
+                &identity.id,
+                &endpoint_id,
+                input,
+                &state.provider_catalog,
+            )
             .await?,
     ))
 }
@@ -88,7 +103,11 @@ async fn regenerate_token(
     Ok(Json(
         state
             .storage
-            .regenerate_endpoint_token(&identity.id, &endpoint_id)
+            .regenerate_endpoint_token_with_catalog(
+                &identity.id,
+                &endpoint_id,
+                &state.provider_catalog,
+            )
             .await?,
     ))
 }

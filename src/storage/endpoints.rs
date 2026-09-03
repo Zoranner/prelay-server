@@ -23,6 +23,7 @@ use crate::{
         },
     },
     identity::credential::generate_credential,
+    provider_catalog::ProviderCatalog,
 };
 
 use super::{Storage, StorageError};
@@ -33,14 +34,31 @@ impl Storage {
         identity_id: &str,
         input: CreateEndpointRequest,
     ) -> Result<EndpointResponse, StorageError> {
-        create(&self.db, identity_id, input).await
+        create(&self.db, identity_id, input, None).await
+    }
+
+    pub async fn create_interface_with_catalog(
+        &self,
+        identity_id: &str,
+        input: CreateEndpointRequest,
+        catalog: &ProviderCatalog,
+    ) -> Result<EndpointResponse, StorageError> {
+        create(&self.db, identity_id, input, Some(catalog)).await
     }
 
     pub async fn list_endpoints(
         &self,
         identity_id: &str,
     ) -> Result<Vec<EndpointResponse>, StorageError> {
-        list(&self.db, identity_id).await
+        list(&self.db, identity_id, None).await
+    }
+
+    pub async fn list_endpoints_with_catalog(
+        &self,
+        identity_id: &str,
+        catalog: &ProviderCatalog,
+    ) -> Result<Vec<EndpointResponse>, StorageError> {
+        list(&self.db, identity_id, Some(catalog)).await
     }
 
     pub async fn get_interface(
@@ -48,7 +66,16 @@ impl Storage {
         identity_id: &str,
         endpoint_id: &str,
     ) -> Result<EndpointResponse, StorageError> {
-        get(&self.db, identity_id, endpoint_id).await
+        get(&self.db, identity_id, endpoint_id, None).await
+    }
+
+    pub async fn get_interface_with_catalog(
+        &self,
+        identity_id: &str,
+        endpoint_id: &str,
+        catalog: &ProviderCatalog,
+    ) -> Result<EndpointResponse, StorageError> {
+        get(&self.db, identity_id, endpoint_id, Some(catalog)).await
     }
 
     pub async fn update_interface(
@@ -57,7 +84,17 @@ impl Storage {
         endpoint_id: &str,
         input: UpdateEndpointRequest,
     ) -> Result<EndpointResponse, StorageError> {
-        update(&self.db, identity_id, endpoint_id, input).await
+        update(&self.db, identity_id, endpoint_id, input, None).await
+    }
+
+    pub async fn update_interface_with_catalog(
+        &self,
+        identity_id: &str,
+        endpoint_id: &str,
+        input: UpdateEndpointRequest,
+        catalog: &ProviderCatalog,
+    ) -> Result<EndpointResponse, StorageError> {
+        update(&self.db, identity_id, endpoint_id, input, Some(catalog)).await
     }
 
     pub async fn delete_interface(
@@ -73,7 +110,16 @@ impl Storage {
         identity_id: &str,
         endpoint_id: &str,
     ) -> Result<EndpointResponse, StorageError> {
-        regenerate_token(&self.db, identity_id, endpoint_id).await
+        regenerate_token(&self.db, identity_id, endpoint_id, None).await
+    }
+
+    pub async fn regenerate_endpoint_token_with_catalog(
+        &self,
+        identity_id: &str,
+        endpoint_id: &str,
+        catalog: &ProviderCatalog,
+    ) -> Result<EndpointResponse, StorageError> {
+        regenerate_token(&self.db, identity_id, endpoint_id, Some(catalog)).await
     }
 }
 
@@ -81,6 +127,7 @@ pub(crate) async fn create(
     db: &DatabaseConnection,
     identity_id: &str,
     input: CreateEndpointRequest,
+    catalog: Option<&ProviderCatalog>,
 ) -> Result<EndpointResponse, StorageError> {
     let name = input.name.trim().to_string();
     let models = normalize_models(input.models)?;
@@ -104,12 +151,13 @@ pub(crate) async fn create(
     .await?;
     insert_models(&transaction, &endpoint_id, models, &created_at).await?;
     transaction.commit().await?;
-    get(db, identity_id, &endpoint_id).await
+    get(db, identity_id, &endpoint_id, catalog).await
 }
 
 pub(crate) async fn list(
     db: &DatabaseConnection,
     identity_id: &str,
+    catalog: Option<&ProviderCatalog>,
 ) -> Result<Vec<EndpointResponse>, StorageError> {
     let endpoints = identity_endpoint_configs::Entity::find()
         .filter(identity_endpoint_configs::Column::IdentityId.eq(identity_id))
@@ -118,7 +166,7 @@ pub(crate) async fn list(
         .await?;
     let mut responses = Vec::with_capacity(endpoints.len());
     for endpoint in endpoints {
-        responses.push(endpoint_response(db, endpoint).await?);
+        responses.push(endpoint_response(db, endpoint, catalog).await?);
     }
     Ok(responses)
 }
@@ -127,9 +175,10 @@ pub(crate) async fn get(
     db: &DatabaseConnection,
     identity_id: &str,
     endpoint_id: &str,
+    catalog: Option<&ProviderCatalog>,
 ) -> Result<EndpointResponse, StorageError> {
     let endpoint = find_endpoint(db, identity_id, endpoint_id).await?;
-    endpoint_response(db, endpoint).await
+    endpoint_response(db, endpoint, catalog).await
 }
 
 pub(crate) async fn update(
@@ -137,6 +186,7 @@ pub(crate) async fn update(
     identity_id: &str,
     endpoint_id: &str,
     input: UpdateEndpointRequest,
+    catalog: Option<&ProviderCatalog>,
 ) -> Result<EndpointResponse, StorageError> {
     let current = find_endpoint(db, identity_id, endpoint_id).await?;
     let name = input
@@ -165,7 +215,7 @@ pub(crate) async fn update(
         replace_models(&transaction, endpoint_id, models, &Utc::now().to_rfc3339()).await?;
     }
     transaction.commit().await?;
-    get(db, identity_id, endpoint_id).await
+    get(db, identity_id, endpoint_id, catalog).await
 }
 
 pub(crate) async fn delete(
@@ -194,12 +244,13 @@ pub(crate) async fn regenerate_token(
     db: &DatabaseConnection,
     identity_id: &str,
     endpoint_id: &str,
+    catalog: Option<&ProviderCatalog>,
 ) -> Result<EndpointResponse, StorageError> {
     let endpoint = find_endpoint(db, identity_id, endpoint_id).await?;
     let mut active = endpoint.into_active_model();
     active.token = Set(generate_credential());
     active.update(db).await?;
-    get(db, identity_id, endpoint_id).await
+    get(db, identity_id, endpoint_id, catalog).await
 }
 
 async fn find_endpoint<C>(
@@ -220,6 +271,7 @@ where
 async fn endpoint_response<C>(
     db: &C,
     endpoint: identity_endpoint_configs::Model,
+    catalog: Option<&ProviderCatalog>,
 ) -> Result<EndpointResponse, StorageError>
 where
     C: ConnectionTrait,
@@ -231,7 +283,7 @@ where
         .all(db)
         .await?
         .into_iter()
-        .map(endpoint_model_response)
+        .map(|model| endpoint_model_response(model, catalog))
         .collect();
     Ok(EndpointResponse {
         id: endpoint.id,
@@ -289,13 +341,7 @@ fn normalize_models(models: Vec<EndpointModelInput>) -> Result<Vec<NormalizedMod
     let mut normalized = Vec::with_capacity(models.len());
     for model in models {
         let upstream_model = model.upstream_model.trim().to_string();
-        let model_name = model
-            .model_name
-            .as_deref()
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-            .unwrap_or(&upstream_model)
-            .to_string();
+        let model_name = upstream_model.clone();
         let mapping = (
             model_name.clone(),
             model.provider_id.clone(),
@@ -381,11 +427,18 @@ async fn insert_models(
     Ok(())
 }
 
-fn endpoint_model_response(model: identity_endpoint_models::Model) -> EndpointModelResponse {
+fn endpoint_model_response(
+    model: identity_endpoint_models::Model,
+    catalog: Option<&ProviderCatalog>,
+) -> EndpointModelResponse {
+    let display_name = catalog
+        .map(|catalog| catalog.model_display_name(&model.model_name))
+        .unwrap_or_else(|| model.model_name.clone());
     EndpointModelResponse {
         id: model.id,
         endpoint_id: model.endpoint_id,
         model_name: model.model_name,
+        display_name,
         provider_id: model.provider_id,
         upstream_model: model.upstream_model,
         created_at: model.created_at,

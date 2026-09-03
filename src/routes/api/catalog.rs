@@ -5,12 +5,14 @@ use axum::{
 };
 use prelay_protocol::{
     CatalogImageGenerationModelResponse, CatalogLanguageModelResponse, CatalogProviderResponse,
+    ProviderCatalogResponse,
 };
 
 use crate::{error::AppError, AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/catalog", get(get_catalog))
         .route("/catalog/providers", get(list_providers))
         .route("/catalog/providers/:provider_id", get(get_provider))
         .route("/catalog/models/language", get(list_language_models))
@@ -26,6 +28,10 @@ pub fn router() -> Router<AppState> {
             "/catalog/models/image-generation/:model_id",
             get(get_image_generation_model),
         )
+}
+
+async fn get_catalog(State(state): State<AppState>) -> Json<ProviderCatalogResponse> {
+    Json(state.provider_catalog.response())
 }
 
 async fn list_providers(

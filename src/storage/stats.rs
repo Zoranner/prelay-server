@@ -135,6 +135,7 @@ async fn list_model_stats(
         .into_iter()
         .map(|row| ModelStatsSummary {
             model_requested: row.model_requested,
+            model_requested_display_name: None,
             total_requests: row.total_requests,
             successful_requests: row.successful_requests.unwrap_or_default(),
             failed_requests: row.failed_requests.unwrap_or_default(),

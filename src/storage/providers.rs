@@ -21,6 +21,7 @@ use crate::{
             provider_models as identity_provider_models,
         },
     },
+    provider_catalog::ProviderCatalog,
     providers::spec::resolved_upstream_protocols,
 };
 
@@ -58,7 +59,15 @@ impl Storage {
         &self,
         identity_id: &str,
     ) -> Result<Vec<ProviderResponse>, StorageError> {
-        list(&self.db, &self.crypto, identity_id).await
+        list(&self.db, &self.crypto, identity_id, None).await
+    }
+
+    pub async fn list_providers_with_catalog(
+        &self,
+        identity_id: &str,
+        catalog: &ProviderCatalog,
+    ) -> Result<Vec<ProviderResponse>, StorageError> {
+        list(&self.db, &self.crypto, identity_id, Some(catalog)).await
     }
 
     pub async fn get_provider(
@@ -66,7 +75,23 @@ impl Storage {
         identity_id: &str,
         provider_id: &str,
     ) -> Result<ProviderResponse, StorageError> {
-        get(&self.db, &self.crypto, identity_id, provider_id).await
+        get(&self.db, &self.crypto, identity_id, provider_id, None).await
+    }
+
+    pub async fn get_provider_with_catalog(
+        &self,
+        identity_id: &str,
+        provider_id: &str,
+        catalog: &ProviderCatalog,
+    ) -> Result<ProviderResponse, StorageError> {
+        get(
+            &self.db,
+            &self.crypto,
+            identity_id,
+            provider_id,
+            Some(catalog),
+        )
+        .await
     }
 
     pub async fn update_provider(
@@ -75,7 +100,33 @@ impl Storage {
         provider_id: &str,
         input: UpdateProviderRequest,
     ) -> Result<ProviderResponse, StorageError> {
-        update(&self.db, &self.crypto, identity_id, provider_id, input).await
+        update(
+            &self.db,
+            &self.crypto,
+            identity_id,
+            provider_id,
+            input,
+            None,
+        )
+        .await
+    }
+
+    pub async fn update_provider_with_catalog(
+        &self,
+        identity_id: &str,
+        provider_id: &str,
+        input: UpdateProviderRequest,
+        catalog: &ProviderCatalog,
+    ) -> Result<ProviderResponse, StorageError> {
+        update(
+            &self.db,
+            &self.crypto,
+            identity_id,
+            provider_id,
+            input,
+            Some(catalog),
+        )
+        .await
     }
 
     pub async fn delete_provider(
@@ -151,6 +202,7 @@ pub(crate) async fn list(
     db: &DatabaseConnection,
     crypto: &KeyCipher,
     identity_id: &str,
+    catalog: Option<&ProviderCatalog>,
 ) -> Result<Vec<ProviderResponse>, StorageError> {
     let providers = identity_provider_configs::Entity::find()
         .filter(identity_provider_configs::Column::IdentityId.eq(identity_id))
@@ -159,7 +211,7 @@ pub(crate) async fn list(
         .await?;
     let mut responses = Vec::with_capacity(providers.len());
     for provider in providers {
-        responses.push(provider_response(db, crypto, provider).await?);
+        responses.push(provider_response(db, crypto, provider, catalog).await?);
     }
     Ok(responses)
 }
@@ -169,9 +221,10 @@ pub(crate) async fn get(
     crypto: &KeyCipher,
     identity_id: &str,
     provider_id: &str,
+    catalog: Option<&ProviderCatalog>,
 ) -> Result<ProviderResponse, StorageError> {
     let provider = find_provider(db, identity_id, provider_id).await?;
-    provider_response(db, crypto, provider).await
+    provider_response(db, crypto, provider, catalog).await
 }
 
 pub(crate) async fn update(
@@ -180,6 +233,7 @@ pub(crate) async fn update(
     identity_id: &str,
     provider_id: &str,
     input: UpdateProviderRequest,
+    catalog: Option<&ProviderCatalog>,
 ) -> Result<ProviderResponse, StorageError> {
     let existing = find_provider(db, identity_id, provider_id).await?;
     let models = input
@@ -224,7 +278,7 @@ pub(crate) async fn update(
         insert_models(&transaction, provider_id, models, &Utc::now().to_rfc3339()).await?;
     }
     transaction.commit().await?;
-    get(db, crypto, identity_id, provider_id).await
+    get(db, crypto, identity_id, provider_id, catalog).await
 }
 
 pub(crate) async fn delete(
@@ -303,6 +357,7 @@ async fn provider_response<C>(
     db: &C,
     crypto: &KeyCipher,
     provider: identity_provider_configs::Model,
+    catalog: Option<&ProviderCatalog>,
 ) -> Result<ProviderResponse, StorageError>
 where
     C: ConnectionTrait,
@@ -313,7 +368,7 @@ where
         .all(db)
         .await?
         .into_iter()
-        .map(provider_model_response)
+        .map(|model| provider_model_response(model, catalog))
         .collect();
     let capabilities: ProviderCapabilityOverrides = provider
         .capabilities_json
@@ -379,11 +434,18 @@ where
     Ok(())
 }
 
-fn provider_model_response(model: identity_provider_models::Model) -> ProviderModelResponse {
+fn provider_model_response(
+    model: identity_provider_models::Model,
+    catalog: Option<&ProviderCatalog>,
+) -> ProviderModelResponse {
+    let display_name = catalog
+        .map(|catalog| catalog.model_display_name(&model.model_name))
+        .unwrap_or_else(|| model.model_name.clone());
     ProviderModelResponse {
         id: model.id,
         provider_id: model.provider_id,
         model_name: model.model_name,
+        display_name,
         created_at: model.created_at,
     }
 }

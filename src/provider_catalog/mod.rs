@@ -192,6 +192,16 @@ impl ProviderCatalog {
         self.image_generation_models.get(model_id)
     }
 
+    pub fn model_display_name(&self, model_id: &str) -> String {
+        self.language_model(model_id)
+            .map(|model| model.display_name.clone())
+            .or_else(|| {
+                self.image_generation_model(model_id)
+                    .map(|model| model.display_name.clone())
+            })
+            .unwrap_or_else(|| model_id.to_string())
+    }
+
     pub fn provider(&self, provider_id: &str) -> Option<&CatalogProvider> {
         self.providers.get(provider_id)
     }
@@ -263,5 +273,59 @@ impl ProviderCatalog {
             image_generation_models: self.image_generation_models(),
             providers: self.providers(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProviderCatalog;
+    use std::path::Path;
+
+    fn catalog() -> ProviderCatalog {
+        ProviderCatalog::load(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("config/catalog")
+                .as_path(),
+        )
+        .expect("load provider catalog")
+    }
+
+    #[test]
+    fn resolves_display_names_for_language_and_image_models() {
+        let catalog = catalog();
+
+        assert_eq!(catalog.model_display_name("gpt-5.6-luna"), "GPT-5.6 Luna");
+        assert_eq!(catalog.model_display_name("gpt-image-1"), "GPT Image 1");
+    }
+
+    #[test]
+    fn falls_back_to_model_id_when_unknown() {
+        let catalog = catalog();
+
+        assert_eq!(catalog.model_display_name("unknown-model"), "unknown-model");
+    }
+
+    #[test]
+    fn response_contains_complete_model_catalog() {
+        let catalog = catalog();
+        let response = catalog.response();
+        let language = response
+            .language_models
+            .iter()
+            .find(|model| model.id == "gpt-5.6-luna")
+            .expect("language model");
+        let image = response
+            .image_generation_models
+            .iter()
+            .find(|model| model.id == "gpt-image-1")
+            .expect("image model");
+
+        assert_eq!(language.display_name, "GPT-5.6 Luna");
+        assert!(language.context_window.is_some());
+        assert_eq!(image.display_name, "GPT Image 1");
+        assert!(image
+            .output_modalities
+            .as_ref()
+            .is_some_and(|modalities| modalities == &["image".to_string()]));
     }
 }
