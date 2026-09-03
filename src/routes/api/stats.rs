@@ -81,7 +81,11 @@ async fn activities(
     Ok(Json(
         state
             .storage
-            .list_activities(&identity.id, query.limit.unwrap_or(100))
+            .list_activities_with_catalog(
+                &identity.id,
+                query.limit.unwrap_or(100),
+                &state.provider_catalog,
+            )
             .await?,
     ))
 }
@@ -111,7 +115,7 @@ async fn models(
     Ok(Json(
         state
             .storage
-            .model_stats(&identity.id, query.range())
+            .model_stats_with_catalog(&identity.id, query.range(), &state.provider_catalog)
             .await?,
     ))
 }

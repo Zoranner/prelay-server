@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::{
     entity::identity::activities,
+    provider_catalog::ProviderCatalog,
     stats::{ActivityInsert, ActivitySummary, StreamActivityUpdate},
 };
 
@@ -44,7 +45,16 @@ impl Storage {
         identity_id: &str,
         limit: usize,
     ) -> Result<Vec<ActivitySummary>, StorageError> {
-        list(&self.db, identity_id, limit).await
+        list(&self.db, identity_id, limit, None).await
+    }
+
+    pub async fn list_activities_with_catalog(
+        &self,
+        identity_id: &str,
+        limit: usize,
+        catalog: &ProviderCatalog,
+    ) -> Result<Vec<ActivitySummary>, StorageError> {
+        list(&self.db, identity_id, limit, Some(catalog)).await
     }
 }
 
@@ -133,6 +143,7 @@ async fn list(
     db: &DatabaseConnection,
     identity_id: &str,
     limit: usize,
+    catalog: Option<&ProviderCatalog>,
 ) -> Result<Vec<ActivitySummary>, StorageError> {
     let rows = activities::Entity::find()
         .filter(activities::Column::IdentityId.eq(identity_id))
@@ -140,10 +151,21 @@ async fn list(
         .limit(limit.min(500) as u64)
         .all(db)
         .await?;
-    Ok(rows.into_iter().map(request_summary).collect())
+    Ok(rows
+        .into_iter()
+        .map(|row| request_summary(row, catalog))
+        .collect())
 }
 
-fn request_summary(row: activities::Model) -> ActivitySummary {
+fn request_summary(row: activities::Model, catalog: Option<&ProviderCatalog>) -> ActivitySummary {
+    let model_requested_display_name = row
+        .model_requested
+        .as_deref()
+        .and_then(|model_id| catalog.map(|catalog| catalog.model_display_name(model_id)));
+    let model_upstream_display_name = row
+        .model_upstream
+        .as_deref()
+        .and_then(|model_id| catalog.map(|catalog| catalog.model_display_name(model_id)));
     ActivitySummary {
         id: row.id,
         created_at: row.created_at,
@@ -152,9 +174,9 @@ fn request_summary(row: activities::Model) -> ActivitySummary {
         endpoint_name: row.endpoint_name,
         provider_name: row.provider_name,
         model_requested: row.model_requested,
-        model_requested_display_name: None,
+        model_requested_display_name,
         model_upstream: row.model_upstream,
-        model_upstream_display_name: None,
+        model_upstream_display_name,
         status: row.status,
         http_status: row.http_status,
         error_code: row.error_code,
@@ -176,10 +198,67 @@ mod tests {
 
     use crate::{
         entity::identity::activities,
+        provider_catalog::ProviderCatalog,
         schema::initialize,
         stats::{ActivityInsert, StreamActivityUpdate},
         storage::{MasterKey, Storage, StorageError},
     };
+
+    #[tokio::test]
+    async fn list_activities_resolves_catalog_display_names_and_unknown_ids() {
+        let (storage, _) = test_storage().await;
+        let identity = register_identity(&storage, "display-names").await;
+        let mut known = test_log(None, None);
+        known.model_requested = "gpt-5.6-luna".to_string();
+        known.model_upstream = "gpt-5.6-luna".to_string();
+        storage
+            .insert_activity_with_id(&identity, "known-log".to_string(), known)
+            .await
+            .expect("insert known model log");
+        let mut unknown = test_log(None, None);
+        unknown.model_requested = "unknown-model".to_string();
+        unknown.model_upstream = "unknown-model".to_string();
+        storage
+            .insert_activity_with_id(&identity, "unknown-log".to_string(), unknown)
+            .await
+            .expect("insert unknown model log");
+
+        let catalog = ProviderCatalog::load(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("config/catalog")
+                .as_path(),
+        )
+        .expect("load provider catalog");
+        let rows = storage
+            .list_activities_with_catalog(&identity, 10, &catalog)
+            .await
+            .expect("list activities with catalog");
+
+        let known = rows
+            .iter()
+            .find(|row| row.id == "known-log")
+            .expect("known row");
+        assert_eq!(
+            known.model_requested_display_name.as_deref(),
+            Some("GPT-5.6 Luna")
+        );
+        assert_eq!(
+            known.model_upstream_display_name.as_deref(),
+            Some("GPT-5.6 Luna")
+        );
+        let unknown = rows
+            .iter()
+            .find(|row| row.id == "unknown-log")
+            .expect("unknown row");
+        assert_eq!(
+            unknown.model_requested_display_name.as_deref(),
+            Some("unknown-model")
+        );
+        assert_eq!(
+            unknown.model_upstream_display_name.as_deref(),
+            Some("unknown-model")
+        );
+    }
 
     #[tokio::test]
     async fn stream_update_changes_one_existing_identity_log_without_inserting() {

@@ -1,10 +1,61 @@
 use sea_orm::Database;
 
 use crate::{
+    provider_catalog::ProviderCatalog,
     schema::initialize,
     stats::{ActivityInsert, StatsRange},
     storage::{MasterKey, Storage},
 };
+
+#[tokio::test]
+async fn model_stats_resolve_display_names_without_splitting_model_ids() {
+    let storage = test_storage().await;
+    let identity = register_identity(&storage, "model-display-names").await;
+    for id in ["model-known-1", "model-known-2"] {
+        let mut log = test_log(Some(3), Some(4));
+        log.model_requested = "gpt-5.6-luna".to_string();
+        storage
+            .insert_activity_with_id(&identity, id.to_string(), log)
+            .await
+            .expect("insert known model log");
+    }
+    let mut unknown = test_log(Some(5), Some(6));
+    unknown.model_requested = "unknown-model".to_string();
+    storage
+        .insert_activity_with_id(&identity, "model-unknown".to_string(), unknown)
+        .await
+        .expect("insert unknown model log");
+
+    let catalog = ProviderCatalog::load(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("config/catalog")
+            .as_path(),
+    )
+    .expect("load provider catalog");
+    let rows = storage
+        .model_stats_with_catalog(&identity, StatsRange::All, &catalog)
+        .await
+        .expect("load model stats with catalog");
+
+    let known = rows
+        .iter()
+        .find(|row| row.model_requested.as_deref() == Some("gpt-5.6-luna"))
+        .expect("known model stats");
+    assert_eq!(
+        known.model_requested_display_name.as_deref(),
+        Some("GPT-5.6 Luna")
+    );
+    assert_eq!(known.total_requests, 2);
+    let unknown = rows
+        .iter()
+        .find(|row| row.model_requested.as_deref() == Some("unknown-model"))
+        .expect("unknown model stats");
+    assert_eq!(
+        unknown.model_requested_display_name.as_deref(),
+        Some("unknown-model")
+    );
+    assert_eq!(rows.len(), 2);
+}
 
 #[tokio::test]
 async fn overview_is_scoped_to_one_identity() {

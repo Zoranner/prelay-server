@@ -255,6 +255,14 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     assert_eq!(activities_a.len(), 1);
     assert_eq!(activities_a[0].id, "request-a");
     assert_eq!(activities_a[0].provider_name.as_deref(), Some("Provider A"));
+    assert_eq!(
+        activities_a[0].model_requested_display_name.as_deref(),
+        Some("model-a")
+    );
+    assert_eq!(
+        activities_a[0].model_upstream_display_name.as_deref(),
+        Some("model-a")
+    );
 
     let (status, models_a): (StatusCode, Vec<ModelStatsSummary>) = request_json(
         &app,
@@ -267,6 +275,10 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(models_a.len(), 1);
     assert_eq!(models_a[0].model_requested.as_deref(), Some("model-a"));
+    assert_eq!(
+        models_a[0].model_requested_display_name.as_deref(),
+        Some("model-a")
+    );
     assert_eq!(models_a[0].total_requests, 1);
     assert_eq!(models_a[0].input_tokens, 3);
     assert_eq!(models_a[0].output_tokens, 4);
@@ -340,12 +352,20 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     assert_eq!(activities_b.len(), 1);
     assert_eq!(activities_b[0].id, "request-b");
     assert_eq!(activities_b[0].provider_name.as_deref(), Some("Provider B"));
+    assert_eq!(
+        activities_b[0].model_requested_display_name.as_deref(),
+        Some("model-b")
+    );
 
     let (status, models_b): (StatusCode, Vec<ModelStatsSummary>) =
         request_json(&app, "GET", "/api/stats/models", Some(credential_b), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(models_b.len(), 1);
     assert_eq!(models_b[0].model_requested.as_deref(), Some("model-b"));
+    assert_eq!(
+        models_b[0].model_requested_display_name.as_deref(),
+        Some("model-b")
+    );
     assert_eq!(models_b[0].total_requests, 1);
     assert_eq!(models_b[0].input_tokens, 5);
     assert_eq!(models_b[0].output_tokens, 6);

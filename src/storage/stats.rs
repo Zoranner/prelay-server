@@ -7,6 +7,7 @@ use sea_orm::{
 
 use crate::{
     entity::identity::activities as identity_activities,
+    provider_catalog::ProviderCatalog,
     stats::{
         all_timeline_bounds, timeline_buckets, ModelStatsSummary, ProviderStatsSummary,
         StatsOverview, StatsRange, TimeBounds, TokenUsageTimelinePoint,
@@ -28,7 +29,16 @@ impl Storage {
         identity_id: &str,
         range: StatsRange,
     ) -> Result<Vec<ModelStatsSummary>, StorageError> {
-        list_model_stats(&self.db, identity_id, range).await
+        list_model_stats(&self.db, identity_id, range, None).await
+    }
+
+    pub async fn model_stats_with_catalog(
+        &self,
+        identity_id: &str,
+        range: StatsRange,
+        catalog: &ProviderCatalog,
+    ) -> Result<Vec<ModelStatsSummary>, StorageError> {
+        list_model_stats(&self.db, identity_id, range, Some(catalog)).await
     }
 
     pub async fn provider_stats(
@@ -104,6 +114,7 @@ async fn list_model_stats(
     db: &DatabaseConnection,
     identity_id: &str,
     range: StatsRange,
+    catalog: Option<&ProviderCatalog>,
 ) -> Result<Vec<ModelStatsSummary>, StorageError> {
     let rows = aggregate_query(identity_id, range.bounds(Utc::now()))
         .select_only()
@@ -131,19 +142,21 @@ async fn list_model_stats(
         .into_model::<ModelAggregate>()
         .all(db)
         .await?;
-    let mut summaries = rows
-        .into_iter()
-        .map(|row| ModelStatsSummary {
-            model_requested: row.model_requested,
-            model_requested_display_name: None,
-            total_requests: row.total_requests,
-            successful_requests: row.successful_requests.unwrap_or_default(),
-            failed_requests: row.failed_requests.unwrap_or_default(),
-            input_tokens: row.input_tokens.unwrap_or_default(),
-            output_tokens: row.output_tokens.unwrap_or_default(),
-            average_latency_ms: floating_average(row.latency_total, row.latency_count),
-        })
-        .collect::<Vec<_>>();
+    let mut summaries =
+        rows.into_iter()
+            .map(|row| ModelStatsSummary {
+                model_requested_display_name: row.model_requested.as_deref().and_then(|model_id| {
+                    catalog.map(|catalog| catalog.model_display_name(model_id))
+                }),
+                model_requested: row.model_requested,
+                total_requests: row.total_requests,
+                successful_requests: row.successful_requests.unwrap_or_default(),
+                failed_requests: row.failed_requests.unwrap_or_default(),
+                input_tokens: row.input_tokens.unwrap_or_default(),
+                output_tokens: row.output_tokens.unwrap_or_default(),
+                average_latency_ms: floating_average(row.latency_total, row.latency_count),
+            })
+            .collect::<Vec<_>>();
     summaries.sort_by(|left, right| {
         right
             .total_requests
