@@ -39,7 +39,7 @@ async fn forwards_chat_completion_request_to_configured_upstream() {
 }
 
 #[tokio::test]
-async fn resolves_endpoint_model_name_to_upstream_model() {
+async fn forwards_the_configured_model_to_upstream() {
     let upstream = spawn_alias_chat_upstream().await;
     let state = test_state().await;
     let provider = test_provider(
@@ -50,13 +50,15 @@ async fn resolves_endpoint_model_name_to_upstream_model() {
     )
     .await
     .expect("create provider");
-    let auth = create_test_endpoint_auth(&state.storage, &provider, "coder", "deepseek-chat").await;
+    let auth =
+        create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+            .await;
 
     let response = create_chat_completion(
         State(state),
         auth.access,
         axum::Json(json!({
-            "model": "coder",
+            "model": "deepseek-chat",
             "messages": [
                 { "role": "user", "content": "hello" }
             ]
@@ -81,13 +83,15 @@ async fn rejects_chat_when_provider_only_supports_responses_upstream_protocol() 
     )
     .await
     .expect("create provider");
-    let auth = create_test_endpoint_auth(&state.storage, &provider, "coder", "deepseek-chat").await;
+    let auth =
+        create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+            .await;
 
     let error = create_chat_completion(
         State(state),
         auth.access,
         axum::Json(json!({
-            "model": "coder",
+            "model": "deepseek-chat",
             "messages": [
                 { "role": "user", "content": "hello" }
             ]
@@ -96,7 +100,7 @@ async fn rejects_chat_when_provider_only_supports_responses_upstream_protocol() 
     .await
     .expect_err("unsupported provider protocol should fail before upstream");
 
-    assert!(format!("{error:?}").contains("接入点未配置支持 chat_completions 的模型 coder"));
+    assert!(format!("{error:?}").contains("接入点未配置支持 chat_completions 的模型 deepseek-chat"));
 }
 
 #[tokio::test]

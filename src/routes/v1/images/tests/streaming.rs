@@ -13,9 +13,13 @@ async fn streams_image_events_without_waiting_for_upstream_done() {
     )
     .await
     .expect("create provider");
-    let auth =
-        create_test_endpoint_auth(&state.storage, &provider, "image-public", "image-upstream")
-            .await;
+    let auth = create_test_endpoint_auth(
+        &state.storage,
+        &provider,
+        "image-upstream",
+        "image-upstream",
+    )
+    .await;
     let identity_id = auth.access.0.identity_id.clone();
     let (relay_url, server) = spawn_image_relay(state.clone()).await;
 
@@ -23,7 +27,7 @@ async fn streams_image_events_without_waiting_for_upstream_done() {
         .post(format!("{relay_url}/v1/images/generations"))
         .bearer_auth(&auth.token)
         .json(&json!({
-            "model": "image-public",
+            "model": "image-upstream",
             "prompt": "private prompt",
             "stream": true,
             "partial_images": 2
@@ -92,9 +96,13 @@ async fn marks_image_request_failed_when_upstream_stream_is_interrupted() {
     )
     .await
     .expect("create provider");
-    let auth =
-        create_test_endpoint_auth(&state.storage, &provider, "image-public", "image-upstream")
-            .await;
+    let auth = create_test_endpoint_auth(
+        &state.storage,
+        &provider,
+        "image-upstream",
+        "image-upstream",
+    )
+    .await;
     let identity_id = auth.access.0.identity_id.clone();
     let (relay_url, server) = spawn_image_relay(state.clone()).await;
 
@@ -102,7 +110,7 @@ async fn marks_image_request_failed_when_upstream_stream_is_interrupted() {
         .post(format!("{relay_url}/v1/images/generations"))
         .bearer_auth(&auth.token)
         .json(&json!({
-            "model": "image-public",
+            "model": "image-upstream",
             "prompt": "private prompt",
             "stream": true,
             "partial_images": 2

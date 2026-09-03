@@ -99,8 +99,13 @@ mod tests {
         )
         .await
         .expect("create legacy provider source");
-        let auth =
-            create_test_endpoint_auth(&state.storage, &provider, "coder", "deepseek-v4-pro").await;
+        let auth = create_test_endpoint_auth(
+            &state.storage,
+            &provider,
+            "deepseek-v4-pro",
+            "deepseek-v4-pro",
+        )
+        .await;
 
         let response = list_models(State(state), auth.access)
             .await
@@ -109,7 +114,7 @@ mod tests {
 
         assert_eq!(response.0.object, "list");
         assert_eq!(response.0.data.len(), 1);
-        assert_eq!(model.id, "coder");
+        assert_eq!(model.id, "deepseek-v4-pro");
         assert_eq!(model.object, "model");
         assert_eq!(model.created, 0);
         assert_eq!(model.owned_by, "prelay");
@@ -159,7 +164,7 @@ mod tests {
         let auth = create_test_endpoint_auth_with_candidates(
             &state.storage,
             &[text_provider, image_provider],
-            "shared-model",
+            "deepseek-v4-pro",
             "deepseek-v4-pro",
         )
         .await;
@@ -170,7 +175,7 @@ mod tests {
         let model = response.0.data.first().expect("merged model listed");
 
         assert_eq!(response.0.data.len(), 1);
-        assert_eq!(model.id, "shared-model");
+        assert_eq!(model.id, "deepseek-v4-pro");
         assert_eq!(model.object, "model");
     }
 

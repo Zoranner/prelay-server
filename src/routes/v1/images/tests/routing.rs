@@ -35,7 +35,7 @@ async fn forwards_only_to_image_generation_candidate_and_preserves_json_bytes() 
     let auth = create_test_endpoint_auth_with_candidates(
         &state.storage,
         &[openai, image_provider],
-        "image-public",
+        "image-upstream",
         "image-upstream",
     )
     .await;
@@ -45,7 +45,7 @@ async fn forwards_only_to_image_generation_candidate_and_preserves_json_bytes() 
         State(state.clone()),
         auth.access,
         Json(json!({
-            "model": "image-public",
+            "model": "image-upstream",
             "prompt": "private prompt"
         })),
     )
@@ -101,15 +101,19 @@ async fn rejects_image_generation_without_image_protocol_candidate() {
     let provider = test_provider("OpenAI only", "openai", "http://127.0.0.1:1", "sk-upstream")
         .await
         .expect("create provider");
-    let auth =
-        create_test_endpoint_auth(&state.storage, &provider, "image-public", "image-upstream")
-            .await;
+    let auth = create_test_endpoint_auth(
+        &state.storage,
+        &provider,
+        "image-upstream",
+        "image-upstream",
+    )
+    .await;
 
     let error = create_image_generation(
         State(state),
         auth.access,
         Json(json!({
-            "model": "image-public",
+            "model": "image-upstream",
             "prompt": "private prompt"
         })),
     )

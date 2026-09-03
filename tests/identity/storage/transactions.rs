@@ -36,7 +36,7 @@ async fn provider_and_endpoint_writes_leave_no_partial_resources_after_validatio
     let duplicate = EndpointModelInput {
         provider_id: provider_id.clone(),
         upstream_model: "test-model".to_string(),
-        model_name: Some("public-model".to_string()),
+        model_name: Some("test-model".to_string()),
     };
     let error = storage
         .create_interface(
@@ -48,7 +48,7 @@ async fn provider_and_endpoint_writes_leave_no_partial_resources_after_validatio
                     duplicate.clone(),
                     EndpointModelInput {
                         upstream_model: " test-model ".to_string(),
-                        model_name: Some(" public-model ".to_string()),
+                        model_name: Some(" test-model ".to_string()),
                         ..duplicate
                     },
                 ],

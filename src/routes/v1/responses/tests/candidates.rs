@@ -24,11 +24,11 @@ async fn fails_over_responses_to_a_healthy_candidate_and_keeps_using_it() {
     let auth = create_test_endpoint_auth_with_candidates(
         &state.storage,
         &[primary, backup],
-        "shared-model",
+        "deepseek-chat",
         "deepseek-chat",
     )
     .await;
-    let payload = json!({ "model": "shared-model", "input": "hello" });
+    let payload = json!({ "model": "deepseek-chat", "input": "hello" });
 
     create_response(
         State(state.clone()),
@@ -79,7 +79,7 @@ async fn fails_over_responses_when_primary_forbids_the_request() {
     let auth = create_test_endpoint_auth_with_candidates(
         &state.storage,
         &[primary, backup],
-        "shared-model",
+        "deepseek-chat",
         "deepseek-chat",
     )
     .await;
@@ -87,7 +87,7 @@ async fn fails_over_responses_when_primary_forbids_the_request() {
     create_response(
         State(state.clone()),
         auth.access.clone(),
-        axum::Json(json!({ "model": "shared-model", "input": "hello" })),
+        axum::Json(json!({ "model": "deepseek-chat", "input": "hello" })),
     )
     .await
     .expect("forbidden primary should fall back to the healthy candidate");
@@ -133,7 +133,7 @@ async fn fails_over_responses_when_primary_returns_an_invalid_success_payload() 
     let auth = create_test_endpoint_auth_with_candidates(
         &state.storage,
         &[primary, backup],
-        "shared-model",
+        "deepseek-chat",
         "deepseek-chat",
     )
     .await;
@@ -141,7 +141,7 @@ async fn fails_over_responses_when_primary_returns_an_invalid_success_payload() 
     create_response(
         State(state),
         auth.access,
-        axum::Json(json!({ "model": "shared-model", "input": "hello" })),
+        axum::Json(json!({ "model": "deepseek-chat", "input": "hello" })),
     )
     .await
     .expect("invalid primary payload should fall back to the healthy candidate");

@@ -176,7 +176,7 @@ async fn seed_owned_resources(
                 name: "Test endpoint".to_string(),
                 protocol: None,
                 models: vec![EndpointModelInput {
-                    model_name: Some("public-model".to_string()),
+                    model_name: Some("upstream-model".to_string()),
                     provider_id: provider_id.clone(),
                     upstream_model: "upstream-model".to_string(),
                 }],
@@ -195,7 +195,7 @@ async fn seed_owned_resources(
                 endpoint_name: endpoint.name.clone(),
                 provider_id: provider_id.clone(),
                 provider_name: "Test provider".to_string(),
-                model_requested: "public-model".to_string(),
+                model_requested: "upstream-model".to_string(),
                 model_upstream: "upstream-model".to_string(),
                 status: "success".to_string(),
                 http_status: 200,
@@ -214,7 +214,7 @@ async fn seed_owned_resources(
     }];
     let response = InternalResponse {
         id: format!("response-{suffix}"),
-        model: "public-model".to_string(),
+        model: "upstream-model".to_string(),
         output: vec![InternalOutputItem::Message {
             id: format!("message-{suffix}"),
             role: InternalRole::Assistant,
@@ -228,7 +228,7 @@ async fn seed_owned_resources(
             response_id: &response.id,
             previous_response_id: None,
             provider_id: &provider_id,
-            model: "public-model",
+            model: "upstream-model",
             input_messages: &input,
             response: &response,
         })

@@ -21,16 +21,20 @@ async fn records_rate_limit_observability_without_image_or_prompt_content() {
     )
     .await
     .expect("create provider");
-    let auth =
-        create_test_endpoint_auth(&state.storage, &provider, "image-public", "image-upstream")
-            .await;
+    let auth = create_test_endpoint_auth(
+        &state.storage,
+        &provider,
+        "image-upstream",
+        "image-upstream",
+    )
+    .await;
     let identity_id = auth.access.0.identity_id.clone();
 
     let error = create_image_generation(
         State(state.clone()),
         auth.access,
         Json(json!({
-            "model": "image-public",
+            "model": "image-upstream",
             "prompt": "private prompt"
         })),
     )
@@ -83,16 +87,20 @@ async fn returns_success_bytes_when_activity_cannot_be_written() {
     )
     .await
     .expect("create image provider");
-    let auth =
-        create_test_endpoint_auth(&state.storage, &provider, "image-public", "image-upstream")
-            .await;
+    let auth = create_test_endpoint_auth(
+        &state.storage,
+        &provider,
+        "image-upstream",
+        "image-upstream",
+    )
+    .await;
     reject_activity_inserts(&connection).await;
 
     let response = create_image_generation(
         State(state),
         auth.access,
         Json(json!({
-            "model": "image-public",
+            "model": "image-upstream",
             "prompt": "private prompt"
         })),
     )
@@ -129,16 +137,20 @@ async fn logs_sanitized_failure_when_upstream_connection_fails() {
     )
     .await
     .expect("create image provider");
-    let auth =
-        create_test_endpoint_auth(&state.storage, &provider, "image-public", "image-upstream")
-            .await;
+    let auth = create_test_endpoint_auth(
+        &state.storage,
+        &provider,
+        "image-upstream",
+        "image-upstream",
+    )
+    .await;
     let identity_id = auth.access.0.identity_id.clone();
 
     let error = create_image_generation(
         State(state.clone()),
         auth.access,
         Json(json!({
-            "model": "image-public",
+            "model": "image-upstream",
             "prompt": "private prompt"
         })),
     )
@@ -186,16 +198,20 @@ async fn logs_sanitized_failure_when_non_streaming_body_is_interrupted() {
     )
     .await
     .expect("create image provider");
-    let auth =
-        create_test_endpoint_auth(&state.storage, &provider, "image-public", "image-upstream")
-            .await;
+    let auth = create_test_endpoint_auth(
+        &state.storage,
+        &provider,
+        "image-upstream",
+        "image-upstream",
+    )
+    .await;
     let identity_id = auth.access.0.identity_id.clone();
 
     let error = create_image_generation(
         State(state.clone()),
         auth.access,
         Json(json!({
-            "model": "image-public",
+            "model": "image-upstream",
             "prompt": "private prompt"
         })),
     )

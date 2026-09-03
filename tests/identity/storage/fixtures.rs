@@ -27,7 +27,7 @@ pub(super) fn activity(provider_id: &str, upstream_latency_ms: i64) -> ActivityI
         endpoint_name: "Test endpoint".to_string(),
         provider_id: provider_id.to_string(),
         provider_name: "Test provider".to_string(),
-        model_requested: "shared-model".to_string(),
+        model_requested: "test-model".to_string(),
         model_upstream: "test-model".to_string(),
         status: "success".to_string(),
         http_status: 200,

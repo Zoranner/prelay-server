@@ -40,12 +40,12 @@ async fn model_candidates_keep_mapping_order_then_prefer_observed_latency() {
                     EndpointModelInput {
                         provider_id: primary_provider_id.clone(),
                         upstream_model: "test-model".to_string(),
-                        model_name: Some("shared-model".to_string()),
+                        model_name: Some("test-model".to_string()),
                     },
                     EndpointModelInput {
                         provider_id: backup_provider_id.clone(),
                         upstream_model: "test-model".to_string(),
-                        model_name: Some("shared-model".to_string()),
+                        model_name: Some("test-model".to_string()),
                     },
                 ],
             },
@@ -59,7 +59,7 @@ async fn model_candidates_keep_mapping_order_then_prefer_observed_latency() {
     };
 
     let candidates = storage
-        .resolve_protocol_models(&access, "shared-model")
+        .resolve_protocol_models(&access, "test-model")
         .await
         .expect("resolve candidates");
     assert_eq!(candidates[0].provider.id, primary_provider_id);
@@ -83,17 +83,17 @@ async fn model_candidates_keep_mapping_order_then_prefer_observed_latency() {
         .expect("record backup latency");
 
     let selected = storage
-        .select_protocol_model_candidates(&access, "shared-model")
+        .select_protocol_model_candidates(&access, "test-model")
         .await
         .expect("select candidates by latency");
     assert_eq!(selected[0].provider.id, backup_provider_id);
 
     storage
-        .remember_protocol_model_provider(&access, "shared-model", &primary_provider_id)
+        .remember_protocol_model_provider(&access, "test-model", &primary_provider_id)
         .await
         .expect("remember current provider");
     let selected = storage
-        .select_protocol_model_candidates(&access, "shared-model")
+        .select_protocol_model_candidates(&access, "test-model")
         .await
         .expect("select candidates with remembered provider");
     assert_eq!(selected[0].provider.id, primary_provider_id);

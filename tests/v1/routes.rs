@@ -26,7 +26,7 @@ async fn post_status(app: &axum::Router, path: &str) -> StatusCode {
                 .uri(path)
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    r#"{"model":"image-public","prompt":"private prompt"}"#,
+                    r#"{"model":"image-upstream","prompt":"private prompt"}"#,
                 ))
                 .expect("build request"),
         )

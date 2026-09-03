@@ -105,7 +105,7 @@ async fn create_endpoint_for_url(
             name: format!("{provider_name} endpoint"),
             protocol: None,
             models: vec![EndpointModelInput {
-                model_name: Some("shared-model".to_string()),
+                model_name: Some("deepseek-v4-pro".to_string()),
                 provider_id: provider["id"].as_str().expect("provider id").to_string(),
                 upstream_model: "deepseek-v4-pro".to_string(),
             }],
@@ -171,7 +171,7 @@ async fn create_image_endpoint_for_url(
             name: format!("{provider_name} endpoint"),
             protocol: None,
             models: vec![EndpointModelInput {
-                model_name: Some("image-public".to_string()),
+                model_name: Some("image-upstream".to_string()),
                 provider_id: provider["id"].as_str().expect("provider id").to_string(),
                 upstream_model: "image-upstream".to_string(),
             }],
@@ -229,7 +229,7 @@ async fn endpoint_token_resolves_only_its_identity_model_mapping() {
     .await;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(response["data"][0]["id"], "shared-model");
+    assert_eq!(response["data"][0]["id"], "deepseek-v4-pro");
     assert_eq!(response["data"].as_array().expect("models").len(), 1);
 }
 
@@ -255,7 +255,7 @@ async fn image_generation_endpoint_token_uses_only_its_identity_mapping() {
             .header("content-type", "application/json")
             .body(Body::from(
                 serde_json::json!({
-                    "model": "image-public",
+                    "model": "image-upstream",
                     "prompt": "private prompt"
                 })
                 .to_string(),
@@ -335,7 +335,7 @@ async fn protocol_request_writes_identity_scoped_log_and_response_session() {
             .header("authorization", format!("Bearer {token}"))
             .header("content-type", "application/json")
             .body(Body::from(
-                serde_json::json!({ "model": "shared-model", "input": "hello" }).to_string(),
+                serde_json::json!({ "model": "deepseek-v4-pro", "input": "hello" }).to_string(),
             ))
             .expect("build protocol request"),
     )

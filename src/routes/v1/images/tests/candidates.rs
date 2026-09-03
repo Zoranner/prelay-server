@@ -40,7 +40,7 @@ async fn fails_over_from_server_error_to_second_image_candidate() {
     let auth = create_test_endpoint_auth_with_candidates(
         &state.storage,
         &[primary_provider, backup_provider],
-        "image-public",
+        "image-upstream",
         "image-upstream",
     )
     .await;
@@ -50,7 +50,7 @@ async fn fails_over_from_server_error_to_second_image_candidate() {
         State(state.clone()),
         auth.access,
         Json(json!({
-            "model": "image-public",
+            "model": "image-upstream",
             "prompt": "private prompt"
         })),
     )
@@ -114,7 +114,7 @@ async fn fails_over_when_failed_activity_cannot_be_written() {
     let auth = create_test_endpoint_auth_with_candidates(
         &state.storage,
         &[primary_provider, backup_provider],
-        "image-public",
+        "image-upstream",
         "image-upstream",
     )
     .await;
@@ -124,7 +124,7 @@ async fn fails_over_when_failed_activity_cannot_be_written() {
         State(state),
         auth.access,
         Json(json!({
-            "model": "image-public",
+            "model": "image-upstream",
             "prompt": "private prompt"
         })),
     )

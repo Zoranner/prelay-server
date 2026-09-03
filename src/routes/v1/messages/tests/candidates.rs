@@ -24,12 +24,12 @@ async fn fails_over_messages_to_a_healthy_candidate_and_keeps_using_it() {
     let auth = create_test_endpoint_auth_with_candidates(
         &state.storage,
         &[primary, backup],
-        "shared-model",
+        "deepseek-chat",
         "deepseek-chat",
     )
     .await;
     let payload = json!({
-        "model": "shared-model",
+        "model": "deepseek-chat",
         "max_tokens": 1024,
         "messages": [{ "role": "user", "content": "hello" }]
     });
