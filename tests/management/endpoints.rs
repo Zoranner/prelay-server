@@ -58,6 +58,49 @@ async fn management_endpoint_rejects_duplicate_model_names_without_creating_an_i
 }
 
 #[tokio::test]
+async fn management_endpoint_preserves_public_model_name_and_resolves_display_name() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let identity = register(&app, "machine-a", "S-1-5-21-100").await;
+    let credential = identity["credential"].as_str().expect("credential");
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Provider A",
+            "provider_type": "openai_compatible",
+            "base_url": "https://provider-a.example",
+            "api_key": "sk-a",
+            "models": ["model-a"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let provider_id = provider["id"].as_str().expect("provider id");
+
+    let (status, endpoint): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/endpoints",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Endpoint A",
+            "models": [{
+                "provider_id": provider_id,
+                "upstream_model": "model-a",
+                "model_name": "custom-public-name"
+            }]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(endpoint["models"][0]["model_name"], "custom-public-name");
+    assert_eq!(endpoint["models"][0]["upstream_model"], "model-a");
+    assert_eq!(endpoint["models"][0]["display_name"], "custom-public-name");
+}
+
+#[tokio::test]
 async fn management_endpoint_rejects_duplicate_model_names_without_updating_the_interface() {
     let app = app::router(test_state().await).await.expect("build app");
     let identity = register(&app, "machine-a", "S-1-5-21-100").await;
@@ -140,6 +183,60 @@ async fn management_endpoint_rejects_duplicate_model_names_without_updating_the_
         1
     );
     assert_eq!(endpoint["models"][0]["model_name"], "public-model");
+}
+
+#[tokio::test]
+async fn management_endpoint_model_display_name_falls_back_for_unknown_id() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let identity = register(
+        &app,
+        "machine-endpoint-display",
+        "S-1-5-21-endpoint-display",
+    )
+    .await;
+    let credential = identity["credential"].as_str().expect("credential");
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Provider A",
+            "provider_type": "openai_compatible",
+            "base_url": "https://provider-a.example",
+            "api_key": "sk-a",
+            "models": ["gpt-5.6-luna", "unknown-model"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let provider_id = provider["id"].as_str().expect("provider id");
+
+    let (status, endpoint): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/endpoints",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Endpoint Display",
+            "models": [
+                {
+                    "provider_id": provider_id,
+                    "upstream_model": "gpt-5.6-luna",
+                    "model_name": "gpt-5.6-luna"
+                },
+                {
+                    "provider_id": provider_id,
+                    "upstream_model": "unknown-model",
+                    "model_name": "unknown-model"
+                }
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(endpoint["models"][0]["display_name"], "GPT-5.6 Luna");
+    assert_eq!(endpoint["models"][1]["display_name"], "unknown-model");
 }
 
 #[tokio::test]

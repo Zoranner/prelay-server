@@ -341,7 +341,13 @@ fn normalize_models(models: Vec<EndpointModelInput>) -> Result<Vec<NormalizedMod
     let mut normalized = Vec::with_capacity(models.len());
     for model in models {
         let upstream_model = model.upstream_model.trim().to_string();
-        let model_name = upstream_model.clone();
+        let model_name = model
+            .model_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .unwrap_or(&upstream_model)
+            .to_string();
         let mapping = (
             model_name.clone(),
             model.provider_id.clone(),

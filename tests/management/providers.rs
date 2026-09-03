@@ -131,3 +131,41 @@ async fn management_provider_response_exposes_the_key_only_to_its_current_identi
         StatusCode::NOT_FOUND
     );
 }
+
+#[tokio::test]
+async fn management_provider_model_display_name_falls_back_for_unknown_id() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let identity = register(
+        &app,
+        "machine-provider-display",
+        "S-1-5-21-provider-display",
+    )
+    .await;
+    let credential = identity["credential"].as_str().expect("credential");
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Provider Display",
+            "provider_type": "openai_compatible",
+            "base_url": "https://provider.example",
+            "api_key": "sk-display",
+            "models": ["gpt-5.6-luna", "unknown-model"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let models = provider["models"].as_array().expect("provider models");
+    let known = models
+        .iter()
+        .find(|model| model["model_name"] == "gpt-5.6-luna")
+        .expect("known model");
+    assert_eq!(known["display_name"], "GPT-5.6 Luna");
+    let unknown = models
+        .iter()
+        .find(|model| model["model_name"] == "unknown-model")
+        .expect("unknown model");
+    assert_eq!(unknown["display_name"], "unknown-model");
+}
