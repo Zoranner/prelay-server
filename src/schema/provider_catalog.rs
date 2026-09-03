@@ -74,9 +74,9 @@ pub(crate) async fn apply(db: &DatabaseConnection, catalog: &ProviderCatalog) ->
         provider_targets.insert(provider_id, (provider_type, target));
     }
 
-    validate_provider_models(&transaction, catalog, &provider_targets).await?;
-    validate_endpoint_models(&transaction, catalog, &provider_targets).await?;
-    validate_model_aliases(&transaction, catalog, &provider_targets).await?;
+    cleanup_endpoint_models(&transaction, catalog, &provider_targets).await?;
+    cleanup_provider_models(&transaction, catalog, &provider_targets).await?;
+    cleanup_model_aliases(&transaction, catalog, &provider_targets).await?;
 
     for (provider_id, (provider_type, target)) in &provider_targets {
         if provider_type != target {
@@ -99,7 +99,7 @@ pub(crate) async fn apply(db: &DatabaseConnection, catalog: &ProviderCatalog) ->
     transaction.commit().await
 }
 
-async fn validate_provider_models(
+async fn cleanup_provider_models(
     transaction: &DatabaseTransaction,
     catalog: &ProviderCatalog,
     provider_targets: &HashMap<String, (String, &'static str)>,
@@ -107,26 +107,29 @@ async fn validate_provider_models(
     let rows = transaction
         .query_all_raw(Statement::from_string(
             DbBackend::Postgres,
-            "SELECT provider_id, model_name FROM identity_provider_models ORDER BY provider_id, model_name"
+            "SELECT id, provider_id, model_name FROM identity_provider_models ORDER BY provider_id, model_name"
                 .to_owned(),
         ))
         .await?;
     for row in rows {
+        let model_id: String = row.try_get("", "id")?;
         let provider_id: String = row.try_get("", "provider_id")?;
         let model_name: String = row.try_get("", "model_name")?;
         let target = provider_target(&provider_id, provider_targets)?;
-        if !catalog.provider_supports_language_model(target, &model_name)
-            && !catalog.provider_supports_image_generation_model(target, &model_name)
-        {
-            return Err(migration_error(format!(
-                "供应商 {provider_id} 的模型 {model_name} 不在目录供应商 {target} 的模型清单中"
-            )));
+        if should_remove_model(catalog, target, &model_name) {
+            transaction
+                .execute_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "DELETE FROM identity_provider_models WHERE id = $1",
+                    [model_id.into()],
+                ))
+                .await?;
         }
     }
     Ok(())
 }
 
-async fn validate_endpoint_models(
+async fn cleanup_endpoint_models(
     transaction: &DatabaseTransaction,
     catalog: &ProviderCatalog,
     provider_targets: &HashMap<String, (String, &'static str)>,
@@ -134,7 +137,7 @@ async fn validate_endpoint_models(
     let rows = transaction
         .query_all_raw(Statement::from_string(
             DbBackend::Postgres,
-            "SELECT id, provider_id, model_name, upstream_model FROM identity_endpoint_models ORDER BY id"
+            "SELECT id, endpoint_id, provider_id, model_name, upstream_model FROM identity_endpoint_models ORDER BY id"
                 .to_owned(),
         ))
         .await?;
@@ -143,24 +146,34 @@ async fn validate_endpoint_models(
         let provider_id: String = row.try_get("", "provider_id")?;
         let model_name: String = row.try_get("", "model_name")?;
         let upstream_model: String = row.try_get("", "upstream_model")?;
-        if model_name.trim() != upstream_model.trim() {
-            return Err(migration_error(format!(
-                "接入点模型 {endpoint_model_id} 使用旧别名 {model_name} -> {upstream_model}，无法无损迁移"
-            )));
-        }
         let target = provider_target(&provider_id, provider_targets)?;
-        if !catalog.provider_supports_language_model(target, &upstream_model)
-            && !catalog.provider_supports_image_generation_model(target, &upstream_model)
+        if model_name.trim() != upstream_model.trim()
+            || should_remove_model(catalog, target, &upstream_model)
         {
-            return Err(migration_error(format!(
-                "接入点模型 {endpoint_model_id} 的上游模型 {upstream_model} 不在目录供应商 {target} 的模型清单中"
-            )));
+            transaction
+                .execute_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "DELETE FROM identity_endpoint_model_routes WHERE endpoint_id = $1 AND model_name = $2 AND provider_id = $3",
+                    [
+                        row.try_get::<String>("", "endpoint_id")?.into(),
+                        model_name.clone().into(),
+                        provider_id.clone().into(),
+                    ],
+                ))
+                .await?;
+            transaction
+                .execute_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "DELETE FROM identity_endpoint_models WHERE id = $1",
+                    [endpoint_model_id.into()],
+                ))
+                .await?;
         }
     }
     Ok(())
 }
 
-async fn validate_model_aliases(
+async fn cleanup_model_aliases(
     transaction: &DatabaseTransaction,
     catalog: &ProviderCatalog,
     provider_targets: &HashMap<String, (String, &'static str)>,
@@ -177,15 +190,22 @@ async fn validate_model_aliases(
         let provider_id: String = row.try_get("", "provider_id")?;
         let upstream_model: String = row.try_get("", "upstream_model")?;
         let target = provider_target(&provider_id, provider_targets)?;
-        if !catalog.provider_supports_language_model(target, &upstream_model)
-            && !catalog.provider_supports_image_generation_model(target, &upstream_model)
-        {
-            return Err(migration_error(format!(
-                "模型别名 {alias_id} 的上游模型 {upstream_model} 不在目录供应商 {target} 的模型清单中"
-            )));
+        if should_remove_model(catalog, target, &upstream_model) {
+            transaction
+                .execute_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "DELETE FROM identity_model_aliases WHERE id = $1",
+                    [alias_id.into()],
+                ))
+                .await?;
         }
     }
     Ok(())
+}
+
+fn should_remove_model(catalog: &ProviderCatalog, provider_id: &str, model_name: &str) -> bool {
+    !catalog.provider_supports_language_model(provider_id, model_name)
+        && !catalog.provider_supports_image_generation_model(provider_id, model_name)
 }
 
 fn provider_target(
@@ -207,7 +227,22 @@ fn migration_error(message: impl Into<String>) -> DbErr {
 
 #[cfg(test)]
 mod tests {
-    use super::target_provider_id;
+    use super::{should_remove_model, target_provider_id};
+    use crate::provider_catalog::ProviderCatalog;
+    use std::path::Path;
+
+    #[test]
+    fn marks_models_outside_provider_catalog_for_cleanup() {
+        let catalog =
+            ProviderCatalog::load(Path::new("config/catalog")).expect("load provider catalog");
+
+        assert!(should_remove_model(
+            &catalog,
+            "gotoken",
+            "codex-auto-review"
+        ));
+        assert!(!should_remove_model(&catalog, "gotoken", "gpt-5.6-sol"));
+    }
 
     #[test]
     fn maps_legacy_provider_types_to_current_catalog_ids() {
