@@ -150,14 +150,14 @@ async fn create_image_endpoint_for_url(
         Some(credential),
         serde_json::to_value(CreateProviderRequest {
             name: provider_name.to_string(),
-            provider_type: "custom_image".to_string(),
+            provider_type: "gotoken".to_string(),
             base_url: base_url.to_string(),
             api_key: format!("sk-{provider_name}"),
             capabilities: Some(ProviderCapabilityOverrides {
                 upstream_protocols: Some(vec!["images_generations".to_string()]),
                 ..ProviderCapabilityOverrides::default()
             }),
-            models: vec!["image-upstream".to_string()],
+            models: vec!["gpt-image-1".to_string()],
         })
         .expect("serialize image provider"),
     )
@@ -171,7 +171,7 @@ async fn create_image_endpoint_for_url(
             protocol: None,
             models: vec![EndpointModelInput {
                 provider_id: provider["id"].as_str().expect("provider id").to_string(),
-                upstream_model: "image-upstream".to_string(),
+                upstream_model: "gpt-image-1".to_string(),
             }],
         })
         .expect("serialize image endpoint"),
@@ -185,7 +185,7 @@ async fn spawn_identity_image_upstream(provider_name: &'static str) -> (String, 
         axum::Json(payload): axum::Json<Value>,
     ) -> axum::Json<Value> {
         hits.fetch_add(1, Ordering::SeqCst);
-        assert_eq!(payload["model"], "image-upstream");
+        assert_eq!(payload["model"], "gpt-image-1");
         axum::Json(serde_json::json!({
             "provider": provider_name,
             "data": [{ "url": format!("https://{provider_name}.example/result") }]
@@ -253,7 +253,7 @@ async fn image_generation_endpoint_token_uses_only_its_identity_mapping() {
             .header("content-type", "application/json")
             .body(Body::from(
                 serde_json::json!({
-                    "model": "image-upstream",
+                    "model": "gpt-image-1",
                     "prompt": "private prompt"
                 })
                 .to_string(),
