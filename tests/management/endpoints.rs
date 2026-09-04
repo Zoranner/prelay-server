@@ -1,6 +1,10 @@
-use axum::http::StatusCode;
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+};
 use prelay_protocol::CreateProviderRequest;
 use prelay_server::{app, test_support::test_state};
+use tower::ServiceExt;
 
 use crate::{auth::register, http::request_json, status::request_status};
 
@@ -36,13 +40,11 @@ async fn management_endpoint_rejects_duplicate_model_names_without_creating_an_i
             "models": [
                 {
                     "provider_id": provider_id,
-                    "upstream_model": "model-a",
-                    "model_name": "public-model"
+                    "upstream_model": "model-a"
                 },
                 {
                     "provider_id": provider_id,
-                    "upstream_model": "model-a",
-                    "model_name": " public-model "
+                    "upstream_model": "model-a"
                 }
             ]
         })),
@@ -58,7 +60,7 @@ async fn management_endpoint_rejects_duplicate_model_names_without_creating_an_i
 }
 
 #[tokio::test]
-async fn management_endpoint_preserves_public_model_name_and_resolves_display_name() {
+async fn management_endpoint_rejects_custom_public_model_name_and_resolves_display_name() {
     let app = app::router(test_state().await).await.expect("build app");
     let identity = register(&app, "machine-a", "S-1-5-21-100").await;
     let credential = identity["credential"].as_str().expect("credential");
@@ -79,6 +81,31 @@ async fn management_endpoint_preserves_public_model_name_and_resolves_display_na
     assert_eq!(status, StatusCode::CREATED);
     let provider_id = provider["id"].as_str().expect("provider id");
 
+    let custom_request = Request::builder()
+        .method("POST")
+        .uri("/api/endpoints")
+        .header("authorization", format!("Bearer {credential}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({
+                "name": "Endpoint A",
+                "models": [{
+                    "provider_id": provider_id,
+                    "upstream_model": "model-a",
+                    "modelName": "custom-public-name"
+                }]
+            })
+            .to_string(),
+        ))
+        .expect("build custom model request");
+    let status = app
+        .clone()
+        .oneshot(custom_request)
+        .await
+        .expect("custom model request")
+        .status();
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
     let (status, endpoint): (StatusCode, serde_json::Value) = request_json(
         &app,
         "POST",
@@ -88,16 +115,15 @@ async fn management_endpoint_preserves_public_model_name_and_resolves_display_na
             "name": "Endpoint A",
             "models": [{
                 "provider_id": provider_id,
-                "upstream_model": "model-a",
-                "model_name": "custom-public-name"
+                "upstream_model": " model-a "
             }]
         })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(endpoint["models"][0]["model_name"], "custom-public-name");
+    assert_eq!(endpoint["models"][0]["model_name"], "model-a");
     assert_eq!(endpoint["models"][0]["upstream_model"], "model-a");
-    assert_eq!(endpoint["models"][0]["display_name"], "custom-public-name");
+    assert_eq!(endpoint["models"][0]["display_name"], "model-a");
 }
 
 #[tokio::test]
@@ -131,8 +157,7 @@ async fn management_endpoint_rejects_duplicate_model_names_without_updating_the_
             "name": "Endpoint A",
             "models": [{
                 "provider_id": provider_id,
-                "upstream_model": "model-a",
-                "model_name": "public-model"
+                "upstream_model": "model-a"
             }]
         })),
     )
@@ -150,13 +175,11 @@ async fn management_endpoint_rejects_duplicate_model_names_without_updating_the_
             "models": [
                 {
                     "provider_id": provider_id,
-                    "upstream_model": "model-a",
-                    "model_name": "public-model"
+                    "upstream_model": "model-a"
                 },
                 {
                     "provider_id": provider_id,
-                    "upstream_model": " model-a ",
-                    "model_name": " public-model "
+                    "upstream_model": " model-a "
                 }
             ]
         })),
@@ -182,7 +205,7 @@ async fn management_endpoint_rejects_duplicate_model_names_without_updating_the_
             .len(),
         1
     );
-    assert_eq!(endpoint["models"][0]["model_name"], "public-model");
+    assert_eq!(endpoint["models"][0]["model_name"], "model-a");
 }
 
 #[tokio::test]
@@ -222,13 +245,11 @@ async fn management_endpoint_model_display_name_falls_back_for_unknown_id() {
             "models": [
                 {
                     "provider_id": provider_id,
-                    "upstream_model": "gpt-5.6-luna",
-                    "model_name": "gpt-5.6-luna"
+                    "upstream_model": "gpt-5.6-luna"
                 },
                 {
                     "provider_id": provider_id,
-                    "upstream_model": "unknown-model",
-                    "model_name": "unknown-model"
+                    "upstream_model": "unknown-model"
                 }
             ]
         })),
@@ -343,7 +364,6 @@ async fn management_credential_deletes_own_endpoint_with_model_mapping() {
         Some(serde_json::json!({
             "name": "Endpoint A",
             "models": [{
-                "model_name": "public-model",
                 "provider_id": provider_id,
                 "upstream_model": "model-a"
             }]
