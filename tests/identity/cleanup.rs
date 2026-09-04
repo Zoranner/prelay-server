@@ -176,7 +176,6 @@ async fn seed_owned_resources(
                 name: "Test endpoint".to_string(),
                 protocol: None,
                 models: vec![EndpointModelInput {
-                    model_name: Some("upstream-model".to_string()),
                     provider_id: provider_id.clone(),
                     upstream_model: "upstream-model".to_string(),
                 }],

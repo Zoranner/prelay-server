@@ -105,7 +105,6 @@ async fn create_endpoint_for_url(
             name: format!("{provider_name} endpoint"),
             protocol: None,
             models: vec![EndpointModelInput {
-                model_name: Some("deepseek-v4-pro".to_string()),
                 provider_id: provider["id"].as_str().expect("provider id").to_string(),
                 upstream_model: "deepseek-v4-pro".to_string(),
             }],
@@ -171,7 +170,6 @@ async fn create_image_endpoint_for_url(
             name: format!("{provider_name} endpoint"),
             protocol: None,
             models: vec![EndpointModelInput {
-                model_name: Some("image-upstream".to_string()),
                 provider_id: provider["id"].as_str().expect("provider id").to_string(),
                 upstream_model: "image-upstream".to_string(),
             }],

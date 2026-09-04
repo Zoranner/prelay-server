@@ -40,12 +40,10 @@ async fn model_candidates_keep_mapping_order_then_prefer_observed_latency() {
                     EndpointModelInput {
                         provider_id: primary_provider_id.clone(),
                         upstream_model: "test-model".to_string(),
-                        model_name: Some("test-model".to_string()),
                     },
                     EndpointModelInput {
                         provider_id: backup_provider_id.clone(),
                         upstream_model: "test-model".to_string(),
-                        model_name: Some("test-model".to_string()),
                     },
                 ],
             },

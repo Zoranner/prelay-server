@@ -83,7 +83,7 @@ pub(crate) async fn create_test_endpoint_auth(
 pub(crate) async fn create_test_endpoint_auth_with_candidates(
     storage: &crate::storage::Storage,
     providers: &[crate::models::ProviderConfig],
-    model_name: &str,
+    _model_name: &str,
     upstream_model: &str,
 ) -> TestEndpointAuth {
     let identity = storage
@@ -116,7 +116,6 @@ pub(crate) async fn create_test_endpoint_auth_with_candidates(
         models.push(prelay_protocol::EndpointModelInput {
             provider_id,
             upstream_model: upstream_model.to_string(),
-            model_name: Some(model_name.to_string()),
         });
     }
     let endpoint = storage
