@@ -90,4 +90,4 @@ protocols = ["chat_completions", "responses", "anthropic_messages"]
 language_models = ["MiniMax-M3"]
 
 [providers.protocol_base_urls]
-anthropic_messages = "https://api.minimax.cn/anthropic"
+anthropic_messages = "https://api.minimax.cn/anthropic/v1"
