@@ -141,11 +141,11 @@ async fn management_stats_only_return_the_current_identity_request_data() {
         Some(
             serde_json::to_value(CreateProviderRequest {
                 name: "Provider A".to_string(),
-                provider_type: "openai_compatible".to_string(),
+                provider_type: "deepseek".to_string(),
                 base_url: "https://provider-a.example".to_string(),
                 api_key: "sk-a".to_string(),
                 capabilities: None,
-                models: vec!["model-a".to_string()],
+                models: vec!["deepseek-v4-flash".to_string()],
             })
             .expect("serialize provider A"),
         ),
@@ -165,11 +165,11 @@ async fn management_stats_only_return_the_current_identity_request_data() {
         Some(
             serde_json::to_value(CreateProviderRequest {
                 name: "Provider B".to_string(),
-                provider_type: "openai_compatible".to_string(),
+                provider_type: "deepseek".to_string(),
                 base_url: "https://provider-b.example".to_string(),
                 api_key: "sk-b".to_string(),
                 capabilities: None,
-                models: vec!["model-b".to_string()],
+                models: vec!["deepseek-v4-pro".to_string()],
             })
             .expect("serialize provider B"),
         ),
@@ -185,7 +185,7 @@ async fn management_stats_only_return_the_current_identity_request_data() {
             identity_id: identity_a_id,
             provider_id: provider_a_id,
             provider_name: "Provider A",
-            model_requested: "model-a",
+            model_requested: "deepseek-v4-flash",
             status: "success",
             input_tokens: 3,
             output_tokens: 4,
@@ -199,7 +199,7 @@ async fn management_stats_only_return_the_current_identity_request_data() {
             identity_id: identity_b_id,
             provider_id: provider_b_id,
             provider_name: "Provider B",
-            model_requested: "model-b",
+            model_requested: "deepseek-v4-pro",
             status: "failed",
             input_tokens: 5,
             output_tokens: 6,
@@ -257,11 +257,11 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     assert_eq!(activities_a[0].provider_name.as_deref(), Some("Provider A"));
     assert_eq!(
         activities_a[0].model_requested_display_name.as_deref(),
-        Some("model-a")
+        Some("DeepSeek V4 Flash")
     );
     assert_eq!(
         activities_a[0].model_upstream_display_name.as_deref(),
-        Some("model-a")
+        Some("DeepSeek V4 Flash")
     );
 
     let (status, models_a): (StatusCode, Vec<ModelStatsSummary>) = request_json(
@@ -274,10 +274,13 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(models_a.len(), 1);
-    assert_eq!(models_a[0].model_requested.as_deref(), Some("model-a"));
+    assert_eq!(
+        models_a[0].model_requested.as_deref(),
+        Some("deepseek-v4-flash")
+    );
     assert_eq!(
         models_a[0].model_requested_display_name.as_deref(),
-        Some("model-a")
+        Some("DeepSeek V4 Flash")
     );
     assert_eq!(models_a[0].total_requests, 1);
     assert_eq!(models_a[0].input_tokens, 3);
@@ -354,17 +357,20 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     assert_eq!(activities_b[0].provider_name.as_deref(), Some("Provider B"));
     assert_eq!(
         activities_b[0].model_requested_display_name.as_deref(),
-        Some("model-b")
+        Some("DeepSeek V4 Pro")
     );
 
     let (status, models_b): (StatusCode, Vec<ModelStatsSummary>) =
         request_json(&app, "GET", "/api/stats/models", Some(credential_b), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(models_b.len(), 1);
-    assert_eq!(models_b[0].model_requested.as_deref(), Some("model-b"));
+    assert_eq!(
+        models_b[0].model_requested.as_deref(),
+        Some("deepseek-v4-pro")
+    );
     assert_eq!(
         models_b[0].model_requested_display_name.as_deref(),
-        Some("model-b")
+        Some("DeepSeek V4 Pro")
     );
     assert_eq!(models_b[0].total_requests, 1);
     assert_eq!(models_b[0].input_tokens, 5);

@@ -49,7 +49,10 @@ async fn create(
     Extension(identity): Extension<CurrentIdentity>,
     Json(input): Json<CreateProviderRequest>,
 ) -> Result<(StatusCode, Json<ProviderResponse>), AppError> {
-    let provider_id = state.storage.create_provider(&identity.id, input).await?;
+    let provider_id = state
+        .storage
+        .create_provider_with_catalog(&identity.id, input, &state.provider_catalog)
+        .await?;
     Ok((
         StatusCode::CREATED,
         Json(

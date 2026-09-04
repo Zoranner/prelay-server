@@ -20,10 +20,10 @@ async fn management_endpoint_rejects_duplicate_model_names_without_creating_an_i
         Some(credential),
         Some(serde_json::json!({
             "name": "Provider A",
-            "provider_type": "openai_compatible",
+            "provider_type": "deepseek",
             "base_url": "https://provider-a.example",
             "api_key": "sk-a",
-            "models": ["model-a"]
+            "models": ["deepseek-v4-flash"]
         })),
     )
     .await;
@@ -40,11 +40,11 @@ async fn management_endpoint_rejects_duplicate_model_names_without_creating_an_i
             "models": [
                 {
                     "provider_id": provider_id,
-                    "upstream_model": "model-a"
+                    "upstream_model": "deepseek-v4-flash"
                 },
                 {
                     "provider_id": provider_id,
-                    "upstream_model": "model-a"
+                    "upstream_model": "deepseek-v4-flash"
                 }
             ]
         })),
@@ -60,6 +60,72 @@ async fn management_endpoint_rejects_duplicate_model_names_without_creating_an_i
 }
 
 #[tokio::test]
+async fn management_endpoint_rejects_provider_model_outside_catalog_relationship() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let identity = register(&app, "machine-endpoint-catalog", "S-1-5-21-endpoint-catalog").await;
+    let credential = identity["credential"].as_str().expect("credential");
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(&app, "POST", "/api/providers", Some(credential), Some(serde_json::json!({"name":"DeepSeek","provider_type":"deepseek","base_url":"https://provider.example","api_key":"sk-a","models":["deepseek-v4-flash"]}))).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let provider_id = provider["id"].as_str().expect("provider id");
+
+    let (status, error): (StatusCode, serde_json::Value) = request_json(&app, "POST", "/api/endpoints", Some(credential), Some(serde_json::json!({"name":"Endpoint A","models":[{"provider_id":provider_id,"upstream_model":"deepseek-v4-pro"}]}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error["error"]["code"], "validation_failed");
+}
+
+#[tokio::test]
+async fn management_endpoint_keeps_same_model_candidates_and_distinct_ids() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let identity = register(
+        &app,
+        "machine-endpoint-candidates",
+        "S-1-5-21-endpoint-candidates",
+    )
+    .await;
+    let credential = identity["credential"].as_str().expect("credential");
+    let mut provider_ids = Vec::new();
+    for name in ["DeepSeek A", "DeepSeek B"] {
+        let (status, provider): (StatusCode, serde_json::Value) = request_json(
+            &app,
+            "POST",
+            "/api/providers",
+            Some(credential),
+            Some(serde_json::json!({
+                "name": name,
+                "provider_type": "deepseek",
+                "base_url": "https://provider.example",
+                "api_key": "sk-a",
+                "models": ["deepseek-v4-flash", "deepseek-v4-pro"]
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        provider_ids.push(provider["id"].as_str().expect("provider id").to_string());
+    }
+    let (status, endpoint): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/endpoints",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Endpoint A",
+            "models": [
+                { "provider_id": provider_ids[0], "upstream_model": "deepseek-v4-flash" },
+                { "provider_id": provider_ids[1], "upstream_model": "deepseek-v4-flash" },
+                { "provider_id": provider_ids[0], "upstream_model": "deepseek-v4-pro" }
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let models = endpoint["models"].as_array().expect("endpoint models");
+    assert_eq!(models.len(), 3);
+    assert_eq!(models[0]["model_name"], "deepseek-v4-flash");
+    assert_eq!(models[1]["model_name"], "deepseek-v4-flash");
+    assert_eq!(models[2]["model_name"], "deepseek-v4-pro");
+}
+
+#[tokio::test]
 async fn management_endpoint_rejects_custom_public_model_name_and_resolves_display_name() {
     let app = app::router(test_state().await).await.expect("build app");
     let identity = register(&app, "machine-a", "S-1-5-21-100").await;
@@ -71,10 +137,10 @@ async fn management_endpoint_rejects_custom_public_model_name_and_resolves_displ
         Some(credential),
         Some(serde_json::json!({
             "name": "Provider A",
-            "provider_type": "openai_compatible",
+            "provider_type": "deepseek",
             "base_url": "https://provider-a.example",
             "api_key": "sk-a",
-            "models": ["model-a"]
+            "models": ["deepseek-v4-flash"]
         })),
     )
     .await;
@@ -91,7 +157,7 @@ async fn management_endpoint_rejects_custom_public_model_name_and_resolves_displ
                 "name": "Endpoint A",
                 "models": [{
                     "provider_id": provider_id,
-                    "upstream_model": "model-a",
+                    "upstream_model": "deepseek-v4-flash",
                     "modelName": "custom-public-name"
                 }]
             })
@@ -115,15 +181,15 @@ async fn management_endpoint_rejects_custom_public_model_name_and_resolves_displ
             "name": "Endpoint A",
             "models": [{
                 "provider_id": provider_id,
-                "upstream_model": " model-a "
+                "upstream_model": " deepseek-v4-flash "
             }]
         })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(endpoint["models"][0]["model_name"], "model-a");
-    assert_eq!(endpoint["models"][0]["upstream_model"], "model-a");
-    assert_eq!(endpoint["models"][0]["display_name"], "model-a");
+    assert_eq!(endpoint["models"][0]["model_name"], "deepseek-v4-flash");
+    assert_eq!(endpoint["models"][0]["upstream_model"], "deepseek-v4-flash");
+    assert_eq!(endpoint["models"][0]["display_name"], "DeepSeek V4 Flash");
 }
 
 #[tokio::test]
@@ -138,10 +204,10 @@ async fn management_endpoint_rejects_duplicate_model_names_without_updating_the_
         Some(credential),
         Some(serde_json::json!({
             "name": "Provider A",
-            "provider_type": "openai_compatible",
+            "provider_type": "deepseek",
             "base_url": "https://provider-a.example",
             "api_key": "sk-a",
-            "models": ["model-a"]
+            "models": ["deepseek-v4-flash"]
         })),
     )
     .await;
@@ -157,7 +223,7 @@ async fn management_endpoint_rejects_duplicate_model_names_without_updating_the_
             "name": "Endpoint A",
             "models": [{
                 "provider_id": provider_id,
-                "upstream_model": "model-a"
+                "upstream_model": "deepseek-v4-flash"
             }]
         })),
     )
@@ -175,11 +241,11 @@ async fn management_endpoint_rejects_duplicate_model_names_without_updating_the_
             "models": [
                 {
                     "provider_id": provider_id,
-                    "upstream_model": "model-a"
+                    "upstream_model": "deepseek-v4-flash"
                 },
                 {
                     "provider_id": provider_id,
-                    "upstream_model": " model-a "
+                    "upstream_model": " deepseek-v4-flash "
                 }
             ]
         })),
@@ -205,11 +271,11 @@ async fn management_endpoint_rejects_duplicate_model_names_without_updating_the_
             .len(),
         1
     );
-    assert_eq!(endpoint["models"][0]["model_name"], "model-a");
+    assert_eq!(endpoint["models"][0]["model_name"], "deepseek-v4-flash");
 }
 
 #[tokio::test]
-async fn management_endpoint_model_display_name_falls_back_for_unknown_id() {
+async fn management_endpoint_model_display_name_uses_catalog_id() {
     let app = app::router(test_state().await).await.expect("build app");
     let identity = register(
         &app,
@@ -225,10 +291,10 @@ async fn management_endpoint_model_display_name_falls_back_for_unknown_id() {
         Some(credential),
         Some(serde_json::json!({
             "name": "Provider A",
-            "provider_type": "openai_compatible",
+            "provider_type": "deepseek",
             "base_url": "https://provider-a.example",
             "api_key": "sk-a",
-            "models": ["gpt-5.6-luna", "unknown-model"]
+            "models": ["deepseek-v4-flash"]
         })),
     )
     .await;
@@ -245,19 +311,14 @@ async fn management_endpoint_model_display_name_falls_back_for_unknown_id() {
             "models": [
                 {
                     "provider_id": provider_id,
-                    "upstream_model": "gpt-5.6-luna"
-                },
-                {
-                    "provider_id": provider_id,
-                    "upstream_model": "unknown-model"
+                    "upstream_model": "deepseek-v4-flash"
                 }
             ]
         })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(endpoint["models"][0]["display_name"], "GPT-5.6 Luna");
-    assert_eq!(endpoint["models"][1]["display_name"], "unknown-model");
+    assert_eq!(endpoint["models"][0]["display_name"], "DeepSeek V4 Flash");
 }
 
 #[tokio::test]
@@ -339,11 +400,11 @@ async fn management_credential_deletes_own_endpoint_with_model_mapping() {
     let credential_a = identity_a["credential"].as_str().expect("credential A");
     let provider_request = CreateProviderRequest {
         name: "Provider A".to_string(),
-        provider_type: "openai_compatible".to_string(),
+        provider_type: "deepseek".to_string(),
         base_url: "https://provider-a.example".to_string(),
         api_key: "sk-a".to_string(),
         capabilities: None,
-        models: vec!["model-a".to_string()],
+        models: vec!["deepseek-v4-flash".to_string()],
     };
     let (status, provider): (StatusCode, serde_json::Value) = request_json(
         &app,
@@ -365,7 +426,7 @@ async fn management_credential_deletes_own_endpoint_with_model_mapping() {
             "name": "Endpoint A",
             "models": [{
                 "provider_id": provider_id,
-                "upstream_model": "model-a"
+                "upstream_model": "deepseek-v4-flash"
             }]
         })),
     )

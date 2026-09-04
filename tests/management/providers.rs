@@ -11,11 +11,11 @@ async fn management_credential_cannot_read_or_mutate_another_identity_provider()
     let credential_a = identity_a["credential"].as_str().expect("credential A");
     let request = CreateProviderRequest {
         name: "Provider A".to_string(),
-        provider_type: "openai_compatible".to_string(),
+        provider_type: "deepseek".to_string(),
         base_url: "https://provider-a.example".to_string(),
         api_key: "sk-a".to_string(),
         capabilities: None,
-        models: vec!["model-a".to_string()],
+        models: vec!["deepseek-v4-flash".to_string()],
     };
     let (status, provider): (StatusCode, serde_json::Value) = request_json(
         &app,
@@ -28,7 +28,7 @@ async fn management_credential_cannot_read_or_mutate_another_identity_provider()
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(
         provider["upstream_protocols"],
-        serde_json::json!(["openai"])
+        serde_json::json!(["openai", "anthropic"])
     );
     let provider_a = provider["id"].as_str().expect("provider id");
 
@@ -75,10 +75,10 @@ async fn management_provider_rejects_duplicate_model_names_without_creating_a_pr
         Some(credential),
         Some(serde_json::json!({
             "name": "Provider A",
-            "provider_type": "openai_compatible",
+            "provider_type": "deepseek",
             "base_url": "https://provider-a.example",
             "api_key": "sk-a",
-            "models": ["model-a", " model-a "]
+            "models": ["deepseek-v4-flash", " deepseek-v4-flash "]
         })),
     )
     .await;
@@ -89,6 +89,128 @@ async fn management_provider_rejects_duplicate_model_names_without_creating_a_pr
         request_json(&app, "GET", "/api/providers", Some(credential), None).await;
     assert_eq!(status, StatusCode::OK);
     assert!(providers.is_empty());
+}
+
+#[tokio::test]
+async fn management_provider_rejects_unknown_catalog_provider_type_without_updating() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let identity = register(
+        &app,
+        "machine-provider-validation",
+        "S-1-5-21-provider-validation",
+    )
+    .await;
+    let credential = identity["credential"].as_str().expect("credential");
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Provider A",
+            "provider_type": "deepseek",
+            "base_url": "https://provider.example",
+            "api_key": "sk-a",
+            "models": ["deepseek-v4-flash"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let provider_id = provider["id"].as_str().expect("provider id");
+
+    let (status, error): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "PATCH",
+        &format!("/api/providers/{provider_id}"),
+        Some(credential),
+        Some(serde_json::json!({ "provider_type": "not-in-catalog" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error["error"]["code"], "validation_failed");
+
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "GET",
+        &format!("/api/providers/{provider_id}"),
+        Some(credential),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(provider["provider_type"], "deepseek");
+
+    let (status, error): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "PATCH",
+        &format!("/api/providers/{provider_id}"),
+        Some(credential),
+        Some(serde_json::json!({ "models": ["model-not-in-catalog"] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error["error"]["code"], "validation_failed");
+}
+
+#[tokio::test]
+async fn management_provider_rejects_catalog_outside_model_without_creating() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let identity = register(
+        &app,
+        "machine-provider-model-validation",
+        "S-1-5-21-provider-model-validation",
+    )
+    .await;
+    let credential = identity["credential"].as_str().expect("credential");
+    let (status, error): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Provider A",
+            "provider_type": "deepseek",
+            "base_url": "https://provider.example",
+            "api_key": "sk-a",
+            "models": ["model-not-in-catalog"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error["error"]["code"], "validation_failed");
+
+    let (status, providers): (StatusCode, Vec<serde_json::Value>) =
+        request_json(&app, "GET", "/api/providers", Some(credential), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(providers.is_empty());
+}
+
+#[tokio::test]
+async fn management_provider_rejects_empty_model_without_creating() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let identity = register(
+        &app,
+        "machine-provider-empty-model",
+        "S-1-5-21-provider-empty-model",
+    )
+    .await;
+    let credential = identity["credential"].as_str().expect("credential");
+    let (status, error): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Provider A",
+            "provider_type": "deepseek",
+            "base_url": "https://provider.example",
+            "api_key": "sk-a",
+            "models": [" "]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error["error"]["code"], "validation_failed");
 }
 
 #[tokio::test]
@@ -105,10 +227,10 @@ async fn management_provider_response_exposes_the_key_only_to_its_current_identi
         Some(&credential_a),
         Some(serde_json::json!({
             "name": "Provider With Visible Key",
-            "provider_type": "openai_compatible",
+            "provider_type": "deepseek",
             "base_url": "https://provider.example",
             "api_key": "sk-visible-to-owner-only",
-            "models": ["model-a"]
+            "models": ["deepseek-v4-flash"]
         })),
     )
     .await;
@@ -133,7 +255,7 @@ async fn management_provider_response_exposes_the_key_only_to_its_current_identi
 }
 
 #[tokio::test]
-async fn management_provider_model_display_name_falls_back_for_unknown_id() {
+async fn management_provider_model_display_name_uses_catalog_id() {
     let app = app::router(test_state().await).await.expect("build app");
     let identity = register(
         &app,
@@ -149,10 +271,10 @@ async fn management_provider_model_display_name_falls_back_for_unknown_id() {
         Some(credential),
         Some(serde_json::json!({
             "name": "Provider Display",
-            "provider_type": "openai_compatible",
+            "provider_type": "deepseek",
             "base_url": "https://provider.example",
             "api_key": "sk-display",
-            "models": ["gpt-5.6-luna", "unknown-model"]
+            "models": ["deepseek-v4-flash"]
         })),
     )
     .await;
@@ -160,12 +282,8 @@ async fn management_provider_model_display_name_falls_back_for_unknown_id() {
     let models = provider["models"].as_array().expect("provider models");
     let known = models
         .iter()
-        .find(|model| model["model_name"] == "gpt-5.6-luna")
+        .find(|model| model["model_name"] == "deepseek-v4-flash")
         .expect("known model");
-    assert_eq!(known["display_name"], "GPT-5.6 Luna");
-    let unknown = models
-        .iter()
-        .find(|model| model["model_name"] == "unknown-model")
-        .expect("unknown model");
-    assert_eq!(unknown["display_name"], "unknown-model");
+    assert_eq!(known["display_name"], "DeepSeek V4 Flash");
+    assert_eq!(models.len(), 1);
 }

@@ -55,7 +55,7 @@ async fn management_provider_actions_do_not_persist_the_supplied_key() {
         .to_string();
     let base_url = spawn_provider_actions_upstream("sk-provider-action-secret").await;
     let input = serde_json::json!({
-        "provider_type": "openai_compatible",
+        "provider_type": "deepseek",
         "base_url": base_url,
         "api_key": "sk-provider-action-secret",
         "protocol": "openai",
@@ -125,10 +125,10 @@ async fn management_saved_provider_ping_checks_reachability_without_a_provider_k
         Some(&credential),
         Some(serde_json::json!({
             "name": "Saved Provider",
-            "provider_type": "openai_compatible",
+            "provider_type": "deepseek",
             "base_url": format!("http://{address}"),
             "api_key": "sk-provider-action-secret",
-            "models": ["saved-model"]
+            "models": ["deepseek-v4-flash"]
         })),
     )
     .await;

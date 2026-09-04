@@ -137,7 +137,7 @@ pub(crate) async fn create(
     let transaction = db.begin().await?;
     ensure_identity_exists(&transaction, identity_id).await?;
     ensure_name_available(&transaction, identity_id, &name, None).await?;
-    validate_models(&transaction, identity_id, &models).await?;
+    validate_models(&transaction, identity_id, &models, catalog).await?;
 
     identity_endpoint_configs::ActiveModel {
         id: Set(endpoint_id.clone()),
@@ -199,7 +199,7 @@ pub(crate) async fn update(
     let transaction = db.begin().await?;
     ensure_name_available(&transaction, identity_id, &name, Some(endpoint_id)).await?;
     if let Some(models) = &models {
-        validate_models(&transaction, identity_id, models).await?;
+        validate_models(&transaction, identity_id, models, catalog).await?;
     }
 
     let mut active = current.into_active_model();
@@ -365,16 +365,19 @@ async fn validate_models(
     transaction: &DatabaseTransaction,
     identity_id: &str,
     models: &[NormalizedModel],
+    catalog: Option<&ProviderCatalog>,
 ) -> Result<(), StorageError> {
     for model in models {
-        let provider_exists = identity_provider_configs::Entity::find_by_id(&model.provider_id)
+        if model.upstream_model.is_empty() {
+            return Err(StorageError::ValidationFailed(
+                "endpoint upstream model must not be empty".to_string(),
+            ));
+        }
+        let provider = identity_provider_configs::Entity::find_by_id(&model.provider_id)
             .filter(identity_provider_configs::Column::IdentityId.eq(identity_id))
             .one(transaction)
             .await?
-            .is_some();
-        if !provider_exists {
-            return Err(StorageError::ProviderNotFound);
-        }
+            .ok_or(StorageError::ProviderNotFound)?;
         let model_exists = identity_provider_models::Entity::find()
             .filter(identity_provider_models::Column::ProviderId.eq(&model.provider_id))
             .filter(identity_provider_models::Column::ModelName.eq(&model.upstream_model))
@@ -382,7 +385,24 @@ async fn validate_models(
             .await?
             .is_some();
         if !model_exists {
-            return Err(StorageError::ProviderNotFound);
+            return Err(StorageError::ValidationFailed(format!(
+                "provider {} does not support model {}",
+                model.provider_id, model.upstream_model
+            )));
+        }
+        if let Some(catalog) = catalog {
+            if !catalog
+                .provider_supports_language_model(&provider.provider_type, &model.upstream_model)
+                && !catalog.provider_supports_image_generation_model(
+                    &provider.provider_type,
+                    &model.upstream_model,
+                )
+            {
+                return Err(StorageError::ValidationFailed(format!(
+                    "provider {} does not support catalog model {}",
+                    provider.provider_type, model.upstream_model
+                )));
+            }
         }
     }
     Ok(())

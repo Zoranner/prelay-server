@@ -36,6 +36,15 @@ impl Storage {
         create(&self.db, &self.crypto, identity_id, input).await
     }
 
+    pub async fn create_provider_with_catalog(
+        &self,
+        identity_id: &str,
+        input: CreateProviderRequest,
+        catalog: &ProviderCatalog,
+    ) -> Result<String, StorageError> {
+        create_with_catalog(&self.db, &self.crypto, identity_id, input, catalog).await
+    }
+
     pub async fn raw_provider_key_ciphertext(
         &self,
         identity_id: &str,
@@ -153,7 +162,30 @@ pub(crate) async fn create(
     identity_id: &str,
     input: CreateProviderRequest,
 ) -> Result<String, StorageError> {
+    create_inner(db, crypto, identity_id, input, None).await
+}
+
+async fn create_with_catalog(
+    db: &DatabaseConnection,
+    crypto: &KeyCipher,
+    identity_id: &str,
+    input: CreateProviderRequest,
+    catalog: &ProviderCatalog,
+) -> Result<String, StorageError> {
+    create_inner(db, crypto, identity_id, input, Some(catalog)).await
+}
+
+async fn create_inner(
+    db: &DatabaseConnection,
+    crypto: &KeyCipher,
+    identity_id: &str,
+    input: CreateProviderRequest,
+    catalog: Option<&ProviderCatalog>,
+) -> Result<String, StorageError> {
     let models = normalize_model_names(&input.models)?;
+    if let Some(catalog) = catalog {
+        validate_catalog_provider(catalog, &input.provider_type, &models)?;
+    }
     let provider_id = Uuid::new_v4().to_string();
     let created_at = Utc::now().to_rfc3339();
     let api_key_ciphertext = crypto.encrypt(&input.api_key)?;
@@ -241,6 +273,23 @@ pub(crate) async fn update(
         .as_deref()
         .map(normalize_model_names)
         .transpose()?;
+    if let Some(catalog) = catalog {
+        let provider_type = input
+            .provider_type
+            .as_deref()
+            .unwrap_or(&existing.provider_type);
+        let models_to_validate = match models.as_deref() {
+            Some(models) => models.to_vec(),
+            None => identity_provider_models::Entity::find()
+                .filter(identity_provider_models::Column::ProviderId.eq(provider_id))
+                .all(db)
+                .await?
+                .into_iter()
+                .map(|model| model.model_name)
+                .collect(),
+        };
+        validate_catalog_provider(catalog, provider_type, &models_to_validate)?;
+    }
     let capabilities_json = match input.capabilities {
         Some(capabilities) => Some(
             serde_json::to_string(&capabilities)
@@ -400,7 +449,9 @@ fn normalize_model_names(models: &[String]) -> Result<Vec<String>, StorageError>
     for model_name in models {
         let model_name = model_name.trim();
         if model_name.is_empty() {
-            continue;
+            return Err(StorageError::ValidationFailed(
+                "provider model names must not be empty".to_string(),
+            ));
         }
         if !names.insert(model_name.to_string()) {
             return Err(StorageError::ValidationFailed(
@@ -410,6 +461,30 @@ fn normalize_model_names(models: &[String]) -> Result<Vec<String>, StorageError>
         normalized.push(model_name.to_string());
     }
     Ok(normalized)
+}
+
+fn validate_catalog_provider(
+    catalog: &ProviderCatalog,
+    provider_type: &str,
+    models: &[String],
+) -> Result<(), StorageError> {
+    let provider_type = provider_type.trim();
+    let provider = catalog.provider(provider_type).ok_or_else(|| {
+        StorageError::ValidationFailed(format!("unknown provider type: {provider_type}"))
+    })?;
+    for model in models {
+        let supported = provider.language_models.iter().any(|id| id == model)
+            || provider
+                .image_generation_models
+                .iter()
+                .any(|id| id == model);
+        if !supported {
+            return Err(StorageError::ValidationFailed(format!(
+                "model {model} is not supported by provider {provider_type}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 async fn insert_models<C>(
