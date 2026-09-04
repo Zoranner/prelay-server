@@ -9,6 +9,8 @@ mod support;
 #[path = "test_context/mod.rs"]
 mod test_context;
 
+#[path = "management/endpoint_access.rs"]
+mod endpoint_access;
 #[path = "management/endpoints.rs"]
 mod endpoints;
 #[path = "management/identity.rs"]

@@ -153,6 +153,40 @@ async fn management_provider_rejects_unknown_catalog_provider_type_without_updat
 }
 
 #[tokio::test]
+async fn management_provider_rejects_unknown_catalog_provider_type_without_creating() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let identity = register(
+        &app,
+        "machine-provider-unknown-create",
+        "S-1-5-21-provider-unknown-create",
+    )
+    .await;
+    let credential = identity["credential"].as_str().expect("credential");
+
+    let (status, error): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Unknown Provider",
+            "provider_type": "not-in-catalog",
+            "base_url": "https://provider.example",
+            "api_key": "sk-a",
+            "models": ["deepseek-v4-flash"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error["error"]["code"], "validation_failed");
+
+    let (status, providers): (StatusCode, Vec<serde_json::Value>) =
+        request_json(&app, "GET", "/api/providers", Some(credential), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(providers.is_empty());
+}
+
+#[tokio::test]
 async fn management_provider_rejects_catalog_outside_model_without_creating() {
     let app = app::router(test_state().await).await.expect("build app");
     let identity = register(

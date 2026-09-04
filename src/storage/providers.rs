@@ -1,10 +1,7 @@
 use std::collections::HashSet;
 
 use chrono::Utc;
-use prelay_protocol::{
-    CreateProviderRequest, ProviderCapabilityOverrides, ProviderModelResponse, ProviderResponse,
-    UpdateProviderRequest,
-};
+use prelay_protocol::{CreateProviderRequest, ProviderResponse, UpdateProviderRequest};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
     EntityTrait, IntoActiveModel, QueryFilter, QueryOrder, TransactionTrait,
@@ -22,10 +19,14 @@ use crate::{
         },
     },
     provider_catalog::ProviderCatalog,
-    providers::spec::resolved_upstream_protocols,
 };
 
-use super::{crypto::KeyCipher, Storage, StorageError};
+use super::{
+    crypto::KeyCipher,
+    provider_validation::{normalize_model_names, validate_catalog_provider},
+    provider_views::provider_response,
+    Storage, StorageError,
+};
 
 impl Storage {
     pub async fn create_provider(
@@ -402,91 +403,6 @@ where
         .ok_or(StorageError::ProviderNotFound)
 }
 
-async fn provider_response<C>(
-    db: &C,
-    crypto: &KeyCipher,
-    provider: identity_provider_configs::Model,
-    catalog: Option<&ProviderCatalog>,
-) -> Result<ProviderResponse, StorageError>
-where
-    C: ConnectionTrait,
-{
-    let models = identity_provider_models::Entity::find()
-        .filter(identity_provider_models::Column::ProviderId.eq(&provider.id))
-        .order_by_asc(identity_provider_models::Column::CreatedAt)
-        .all(db)
-        .await?
-        .into_iter()
-        .map(|model| provider_model_response(model, catalog))
-        .collect();
-    let capabilities: ProviderCapabilityOverrides = provider
-        .capabilities_json
-        .as_deref()
-        .and_then(|value| serde_json::from_str(value).ok())
-        .unwrap_or_default();
-    let upstream_protocols = resolved_upstream_protocols(
-        &provider.provider_type,
-        capabilities.upstream_protocols.as_deref(),
-    );
-    let api_key = crypto.decrypt(&provider.api_key_ciphertext)?;
-    Ok(ProviderResponse {
-        id: provider.id,
-        name: provider.name,
-        provider_type: provider.provider_type,
-        base_url: provider.base_url,
-        api_key,
-        api_key_masked: mask_ciphertext(&provider.api_key_ciphertext),
-        capabilities,
-        upstream_protocols,
-        models,
-        created_at: provider.created_at,
-    })
-}
-
-fn normalize_model_names(models: &[String]) -> Result<Vec<String>, StorageError> {
-    let mut names = HashSet::with_capacity(models.len());
-    let mut normalized = Vec::with_capacity(models.len());
-    for model_name in models {
-        let model_name = model_name.trim();
-        if model_name.is_empty() {
-            return Err(StorageError::ValidationFailed(
-                "provider model names must not be empty".to_string(),
-            ));
-        }
-        if !names.insert(model_name.to_string()) {
-            return Err(StorageError::ValidationFailed(
-                "provider model names must be unique".to_string(),
-            ));
-        }
-        normalized.push(model_name.to_string());
-    }
-    Ok(normalized)
-}
-
-fn validate_catalog_provider(
-    catalog: &ProviderCatalog,
-    provider_type: &str,
-    models: &[String],
-) -> Result<(), StorageError> {
-    let provider_type = provider_type.trim();
-    let provider = catalog.provider(provider_type).ok_or_else(|| {
-        StorageError::ValidationFailed(format!("unknown provider type: {provider_type}"))
-    })?;
-    for model in models {
-        let supported = provider.language_models.iter().any(|id| id == model)
-            || provider
-                .image_generation_models
-                .iter()
-                .any(|id| id == model);
-        if !supported {
-            return Err(StorageError::ValidationFailed(format!(
-                "model {model} is not supported by provider {provider_type}"
-            )));
-        }
-    }
-    Ok(())
-}
-
 async fn insert_models<C>(
     db: &C,
     provider_id: &str,
@@ -507,28 +423,4 @@ where
         .await?;
     }
     Ok(())
-}
-
-fn provider_model_response(
-    model: identity_provider_models::Model,
-    catalog: Option<&ProviderCatalog>,
-) -> ProviderModelResponse {
-    let display_name = catalog
-        .map(|catalog| catalog.model_display_name(&model.model_name))
-        .unwrap_or_else(|| model.model_name.clone());
-    ProviderModelResponse {
-        id: model.id,
-        provider_id: model.provider_id,
-        model_name: model.model_name,
-        display_name,
-        created_at: model.created_at,
-    }
-}
-
-fn mask_ciphertext(ciphertext: &str) -> String {
-    if ciphertext.is_empty() {
-        String::new()
-    } else {
-        "********".to_string()
-    }
 }

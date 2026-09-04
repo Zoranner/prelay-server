@@ -2,9 +2,12 @@ mod access;
 mod activities;
 mod activity_contents;
 mod crypto;
+mod endpoint_validation;
 mod identities;
 mod leaderboard;
 mod memories;
+mod provider_validation;
+mod provider_views;
 mod sessions;
 mod stats;
 
