@@ -35,6 +35,30 @@ fn loads_the_deployment_catalog() {
 }
 
 #[test]
+fn deployment_catalog_uses_high_defaults_for_broad_reasoning_models() {
+    let catalog = ProviderCatalog::load(Path::new("config/catalog")).expect("load catalog");
+
+    assert_eq!(
+        catalog
+            .language_model("gpt-5.6-terra")
+            .and_then(|model| model.default_reasoning_effort.as_deref()),
+        Some("high")
+    );
+    assert_eq!(
+        catalog
+            .language_model("deepseek-v4-pro")
+            .and_then(|model| model.default_reasoning_effort.as_deref()),
+        Some("max")
+    );
+    assert_eq!(
+        catalog
+            .language_model("k3")
+            .and_then(|model| model.default_reasoning_effort.as_deref()),
+        Some("max")
+    );
+}
+
+#[test]
 fn loads_typed_models_and_ordered_provider_protocols() {
     let directory = write_catalog(
         "",
@@ -102,5 +126,33 @@ language_models = ["text-model"]
     let error = ProviderCatalog::load(&directory).expect_err("reject unordered protocols");
 
     assert!(error.to_string().contains("protocols"));
+    fs::remove_dir_all(directory).expect("remove temporary catalog directory");
+}
+
+#[test]
+fn rejects_default_reasoning_effort_when_model_has_no_reasoning_efforts() {
+    let directory = write_catalog(
+        r#"
+[[models]]
+id = "text-model"
+display_name = "Text model"
+reasoning_efforts = []
+default_reasoning_effort = "max"
+"#,
+        "",
+        r#"
+[[providers]]
+id = "provider"
+name = "Provider"
+auth_scheme = "bearer"
+base_url = "https://api.example.com/v1"
+protocols = ["chat_completions"]
+language_models = ["text-model"]
+"#,
+    );
+
+    let error = ProviderCatalog::load(&directory).expect_err("reject inconsistent reasoning");
+
+    assert!(error.to_string().contains("默认思考档位无效"));
     fs::remove_dir_all(directory).expect("remove temporary catalog directory");
 }

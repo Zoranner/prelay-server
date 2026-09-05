@@ -149,9 +149,7 @@ fn validate_reasoning(
     }
     if let Some(default_effort) = default_effort {
         if !REASONING_EFFORTS.contains(&default_effort)
-            || efforts.is_some_and(|efforts| {
-                !efforts.is_empty() && !efforts.contains(&default_effort.to_string())
-            })
+            || !efforts.is_some_and(|efforts| efforts.contains(&default_effort.to_string()))
         {
             return Err(ProviderCatalogError(format!(
                 "语言模型 {model_id} 的默认思考档位无效"

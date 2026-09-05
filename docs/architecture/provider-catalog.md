@@ -54,7 +54,7 @@ experimental_supported_tools = []
 minimal_client_version = "0.144.0"
 ```
 
-官方资料未明确的字段以英文键名注释保留。`reasoning_efforts` 只能使用 `none`、`minimal`、`low`、`medium`、`high`、`xhigh` 或 `max`；非空时必须同时给出其中一个 `default_reasoning_effort`。
+官方资料未明确的字段以英文键名注释保留；缺省表示能力未知，不由客户端推断为具体能力。`reasoning_efforts` 只能使用 `none`、`minimal`、`low`、`medium`、`high`、`xhigh` 或 `max`；配置默认思考强度时必须同时给出非空档位列表，且 `default_reasoning_effort` 必须包含在该列表中。默认思考强度由服务端目录维护，客户端用户设置可以覆盖它。目录约定：可选档位超过三档时默认使用 `high`，三档或更少时使用列表中的最高档。
 
 ### 图像生成模型
 
