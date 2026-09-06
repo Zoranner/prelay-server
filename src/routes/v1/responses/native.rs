@@ -114,15 +114,18 @@ pub(super) async fn create_native_response(
             upstream_request_id: None,
         };
         let (stream, stream_stats) = native_responses_sse_with_stats(upstream_response);
-        let body = Body::from_stream(record_stream_with_activity_content(
-            state.storage.clone(),
-            context.identity_id.clone(),
-            stream,
-            log,
-            context.started_at,
-            stream_stats,
-            internal_request_text(&request),
-        ));
+        let body = Body::from_stream(
+            record_stream_with_activity_content(
+                state.storage.clone(),
+                context.identity_id.clone(),
+                stream,
+                log,
+                context.started_at,
+                stream_stats,
+                internal_request_text(&request),
+            )
+            .await?,
+        );
         return Ok((
             [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
             body,

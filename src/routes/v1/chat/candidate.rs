@@ -124,15 +124,18 @@ pub(super) async fn create_chat_completion_with_candidate(
             upstream_request_id,
         };
         let (stream, stream_stats) = native_chat_sse_with_stats(upstream_response);
-        let body = Body::from_stream(record_stream_with_activity_content(
-            state.storage.clone(),
-            access.identity_id.clone(),
-            stream,
-            log,
-            started_at,
-            stream_stats,
-            input_text,
-        ));
+        let body = Body::from_stream(
+            record_stream_with_activity_content(
+                state.storage.clone(),
+                access.identity_id.clone(),
+                stream,
+                log,
+                started_at,
+                stream_stats,
+                input_text,
+            )
+            .await?,
+        );
         return Ok(([(header::CONTENT_TYPE, "text/event-stream")], body).into_response());
     }
 

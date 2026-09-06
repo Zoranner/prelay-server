@@ -123,15 +123,18 @@ pub(super) async fn create_responses_anthropic_message(
         );
         return Response::builder()
             .header(header::CONTENT_TYPE, "text/event-stream")
-            .body(Body::from_stream(record_stream_with_activity_content(
-                state.storage.clone(),
-                context.identity_id,
-                stream,
-                log,
-                context.started_at,
-                stream_stats,
-                input_text,
-            )))
+            .body(Body::from_stream(
+                record_stream_with_activity_content(
+                    state.storage.clone(),
+                    context.identity_id,
+                    stream,
+                    log,
+                    context.started_at,
+                    stream_stats,
+                    input_text,
+                )
+                .await?,
+            ))
             .map_err(|error| AppError::Internal(error.into()));
     }
 

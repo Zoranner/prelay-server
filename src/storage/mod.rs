@@ -8,6 +8,7 @@ mod leaderboard;
 mod memories;
 mod provider_validation;
 mod provider_views;
+mod recordings;
 mod sessions;
 mod stats;
 

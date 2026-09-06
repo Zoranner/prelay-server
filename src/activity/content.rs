@@ -99,6 +99,31 @@ pub fn activity_content_from_text_with_media(
     media: Option<ActivityMediaMetadata>,
     max_bytes: usize,
 ) -> Option<NormalizedActivityContent> {
+    let content = normalized_activity_content(input_text, output_text, media, max_bytes);
+    if content.input_text.is_empty()
+        && content.output_text.is_empty()
+        && content.media_metadata_json.is_none()
+    {
+        return None;
+    }
+    Some(content)
+}
+
+pub fn activity_content_from_text_with_media_or_empty(
+    input_text: &str,
+    output_text: &str,
+    media: Option<ActivityMediaMetadata>,
+    max_bytes: usize,
+) -> NormalizedActivityContent {
+    normalized_activity_content(input_text, output_text, media, max_bytes)
+}
+
+fn normalized_activity_content(
+    input_text: &str,
+    output_text: &str,
+    media: Option<ActivityMediaMetadata>,
+    max_bytes: usize,
+) -> NormalizedActivityContent {
     let input_text = normalize_text(input_text);
     let mut output_text = normalize_text(output_text);
     let media_metadata_json = media.as_ref().map(|media| {
@@ -113,22 +138,18 @@ pub fn activity_content_from_text_with_media(
         .expect("media metadata serializes")
     });
 
-    if input_text.is_empty() && output_text.is_empty() {
-        return None;
-    }
-
     let (input_text, input_truncated, remaining) = truncate_utf8(&input_text, max_bytes);
     let (output_text, output_truncated, _) = truncate_utf8(&output_text, remaining);
     let is_truncated = input_truncated || output_truncated;
     let content_hash = content_hash(&input_text, &output_text, media_metadata_json.as_deref());
 
-    Some(NormalizedActivityContent {
+    NormalizedActivityContent {
         input_text,
         output_text,
         media_metadata_json,
         is_truncated,
         content_hash,
-    })
+    }
 }
 
 fn normalize_text(value: &str) -> String {

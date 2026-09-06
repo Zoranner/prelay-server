@@ -1,4 +1,9 @@
-use crate::{routes::v1::auth::CurrentProtocolAccess, stats::ActivityInsert, AppState};
+use crate::{
+    activity::{activity_content_from_text_with_media_or_empty, policy, ActivityMediaMetadata},
+    routes::v1::auth::CurrentProtocolAccess,
+    stats::ActivityInsert,
+    AppState,
+};
 
 use super::IMAGE_GENERATIONS_PROTOCOL;
 
@@ -71,5 +76,31 @@ pub(super) async fn insert_image_activity_with_id_best_effort(
             );
             None
         }
+    }
+}
+
+pub(super) async fn record_image_activity_with_content_best_effort(
+    state: &AppState,
+    access: &CurrentProtocolAccess,
+    log: ActivityInsert,
+    input_text: &str,
+    media: ActivityMediaMetadata,
+) {
+    let content = activity_content_from_text_with_media_or_empty(
+        input_text,
+        "",
+        Some(media),
+        policy().max_bytes,
+    );
+    if state
+        .storage
+        .record_completed_activity(&access.identity_id, log, content)
+        .await
+        .is_err()
+    {
+        tracing::warn!(
+            failure_kind = "image_activity_storage",
+            "failed to persist image activity"
+        );
     }
 }

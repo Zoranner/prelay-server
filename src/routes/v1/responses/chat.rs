@@ -8,9 +8,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
-    activity::{
-        enqueue_activity_content_best_effort, internal_request_text, internal_response_text,
-    },
+    activity::{insert_activity_with_content, internal_request_text, internal_response_text},
     bridge::{
         internal::InternalRequest, responses::encode::encode_responses_response,
         stream::chat_sse_response_to_responses_sse_with_stats,
@@ -136,15 +134,18 @@ pub(super) async fn create_chat_response(
         };
         let (stream, stream_stats) =
             chat_sse_response_to_responses_sse_with_stats(upstream_response);
-        let body = Body::from_stream(record_stream_with_activity_content(
-            state.storage.clone(),
-            identity_id.clone(),
-            stream,
-            log,
-            started_at,
-            stream_stats,
-            input_text,
-        ));
+        let body = Body::from_stream(
+            record_stream_with_activity_content(
+                state.storage.clone(),
+                identity_id.clone(),
+                stream,
+                log,
+                started_at,
+                stream_stats,
+                input_text,
+            )
+            .await?,
+        );
         return Ok((
             [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
             body,
@@ -180,54 +181,48 @@ pub(super) async fn create_chat_response(
             })
             .await?;
     }
-    let activity_id = state
-        .storage
-        .insert_activity(
-            &identity_id,
-            ActivityInsert {
-                protocol_in: "responses".to_string(),
-                protocol_out: "responses".to_string(),
-                protocol_upstream: "chat_completions".to_string(),
-                provider_id: provider.id,
-                provider_name: provider.name,
-                endpoint_name: endpoint_name.clone(),
-                model_requested,
-                model_upstream: response.model.clone(),
-                status: "success".to_string(),
-                http_status: 200,
-                error_code: None,
-                error_message: None,
-                is_streaming,
-                input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
-                output_tokens: response
-                    .usage
-                    .as_ref()
-                    .and_then(|usage| usage.output_tokens),
-                reasoning_tokens,
-                cache_read_tokens: response
-                    .usage
-                    .as_ref()
-                    .and_then(|usage| usage.cache_read_tokens),
-                cache_write_tokens: response
-                    .usage
-                    .as_ref()
-                    .and_then(|usage| usage.cache_write_tokens),
-                latency_ms: started_at.elapsed().as_millis() as i64,
-                upstream_latency_ms: Some(upstream_latency_ms),
-                first_token_ms: None,
-                tool_call_count: Some(tool_call_count),
-                upstream_request_id: None,
-            },
-        )
-        .await?;
-    enqueue_activity_content_best_effort(
+    insert_activity_with_content(
         &state.storage,
-        activity_id,
+        &identity_id,
+        ActivityInsert {
+            protocol_in: "responses".to_string(),
+            protocol_out: "responses".to_string(),
+            protocol_upstream: "chat_completions".to_string(),
+            provider_id: provider.id,
+            provider_name: provider.name,
+            endpoint_name: endpoint_name.clone(),
+            model_requested,
+            model_upstream: response.model.clone(),
+            status: "success".to_string(),
+            http_status: 200,
+            error_code: None,
+            error_message: None,
+            is_streaming,
+            input_tokens: response.usage.as_ref().and_then(|usage| usage.input_tokens),
+            output_tokens: response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.output_tokens),
+            reasoning_tokens,
+            cache_read_tokens: response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.cache_read_tokens),
+            cache_write_tokens: response
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.cache_write_tokens),
+            latency_ms: started_at.elapsed().as_millis() as i64,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            first_token_ms: None,
+            tool_call_count: Some(tool_call_count),
+            upstream_request_id: None,
+        },
         &internal_request_text(&request),
         &internal_response_text(&response),
         None,
     )
-    .await;
+    .await?;
 
     Ok(Json(encode_responses_response(response)).into_response())
 }

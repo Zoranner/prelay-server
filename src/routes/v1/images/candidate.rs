@@ -3,13 +3,10 @@ use futures::TryStreamExt;
 use serde_json::Value;
 
 use crate::{
-    activity::{
-        enqueue_activity_content_best_effort, media_metadata_from_bytes, RawStreamContentCapture,
-        RawStreamProtocol,
-    },
+    activity::{media_metadata_from_bytes, RawStreamContentCapture, RawStreamProtocol},
     error::AppError,
     observability::{
-        stream_stats::record_first_chunk_with_activity_content,
+        stream_stats::record_first_chunk_with_activity_content_best_effort,
         upstream_observability::upstream_observability,
     },
     providers::spec::provider_upstream_base_url,
@@ -18,8 +15,8 @@ use crate::{
 };
 
 use super::activity::{
-    image_activity, insert_image_activity_best_effort, insert_image_activity_with_id_best_effort,
-    ImageActivityParams,
+    image_activity, insert_image_activity_best_effort,
+    record_image_activity_with_content_best_effort, ImageActivityParams,
 };
 
 pub(super) async fn create_image_generation_with_candidate(
@@ -134,17 +131,20 @@ pub(super) async fn create_image_generation_with_candidate(
             upstream_request_id,
             error_message: None,
         });
-        let body = Body::from_stream(record_first_chunk_with_activity_content(
-            state.storage.clone(),
-            access.identity_id.clone(),
-            upstream_response
-                .bytes_stream()
-                .map_err(std::io::Error::other),
-            log,
-            started_at,
-            input_text,
-            RawStreamContentCapture::new(RawStreamProtocol::ImageGeneration),
-        ));
+        let body = Body::from_stream(
+            record_first_chunk_with_activity_content_best_effort(
+                state.storage.clone(),
+                access.identity_id.clone(),
+                upstream_response
+                    .bytes_stream()
+                    .map_err(std::io::Error::other),
+                log,
+                started_at,
+                input_text,
+                RawStreamContentCapture::new(RawStreamProtocol::ImageGeneration),
+            )
+            .await,
+        );
         return Ok(upstream_response_with_body(
             upstream_status,
             content_type,
@@ -190,7 +190,7 @@ pub(super) async fn create_image_generation_with_candidate(
         .as_ref()
         .and_then(|value| value.to_str().ok())
         .unwrap_or("application/octet-stream");
-    if let Some(activity_id) = insert_image_activity_with_id_best_effort(
+    record_image_activity_with_content_best_effort(
         state,
         access,
         image_activity(ImageActivityParams {
@@ -207,18 +207,10 @@ pub(super) async fn create_image_generation_with_candidate(
             upstream_request_id,
             error_message: None,
         }),
+        &input_text,
+        media_metadata_from_bytes(media_type, &response_bytes),
     )
-    .await
-    {
-        enqueue_activity_content_best_effort(
-            &state.storage,
-            activity_id,
-            &input_text,
-            "",
-            Some(media_metadata_from_bytes(media_type, &response_bytes)),
-        )
-        .await;
-    }
+    .await;
 
     Ok(upstream_response_with_body(
         upstream_status,

@@ -1,16 +1,18 @@
 use crate::{
+    activity::NormalizedActivityContent,
     stats::{ActivityInsert, StreamActivityUpdate},
     storage::{Storage, StorageError},
 };
 
-pub(super) async fn insert_stream_log_with_id(
+pub(super) async fn start_stream_record_with_id(
     storage: &Storage,
     identity_id: &str,
     id: &str,
     log: ActivityInsert,
+    content: NormalizedActivityContent,
 ) -> Result<(), StorageError> {
     if let Err(error) = storage
-        .insert_activity_with_id(identity_id, id.to_string(), log)
+        .start_stream_activity(identity_id, id, log, content)
         .await
     {
         log_stream_storage_failure("insert", &error);

@@ -1,7 +1,7 @@
 use chrono::Utc;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    QueryOrder, QuerySelect,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
+    EntityTrait, QueryFilter, QueryOrder, QuerySelect,
 };
 use uuid::Uuid;
 
@@ -68,12 +68,15 @@ async fn insert(
     Ok(id)
 }
 
-async fn insert_with_id(
-    db: &DatabaseConnection,
+pub(super) async fn insert_with_id<C>(
+    db: &C,
     identity_id: &str,
     id: String,
     log: ActivityInsert,
-) -> Result<(), StorageError> {
+) -> Result<(), StorageError>
+where
+    C: ConnectionTrait,
+{
     activities::ActiveModel {
         id: Set(id),
         identity_id: Set(identity_id.to_string()),

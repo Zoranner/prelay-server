@@ -126,15 +126,18 @@ pub(super) async fn create_anthropic_messages_response(
         };
         let (stream, stream_stats) =
             anthropic_messages_sse_response_to_responses_sse_with_stats(upstream_response);
-        let body = Body::from_stream(record_stream_with_activity_content(
-            state.storage.clone(),
-            context.identity_id.clone(),
-            stream,
-            log,
-            context.started_at,
-            stream_stats,
-            input_text,
-        ));
+        let body = Body::from_stream(
+            record_stream_with_activity_content(
+                state.storage.clone(),
+                context.identity_id.clone(),
+                stream,
+                log,
+                context.started_at,
+                stream_stats,
+                input_text,
+            )
+            .await?,
+        );
         return Ok((
             [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
             body,

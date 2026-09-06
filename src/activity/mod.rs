@@ -13,8 +13,9 @@ use serde_json::Value;
 pub use config::{initialize_from_environment, policy, ActivityContentPolicy};
 pub use content::media_metadata_from_bytes;
 pub use content::{
-    activity_content_from_text, activity_content_from_text_with_media, ActivityContentDraft,
-    ActivityMediaMetadata, NormalizedActivityContent,
+    activity_content_from_text, activity_content_from_text_with_media,
+    activity_content_from_text_with_media_or_empty, ActivityContentDraft, ActivityMediaMetadata,
+    NormalizedActivityContent,
 };
 pub use stream::{RawStreamContentCapture, RawStreamProtocol};
 
@@ -142,51 +143,6 @@ fn anthropic_content_text(content: &Value) -> String {
     }
 }
 
-pub async fn enqueue_activity_content_best_effort(
-    storage: &Storage,
-    activity_id: String,
-    input_text: &str,
-    output_text: &str,
-    media: Option<ActivityMediaMetadata>,
-) {
-    enqueue_activity_content_with_capture_best_effort(
-        storage,
-        activity_id,
-        input_text,
-        output_text,
-        media,
-        false,
-    )
-    .await;
-}
-
-pub async fn enqueue_activity_content_with_capture_best_effort(
-    storage: &Storage,
-    activity_id: String,
-    input_text: &str,
-    output_text: &str,
-    media: Option<ActivityMediaMetadata>,
-    capture_truncated: bool,
-) {
-    let Some(mut content) =
-        activity_content_from_text_with_media(input_text, output_text, media, policy().max_bytes)
-    else {
-        return;
-    };
-    content.is_truncated |= capture_truncated;
-
-    if storage
-        .enqueue_activity_content(content.into_draft(activity_id))
-        .await
-        .is_err()
-    {
-        tracing::warn!(
-            failure_kind = "activity_content_storage",
-            "failed to persist activity content"
-        );
-    }
-}
-
 pub async fn insert_activity_with_content(
     storage: &Storage,
     identity_id: &str,
@@ -195,9 +151,15 @@ pub async fn insert_activity_with_content(
     output_text: &str,
     media: Option<ActivityMediaMetadata>,
 ) -> Result<(), StorageError> {
-    let activity_id = storage.insert_activity(identity_id, activity).await?;
-    enqueue_activity_content_best_effort(storage, activity_id, input_text, output_text, media)
-        .await;
+    let content = activity_content_from_text_with_media_or_empty(
+        input_text,
+        output_text,
+        media,
+        policy().max_bytes,
+    );
+    storage
+        .record_completed_activity(identity_id, activity, content)
+        .await?;
     Ok(())
 }
 
