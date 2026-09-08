@@ -1,6 +1,7 @@
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{bail, Context, Result};
@@ -12,6 +13,7 @@ use uuid::Uuid;
 
 const DEFAULT_REPOSITORY: &str = "Zoranner/prelay-client";
 const DEFAULT_CACHE_DIRECTORY: &str = "updates";
+const CLIENT_UPDATE_PROXY_ENV: &str = "CLIENT_UPDATE_PROXY";
 const GITHUB_API_BASE_URL: &str = "https://api.github.com";
 
 #[derive(Clone)]
@@ -212,6 +214,31 @@ impl ClientUpdateCache {
     }
 }
 
+pub fn http_client_from_environment(timeout: Duration) -> Result<reqwest::Client> {
+    let proxy = std::env::var(CLIENT_UPDATE_PROXY_ENV).ok();
+    build_http_client(timeout, proxy.as_deref())
+}
+
+fn build_http_client(timeout: Duration, proxy: Option<&str>) -> Result<reqwest::Client> {
+    let proxy = client_update_proxy_from_value(proxy)?;
+    let mut builder = reqwest::Client::builder().no_proxy().timeout(timeout);
+    if let Some(proxy) = proxy {
+        let proxy = reqwest::Proxy::all(&proxy)
+            .with_context(|| format!("{CLIENT_UPDATE_PROXY_ENV} must be a valid proxy URL"))?;
+        builder = builder.proxy(proxy);
+    }
+    builder.build().context("build client update HTTP client")
+}
+
+fn client_update_proxy_from_value(value: Option<&str>) -> Result<Option<String>> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    reqwest::Url::parse(value)
+        .with_context(|| format!("{CLIENT_UPDATE_PROXY_ENV} must be a valid proxy URL"))?;
+    Ok(Some(value.to_string()))
+}
+
 fn validate_repository(repository: &str) -> Result<()> {
     let mut components = repository.split('/');
     let owner = components.next().unwrap_or_default();
@@ -347,11 +374,12 @@ fn parse_version(value: &str) -> Option<[u64; 3]> {
 #[cfg(test)]
 mod tests {
     use super::{
-        cache_directory_for_target, is_windows_nsis_asset, normalize_version, validate_repository,
-        windows_nsis_target, DEFAULT_CACHE_DIRECTORY,
+        build_http_client, cache_directory_for_target, client_update_proxy_from_value,
+        is_windows_nsis_asset, normalize_version, validate_repository, windows_nsis_target,
+        DEFAULT_CACHE_DIRECTORY,
     };
     use prelay_protocol::ClientUpdateTarget;
-    use std::path::Path;
+    use std::{path::Path, time::Duration};
 
     #[test]
     fn stores_client_updates_outside_the_database_directory_by_default() {
@@ -389,5 +417,23 @@ mod tests {
                 .architecture,
             "arm64"
         );
+    }
+
+    #[test]
+    fn accepts_an_optional_client_update_proxy() {
+        assert_eq!(client_update_proxy_from_value(None).unwrap(), None);
+        assert_eq!(client_update_proxy_from_value(Some("  ")).unwrap(), None);
+        assert_eq!(
+            client_update_proxy_from_value(Some(" http://127.0.0.1:7890 ")).unwrap(),
+            Some("http://127.0.0.1:7890".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_an_invalid_client_update_proxy() {
+        let error = build_http_client(Duration::from_secs(30), Some("not a URL"))
+            .expect_err("invalid proxy should be rejected");
+
+        assert!(format!("{error:#}").contains("CLIENT_UPDATE_PROXY"));
     }
 }

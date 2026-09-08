@@ -53,7 +53,7 @@ cargo run
 
 ## 客户端更新
 
-服务启动时会检查 GitHub Release，并每 6 小时刷新一次 Windows NSIS 安装包缓存。默认仓库是 `Zoranner/prelay-client`，缓存目录是 `updates`；分别可通过 `CLIENT_UPDATE_REPOSITORY`（`owner/repository` 格式）和 `CLIENT_UPDATE_DIR` 覆盖。刷新失败时，服务会继续保留并提供最近一次成功缓存的安装包。也可以直接按 `updates/<平台>/<架构>/<版本>/<发布产物原文件名>` 放入安装包，服务会选择对应平台和架构目录中的最高版本，无需额外清单。
+服务启动时会检查 GitHub Release，并每 6 小时刷新一次 Windows NSIS 安装包缓存。默认仓库是 `Zoranner/prelay-client`，缓存目录是 `updates`；分别可通过 `CLIENT_UPDATE_REPOSITORY`（`owner/repository` 格式）、`CLIENT_UPDATE_PROXY`（仅用于客户端更新检查和安装包下载的 HTTP/HTTPS 代理地址）和 `CLIENT_UPDATE_DIR` 覆盖。直接运行服务时，代理可以填写 `http://127.0.0.1:7890`；Docker 部署时应填写容器可访问的代理地址。上游请求使用独立的直连 HTTP Client，不读取 `CLIENT_UPDATE_PROXY`。刷新失败时，服务会继续保留并提供最近一次成功缓存的安装包。也可以直接按 `updates/<平台>/<架构>/<版本>/<发布产物原文件名>` 放入安装包，服务会选择对应平台和架构目录中的最高版本，无需额外清单。
 
 已注册设备可通过 `GET /api/client-update` 查询缓存版本，并通过 `GET /api/client-update/download` 下载安装包。服务尚未获得有效安装包时，这两个接口返回 `client_update_unavailable`；桌面客户端不直接访问 GitHub。
 
