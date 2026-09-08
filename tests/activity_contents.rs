@@ -1,6 +1,7 @@
 use prelay_server::{
     activity::{
-        ActivityContentDraft, ActivityContentPolicy, RawStreamContentCapture, RawStreamProtocol,
+        ActivityContentDraft, ActivityContentPolicy, NormalizedActivityContent,
+        RawStreamContentCapture, RawStreamProtocol,
     },
     entity::activity_contents,
     identity::credential::generate_credential,
@@ -9,6 +10,7 @@ use prelay_server::{
     storage::{MasterKey, Storage},
 };
 use sea_orm::{ColumnTrait, Database, EntityTrait, QueryFilter};
+use std::time::Duration;
 
 #[test]
 fn activity_content_policy_uses_a_positive_configured_size_limit() {
@@ -75,6 +77,91 @@ async fn enqueues_one_pending_content_for_a_persisted_activity() {
     assert_eq!(row.attempts, 0);
     assert!(row.next_attempt_at.is_some());
     assert!(storage.enqueue_activity_content(draft).await.is_err());
+}
+
+#[tokio::test]
+async fn recovers_stale_capturing_content_for_terminal_activities() {
+    let (storage, db) = test_storage().await;
+    let identity_id = register_identity(&storage).await;
+    let activity_id = "stale-capturing-activity".to_string();
+    let activity = ActivityInsert {
+        status: "success".to_string(),
+        ..Default::default()
+    };
+    storage
+        .start_stream_activity(
+            &identity_id,
+            &activity_id,
+            activity,
+            NormalizedActivityContent {
+                input_text: "preserve input".to_string(),
+                output_text: "preserve output".to_string(),
+                media_metadata_json: None,
+                is_truncated: false,
+                content_hash: "preserve-hash".to_string(),
+            },
+        )
+        .await
+        .expect("persist capturing content");
+
+    let recovered = storage
+        .recover_stale_activity_content(Duration::ZERO)
+        .await
+        .expect("recover stale content");
+
+    assert_eq!(recovered, 1);
+    let row = activity_contents::Entity::find()
+        .filter(activity_contents::Column::ActivityId.eq(activity_id))
+        .one(&db)
+        .await
+        .expect("load recovered content")
+        .expect("recovered content exists");
+    assert_eq!(row.status, "pending");
+    assert!(row.completed_at.is_some());
+    assert_eq!(row.input_text, "preserve input");
+    assert_eq!(row.output_text, "preserve output");
+    assert!(row.lease_owner.is_none());
+    assert!(row.lease_expires_at.is_none());
+}
+
+#[tokio::test]
+async fn does_not_recover_capturing_content_for_an_active_activity() {
+    let (storage, db) = test_storage().await;
+    let identity_id = register_identity(&storage).await;
+    let activity_id = "active-capturing-activity".to_string();
+    let activity = ActivityInsert {
+        status: "capturing".to_string(),
+        ..Default::default()
+    };
+    storage
+        .start_stream_activity(
+            &identity_id,
+            &activity_id,
+            activity,
+            NormalizedActivityContent {
+                input_text: "active input".to_string(),
+                output_text: "active output".to_string(),
+                media_metadata_json: None,
+                is_truncated: false,
+                content_hash: "active-hash".to_string(),
+            },
+        )
+        .await
+        .expect("persist capturing content");
+
+    let recovered = storage
+        .recover_stale_activity_content(Duration::from_secs(60))
+        .await
+        .expect("recover stale content");
+
+    assert_eq!(recovered, 0);
+    let row = activity_contents::Entity::find()
+        .filter(activity_contents::Column::ActivityId.eq(activity_id))
+        .one(&db)
+        .await
+        .expect("load active content")
+        .expect("active content exists");
+    assert_eq!(row.status, "capturing");
 }
 
 async fn test_storage() -> (Storage, sea_orm::DatabaseConnection) {

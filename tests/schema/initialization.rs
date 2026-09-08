@@ -140,3 +140,91 @@ async fn removes_legacy_cost_columns_from_an_existing_activity_table() {
         );
     }
 }
+
+#[tokio::test]
+async fn migrates_stale_activity_content_once_during_schema_initialization() {
+    let db = Database::connect("sqlite::memory:")
+        .await
+        .expect("connect to in-memory SQLite");
+
+    initialize(&db).await.expect("initialize current schema");
+    db.execute_unprepared(
+        "CREATE TABLE IF NOT EXISTS prelay_schema_migrations (
+            version VARCHAR(128) PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )",
+    )
+    .await
+    .expect("create migration history");
+    db.execute_unprepared(
+        "DELETE FROM prelay_schema_migrations
+         WHERE version = 'activity_content_lifecycle_v1'",
+    )
+    .await
+    .expect("reset activity content migration");
+    db.execute_unprepared(
+        "INSERT INTO identities
+            (id, machine_id, account_sid, credential_hash, display_name, created_at, last_active_at)
+         VALUES
+            ('identity-migration', 'machine-migration', 'sid-migration', 'hash', '',
+             '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')",
+    )
+    .await
+    .expect("insert migration identity");
+    db.execute_unprepared(
+        "INSERT INTO identity_activities (id, identity_id, created_at, status)
+         VALUES ('activity-migration', 'identity-migration', '2026-09-01T00:00:00Z', 'success')",
+    )
+    .await
+    .expect("insert migration activity");
+    db.execute_unprepared(
+        "INSERT INTO activity_contents
+            (id, activity_id, input_text, output_text, content_hash, status, is_truncated,
+             attempts, created_at, updated_at)
+         VALUES
+            ('content-migration', 'activity-migration', 'input', 'output', 'hash', 'capturing',
+             0, 0, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')",
+    )
+    .await
+    .expect("insert stale activity content");
+
+    initialize(&db)
+        .await
+        .expect("apply activity content migration");
+
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT status, input_text, output_text
+             FROM activity_contents
+             WHERE id = 'content-migration'"
+                .to_owned(),
+        ))
+        .await
+        .expect("query migrated activity content")
+        .expect("migrated activity content exists");
+    assert_eq!(row.try_get::<String>("", "status").unwrap(), "pending");
+    assert_eq!(row.try_get::<String>("", "input_text").unwrap(), "input");
+    assert_eq!(row.try_get::<String>("", "output_text").unwrap(), "output");
+
+    initialize(&db)
+        .await
+        .expect("re-running schema initialization is idempotent");
+    let migration_count = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS migration_count
+             FROM prelay_schema_migrations
+             WHERE version = 'activity_content_lifecycle_v1'"
+                .to_owned(),
+        ))
+        .await
+        .expect("query migration history")
+        .expect("migration history exists");
+    assert_eq!(
+        migration_count
+            .try_get::<i64>("", "migration_count")
+            .unwrap(),
+        1
+    );
+}

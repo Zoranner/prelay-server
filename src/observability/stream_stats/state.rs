@@ -1,7 +1,11 @@
-use std::{pin::Pin, time::Instant};
+use std::{
+    pin::Pin,
+    time::{Duration, Instant},
+};
 
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
+use tokio::sync::mpsc;
 
 use crate::{
     activity::{activity_content_from_text_with_media_or_empty, policy, RawStreamContentCapture},
@@ -15,6 +19,8 @@ use super::persistence::{
 };
 
 pub(super) type RecordedStream = Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>;
+const DOWNSTREAM_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
+const RECORDED_STREAM_CHANNEL_CAPACITY: usize = 16;
 
 #[derive(Clone, Copy)]
 pub(super) enum RecordingMode {
@@ -88,6 +94,7 @@ where
         inserted: false,
         failed: false,
         usage_recorded: false,
+        content_finalized: false,
     };
 
     let Some(first) = first else {
@@ -97,17 +104,63 @@ where
     state.start(&first).await?;
     state.observe_item(&first).await;
 
-    let remaining = futures::stream::unfold(state, |mut state| async move {
-        let Some(item) = state.stream.next().await else {
-            state.record_stream_end().await;
-            return None;
+    let (sender, receiver) = mpsc::channel(RECORDED_STREAM_CHANNEL_CAPACITY);
+    tokio::spawn(forward_recorded_stream(state, first, sender));
+    Ok(Box::pin(futures::stream::unfold(
+        receiver,
+        |mut receiver| async move { receiver.recv().await.map(|item| (item, receiver)) },
+    )))
+}
+
+async fn forward_recorded_stream(
+    mut state: StreamRecordState,
+    first: Result<Bytes, std::io::Error>,
+    sender: mpsc::Sender<Result<Bytes, std::io::Error>>,
+) {
+    let first_failed = first.is_err();
+    let mut sender = Some(sender);
+    let mut drain_deadline = None;
+    if let Some(current_sender) = sender.as_ref() {
+        if current_sender.send(first).await.is_err() {
+            sender = None;
+            drain_deadline = Some(tokio::time::Instant::now() + DOWNSTREAM_DRAIN_TIMEOUT);
+        }
+    }
+    if first_failed {
+        return;
+    }
+
+    loop {
+        let next = match drain_deadline {
+            Some(deadline) => match tokio::time::timeout_at(deadline, state.stream.next()).await {
+                Ok(item) => item,
+                Err(_) => {
+                    state.record_downstream_disconnect().await;
+                    return;
+                }
+            },
+            None => state.stream.next().await,
         };
+        let Some(item) = next else {
+            if drain_deadline.is_some() {
+                state.record_downstream_disconnect().await;
+            } else {
+                state.record_stream_end().await;
+            }
+            return;
+        };
+        let item_failed = item.is_err();
         state.observe_item(&item).await;
-        Some((item, state))
-    });
-    Ok(Box::pin(
-        futures::stream::once(async move { first }).chain(remaining),
-    ))
+        if let Some(current_sender) = sender.as_ref() {
+            if current_sender.send(item).await.is_err() {
+                sender = None;
+                drain_deadline = Some(tokio::time::Instant::now() + DOWNSTREAM_DRAIN_TIMEOUT);
+            }
+        }
+        if item_failed {
+            return;
+        }
+    }
 }
 
 struct StreamRecordState {
@@ -125,6 +178,7 @@ struct StreamRecordState {
     inserted: bool,
     failed: bool,
     usage_recorded: bool,
+    content_finalized: bool,
 }
 
 impl StreamRecordState {
@@ -135,7 +189,10 @@ impl StreamRecordState {
         let first_token_ms = self.started_at.elapsed().as_millis() as i64;
         log.latency_ms = first_token_ms;
         match item {
-            Ok(_) => log.first_token_ms = Some(first_token_ms),
+            Ok(_) => {
+                log.status = "streaming".to_string();
+                log.first_token_ms = Some(first_token_ms);
+            }
             Err(error) => {
                 self.failed = true;
                 log.status = "failed".to_string();
@@ -175,9 +232,13 @@ impl StreamRecordState {
     }
 
     async fn observe_item(&mut self, item: &Result<Bytes, std::io::Error>) {
-        if self.inserted && !self.failed {
+        if self.inserted {
             if let Err(error) = item {
-                self.record_stream_error(error.to_string()).await;
+                if self.failed {
+                    self.finalize_content().await;
+                } else {
+                    self.record_stream_error(error.to_string()).await;
+                }
             }
         }
         if let (Ok(chunk), Some(content_capture)) = (item, &mut self.content_capture) {
@@ -189,50 +250,28 @@ impl StreamRecordState {
     }
 
     async fn record_stream_end(&mut self) {
-        if !self.inserted || self.failed {
+        if !self.inserted {
             return;
         }
-        let snapshot = self.stats_snapshot();
-        let update = StreamActivityUpdate {
-            status: "success".to_string(),
-            http_status: 200,
-            error_code: None,
-            error_message: None,
-            input_tokens: snapshot.input_tokens,
-            output_tokens: snapshot.output_tokens,
-            reasoning_tokens: None,
-            cache_read_tokens: snapshot.cache_read_tokens,
-            cache_write_tokens: snapshot.cache_write_tokens,
-            latency_ms: self.started_at.elapsed().as_millis() as i64,
-            tool_call_count: Some(snapshot.tool_call_count),
-            upstream_request_id: self.upstream_request_id.clone(),
-        };
-        update_stream_log(&self.storage, &self.identity_id, &self.log_id, update).await;
-
-        let (output_text, capture_truncated) =
-            if let Some(content_capture) = self.content_capture.as_mut() {
-                content_capture.finish();
-                (
-                    content_capture.output_text().to_string(),
-                    content_capture.is_truncated() || !content_capture.is_completed(),
-                )
-            } else {
-                (snapshot.output_text, !snapshot.completed)
+        if !self.failed {
+            let snapshot = self.stats_snapshot();
+            let update = StreamActivityUpdate {
+                status: "success".to_string(),
+                http_status: 200,
+                error_code: None,
+                error_message: None,
+                input_tokens: snapshot.input_tokens,
+                output_tokens: snapshot.output_tokens,
+                reasoning_tokens: None,
+                cache_read_tokens: snapshot.cache_read_tokens,
+                cache_write_tokens: snapshot.cache_write_tokens,
+                latency_ms: self.started_at.elapsed().as_millis() as i64,
+                tool_call_count: Some(snapshot.tool_call_count),
+                upstream_request_id: self.upstream_request_id.clone(),
             };
-        let mut content = activity_content_from_text_with_media_or_empty(
-            &self.input_text,
-            &output_text,
-            None,
-            policy().max_bytes,
-        );
-        content.is_truncated |= capture_truncated;
-        if let Err(error) = self
-            .storage
-            .complete_stream_activity_content(content.into_draft(self.log_id.clone()))
-            .await
-        {
-            log_stream_storage_failure("complete-content", &error);
+            update_stream_log(&self.storage, &self.identity_id, &self.log_id, update).await;
         }
+        self.finalize_content().await;
     }
 
     async fn record_final_usage(&mut self) {
@@ -242,7 +281,7 @@ impl StreamRecordState {
         }
         self.usage_recorded = true;
         let update = StreamActivityUpdate {
-            status: "success".to_string(),
+            status: String::new(),
             http_status: 200,
             input_tokens: snapshot.input_tokens,
             output_tokens: snapshot.output_tokens,
@@ -272,18 +311,15 @@ impl StreamRecordState {
             None,
             policy().max_bytes,
         );
-        match start_stream_record_with_id(
-            &self.storage,
-            &self.identity_id,
-            &self.log_id,
-            log,
-            content,
-        )
-        .await
+        match self
+            .storage
+            .record_completed_activity_with_id(&self.identity_id, self.log_id.clone(), log, content)
+            .await
         {
             Ok(()) => {
                 self.inserted = true;
                 self.failed = true;
+                self.content_finalized = true;
                 Ok(())
             }
             Err(error) => match self.mode {
@@ -311,6 +347,62 @@ impl StreamRecordState {
             upstream_request_id: self.upstream_request_id.clone(),
         };
         update_stream_log(&self.storage, &self.identity_id, &self.log_id, update).await;
+        self.finalize_content().await;
+    }
+
+    async fn record_downstream_disconnect(&mut self) {
+        if !self.failed {
+            self.failed = true;
+            let snapshot = self.stats_snapshot();
+            let update = StreamActivityUpdate {
+                status: "failed".to_string(),
+                http_status: 499,
+                error_code: Some("downstream_disconnect".to_string()),
+                error_message: Some("downstream client disconnected".to_string()),
+                input_tokens: snapshot.input_tokens,
+                output_tokens: snapshot.output_tokens,
+                reasoning_tokens: None,
+                cache_read_tokens: snapshot.cache_read_tokens,
+                cache_write_tokens: snapshot.cache_write_tokens,
+                latency_ms: self.started_at.elapsed().as_millis() as i64,
+                tool_call_count: Some(snapshot.tool_call_count),
+                upstream_request_id: self.upstream_request_id.clone(),
+            };
+            update_stream_log(&self.storage, &self.identity_id, &self.log_id, update).await;
+        }
+        self.finalize_content().await;
+    }
+
+    async fn finalize_content(&mut self) {
+        if self.content_finalized {
+            return;
+        }
+        let snapshot = self.stats_snapshot();
+        let (output_text, capture_truncated) =
+            if let Some(content_capture) = self.content_capture.as_mut() {
+                content_capture.finish();
+                (
+                    content_capture.output_text().to_string(),
+                    content_capture.is_truncated() || !content_capture.is_completed(),
+                )
+            } else {
+                (snapshot.output_text, !snapshot.completed)
+            };
+        let mut content = activity_content_from_text_with_media_or_empty(
+            &self.input_text,
+            &output_text,
+            None,
+            policy().max_bytes,
+        );
+        content.is_truncated |= capture_truncated;
+        match self
+            .storage
+            .complete_stream_activity_content(content.into_draft(self.log_id.clone()))
+            .await
+        {
+            Ok(()) => self.content_finalized = true,
+            Err(error) => log_stream_storage_failure("complete-content", &error),
+        }
     }
 
     fn stats_snapshot(&self) -> StreamStatsSnapshot {

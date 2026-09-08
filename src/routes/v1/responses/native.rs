@@ -97,7 +97,7 @@ pub(super) async fn create_native_response(
                 .and_then(Value::as_str)
                 .unwrap_or("unknown")
                 .to_string(),
-            status: "success".to_string(),
+            status: "streaming".to_string(),
             http_status: 200,
             error_code: None,
             error_message: None,

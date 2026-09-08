@@ -1,3 +1,4 @@
+mod activity_content;
 mod indexes;
 mod provider_catalog;
 mod tables;
@@ -55,7 +56,8 @@ pub async fn initialize(db: &DatabaseConnection) -> Result<(), DbErr> {
         _ => Err(DbErr::Custom(
             "database schema is incomplete; create a new database deployment".to_owned(),
         )),
-    }
+    }?;
+    activity_content::apply(db).await
 }
 
 pub async fn initialize_with_catalog(
@@ -69,7 +71,6 @@ pub async fn initialize_with_catalog(
 async fn initialize_empty_schema(manager: &SchemaInitializer<'_>) -> Result<(), DbErr> {
     manager.create_table(tables::identity::statement()).await?;
     manager.create_table(tables::providers::configs()).await?;
-    manager.create_table(tables::providers::models()).await?;
     manager.create_table(tables::endpoints::configs()).await?;
     manager.create_table(tables::endpoints::models()).await?;
     manager.create_table(tables::endpoints::routes()).await?;

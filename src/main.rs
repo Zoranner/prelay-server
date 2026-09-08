@@ -19,6 +19,9 @@ use prelay_server::{
 const STARTUP_CLEANUP_FAILURE: &str = "startup identity cleanup failed";
 const DEFAULT_LISTEN_ADDRESS: &str = "0.0.0.0:18080";
 const DEFAULT_CATALOG_DIRECTORY: &str = "config/catalog";
+const STALE_ACTIVITY_CONTENT_AGE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+const ACTIVITY_CONTENT_RECOVERY_INTERVAL: std::time::Duration =
+    std::time::Duration::from_secs(5 * 60);
 
 fn catalog_directory() -> PathBuf {
     PathBuf::from(DEFAULT_CATALOG_DIRECTORY)
@@ -38,6 +41,26 @@ fn handle_startup_cleanup_failure(error: StorageError) -> anyhow::Error {
         "failed to delete inactive identities at startup"
     );
     anyhow::anyhow!(STARTUP_CLEANUP_FAILURE)
+}
+
+fn log_activity_content_recovery_failure(_error: &StorageError) {
+    tracing::warn!(
+        failure_kind = "activity_content_recovery",
+        "failed to recover stale activity content"
+    );
+}
+
+async fn recover_stale_activity_content(storage: &Storage) {
+    match storage
+        .recover_stale_activity_content(STALE_ACTIVITY_CONTENT_AGE)
+        .await
+    {
+        Ok(recovered) if recovered > 0 => {
+            tracing::info!(recovered, "recovered stale activity content");
+        }
+        Ok(_) => {}
+        Err(error) => log_activity_content_recovery_failure(&error),
+    }
 }
 
 fn load_environment_file(path: &Path) -> anyhow::Result<()> {
@@ -78,6 +101,7 @@ async fn main() -> anyhow::Result<()> {
     if deleted > 0 {
         tracing::info!(deleted, "deleted inactive identities at startup");
     }
+    recover_stale_activity_content(&storage).await;
     let cleanup_storage = storage.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(24 * 60 * 60));
@@ -93,13 +117,25 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     });
+    let recovery_storage = storage.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(ACTIVITY_CONTENT_RECOVERY_INTERVAL);
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            recover_stale_activity_content(&recovery_storage).await;
+        }
+    });
 
     let upstream_policy =
         prelay_server::upstream::initialize_from_environment().map_err(anyhow::Error::msg)?;
     let client = reqwest::Client::builder()
+        .no_proxy()
         .timeout(upstream_policy.timeout)
         .build()?;
-    let client_update = ClientUpdateCache::from_environment(client.clone()).await?;
+    let client_update_client =
+        prelay_server::client_update::http_client_from_environment(upstream_policy.timeout)?;
+    let client_update = ClientUpdateCache::from_environment(client_update_client).await?;
     if let Err(error) = client_update.refresh().await {
         tracing::warn!(error = %error, "failed to refresh client update cache at startup");
     }

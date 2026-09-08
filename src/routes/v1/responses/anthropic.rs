@@ -108,7 +108,7 @@ pub(super) async fn create_anthropic_messages_response(
             endpoint_name: context.endpoint_name.clone(),
             model_requested: context.model_requested,
             model_upstream: request.model,
-            status: "success".to_string(),
+            status: "streaming".to_string(),
             http_status: 200,
             error_code: None,
             error_message: None,

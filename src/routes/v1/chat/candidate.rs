@@ -107,7 +107,7 @@ pub(super) async fn create_chat_completion_with_candidate(
             endpoint_name: access.endpoint_name.clone(),
             model_requested: model,
             model_upstream,
-            status: "success".to_string(),
+            status: "streaming".to_string(),
             http_status: 200,
             error_code: None,
             error_message: None,

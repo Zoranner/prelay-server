@@ -16,6 +16,18 @@ impl Storage {
         content: NormalizedActivityContent,
     ) -> Result<String, StorageError> {
         let activity_id = Uuid::new_v4().to_string();
+        self.record_completed_activity_with_id(identity_id, activity_id.clone(), activity, content)
+            .await?;
+        Ok(activity_id)
+    }
+
+    pub async fn record_completed_activity_with_id(
+        &self,
+        identity_id: &str,
+        activity_id: String,
+        activity: ActivityInsert,
+        content: NormalizedActivityContent,
+    ) -> Result<(), StorageError> {
         let transaction = self.db.begin().await?;
         activities::insert_with_id(&transaction, identity_id, activity_id.clone(), activity)
             .await?;
@@ -26,7 +38,7 @@ impl Storage {
         )
         .await?;
         transaction.commit().await?;
-        Ok(activity_id)
+        Ok(())
     }
 
     pub async fn start_stream_activity(

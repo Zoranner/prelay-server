@@ -342,7 +342,7 @@ fn success_count_expr() -> Expr {
 
 fn failed_count_expr() -> Expr {
     let case: Expr = Expr::case(
-        Expr::col(identity_activities::Column::Status).ne("success"),
+        Expr::col(identity_activities::Column::Status).is_in(["failed", "downstream_disconnected"]),
         1,
     )
     .finally(0)

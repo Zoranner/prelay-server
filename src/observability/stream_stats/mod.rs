@@ -3,6 +3,8 @@ mod record;
 mod state;
 
 #[cfg(test)]
+mod content_tests;
+#[cfg(test)]
 mod tests;
 
 pub use record::{

@@ -105,7 +105,7 @@ pub(super) async fn create_chat_anthropic_message(
             endpoint_name: context.endpoint_name.clone(),
             model_requested: context.model_requested,
             model_upstream: request.model.clone(),
-            status: "success".to_string(),
+            status: "streaming".to_string(),
             http_status: 200,
             error_code: None,
             error_message: None,

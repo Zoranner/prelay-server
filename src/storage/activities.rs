@@ -124,7 +124,9 @@ async fn update_stream(
         .await?
         .ok_or(StorageError::ActivityNotFound)?;
     let mut active: activities::ActiveModel = row.into();
-    active.status = Set(update.status);
+    if !update.status.is_empty() {
+        active.status = Set(update.status);
+    }
     active.http_status = Set(Some(update.http_status));
     active.error_code = Set(update.error_code);
     active.error_message = Set(update.error_message);

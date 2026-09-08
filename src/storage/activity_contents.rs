@@ -2,9 +2,14 @@ use chrono::Utc;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
 };
+use sea_query::{Expr, Query};
+use std::time::Duration;
 use uuid::Uuid;
 
-use crate::{activity::ActivityContentDraft, entity::activity_contents};
+use crate::{
+    activity::ActivityContentDraft,
+    entity::{activity_contents, identity::activities},
+};
 
 use super::{Storage, StorageError};
 
@@ -25,6 +30,48 @@ impl Storage {
             .one(&self.db)
             .await
             .map_err(StorageError::from)
+    }
+
+    pub async fn recover_stale_activity_content(
+        &self,
+        max_age: Duration,
+    ) -> Result<u64, StorageError> {
+        let now = Utc::now();
+        let cutoff = now
+            - chrono::Duration::from_std(max_age)
+                .map_err(|error| StorageError::ValidationFailed(error.to_string()))?;
+        let result = activity_contents::Entity::update_many()
+            .col_expr(activity_contents::Column::Status, Expr::value("pending"))
+            .col_expr(
+                activity_contents::Column::NextAttemptAt,
+                Expr::value(now.to_rfc3339()),
+            )
+            .col_expr(
+                activity_contents::Column::LeaseOwner,
+                Expr::value(Option::<String>::None),
+            )
+            .col_expr(
+                activity_contents::Column::LeaseExpiresAt,
+                Expr::value(Option::<String>::None),
+            )
+            .col_expr(
+                activity_contents::Column::CompletedAt,
+                Expr::value(now.to_rfc3339()),
+            )
+            .filter(activity_contents::Column::Status.eq("capturing"))
+            .filter(activity_contents::Column::UpdatedAt.lt(cutoff.to_rfc3339()))
+            .filter(
+                activity_contents::Column::ActivityId.in_subquery(
+                    Query::select()
+                        .column(activities::Column::Id)
+                        .from(activities::Entity)
+                        .and_where(activities::Column::Status.is_in(["success", "failed"]))
+                        .take(),
+                ),
+            )
+            .exec(&self.db)
+            .await?;
+        Ok(result.rows_affected)
     }
 }
 
@@ -79,6 +126,7 @@ where
     active.is_truncated = Set(draft.is_truncated);
     active.content_hash = Set(draft.content_hash);
     active.status = Set("pending".to_string());
+    active.completed_at = Set(Some(now.clone()));
     active.updated_at = Set(now);
     active.update(db).await?;
     Ok(())
