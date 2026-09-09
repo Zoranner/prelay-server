@@ -4,7 +4,7 @@ use axum::{
     Json,
 };
 use prelay_protocol::{
-    CreateIdentityRequest, CreateIdentityResponse, RotateCredentialRequest,
+    CreateIdentityRequest, CreateIdentityResponse, IdentityDirectoryEntry, RotateCredentialRequest,
     RotateCredentialResponse,
 };
 use serde::Serialize;
@@ -24,6 +24,12 @@ pub async fn current_identity(
     Json(CurrentIdentityResponse {
         identity_id: identity.id,
     })
+}
+
+pub async fn directory(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<IdentityDirectoryEntry>>, AppError> {
+    Ok(Json(state.storage.list_identity_directory().await?))
 }
 
 pub async fn create_identity(

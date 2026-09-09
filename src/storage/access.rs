@@ -5,12 +5,12 @@ use sea_orm::{
     sea_query::OnConflict, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QueryOrder,
 };
 
+use super::{identities, ProtocolAccess, ProtocolModel, Storage, StorageError};
 use crate::entity::identity::{
     activities, endpoint_configs, endpoint_model_routes, endpoint_models, provider_configs,
-    provider_models,
 };
 
-use super::{identities, ProtocolAccess, ProtocolModel, Storage, StorageError};
+use super::provider_visibility::can_use_provider_on;
 
 impl Storage {
     pub async fn authenticate_protocol_access(
@@ -46,8 +46,18 @@ impl Storage {
         model_name: &str,
     ) -> Result<Vec<ProtocolModel>, StorageError> {
         let mut candidates = self.resolve_protocol_models(access, model_name).await?;
+        self.select_candidates(access, model_name, &mut candidates)
+            .await
+    }
+
+    async fn select_candidates(
+        &self,
+        access: &ProtocolAccess,
+        model_name: &str,
+        candidates: &mut Vec<ProtocolModel>,
+    ) -> Result<Vec<ProtocolModel>, StorageError> {
         if candidates.len() < 2 {
-            return Ok(candidates);
+            return Ok(std::mem::take(candidates));
         }
 
         let provider_latencies = self
@@ -85,12 +95,12 @@ impl Storage {
                 let active = candidates.remove(index);
                 candidates.sort_by(sort_by_latency);
                 candidates.insert(0, active);
-                return Ok(candidates);
+                return Ok(std::mem::take(candidates));
             }
         }
 
         candidates.sort_by(sort_by_latency);
-        Ok(candidates)
+        Ok(std::mem::take(candidates))
     }
 
     async fn provider_average_latencies<'a>(
@@ -192,19 +202,12 @@ impl Storage {
         let mut resolved = Vec::with_capacity(models.len());
         for model in models {
             let provider = provider_configs::Entity::find_by_id(&model.provider_id)
-                .filter(provider_configs::Column::IdentityId.eq(&access.identity_id))
                 .one(&self.db)
                 .await?;
             let Some(provider) = provider else {
                 continue;
             };
-            let upstream_exists = provider_models::Entity::find()
-                .filter(provider_models::Column::ProviderId.eq(&provider.id))
-                .filter(provider_models::Column::ModelName.eq(&model.upstream_model))
-                .one(&self.db)
-                .await?
-                .is_some();
-            if !upstream_exists {
+            if !can_use_provider_on(&self.db, &access.identity_id, &model.provider_id).await? {
                 continue;
             }
             resolved.push(ProtocolModel {

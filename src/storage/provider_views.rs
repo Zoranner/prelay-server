@@ -1,33 +1,18 @@
-use prelay_protocol::{ProviderCapabilityOverrides, ProviderModelResponse, ProviderResponse};
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder};
+use prelay_protocol::{
+    ProviderCapabilityOverrides, ProviderListItemResponse, ProviderResponse, ProviderVisibility,
+};
 
 use crate::{
-    entity::identity::{
-        provider_configs as identity_provider_configs, provider_models as identity_provider_models,
-    },
-    provider_catalog::ProviderCatalog,
+    entity::identity::provider_configs as identity_provider_configs,
     providers::spec::resolved_upstream_protocols,
 };
 
 use super::{crypto::KeyCipher, StorageError};
 
-pub(super) async fn provider_response<C>(
-    db: &C,
+pub(super) fn provider_response(
     crypto: &KeyCipher,
     provider: identity_provider_configs::Model,
-    catalog: Option<&ProviderCatalog>,
-) -> Result<ProviderResponse, StorageError>
-where
-    C: ConnectionTrait,
-{
-    let models = identity_provider_models::Entity::find()
-        .filter(identity_provider_models::Column::ProviderId.eq(&provider.id))
-        .order_by_asc(identity_provider_models::Column::CreatedAt)
-        .all(db)
-        .await?
-        .into_iter()
-        .map(|model| provider_model_response(model, catalog))
-        .collect();
+) -> Result<ProviderResponse, StorageError> {
     let capabilities: ProviderCapabilityOverrides = provider
         .capabilities_json
         .as_deref()
@@ -47,25 +32,43 @@ where
         api_key_masked: mask_ciphertext(&provider.api_key_ciphertext),
         capabilities,
         upstream_protocols,
-        models,
         created_at: provider.created_at,
     })
 }
 
-fn provider_model_response(
-    model: identity_provider_models::Model,
-    catalog: Option<&ProviderCatalog>,
-) -> ProviderModelResponse {
-    let display_name = catalog
-        .map(|catalog| catalog.model_display_name(&model.model_name))
-        .unwrap_or_else(|| model.model_name.clone());
-    ProviderModelResponse {
-        id: model.id,
-        provider_id: model.provider_id,
-        model_name: model.model_name,
-        display_name,
-        created_at: model.created_at,
-    }
+pub(super) fn provider_list_item(
+    provider: identity_provider_configs::Model,
+    owner_identity_id: String,
+    owner_display_name: String,
+    visibility: ProviderVisibility,
+    can_manage: bool,
+) -> Result<ProviderListItemResponse, StorageError> {
+    let capabilities = capabilities(&provider);
+    let upstream_protocols = resolved_upstream_protocols(
+        &provider.provider_type,
+        capabilities.upstream_protocols.as_deref(),
+    );
+    Ok(ProviderListItemResponse {
+        id: provider.id,
+        name: provider.name,
+        provider_type: provider.provider_type,
+        base_url: provider.base_url,
+        capabilities,
+        upstream_protocols,
+        owner_identity_id,
+        owner_display_name,
+        visibility,
+        can_manage,
+        created_at: provider.created_at,
+    })
+}
+
+fn capabilities(provider: &identity_provider_configs::Model) -> ProviderCapabilityOverrides {
+    provider
+        .capabilities_json
+        .as_deref()
+        .and_then(|value| serde_json::from_str(value).ok())
+        .unwrap_or_default()
 }
 
 fn mask_ciphertext(ciphertext: &str) -> String {

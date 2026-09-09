@@ -87,7 +87,6 @@ async fn management_credential_deletes_own_endpoint_with_model_mapping() {
         base_url: "https://provider-a.example".to_string(),
         api_key: "sk-a".to_string(),
         capabilities: None,
-        models: vec!["deepseek-v4-flash".to_string()],
     };
     let (status, provider): (StatusCode, serde_json::Value) = request_json(
         &app,

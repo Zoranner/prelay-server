@@ -145,7 +145,6 @@ async fn management_stats_only_return_the_current_identity_request_data() {
                 base_url: "https://provider-a.example".to_string(),
                 api_key: "sk-a".to_string(),
                 capabilities: None,
-                models: vec!["deepseek-v4-flash".to_string()],
             })
             .expect("serialize provider A"),
         ),
@@ -169,7 +168,6 @@ async fn management_stats_only_return_the_current_identity_request_data() {
                 base_url: "https://provider-b.example".to_string(),
                 api_key: "sk-b".to_string(),
                 capabilities: None,
-                models: vec!["deepseek-v4-pro".to_string()],
             })
             .expect("serialize provider B"),
         ),

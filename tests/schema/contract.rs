@@ -5,7 +5,7 @@ use prelay_server::schema::initialize;
 const TABLES: [&str; 12] = [
     "identities",
     "identity_provider_configs",
-    "identity_provider_models",
+    "identity_provider_shares",
     "identity_endpoint_configs",
     "identity_endpoint_models",
     "identity_endpoint_model_routes",
@@ -90,6 +90,16 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
     for table in TABLES {
         assert!(table_exists(db, table).await, "missing table: {table}");
     }
+    assert_string_column(db, "identity_provider_configs", "visibility").await;
+    for column in ["provider_id", "grantee_identity_id", "created_at"] {
+        assert_string_column(db, "identity_provider_shares", column).await;
+    }
+    for column in ["api_key", "api_key_ciphertext", "credential", "token"] {
+        assert!(
+            !column_exists(db, "identity_provider_shares", column).await,
+            "identity_provider_shares must not store credentials in {column}"
+        );
+    }
 
     db.execute_unprepared(
         "INSERT INTO identities (id, machine_id, account_sid, credential_hash, display_name, created_at, last_active_at) \
@@ -108,11 +118,66 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
 
     let missing_identity = db
         .execute_unprepared(
-            "INSERT INTO identity_provider_configs (id, identity_id, name, provider_type, base_url, api_key_ciphertext, created_at) \
+        "INSERT INTO identity_provider_configs (id, identity_id, name, provider_type, base_url, api_key_ciphertext, created_at) \
              VALUES ('provider-1', 'missing', 'Provider', 'openai', 'https://example.test', 'ciphertext', '2026-08-23T00:00:00Z')",
+    )
+    .await;
+    assert!(missing_identity.is_err());
+
+    db.execute_unprepared(
+        "INSERT INTO identity_provider_configs
+            (id, identity_id, name, provider_type, base_url, api_key_ciphertext, created_at)
+         VALUES
+            ('provider-1', 'identity-1', 'Provider', 'openai', 'https://example.test',
+             'ciphertext', '2026-08-23T00:00:00Z')",
+    )
+    .await
+    .unwrap();
+    db.execute_unprepared(
+        "INSERT INTO identities
+            (id, machine_id, account_sid, credential_hash, display_name, created_at, last_active_at)
+         VALUES
+            ('identity-2', 'machine-2', 'S-1-5-22', 'hash', '', '2026-08-23T00:00:00Z',
+             '2026-08-23T00:00:00Z')",
+    )
+    .await
+    .unwrap();
+    db.execute_unprepared(
+        "INSERT INTO identity_provider_shares
+            (provider_id, grantee_identity_id, created_at)
+         VALUES
+            ('provider-1', 'identity-2', '2026-08-23T00:00:00Z')",
+    )
+    .await
+    .unwrap();
+    let duplicate_share = db
+        .execute_unprepared(
+            "INSERT INTO identity_provider_shares
+                (provider_id, grantee_identity_id, created_at)
+             VALUES
+                ('provider-1', 'identity-2', '2026-08-23T00:00:01Z')",
         )
         .await;
-    assert!(missing_identity.is_err());
+    assert!(duplicate_share.is_err());
+
+    let missing_provider_share = db
+        .execute_unprepared(
+            "INSERT INTO identity_provider_shares
+                (provider_id, grantee_identity_id, created_at)
+             VALUES
+                ('missing-provider', 'identity-2', '2026-08-23T00:00:00Z')",
+        )
+        .await;
+    assert!(missing_provider_share.is_err());
+    let missing_grantee_share = db
+        .execute_unprepared(
+            "INSERT INTO identity_provider_shares
+                (provider_id, grantee_identity_id, created_at)
+             VALUES
+                ('provider-1', 'missing-identity', '2026-08-23T00:00:00Z')",
+        )
+        .await;
+    assert!(missing_grantee_share.is_err());
 
     for column in [
         "http_status",
@@ -266,6 +331,22 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
     let index_statement = Statement::from_string(db.get_database_backend(), index_sql);
     let row = db.query_one_raw(index_statement).await.unwrap().unwrap();
     assert_eq!(row.try_get::<i64>("", COUNT_COLUMN).unwrap(), 1);
+
+    let sharing_index_sql = "SELECT COUNT(*) AS result_count
+        FROM pragma_index_list('identity_provider_shares')
+        WHERE name = 'uq_identity_provider_shares_provider_grantee'";
+    let sharing_index_row = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            sharing_index_sql.to_owned(),
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        sharing_index_row.try_get::<i64>("", COUNT_COLUMN).unwrap(),
+        1
+    );
 }
 
 #[tokio::test]

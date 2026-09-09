@@ -27,6 +27,7 @@ pub fn router(state: AppState) -> Router {
             "/identity/credential/rotate",
             post(identities::rotate_credential),
         )
+        .route("/identities", get(identities::directory))
         .route("/identity", get(identities::current_identity))
         .layer(middleware::from_fn_with_state(
             state.clone(),

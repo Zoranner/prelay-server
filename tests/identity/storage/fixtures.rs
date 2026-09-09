@@ -15,7 +15,6 @@ pub(super) fn provider_input(name: &str, api_key: &str) -> CreateProviderRequest
         base_url: "https://provider.example".to_string(),
         api_key: api_key.to_string(),
         capabilities: None,
-        models: vec!["test-model".to_string()],
     }
 }
 

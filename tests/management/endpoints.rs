@@ -8,6 +8,51 @@ use tower::ServiceExt;
 use crate::{auth::register, http::request_json};
 
 #[tokio::test]
+async fn management_endpoint_accepts_catalog_model_without_provider_model_rows() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let identity = register(
+        &app,
+        "machine-endpoint-catalog-source",
+        "S-1-5-21-endpoint-catalog-source",
+    )
+    .await;
+    let credential = identity["credential"].as_str().expect("credential");
+
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Catalog Provider",
+            "provider_type": "deepseek",
+            "base_url": "https://provider.example",
+            "api_key": "sk-catalog-source"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, endpoint): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/endpoints",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Catalog Endpoint",
+            "models": [{
+                "provider_id": provider["id"],
+                "upstream_model": "deepseek-v4-pro"
+            }]
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(endpoint["models"][0]["upstream_model"], "deepseek-v4-pro");
+}
+
+#[tokio::test]
 async fn management_endpoint_rejects_duplicate_model_names_without_creating_an_interface() {
     let app = app::router(test_state().await).await.expect("build app");
     let identity = register(&app, "machine-a", "S-1-5-21-100").await;
@@ -56,25 +101,6 @@ async fn management_endpoint_rejects_duplicate_model_names_without_creating_an_i
         request_json(&app, "GET", "/api/endpoints", Some(credential), None).await;
     assert_eq!(status, StatusCode::OK);
     assert!(endpoints.is_empty());
-}
-
-#[tokio::test]
-async fn management_endpoint_rejects_provider_model_outside_catalog_relationship() {
-    let app = app::router(test_state().await).await.expect("build app");
-    let identity = register(
-        &app,
-        "machine-endpoint-catalog",
-        "S-1-5-21-endpoint-catalog",
-    )
-    .await;
-    let credential = identity["credential"].as_str().expect("credential");
-    let (status, provider): (StatusCode, serde_json::Value) = request_json(&app, "POST", "/api/providers", Some(credential), Some(serde_json::json!({"name":"DeepSeek","provider_type":"deepseek","base_url":"https://provider.example","api_key":"sk-a","models":["deepseek-v4-flash"]}))).await;
-    assert_eq!(status, StatusCode::CREATED);
-    let provider_id = provider["id"].as_str().expect("provider id");
-
-    let (status, error): (StatusCode, serde_json::Value) = request_json(&app, "POST", "/api/endpoints", Some(credential), Some(serde_json::json!({"name":"Endpoint A","models":[{"provider_id":provider_id,"upstream_model":"deepseek-v4-pro"}]}))).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(error["error"]["code"], "validation_failed");
 }
 
 #[tokio::test]

@@ -1,5 +1,43 @@
 use prelay_server::schema::initialize;
-use sea_orm::{ConnectionTrait, Database, DbBackend, EntityTrait, Statement};
+use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, EntityTrait, Statement};
+
+async fn create_existing_base_tables(db: &DatabaseConnection) {
+    for table in [
+        "identities",
+        "identity_endpoint_configs",
+        "identity_endpoint_models",
+        "identity_endpoint_model_routes",
+        "identity_response_sessions",
+        "identity_model_aliases",
+    ] {
+        db.execute_unprepared(&format!("CREATE TABLE {table} (id TEXT PRIMARY KEY)"))
+            .await
+            .expect("create existing companion table");
+    }
+    db.execute_unprepared(
+        "CREATE TABLE identity_provider_configs (
+            id TEXT PRIMARY KEY,
+            visibility TEXT NOT NULL
+        )",
+    )
+    .await
+    .expect("create existing provider config table");
+    db.execute_unprepared(
+        "CREATE TABLE identity_provider_shares (
+            provider_id TEXT NOT NULL,
+            grantee_identity_id TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )",
+    )
+    .await
+    .expect("create existing provider shares table");
+    db.execute_unprepared(
+        "CREATE UNIQUE INDEX uq_identity_provider_shares_provider_grantee
+         ON identity_provider_shares (provider_id, grantee_identity_id)",
+    )
+    .await
+    .expect("create existing provider shares index");
+}
 
 #[tokio::test]
 async fn initializes_an_empty_database_without_migration_metadata() {
@@ -28,6 +66,41 @@ async fn initializes_an_empty_database_without_migration_metadata() {
 }
 
 #[tokio::test]
+async fn initializes_provider_sharing_structures_in_an_empty_database() {
+    let db = Database::connect("sqlite::memory:")
+        .await
+        .expect("connect to in-memory SQLite");
+
+    initialize(&db)
+        .await
+        .expect("initialize the current schema");
+
+    for (table, column) in [
+        ("identity_provider_configs", "visibility"),
+        ("identity_provider_shares", "provider_id"),
+        ("identity_provider_shares", "grantee_identity_id"),
+        ("identity_provider_shares", "created_at"),
+    ] {
+        let row = db
+            .query_one_raw(Statement::from_string(
+                DbBackend::Sqlite,
+                format!(
+                    "SELECT COUNT(*) AS result_count FROM pragma_table_info('{table}') \
+                     WHERE name = '{column}'"
+                ),
+            ))
+            .await
+            .expect("inspect provider sharing schema")
+            .expect("provider sharing column count");
+        assert_eq!(
+            row.try_get::<i64>("", "result_count").unwrap(),
+            1,
+            "missing {table}.{column}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn rejects_a_partially_initialized_database() {
     let db = Database::connect("sqlite::memory:")
         .await
@@ -43,14 +116,14 @@ async fn rejects_a_partially_initialized_database() {
 }
 
 #[tokio::test]
-async fn migrates_the_complete_legacy_activity_table_without_losing_rows() {
+async fn rejects_complete_table_names_without_provider_visibility_column() {
     let db = Database::connect("sqlite::memory:")
         .await
         .expect("connect to in-memory SQLite");
     for table in [
         "identities",
         "identity_provider_configs",
-        "identity_provider_models",
+        "identity_provider_shares",
         "identity_endpoint_configs",
         "identity_endpoint_models",
         "identity_endpoint_model_routes",
@@ -59,8 +132,80 @@ async fn migrates_the_complete_legacy_activity_table_without_losing_rows() {
     ] {
         db.execute_unprepared(&format!("CREATE TABLE {table} (id TEXT PRIMARY KEY)"))
             .await
-            .expect("create legacy companion table");
+            .expect("create complete table-name set");
     }
+    db.execute_unprepared(
+        "CREATE TABLE identity_activities (
+            id TEXT PRIMARY KEY,
+            identity_id TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )",
+    )
+    .await
+    .expect("create current activity table");
+
+    let error = initialize(&db)
+        .await
+        .expect_err("schema without provider visibility must be rejected");
+    assert!(error.to_string().contains("database schema is incomplete"));
+}
+
+#[tokio::test]
+async fn rejects_provider_shares_without_required_unique_index() {
+    let db = Database::connect("sqlite::memory:")
+        .await
+        .expect("connect to in-memory SQLite");
+    for table in [
+        "identities",
+        "identity_endpoint_configs",
+        "identity_endpoint_models",
+        "identity_endpoint_model_routes",
+        "identity_response_sessions",
+        "identity_model_aliases",
+    ] {
+        db.execute_unprepared(&format!("CREATE TABLE {table} (id TEXT PRIMARY KEY)"))
+            .await
+            .expect("create complete table-name set");
+    }
+    db.execute_unprepared(
+        "CREATE TABLE identity_provider_configs (
+            id TEXT PRIMARY KEY,
+            visibility TEXT NOT NULL
+        )",
+    )
+    .await
+    .expect("create provider config table");
+    db.execute_unprepared(
+        "CREATE TABLE identity_provider_shares (
+            provider_id TEXT NOT NULL,
+            grantee_identity_id TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )",
+    )
+    .await
+    .expect("create provider shares table without its index");
+    db.execute_unprepared(
+        "CREATE TABLE identity_activities (
+            id TEXT PRIMARY KEY,
+            identity_id TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )",
+    )
+    .await
+    .expect("create current activity table");
+
+    let error = initialize(&db)
+        .await
+        .expect_err("provider shares without its unique index must be rejected");
+    assert!(error.to_string().contains("database schema is incomplete"));
+}
+
+#[tokio::test]
+async fn migrates_the_complete_legacy_activity_table_without_losing_rows() {
+    let db = Database::connect("sqlite::memory:")
+        .await
+        .expect("connect to in-memory SQLite");
+    create_existing_base_tables(&db).await;
     db.execute_unprepared(
         "CREATE TABLE identity_activities (id TEXT PRIMARY KEY, identity_id TEXT NOT NULL, created_at TEXT NOT NULL)",
     )
@@ -93,20 +238,7 @@ async fn removes_legacy_cost_columns_from_an_existing_activity_table() {
     let db = Database::connect("sqlite::memory:")
         .await
         .expect("connect to in-memory SQLite");
-    for table in [
-        "identities",
-        "identity_provider_configs",
-        "identity_provider_models",
-        "identity_endpoint_configs",
-        "identity_endpoint_models",
-        "identity_endpoint_model_routes",
-        "identity_response_sessions",
-        "identity_model_aliases",
-    ] {
-        db.execute_unprepared(&format!("CREATE TABLE {table} (id TEXT PRIMARY KEY)"))
-            .await
-            .expect("create existing companion table");
-    }
+    create_existing_base_tables(&db).await;
     db.execute_unprepared(
         "CREATE TABLE identity_activities (
             id TEXT PRIMARY KEY,

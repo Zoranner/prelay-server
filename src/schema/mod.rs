@@ -9,7 +9,7 @@ use sea_query::{IndexCreateStatement, TableCreateStatement};
 const BASE_TABLES: [&str; 8] = [
     "identities",
     "identity_provider_configs",
-    "identity_provider_models",
+    "identity_provider_shares",
     "identity_endpoint_configs",
     "identity_endpoint_models",
     "identity_endpoint_model_routes",
@@ -19,6 +19,8 @@ const BASE_TABLES: [&str; 8] = [
 const LEGACY_ACTIVITY_TABLE: &str = "identity_request_logs";
 const LEGACY_ACTIVITY_INDEX: &str = "idx_identity_request_logs_identity_created_at";
 const MEMORY_TABLES: [&str; 3] = ["activity_contents", "memories", "memory_sources"];
+const INCOMPLETE_SCHEMA_ERROR: &str =
+    "database schema is incomplete; create a new database deployment";
 
 pub async fn initialize(db: &DatabaseConnection) -> Result<(), DbErr> {
     let manager = SchemaInitializer { db };
@@ -33,29 +35,27 @@ pub async fn initialize(db: &DatabaseConnection) -> Result<(), DbErr> {
         && existing_memory_tables == 0
     {
         initialize_empty_schema(&manager).await?;
+        activity_content::apply(db).await?;
         return Ok(());
     }
     if existing_base_tables != BASE_TABLES.len() {
-        return Err(DbErr::Custom(
-            "database schema is incomplete; create a new database deployment".to_owned(),
-        ));
+        return Err(incomplete_schema_error());
+    }
+    if !provider_sharing_schema_exists(db).await? {
+        return Err(incomplete_schema_error());
     }
 
     if !has_current_activities && has_legacy_activities {
         manager.rename_legacy_activities().await?;
     }
     if !has_current_activities && !has_legacy_activities {
-        return Err(DbErr::Custom(
-            "database schema is incomplete; create a new database deployment".to_owned(),
-        ));
+        return Err(incomplete_schema_error());
     }
     manager.drop_legacy_cost_columns().await?;
     match existing_memory_tables {
         0 => initialize_memory_schema(&manager).await,
         count if count == MEMORY_TABLES.len() => Ok(()),
-        _ => Err(DbErr::Custom(
-            "database schema is incomplete; create a new database deployment".to_owned(),
-        )),
+        _ => Err(incomplete_schema_error()),
     }?;
     activity_content::apply(db).await
 }
@@ -71,6 +71,12 @@ pub async fn initialize_with_catalog(
 async fn initialize_empty_schema(manager: &SchemaInitializer<'_>) -> Result<(), DbErr> {
     manager.create_table(tables::identity::statement()).await?;
     manager.create_table(tables::providers::configs()).await?;
+    manager
+        .create_table(tables::provider_shares::statement())
+        .await?;
+    manager
+        .create_index(indexes::provider_shares_provider_grantee())
+        .await?;
     manager.create_table(tables::endpoints::configs()).await?;
     manager.create_table(tables::endpoints::models()).await?;
     manager.create_table(tables::endpoints::routes()).await?;
@@ -204,6 +210,50 @@ async fn column_exists(db: &DatabaseConnection, table: &str, column: &str) -> Re
         .ok_or_else(|| DbErr::Custom("database column lookup returned no row".to_owned()))?;
     row.try_get::<i64>("", "column_exists")
         .map(|count| count == 1)
+}
+
+async fn index_exists(db: &DatabaseConnection, table: &str, index: &str) -> Result<bool, DbErr> {
+    let backend = db.get_database_backend();
+    let sql = match backend {
+        DbBackend::Sqlite => format!(
+            "SELECT COUNT(*) AS index_exists FROM sqlite_master \
+             WHERE type = 'index' AND tbl_name = '{table}' AND name = '{index}'"
+        ),
+        DbBackend::Postgres => format!(
+            "SELECT COUNT(*) AS index_exists FROM pg_indexes \
+             WHERE schemaname = current_schema() \
+             AND tablename = '{table}' \
+             AND indexname = '{index}'"
+        ),
+        _ => unreachable!("only SQLite and PostgreSQL are supported"),
+    };
+    let row = db
+        .query_one_raw(Statement::from_string(backend, sql))
+        .await?
+        .ok_or_else(|| DbErr::Custom("database index lookup returned no row".to_owned()))?;
+    row.try_get::<i64>("", "index_exists")
+        .map(|count| count == 1)
+}
+
+async fn provider_sharing_schema_exists(db: &DatabaseConnection) -> Result<bool, DbErr> {
+    if !column_exists(db, "identity_provider_configs", "visibility").await? {
+        return Ok(false);
+    }
+    for column in ["provider_id", "grantee_identity_id", "created_at"] {
+        if !column_exists(db, "identity_provider_shares", column).await? {
+            return Ok(false);
+        }
+    }
+    index_exists(
+        db,
+        "identity_provider_shares",
+        "uq_identity_provider_shares_provider_grantee",
+    )
+    .await
+}
+
+fn incomplete_schema_error() -> DbErr {
+    DbErr::Custom(INCOMPLETE_SCHEMA_ERROR.to_owned())
 }
 
 #[cfg(test)]

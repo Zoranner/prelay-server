@@ -1,8 +1,8 @@
 use chrono::{DateTime, Duration, Utc};
-use prelay_protocol::{CreateIdentityResponse, RotateCredentialResponse};
+use prelay_protocol::{CreateIdentityResponse, IdentityDirectoryEntry, RotateCredentialResponse};
 use sea_orm::{
     sea_query::Expr, ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection,
-    EntityTrait, IntoActiveModel, QueryFilter, TransactionTrait,
+    EntityTrait, IntoActiveModel, QueryFilter, QueryOrder, TransactionTrait,
 };
 use uuid::Uuid;
 
@@ -14,7 +14,6 @@ use crate::{
             endpoint_model_routes as identity_endpoint_model_routes,
             endpoint_models as identity_endpoint_models, model_aliases as identity_model_aliases,
             provider_configs as identity_provider_configs,
-            provider_models as identity_provider_models,
             response_sessions as identity_response_sessions,
         },
     },
@@ -86,6 +85,22 @@ impl Storage {
         identity_id: &str,
     ) -> Result<String, StorageError> {
         credential_hash(&self.db, identity_id).await
+    }
+
+    pub async fn list_identity_directory(
+        &self,
+    ) -> Result<Vec<IdentityDirectoryEntry>, StorageError> {
+        Ok(identities::Entity::find()
+            .order_by_asc(identities::Column::DisplayName)
+            .order_by_asc(identities::Column::Id)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(|identity| IdentityDirectoryEntry {
+                identity_id: identity.id,
+                display_name: identity.display_name,
+            })
+            .collect())
     }
 
     pub async fn delete_inactive_identities(
@@ -273,13 +288,6 @@ pub(crate) async fn delete_inactive(
         .into_iter()
         .map(|endpoint| endpoint.id)
         .collect::<Vec<_>>();
-    let provider_ids = identity_provider_configs::Entity::find()
-        .filter(identity_provider_configs::Column::IdentityId.is_in(identity_ids.clone()))
-        .all(&transaction)
-        .await?
-        .into_iter()
-        .map(|provider| provider.id)
-        .collect::<Vec<_>>();
     let activity_ids = identity_activities::Entity::find()
         .filter(identity_activities::Column::IdentityId.is_in(identity_ids.clone()))
         .all(&transaction)
@@ -316,12 +324,6 @@ pub(crate) async fn delete_inactive(
         .filter(identity_endpoint_configs::Column::IdentityId.is_in(identity_ids.clone()))
         .exec(&transaction)
         .await?;
-    if !provider_ids.is_empty() {
-        identity_provider_models::Entity::delete_many()
-            .filter(identity_provider_models::Column::ProviderId.is_in(provider_ids))
-            .exec(&transaction)
-            .await?;
-    }
     identity_model_aliases::Entity::delete_many()
         .filter(identity_model_aliases::Column::IdentityId.is_in(identity_ids.clone()))
         .exec(&transaction)

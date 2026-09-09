@@ -1,16 +1,14 @@
 use std::collections::HashSet;
 
 use prelay_protocol::EndpointModelInput;
-use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
+use sea_orm::{DatabaseTransaction, EntityTrait};
 
 use crate::{
-    entity::identity::{
-        provider_configs as identity_provider_configs, provider_models as identity_provider_models,
-    },
+    entity::identity::provider_configs as identity_provider_configs,
     provider_catalog::ProviderCatalog,
 };
 
-use super::StorageError;
+use super::{provider_visibility::can_use_provider_on, StorageError};
 
 #[derive(Clone)]
 pub(super) struct NormalizedModel {
@@ -58,23 +56,13 @@ pub(super) async fn validate_models(
                 "endpoint upstream model must not be empty".to_string(),
             ));
         }
-        let provider = identity_provider_configs::Entity::find_by_id(&model.provider_id)
-            .filter(identity_provider_configs::Column::IdentityId.eq(identity_id))
-            .one(transaction)
-            .await?
-            .ok_or(StorageError::ProviderNotFound)?;
-        let model_exists = identity_provider_models::Entity::find()
-            .filter(identity_provider_models::Column::ProviderId.eq(&model.provider_id))
-            .filter(identity_provider_models::Column::ModelName.eq(&model.upstream_model))
-            .one(transaction)
-            .await?
-            .is_some();
-        if !model_exists {
-            return Err(StorageError::ValidationFailed(format!(
-                "provider {} does not support model {}",
-                model.provider_id, model.upstream_model
-            )));
+        if !can_use_provider_on(transaction, identity_id, &model.provider_id).await? {
+            return Err(StorageError::ProviderNotUsable);
         }
+        let provider = identity_provider_configs::Entity::find_by_id(&model.provider_id)
+            .one(transaction)
+            .await?
+            .ok_or(StorageError::ProviderNotUsable)?;
         if let Some(catalog) = catalog {
             if !catalog
                 .provider_supports_language_model(&provider.provider_type, &model.upstream_model)

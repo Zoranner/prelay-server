@@ -71,7 +71,6 @@ fn source_modules_use_domain_directories() {
         "entity/identity/endpoint_models.rs",
         "entity/identity/model_aliases.rs",
         "entity/identity/provider_configs.rs",
-        "entity/identity/provider_models.rs",
         "entity/identity/activities.rs",
         "entity/identity/response_sessions.rs",
         "observability/stream_stats/mod.rs",

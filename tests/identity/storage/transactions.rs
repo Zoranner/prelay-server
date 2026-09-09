@@ -13,19 +13,6 @@ async fn provider_and_endpoint_writes_leave_no_partial_resources_after_validatio
         .await
         .expect("register identity");
 
-    let mut invalid_provider = provider_input("Invalid provider", "test-provider-key");
-    invalid_provider.models = vec!["test-model".to_string(), " test-model ".to_string()];
-    let error = storage
-        .create_provider(&identity.identity_id, invalid_provider)
-        .await
-        .expect_err("reject duplicate provider model");
-    assert!(matches!(error, StorageError::ValidationFailed(_)));
-    assert!(storage
-        .list_providers(&identity.identity_id)
-        .await
-        .expect("list providers")
-        .is_empty());
-
     let provider_id = storage
         .create_provider(
             &identity.identity_id,

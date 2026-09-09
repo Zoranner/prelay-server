@@ -8,6 +8,7 @@ pub struct Model {
     pub identity_id: String,
     pub name: String,
     pub provider_type: String,
+    pub visibility: String,
     pub base_url: String,
     pub api_key_ciphertext: String,
     pub capabilities_json: Option<String>,
@@ -22,8 +23,8 @@ pub enum Relation {
         to = "super::super::identities::Column::Id"
     )]
     Identity,
-    #[sea_orm(has_many = "super::provider_models::Entity")]
-    ProviderModels,
+    #[sea_orm(has_many = "super::provider_shares::Entity")]
+    ProviderShares,
     #[sea_orm(has_many = "super::endpoint_models::Entity")]
     EndpointModels,
     #[sea_orm(has_many = "super::endpoint_model_routes::Entity")]
@@ -40,9 +41,9 @@ impl Related<super::super::identities::Entity> for Entity {
     }
 }
 
-impl Related<super::provider_models::Entity> for Entity {
+impl Related<super::provider_shares::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::ProviderModels.def()
+        Relation::ProviderShares.def()
     }
 }
 

@@ -108,7 +108,6 @@ pub(crate) async fn create_test_endpoint_auth_with_candidates(
                         .capabilities_json
                         .as_deref()
                         .and_then(|value| serde_json::from_str(value).ok()),
-                    models: vec![upstream_model.to_string()],
                 },
             )
             .await

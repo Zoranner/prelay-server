@@ -21,6 +21,10 @@ mod leaderboard;
 mod provider_catalog;
 #[path = "management/provider_operations.rs"]
 mod provider_operations;
+#[path = "management/provider_sharing.rs"]
+mod provider_sharing;
+#[path = "management/provider_usage.rs"]
+mod provider_usage;
 #[path = "management/providers.rs"]
 mod providers;
 #[path = "management/stats.rs"]

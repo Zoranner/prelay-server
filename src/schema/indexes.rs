@@ -8,7 +8,7 @@ use super::tables::{
     memories::Memories,
     memory_sources::MemorySources,
     model_aliases::ModelAliases,
-    providers::ProviderModels,
+    provider_shares::ProviderShares,
     sessions::ResponseSessions,
 };
 
@@ -17,15 +17,6 @@ pub(super) fn identities_machine_sid() -> IndexCreateStatement {
         .name("uq_identities_machine_sid")
         .col(Identities::MachineId)
         .col(Identities::AccountSid)
-        .unique()
-        .to_owned()
-}
-
-pub(super) fn provider_models_name() -> IndexCreateStatement {
-    Index::create()
-        .name("uq_provider_models_name")
-        .col(ProviderModels::ProviderId)
-        .col(ProviderModels::ModelName)
         .unique()
         .to_owned()
 }
@@ -118,6 +109,16 @@ pub(super) fn model_aliases_alias() -> IndexCreateStatement {
         .name("uq_identity_model_aliases_alias")
         .col(ModelAliases::IdentityId)
         .col(ModelAliases::Alias)
+        .unique()
+        .to_owned()
+}
+
+pub(super) fn provider_shares_provider_grantee() -> IndexCreateStatement {
+    Index::create()
+        .name("uq_identity_provider_shares_provider_grantee")
+        .table(ProviderShares::Table)
+        .col(ProviderShares::ProviderId)
+        .col(ProviderShares::GranteeIdentityId)
         .unique()
         .to_owned()
 }

@@ -6,8 +6,10 @@ mod endpoint_validation;
 mod identities;
 mod leaderboard;
 mod memories;
+mod provider_usage;
 mod provider_validation;
 mod provider_views;
+mod provider_visibility;
 mod recordings;
 mod sessions;
 mod stats;
@@ -49,6 +51,11 @@ pub enum StorageError {
     IdentityNotFound,
     InvalidCredential,
     ProviderNotFound,
+    InvalidProviderSharing(String),
+    ProviderSharingNotAllowed,
+    ProviderNotVisible,
+    ProviderNotUsable,
+    ProviderRouteUnavailable,
     EndpointNotFound,
     ActivityNotFound,
     MemoryNotFound,
@@ -65,6 +72,11 @@ impl StorageError {
         match self {
             Self::IdentityAlreadyRegistered => ProtocolErrorCode::IdentityAlreadyRegistered,
             Self::InvalidCredential => ProtocolErrorCode::InvalidCredential,
+            Self::InvalidProviderSharing(_) => ProtocolErrorCode::InvalidProviderSharing,
+            Self::ProviderSharingNotAllowed => ProtocolErrorCode::ProviderSharingNotAllowed,
+            Self::ProviderNotVisible => ProtocolErrorCode::ProviderNotVisible,
+            Self::ProviderNotUsable => ProtocolErrorCode::ProviderNotUsable,
+            Self::ProviderRouteUnavailable => ProtocolErrorCode::ProviderRouteUnavailable,
             Self::IdentityNotFound
             | Self::ProviderNotFound
             | Self::EndpointNotFound
@@ -98,6 +110,17 @@ impl fmt::Display for StorageError {
                 write!(formatter, "invalid stored timestamp: {message}")
             }
             Self::InvalidMasterKey(message) => write!(formatter, "invalid master key: {message}"),
+            Self::InvalidProviderSharing(message) => {
+                write!(formatter, "invalid provider sharing: {message}")
+            }
+            Self::ProviderSharingNotAllowed => {
+                formatter.write_str("provider sharing can only be managed by its owner")
+            }
+            Self::ProviderNotVisible => formatter.write_str("provider is not visible to identity"),
+            Self::ProviderNotUsable => formatter.write_str("provider is not usable by identity"),
+            Self::ProviderRouteUnavailable => {
+                formatter.write_str("provider route is no longer available")
+            }
             Self::Crypto(message) => write!(formatter, "key encryption failed: {message}"),
             Self::Serialization(error) => error.fmt(formatter),
             Self::Database(error) => error.fmt(formatter),

@@ -164,7 +164,6 @@ async fn seed_owned_resources(
                 base_url: "https://provider.example".to_string(),
                 api_key: "test-provider-key".to_string(),
                 capabilities: None,
-                models: vec!["upstream-model".to_string()],
             },
         )
         .await

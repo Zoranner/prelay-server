@@ -272,7 +272,6 @@ mod tests {
                     base_url: "https://provider.example".to_string(),
                     api_key: format!("key-{suffix}"),
                     capabilities: None,
-                    models: vec![format!("model-{suffix}")],
                 },
             )
             .await

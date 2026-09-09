@@ -48,6 +48,11 @@ impl IntoResponse for AppError {
                     ProtocolErrorCode::ExtensionContentInvalid => StatusCode::UNPROCESSABLE_ENTITY,
                     ProtocolErrorCode::ExtensionNotFound
                     | ProtocolErrorCode::ExtensionVersionNotFound => StatusCode::NOT_FOUND,
+                    ProtocolErrorCode::InvalidProviderSharing => StatusCode::BAD_REQUEST,
+                    ProtocolErrorCode::ProviderSharingNotAllowed => StatusCode::FORBIDDEN,
+                    ProtocolErrorCode::ProviderNotVisible => StatusCode::NOT_FOUND,
+                    ProtocolErrorCode::ProviderNotUsable => StatusCode::UNPROCESSABLE_ENTITY,
+                    ProtocolErrorCode::ProviderRouteUnavailable => StatusCode::SERVICE_UNAVAILABLE,
                     ProtocolErrorCode::InvalidCredential => StatusCode::UNAUTHORIZED,
                     ProtocolErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
                     ProtocolErrorCode::ExtensionInstallUnsupported
@@ -310,5 +315,36 @@ mod tests {
         .into_response();
 
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn provider_protocol_errors_use_semantic_http_statuses() {
+        for (code, expected_status) in [
+            (
+                ProtocolErrorCode::InvalidProviderSharing,
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                ProtocolErrorCode::ProviderSharingNotAllowed,
+                StatusCode::FORBIDDEN,
+            ),
+            (ProtocolErrorCode::ProviderNotVisible, StatusCode::NOT_FOUND),
+            (
+                ProtocolErrorCode::ProviderNotUsable,
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                ProtocolErrorCode::ProviderRouteUnavailable,
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+        ] {
+            let response = AppError::Protocol {
+                code,
+                message: "provider error".to_string(),
+            }
+            .into_response();
+
+            assert_eq!(response.status(), expected_status, "{}", code.as_str());
+        }
     }
 }

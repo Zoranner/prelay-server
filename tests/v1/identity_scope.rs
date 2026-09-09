@@ -92,7 +92,6 @@ async fn create_endpoint_for_url(
             base_url: base_url.to_string(),
             api_key: format!("sk-{provider_name}"),
             capabilities: None,
-            models: vec!["deepseek-v4-pro".to_string()],
         })
         .expect("serialize provider"),
     )
@@ -157,7 +156,6 @@ async fn create_image_endpoint_for_url(
                 upstream_protocols: Some(vec!["images_generations".to_string()]),
                 ..ProviderCapabilityOverrides::default()
             }),
-            models: vec!["gpt-image-1".to_string()],
         })
         .expect("serialize image provider"),
     )

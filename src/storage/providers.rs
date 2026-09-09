@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use chrono::Utc;
 use prelay_protocol::{CreateProviderRequest, ProviderResponse, UpdateProviderRequest};
 use sea_orm::{
@@ -15,17 +13,15 @@ use crate::{
             endpoint_model_routes as identity_endpoint_model_routes,
             endpoint_models as identity_endpoint_models,
             provider_configs as identity_provider_configs,
-            provider_models as identity_provider_models,
+            provider_shares as identity_provider_shares,
         },
     },
     provider_catalog::ProviderCatalog,
 };
 
 use super::{
-    crypto::KeyCipher,
-    provider_validation::{normalize_model_names, validate_catalog_provider},
-    provider_views::provider_response,
-    Storage, StorageError,
+    crypto::KeyCipher, provider_validation::validate_catalog_provider,
+    provider_views::provider_response, provider_visibility::owned_provider, Storage, StorageError,
 };
 
 impl Storage {
@@ -69,15 +65,15 @@ impl Storage {
         &self,
         identity_id: &str,
     ) -> Result<Vec<ProviderResponse>, StorageError> {
-        list(&self.db, &self.crypto, identity_id, None).await
+        list(&self.db, &self.crypto, identity_id).await
     }
 
     pub async fn list_providers_with_catalog(
         &self,
         identity_id: &str,
-        catalog: &ProviderCatalog,
+        _catalog: &ProviderCatalog,
     ) -> Result<Vec<ProviderResponse>, StorageError> {
-        list(&self.db, &self.crypto, identity_id, Some(catalog)).await
+        list(&self.db, &self.crypto, identity_id).await
     }
 
     pub async fn get_provider(
@@ -85,23 +81,16 @@ impl Storage {
         identity_id: &str,
         provider_id: &str,
     ) -> Result<ProviderResponse, StorageError> {
-        get(&self.db, &self.crypto, identity_id, provider_id, None).await
+        get(&self.db, &self.crypto, identity_id, provider_id).await
     }
 
     pub async fn get_provider_with_catalog(
         &self,
         identity_id: &str,
         provider_id: &str,
-        catalog: &ProviderCatalog,
+        _catalog: &ProviderCatalog,
     ) -> Result<ProviderResponse, StorageError> {
-        get(
-            &self.db,
-            &self.crypto,
-            identity_id,
-            provider_id,
-            Some(catalog),
-        )
-        .await
+        get(&self.db, &self.crypto, identity_id, provider_id).await
     }
 
     pub async fn update_provider(
@@ -146,15 +135,6 @@ impl Storage {
     ) -> Result<(), StorageError> {
         delete(&self.db, identity_id, provider_id).await
     }
-
-    pub async fn add_provider_models(
-        &self,
-        identity_id: &str,
-        provider_id: &str,
-        model_names: &[String],
-    ) -> Result<(), StorageError> {
-        add_models(&self.db, identity_id, provider_id, model_names).await
-    }
 }
 
 pub(crate) async fn create(
@@ -183,9 +163,8 @@ async fn create_inner(
     input: CreateProviderRequest,
     catalog: Option<&ProviderCatalog>,
 ) -> Result<String, StorageError> {
-    let models = normalize_model_names(&input.models)?;
     if let Some(catalog) = catalog {
-        validate_catalog_provider(catalog, &input.provider_type, &models)?;
+        validate_catalog_provider(catalog, &input.provider_type)?;
     }
     let provider_id = Uuid::new_v4().to_string();
     let created_at = Utc::now().to_rfc3339();
@@ -209,6 +188,7 @@ async fn create_inner(
         identity_id: Set(identity_id.to_string()),
         name: Set(input.name.trim().to_string()),
         provider_type: Set(input.provider_type.trim().to_string()),
+        visibility: Set("private".to_string()),
         base_url: Set(input.base_url.trim().to_string()),
         api_key_ciphertext: Set(api_key_ciphertext),
         capabilities_json: Set(capabilities_json),
@@ -216,7 +196,6 @@ async fn create_inner(
     }
     .insert(&transaction)
     .await?;
-    insert_models(&transaction, &provider_id, models, &created_at).await?;
     transaction.commit().await?;
     Ok(provider_id)
 }
@@ -235,7 +214,6 @@ pub(crate) async fn list(
     db: &DatabaseConnection,
     crypto: &KeyCipher,
     identity_id: &str,
-    catalog: Option<&ProviderCatalog>,
 ) -> Result<Vec<ProviderResponse>, StorageError> {
     let providers = identity_provider_configs::Entity::find()
         .filter(identity_provider_configs::Column::IdentityId.eq(identity_id))
@@ -244,7 +222,7 @@ pub(crate) async fn list(
         .await?;
     let mut responses = Vec::with_capacity(providers.len());
     for provider in providers {
-        responses.push(provider_response(db, crypto, provider, catalog).await?);
+        responses.push(provider_response(crypto, provider)?);
     }
     Ok(responses)
 }
@@ -254,10 +232,9 @@ pub(crate) async fn get(
     crypto: &KeyCipher,
     identity_id: &str,
     provider_id: &str,
-    catalog: Option<&ProviderCatalog>,
 ) -> Result<ProviderResponse, StorageError> {
     let provider = find_provider(db, identity_id, provider_id).await?;
-    provider_response(db, crypto, provider, catalog).await
+    provider_response(crypto, provider)
 }
 
 pub(crate) async fn update(
@@ -269,27 +246,12 @@ pub(crate) async fn update(
     catalog: Option<&ProviderCatalog>,
 ) -> Result<ProviderResponse, StorageError> {
     let existing = find_provider(db, identity_id, provider_id).await?;
-    let models = input
-        .models
-        .as_deref()
-        .map(normalize_model_names)
-        .transpose()?;
     if let Some(catalog) = catalog {
         let provider_type = input
             .provider_type
             .as_deref()
             .unwrap_or(&existing.provider_type);
-        let models_to_validate = match models.as_deref() {
-            Some(models) => models.to_vec(),
-            None => identity_provider_models::Entity::find()
-                .filter(identity_provider_models::Column::ProviderId.eq(provider_id))
-                .all(db)
-                .await?
-                .into_iter()
-                .map(|model| model.model_name)
-                .collect(),
-        };
-        validate_catalog_provider(catalog, provider_type, &models_to_validate)?;
+        validate_catalog_provider(catalog, provider_type)?;
     }
     let capabilities_json = match input.capabilities {
         Some(capabilities) => Some(
@@ -320,15 +282,8 @@ pub(crate) async fn update(
     active.capabilities_json = Set(capabilities_json);
     active.update(&transaction).await?;
 
-    if let Some(models) = models {
-        identity_provider_models::Entity::delete_many()
-            .filter(identity_provider_models::Column::ProviderId.eq(provider_id))
-            .exec(&transaction)
-            .await?;
-        insert_models(&transaction, provider_id, models, &Utc::now().to_rfc3339()).await?;
-    }
     transaction.commit().await?;
-    get(db, crypto, identity_id, provider_id, catalog).await
+    get(db, crypto, identity_id, provider_id).await
 }
 
 pub(crate) async fn delete(
@@ -337,7 +292,11 @@ pub(crate) async fn delete(
     provider_id: &str,
 ) -> Result<(), StorageError> {
     let transaction = db.begin().await?;
-    find_provider(&transaction, identity_id, provider_id).await?;
+    owned_provider(&transaction, identity_id, provider_id).await?;
+    identity_provider_shares::Entity::delete_many()
+        .filter(identity_provider_shares::Column::ProviderId.eq(provider_id))
+        .exec(&transaction)
+        .await?;
     identity_endpoint_model_routes::Entity::delete_many()
         .filter(identity_endpoint_model_routes::Column::ProviderId.eq(provider_id))
         .exec(&transaction)
@@ -346,44 +305,9 @@ pub(crate) async fn delete(
         .filter(identity_endpoint_models::Column::ProviderId.eq(provider_id))
         .exec(&transaction)
         .await?;
-    identity_provider_models::Entity::delete_many()
-        .filter(identity_provider_models::Column::ProviderId.eq(provider_id))
-        .exec(&transaction)
-        .await?;
     identity_provider_configs::Entity::delete_by_id(provider_id.to_string())
         .exec(&transaction)
         .await?;
-    transaction.commit().await?;
-    Ok(())
-}
-
-pub(crate) async fn add_models(
-    db: &DatabaseConnection,
-    identity_id: &str,
-    provider_id: &str,
-    model_names: &[String],
-) -> Result<(), StorageError> {
-    let model_names = normalize_model_names(model_names)?;
-    let transaction = db.begin().await?;
-    find_provider(&transaction, identity_id, provider_id).await?;
-    let existing = identity_provider_models::Entity::find()
-        .filter(identity_provider_models::Column::ProviderId.eq(provider_id))
-        .all(&transaction)
-        .await?
-        .into_iter()
-        .map(|model| model.model_name)
-        .collect::<HashSet<_>>();
-    let model_names = model_names
-        .into_iter()
-        .filter(|model_name| !existing.contains(model_name))
-        .collect();
-    insert_models(
-        &transaction,
-        provider_id,
-        model_names,
-        &Utc::now().to_rfc3339(),
-    )
-    .await?;
     transaction.commit().await?;
     Ok(())
 }
@@ -396,31 +320,61 @@ async fn find_provider<C>(
 where
     C: ConnectionTrait,
 {
-    identity_provider_configs::Entity::find_by_id(provider_id)
-        .filter(identity_provider_configs::Column::IdentityId.eq(identity_id))
-        .one(db)
-        .await?
-        .ok_or(StorageError::ProviderNotFound)
+    owned_provider(db, identity_id, provider_id).await
 }
 
-async fn insert_models<C>(
-    db: &C,
-    provider_id: &str,
-    model_names: Vec<String>,
-    created_at: &str,
-) -> Result<(), StorageError>
-where
-    C: ConnectionTrait,
-{
-    for model_name in model_names {
-        identity_provider_models::ActiveModel {
-            id: Set(Uuid::new_v4().to_string()),
-            provider_id: Set(provider_id.to_string()),
-            model_name: Set(model_name),
-            created_at: Set(created_at.to_string()),
-        }
-        .insert(db)
-        .await?;
+#[cfg(test)]
+mod tests {
+    use sea_orm::EntityTrait;
+
+    use super::*;
+    use crate::{
+        database::{connect, DatabaseConfig},
+        entity::identity::provider_configs as identity_provider_configs,
+        identity::credential::generate_credential,
+        schema::initialize,
+        storage::MasterKey,
+    };
+
+    #[tokio::test]
+    async fn create_provider_defaults_visibility_to_private() {
+        let database_config =
+            DatabaseConfig::from_url("sqlite::memory:").expect("valid in-memory SQLite URL");
+        let db = connect(&database_config)
+            .await
+            .expect("connect to in-memory SQLite");
+        initialize(&db)
+            .await
+            .expect("initialize test database schema");
+        let storage = Storage::from_connection(db, MasterKey::from_bytes([0; 32]));
+        let identity = storage
+            .register_identity(
+                "machine-provider-visibility",
+                "sid-provider-visibility",
+                &generate_credential(),
+            )
+            .await
+            .expect("register identity");
+
+        let provider_id = storage
+            .create_provider(
+                &identity.identity_id,
+                CreateProviderRequest {
+                    name: "Private provider".to_string(),
+                    provider_type: "openai_compatible".to_string(),
+                    base_url: "https://provider.example".to_string(),
+                    api_key: "provider-key".to_string(),
+                    capabilities: None,
+                },
+            )
+            .await
+            .expect("create provider");
+
+        let provider = identity_provider_configs::Entity::find_by_id(provider_id)
+            .one(&storage.db)
+            .await
+            .expect("load provider")
+            .expect("provider exists");
+        assert_eq!(provider.visibility, "private");
     }
-    Ok(())
 }
