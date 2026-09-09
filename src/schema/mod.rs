@@ -3,7 +3,7 @@ mod indexes;
 mod provider_catalog;
 mod tables;
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement, TransactionTrait};
 use sea_query::{IndexCreateStatement, TableCreateStatement};
 
 const BASE_TABLES: [&str; 8] = [
@@ -23,7 +23,6 @@ const INCOMPLETE_SCHEMA_ERROR: &str =
     "database schema is incomplete; create a new database deployment";
 
 pub async fn initialize(db: &DatabaseConnection) -> Result<(), DbErr> {
-    let manager = SchemaInitializer { db };
     let existing_base_tables = table_count(db, BASE_TABLES).await?;
     let has_current_activities = table_exists(db, "identity_activities").await?;
     let has_legacy_activities = table_exists(db, LEGACY_ACTIVITY_TABLE).await?;
@@ -34,29 +33,32 @@ pub async fn initialize(db: &DatabaseConnection) -> Result<(), DbErr> {
         && !has_legacy_activities
         && existing_memory_tables == 0
     {
+        let manager = SchemaInitializer { db };
         initialize_empty_schema(&manager).await?;
         activity_content::apply(db).await?;
         return Ok(());
     }
-    if existing_base_tables != BASE_TABLES.len() {
+    if !required_base_tables_exist(db).await? {
         return Err(incomplete_schema_error());
-    }
-    if !provider_sharing_schema_exists(db).await? {
-        return Err(incomplete_schema_error());
-    }
-
-    if !has_current_activities && has_legacy_activities {
-        manager.rename_legacy_activities().await?;
     }
     if !has_current_activities && !has_legacy_activities {
         return Err(incomplete_schema_error());
     }
+
+    let transaction = db.begin().await?;
+    let manager = SchemaInitializer { db: &transaction };
+    manager.migrate_provider_sharing_schema().await?;
+    if !has_current_activities && has_legacy_activities {
+        manager.rename_legacy_activities().await?;
+    }
     manager.drop_legacy_cost_columns().await?;
     match existing_memory_tables {
-        0 => initialize_memory_schema(&manager).await,
-        count if count == MEMORY_TABLES.len() => Ok(()),
-        _ => Err(incomplete_schema_error()),
-    }?;
+        0 => initialize_memory_schema(&manager).await?,
+        count if count == MEMORY_TABLES.len() => {}
+        _ => return Err(incomplete_schema_error()),
+    }
+    manager.validate_current_schema().await?;
+    transaction.commit().await?;
     activity_content::apply(db).await
 }
 
@@ -68,7 +70,9 @@ pub async fn initialize_with_catalog(
     provider_catalog::apply(db, catalog).await
 }
 
-async fn initialize_empty_schema(manager: &SchemaInitializer<'_>) -> Result<(), DbErr> {
+async fn initialize_empty_schema<C: ConnectionTrait>(
+    manager: &SchemaInitializer<'_, C>,
+) -> Result<(), DbErr> {
     manager.create_table(tables::identity::statement()).await?;
     manager.create_table(tables::providers::configs()).await?;
     manager
@@ -93,7 +97,9 @@ async fn initialize_empty_schema(manager: &SchemaInitializer<'_>) -> Result<(), 
     initialize_memory_schema(manager).await
 }
 
-async fn initialize_memory_schema(manager: &SchemaInitializer<'_>) -> Result<(), DbErr> {
+async fn initialize_memory_schema<C: ConnectionTrait>(
+    manager: &SchemaInitializer<'_, C>,
+) -> Result<(), DbErr> {
     manager
         .create_table(tables::activity_contents::statement())
         .await?;
@@ -116,8 +122,8 @@ async fn initialize_memory_schema(manager: &SchemaInitializer<'_>) -> Result<(),
     manager.create_index(indexes::memory_sources_unique()).await
 }
 
-async fn table_count<'a>(
-    db: &DatabaseConnection,
+async fn table_count<'a, C: ConnectionTrait>(
+    db: &C,
     tables: impl IntoIterator<Item = &'a str>,
 ) -> Result<usize, DbErr> {
     let mut count = 0;
@@ -127,17 +133,46 @@ async fn table_count<'a>(
     Ok(count)
 }
 
-struct SchemaInitializer<'a> {
-    db: &'a DatabaseConnection,
+struct SchemaInitializer<'a, C: ConnectionTrait> {
+    db: &'a C,
 }
 
-impl SchemaInitializer<'_> {
+impl<C: ConnectionTrait> SchemaInitializer<'_, C> {
     async fn create_table(&self, statement: TableCreateStatement) -> Result<(), DbErr> {
         self.db.execute(&statement).await.map(|_| ())
     }
 
     async fn create_index(&self, statement: IndexCreateStatement) -> Result<(), DbErr> {
         self.db.execute(&statement).await.map(|_| ())
+    }
+
+    async fn migrate_provider_sharing_schema(&self) -> Result<(), DbErr> {
+        if !column_exists(self.db, "identity_provider_configs", "visibility").await? {
+            self.db
+                .execute_unprepared(
+                    "ALTER TABLE identity_provider_configs
+                     ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'",
+                )
+                .await?;
+        }
+        if !table_exists(self.db, "identity_provider_shares").await? {
+            self.create_table(tables::provider_shares::statement())
+                .await?;
+            self.create_index(indexes::provider_shares_provider_grantee())
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn validate_current_schema(&self) -> Result<(), DbErr> {
+        if table_count(self.db, BASE_TABLES).await? != BASE_TABLES.len()
+            || !provider_sharing_schema_exists(self.db).await?
+            || !table_exists(self.db, "identity_activities").await?
+            || table_count(self.db, MEMORY_TABLES).await? != MEMORY_TABLES.len()
+        {
+            return Err(incomplete_schema_error());
+        }
+        Ok(())
     }
 
     async fn rename_legacy_activities(&self) -> Result<(), DbErr> {
@@ -167,7 +202,16 @@ impl SchemaInitializer<'_> {
     }
 }
 
-async fn table_exists(db: &DatabaseConnection, table: &str) -> Result<bool, DbErr> {
+async fn required_base_tables_exist<C: ConnectionTrait>(db: &C) -> Result<bool, DbErr> {
+    for table in BASE_TABLES {
+        if table != "identity_provider_shares" && !table_exists(db, table).await? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+async fn table_exists<C: ConnectionTrait>(db: &C, table: &str) -> Result<bool, DbErr> {
     let backend = db.get_database_backend();
     let sql = match backend {
         DbBackend::Sqlite => {
@@ -190,7 +234,11 @@ async fn table_exists(db: &DatabaseConnection, table: &str) -> Result<bool, DbEr
         .map(|count| count == 1)
 }
 
-async fn column_exists(db: &DatabaseConnection, table: &str, column: &str) -> Result<bool, DbErr> {
+async fn column_exists<C: ConnectionTrait>(
+    db: &C,
+    table: &str,
+    column: &str,
+) -> Result<bool, DbErr> {
     let backend = db.get_database_backend();
     let sql = match backend {
         DbBackend::Sqlite => format!(
@@ -212,7 +260,7 @@ async fn column_exists(db: &DatabaseConnection, table: &str, column: &str) -> Re
         .map(|count| count == 1)
 }
 
-async fn index_exists(db: &DatabaseConnection, table: &str, index: &str) -> Result<bool, DbErr> {
+async fn index_exists<C: ConnectionTrait>(db: &C, table: &str, index: &str) -> Result<bool, DbErr> {
     let backend = db.get_database_backend();
     let sql = match backend {
         DbBackend::Sqlite => format!(
@@ -235,7 +283,7 @@ async fn index_exists(db: &DatabaseConnection, table: &str, index: &str) -> Resu
         .map(|count| count == 1)
 }
 
-async fn provider_sharing_schema_exists(db: &DatabaseConnection) -> Result<bool, DbErr> {
+async fn provider_sharing_schema_exists<C: ConnectionTrait>(db: &C) -> Result<bool, DbErr> {
     if !column_exists(db, "identity_provider_configs", "visibility").await? {
         return Ok(false);
     }
