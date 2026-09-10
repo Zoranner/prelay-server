@@ -42,11 +42,17 @@ impl Storage {
             let Some(provider) = visible_provider(&self.db, identity_id, provider).await? else {
                 continue;
             };
+            let selected_identity_ids = if provider.visibility == ProviderVisibility::Selected {
+                selected_identity_ids(&self.db, &provider.provider.id).await?
+            } else {
+                Vec::new()
+            };
             visible.push(provider_list_item(
                 provider.provider,
                 provider.owner_identity_id,
                 provider.owner_display_name,
                 provider.visibility,
+                selected_identity_ids,
                 provider.can_manage,
             )?);
         }

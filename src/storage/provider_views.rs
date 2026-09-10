@@ -41,6 +41,7 @@ pub(super) fn provider_list_item(
     owner_identity_id: String,
     owner_display_name: String,
     visibility: ProviderVisibility,
+    selected_identity_ids: Vec<String>,
     can_manage: bool,
 ) -> Result<ProviderListItemResponse, StorageError> {
     let capabilities = capabilities(&provider);
@@ -58,6 +59,7 @@ pub(super) fn provider_list_item(
         owner_identity_id,
         owner_display_name,
         visibility,
+        selected_identity_ids,
         can_manage,
         created_at: provider.created_at,
     })

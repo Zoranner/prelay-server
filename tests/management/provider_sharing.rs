@@ -112,6 +112,10 @@ async fn provider_visibility_controls_lists_and_replaces_selected_grantees() {
     assert_eq!(providers[0]["owner_identity_id"], owner["identity_id"]);
     assert_eq!(providers[0]["owner_display_name"], "Owner");
     assert_eq!(providers[0]["can_manage"], false);
+    assert_eq!(
+        providers[0]["selected_identity_ids"],
+        serde_json::json!([grantee["identity_id"]])
+    );
     assert!(providers[0].get("api_key").is_none());
     assert!(providers[0].get("api_key_masked").is_none());
 
@@ -173,6 +177,10 @@ async fn provider_visibility_controls_lists_and_replaces_selected_grantees() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(providers.len(), 1);
+    assert_eq!(
+        providers[0]["selected_identity_ids"],
+        serde_json::json!([replacement["identity_id"]])
+    );
 
     let (status, sharing): (StatusCode, serde_json::Value) = request_json(
         &app,
@@ -198,6 +206,7 @@ async fn provider_visibility_controls_lists_and_replaces_selected_grantees() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(providers.len(), 1);
+    assert_eq!(providers[0]["selected_identity_ids"], serde_json::json!([]));
 }
 
 #[tokio::test]
