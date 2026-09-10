@@ -3,15 +3,18 @@ use std::{future::Future, sync::OnceLock, time::Duration};
 use crate::error::AppError;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
+const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_RETRY_BACKOFF_MS: u64 = 250;
 
 static UPSTREAM_POLICY: OnceLock<UpstreamPolicy> = OnceLock::new();
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpstreamPolicy {
+    /// Timeout for establishing an upstream connection, including the TLS handshake.
+    pub connect_timeout: Duration,
     /// Idle read timeout for upstream responses; every received chunk restarts it.
     /// It also bounds the wait for the response head.
-    pub timeout: Duration,
+    pub read_timeout: Duration,
     pub max_retries: usize,
     pub retry_backoff: Duration,
     pub max_candidates: Option<usize>,
@@ -20,7 +23,8 @@ pub struct UpstreamPolicy {
 impl Default for UpstreamPolicy {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+            connect_timeout: Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS),
+            read_timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
             max_retries: 0,
             retry_backoff: Duration::from_millis(DEFAULT_RETRY_BACKOFF_MS),
             max_candidates: None,
@@ -31,6 +35,9 @@ impl Default for UpstreamPolicy {
 impl UpstreamPolicy {
     pub fn from_environment() -> Result<Self, String> {
         Self::from_values(
+            std::env::var("UPSTREAM_CONNECT_TIMEOUT_SECS")
+                .ok()
+                .as_deref(),
             std::env::var("UPSTREAM_TIMEOUT_SECS").ok().as_deref(),
             std::env::var("UPSTREAM_MAX_RETRIES").ok().as_deref(),
             std::env::var("UPSTREAM_RETRY_BACKOFF_MS").ok().as_deref(),
@@ -39,13 +46,17 @@ impl UpstreamPolicy {
     }
 
     pub fn from_values(
-        timeout_secs: Option<&str>,
+        connect_timeout_secs: Option<&str>,
+        read_timeout_secs: Option<&str>,
         max_retries: Option<&str>,
         retry_backoff_ms: Option<&str>,
         max_candidates: Option<&str>,
     ) -> Result<Self, String> {
-        let timeout_secs =
-            parse_positive("UPSTREAM_TIMEOUT_SECS", timeout_secs)?.unwrap_or(DEFAULT_TIMEOUT_SECS);
+        let connect_timeout_secs =
+            parse_positive("UPSTREAM_CONNECT_TIMEOUT_SECS", connect_timeout_secs)?
+                .unwrap_or(DEFAULT_CONNECT_TIMEOUT_SECS);
+        let read_timeout_secs = parse_positive("UPSTREAM_TIMEOUT_SECS", read_timeout_secs)?
+            .unwrap_or(DEFAULT_TIMEOUT_SECS);
         let max_retries = parse_usize("UPSTREAM_MAX_RETRIES", max_retries)?.unwrap_or(0);
         let retry_backoff_ms = parse_usize("UPSTREAM_RETRY_BACKOFF_MS", retry_backoff_ms)?
             .unwrap_or(DEFAULT_RETRY_BACKOFF_MS as usize);
@@ -53,7 +64,8 @@ impl UpstreamPolicy {
             parse_positive("UPSTREAM_MAX_CANDIDATES", max_candidates)?.map(|value| value as usize);
 
         Ok(Self {
-            timeout: Duration::from_secs(timeout_secs),
+            connect_timeout: Duration::from_secs(connect_timeout_secs),
+            read_timeout: Duration::from_secs(read_timeout_secs),
             max_retries,
             retry_backoff: Duration::from_millis(retry_backoff_ms as u64),
             max_candidates,
@@ -76,7 +88,8 @@ pub fn policy() -> &'static UpstreamPolicy {
 pub fn build_client(policy: &UpstreamPolicy) -> Result<reqwest::Client, reqwest::Error> {
     reqwest::Client::builder()
         .no_proxy()
-        .read_timeout(policy.timeout)
+        .connect_timeout(policy.connect_timeout)
+        .read_timeout(policy.read_timeout)
         .build()
 }
 
@@ -137,7 +150,8 @@ mod tests {
 
     fn test_client() -> reqwest::Client {
         build_client(&UpstreamPolicy {
-            timeout: TEST_READ_TIMEOUT,
+            connect_timeout: Duration::from_secs(1),
+            read_timeout: TEST_READ_TIMEOUT,
             max_retries: 0,
             retry_backoff: Duration::ZERO,
             max_candidates: None,

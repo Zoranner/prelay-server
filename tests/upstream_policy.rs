@@ -11,9 +11,10 @@ use prelay_server::{
 
 #[test]
 fn uses_safe_defaults_when_optional_environment_variables_are_missing() {
-    let policy = UpstreamPolicy::from_values(None, None, None, None).expect("default policy");
+    let policy = UpstreamPolicy::from_values(None, None, None, None, None).expect("default policy");
 
-    assert_eq!(policy.timeout, Duration::from_secs(300));
+    assert_eq!(policy.connect_timeout, Duration::from_secs(10));
+    assert_eq!(policy.read_timeout, Duration::from_secs(300));
     assert_eq!(policy.max_retries, 0);
     assert_eq!(policy.retry_backoff, Duration::from_millis(250));
     assert_eq!(policy.max_candidates, None);
@@ -21,25 +22,28 @@ fn uses_safe_defaults_when_optional_environment_variables_are_missing() {
 
 #[test]
 fn parses_global_upstream_policy_values() {
-    let policy = UpstreamPolicy::from_values(Some("45"), Some("2"), Some("500"), Some("3"))
-        .expect("valid policy");
+    let policy =
+        UpstreamPolicy::from_values(Some("5"), Some("45"), Some("2"), Some("500"), Some("3"))
+            .expect("valid policy");
 
-    assert_eq!(policy.timeout, Duration::from_secs(45));
+    assert_eq!(policy.connect_timeout, Duration::from_secs(5));
+    assert_eq!(policy.read_timeout, Duration::from_secs(45));
     assert_eq!(policy.max_retries, 2);
     assert_eq!(policy.retry_backoff, Duration::from_millis(500));
     assert_eq!(policy.max_candidates, Some(3));
 }
 
 #[test]
-fn rejects_zero_timeout_and_candidate_limit() {
-    assert!(UpstreamPolicy::from_values(Some("0"), None, None, None).is_err());
-    assert!(UpstreamPolicy::from_values(None, None, None, Some("0")).is_err());
+fn rejects_zero_timeouts_and_candidate_limit() {
+    assert!(UpstreamPolicy::from_values(Some("0"), None, None, None, None).is_err());
+    assert!(UpstreamPolicy::from_values(None, Some("0"), None, None, None).is_err());
+    assert!(UpstreamPolicy::from_values(None, None, None, None, Some("0")).is_err());
 }
 
 #[tokio::test]
 async fn retries_a_retryable_candidate_until_it_succeeds() {
-    let policy =
-        UpstreamPolicy::from_values(None, Some("2"), Some("0"), None).expect("valid retry policy");
+    let policy = UpstreamPolicy::from_values(None, None, Some("2"), Some("0"), None)
+        .expect("valid retry policy");
     let attempts = Arc::new(AtomicUsize::new(0));
 
     let response = retry_with_policy(&policy, || {

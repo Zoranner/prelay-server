@@ -96,6 +96,7 @@ Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.3.0`，并以只读方式
 上游故障转移属于服务端部署策略，不向桌面客户端或最终用户开放。以下变量在启动时读取，修改后需要重启服务：
 
 - `UPSTREAM_TIMEOUT_SECS`：上游读取空闲超时秒数，默认 `300`，必须大于 `0`。每读到一段数据后重新计时，长流式响应不受总时长限制；等待响应头同样受该值约束。
+- `UPSTREAM_CONNECT_TIMEOUT_SECS`：上游建立连接（含 TLS 握手）超时秒数，默认 `10`，必须大于 `0`。
 - `UPSTREAM_MAX_RETRIES`：同一候选上游的额外重试次数，默认 `0`。
 - `UPSTREAM_RETRY_BACKOFF_MS`：重试前等待的毫秒数，默认 `250`，允许为 `0`。
 - `UPSTREAM_MAX_CANDIDATES`：单次请求最多尝试的候选上游数，默认不限制，必须大于 `0`。

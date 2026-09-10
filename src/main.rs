@@ -130,8 +130,10 @@ async fn main() -> anyhow::Result<()> {
     let upstream_policy =
         prelay_server::upstream::initialize_from_environment().map_err(anyhow::Error::msg)?;
     let client = prelay_server::upstream::build_client(upstream_policy)?;
-    let client_update_client =
-        prelay_server::client_update::http_client_from_environment(upstream_policy.timeout)?;
+    let client_update_client = prelay_server::client_update::http_client_from_environment(
+        upstream_policy.connect_timeout,
+        upstream_policy.read_timeout,
+    )?;
     let client_update = ClientUpdateCache::from_environment(client_update_client).await?;
     if let Err(error) = client_update.refresh().await {
         tracing::warn!(error = %error, "failed to refresh client update cache at startup");

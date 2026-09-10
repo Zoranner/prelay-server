@@ -214,14 +214,24 @@ impl ClientUpdateCache {
     }
 }
 
-pub fn http_client_from_environment(timeout: Duration) -> Result<reqwest::Client> {
+pub fn http_client_from_environment(
+    connect_timeout: Duration,
+    read_timeout: Duration,
+) -> Result<reqwest::Client> {
     let proxy = std::env::var(CLIENT_UPDATE_PROXY_ENV).ok();
-    build_http_client(timeout, proxy.as_deref())
+    build_http_client(connect_timeout, read_timeout, proxy.as_deref())
 }
 
-fn build_http_client(timeout: Duration, proxy: Option<&str>) -> Result<reqwest::Client> {
+fn build_http_client(
+    connect_timeout: Duration,
+    read_timeout: Duration,
+    proxy: Option<&str>,
+) -> Result<reqwest::Client> {
     let proxy = client_update_proxy_from_value(proxy)?;
-    let mut builder = reqwest::Client::builder().no_proxy().timeout(timeout);
+    let mut builder = reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(connect_timeout)
+        .read_timeout(read_timeout);
     if let Some(proxy) = proxy {
         let proxy = reqwest::Proxy::all(&proxy)
             .with_context(|| format!("{CLIENT_UPDATE_PROXY_ENV} must be a valid proxy URL"))?;
@@ -431,7 +441,7 @@ mod tests {
 
     #[test]
     fn rejects_an_invalid_client_update_proxy() {
-        let error = build_http_client(Duration::from_secs(30), Some("not a URL"))
+        let error = build_http_client(Duration::ZERO, Duration::ZERO, Some("not a URL"))
             .expect_err("invalid proxy should be rejected");
 
         assert!(format!("{error:#}").contains("CLIENT_UPDATE_PROXY"));
