@@ -330,7 +330,7 @@ async fn shared_provider_can_back_endpoint_until_revoked_and_deleted() {
 }
 
 #[tokio::test]
-async fn non_owner_cannot_ping_or_test_a_shared_provider() {
+async fn non_owner_can_ping_a_shared_provider_but_cannot_test_its_protocols() {
     let app = app::router(test_state().await).await.expect("build app");
     let owner = register(&app, "operation-sharing-owner", "S-1-5-21-owner").await;
     let owner_credential = owner["credential"].as_str().expect("owner credential");
@@ -366,16 +366,17 @@ async fn non_owner_cannot_ping_or_test_a_shared_provider() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    assert_eq!(
-        request_status(
-            &app,
-            "POST",
-            &format!("/api/providers/{provider_id}/ping"),
-            Some(grantee_credential),
-        )
-        .await,
-        StatusCode::FORBIDDEN
-    );
+    let (status, ping): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        &format!("/api/providers/{provider_id}/ping"),
+        Some(grantee_credential),
+        Some(serde_json::json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ping["ok"], false);
+    assert!(!ping.to_string().contains("sk-operation-secret"));
 
     let (status, error): (StatusCode, serde_json::Value) = request_json(
         &app,

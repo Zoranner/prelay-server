@@ -126,9 +126,6 @@ async fn ping(
         .storage
         .get_visible_provider(&identity.id, &provider_id)
         .await?;
-    if !provider.can_manage {
-        return Err(crate::storage::StorageError::ProviderSharingNotAllowed.into());
-    }
     let started_at = std::time::Instant::now();
     let response = state.client.head(&provider.provider.base_url).send().await;
     let latency_ms = Some(started_at.elapsed().as_millis() as i64);
