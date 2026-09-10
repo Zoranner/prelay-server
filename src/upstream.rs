@@ -9,6 +9,8 @@ static UPSTREAM_POLICY: OnceLock<UpstreamPolicy> = OnceLock::new();
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpstreamPolicy {
+    /// Idle read timeout for upstream responses; every received chunk restarts it.
+    /// It also bounds the wait for the response head.
     pub timeout: Duration,
     pub max_retries: usize,
     pub retry_backoff: Duration,
@@ -71,6 +73,13 @@ pub fn policy() -> &'static UpstreamPolicy {
     UPSTREAM_POLICY.get_or_init(UpstreamPolicy::default)
 }
 
+pub fn build_client(policy: &UpstreamPolicy) -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .no_proxy()
+        .read_timeout(policy.timeout)
+        .build()
+}
+
 pub async fn retry_with_policy<T, F, Fut>(
     policy: &UpstreamPolicy,
     mut request: F,
@@ -108,5 +117,115 @@ fn parse_usize(name: &str, value: Option<&str>) -> Result<Option<usize>, String>
             .map(Some)
             .map_err(|_| format!("{name} must be a non-negative integer")),
         None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::{TcpListener, TcpStream},
+    };
+
+    use super::{build_client, UpstreamPolicy};
+
+    const TEST_READ_TIMEOUT: Duration = Duration::from_millis(1000);
+    const CHUNK_INTERVAL: Duration = Duration::from_millis(250);
+    const CHUNK_COUNT: usize = 6;
+
+    fn test_client() -> reqwest::Client {
+        build_client(&UpstreamPolicy {
+            timeout: TEST_READ_TIMEOUT,
+            max_retries: 0,
+            retry_backoff: Duration::ZERO,
+            max_candidates: None,
+        })
+        .expect("build test upstream client")
+    }
+
+    async fn accept_request(listener: &TcpListener) -> TcpStream {
+        let (mut socket, _) = listener.accept().await.expect("accept test connection");
+        let mut request = [0_u8; 1024];
+        let bytes_read = socket.read(&mut request).await.expect("read test request");
+        assert!(bytes_read > 0, "test client must send a request");
+        socket
+    }
+
+    #[tokio::test]
+    async fn read_timeout_allows_a_stream_that_keeps_flowing() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test listener");
+        let address = listener.local_addr().expect("test listener address");
+
+        let server = tokio::spawn(async move {
+            let mut socket = accept_request(&listener).await;
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+                .await
+                .expect("write response header");
+            for _ in 0..CHUNK_COUNT {
+                socket
+                    .write_all(b"5\r\nhello\r\n")
+                    .await
+                    .expect("write response chunk");
+                tokio::time::sleep(CHUNK_INTERVAL).await;
+            }
+            socket
+                .write_all(b"0\r\n\r\n")
+                .await
+                .expect("write response terminator");
+        });
+
+        let started = Instant::now();
+        let response = test_client()
+            .get(format!("http://{address}/"))
+            .send()
+            .await
+            .expect("send test request");
+        let body = response.text().await.expect("read streaming response body");
+        let elapsed = started.elapsed();
+
+        assert_eq!(body, "hello".repeat(CHUNK_COUNT));
+        assert!(
+            elapsed > TEST_READ_TIMEOUT,
+            "stream must outlast the read timeout: {elapsed:?}"
+        );
+        server.await.expect("join test server");
+    }
+
+    #[tokio::test]
+    async fn read_timeout_fails_when_a_stream_stalls() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test listener");
+        let address = listener.local_addr().expect("test listener address");
+
+        let server = tokio::spawn(async move {
+            let mut socket = accept_request(&listener).await;
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n")
+                .await
+                .expect("write response head");
+            std::future::pending::<()>().await;
+        });
+
+        let response = test_client()
+            .get(format!("http://{address}/"))
+            .send()
+            .await
+            .expect("send test request");
+        let started = Instant::now();
+        let error = response.text().await.expect_err("stalled stream must fail");
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed >= TEST_READ_TIMEOUT,
+            "stall must outlast the read timeout: {elapsed:?}"
+        );
+        assert!(error.is_timeout(), "expected a timeout error: {error:?}");
+        server.abort();
     }
 }

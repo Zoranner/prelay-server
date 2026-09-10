@@ -129,10 +129,7 @@ async fn main() -> anyhow::Result<()> {
 
     let upstream_policy =
         prelay_server::upstream::initialize_from_environment().map_err(anyhow::Error::msg)?;
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .timeout(upstream_policy.timeout)
-        .build()?;
+    let client = prelay_server::upstream::build_client(upstream_policy)?;
     let client_update_client =
         prelay_server::client_update::http_client_from_environment(upstream_policy.timeout)?;
     let client_update = ClientUpdateCache::from_environment(client_update_client).await?;
