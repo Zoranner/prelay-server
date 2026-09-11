@@ -1,6 +1,7 @@
 mod catalog;
 mod config;
 mod gitea;
+mod mcp;
 mod package;
 
 pub use catalog::{CatalogError, ExtensionCatalog};

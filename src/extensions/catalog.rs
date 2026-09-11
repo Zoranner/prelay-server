@@ -18,6 +18,7 @@ use tokio::sync::{Mutex, RwLock};
 use super::{
     config::ExtensionCatalogConfig,
     gitea::{GiteaClient, GiteaFileError},
+    mcp::validate_mcp_manifest,
     package::{
         classify_paths, valid_extension_file_path, valid_repository_name, versions_from_tags,
     },
@@ -172,8 +173,9 @@ impl ExtensionCatalog {
             let content = BASE64
                 .decode(&files[0].content_base64)
                 .map_err(|_| CatalogError::ContentInvalid)?;
-            serde_json::from_slice::<ExtensionMcpManifest>(&content)
-                .map_err(|_| CatalogError::VersionNotFound)?;
+            let manifest = serde_json::from_slice::<ExtensionMcpManifest>(&content)
+                .map_err(|_| CatalogError::ContentInvalid)?;
+            validate_mcp_manifest(&manifest)?;
         }
         Ok(ExtensionInstallBundle {
             name: repository.to_string(),
