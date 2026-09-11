@@ -54,6 +54,10 @@ fn is_mcp_server_name(value: &str) -> bool {
         && value
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+        && !matches!(
+            value.to_ascii_lowercase().as_str(),
+            "workspace" | "cli" | "project" | "user" | "local" | "claude" | "builtin"
+        )
 }
 
 fn is_safe_http_url(value: &str) -> bool {
@@ -65,9 +69,7 @@ fn is_safe_http_url(value: &str) -> bool {
         && url.username().is_empty()
         && url.password().is_none()
         && url.fragment().is_none()
-        && !url
-            .query_pairs()
-            .any(|(name, _)| is_sensitive_name(name.as_ref()))
+        && url.query().is_none()
 }
 
 fn command_has_plaintext_secret(command: &[String]) -> bool {
@@ -87,13 +89,21 @@ fn is_sensitive_command_option(argument: &str) -> bool {
 
 fn is_sensitive_name(value: &str) -> bool {
     let normalized = value.to_ascii_lowercase().replace('_', "-");
-    normalized.contains("api-key")
-        || normalized.contains("apikey")
-        || normalized.contains("token")
-        || normalized.contains("secret")
-        || normalized.contains("password")
-        || normalized.contains("authorization")
-        || matches!(normalized.as_str(), "auth" | "key")
+    matches!(
+        normalized.as_str(),
+        "api-key"
+            | "apikey"
+            | "access-key"
+            | "accesskey"
+            | "token"
+            | "secret"
+            | "password"
+            | "authorization"
+            | "auth"
+            | "credential"
+            | "credentials"
+            | "key"
+    )
 }
 
 fn validate_environment_references(
@@ -223,6 +233,16 @@ mod tests {
                 timeout_ms: None,
             },
         };
+        let reserved_server_name = ExtensionMcpManifest {
+            name: "workspace".to_string(),
+            transport: ExtensionMcpTransport::Stdio {
+                command: vec!["uvx".to_string(), "mcp-server-filesystem".to_string()],
+                cwd: None,
+                environment: BTreeMap::new(),
+                enabled: true,
+                timeout_ms: None,
+            },
+        };
         let plaintext_command_secret = ExtensionMcpManifest {
             name: "filesystem".to_string(),
             transport: ExtensionMcpTransport::Stdio {
@@ -256,6 +276,44 @@ mod tests {
                 timeout_ms: None,
             },
         };
+        let plaintext_access_key = ExtensionMcpManifest {
+            name: "filesystem".to_string(),
+            transport: ExtensionMcpTransport::Stdio {
+                command: vec![
+                    "uvx".to_string(),
+                    "mcp-server-filesystem".to_string(),
+                    "--access-key".to_string(),
+                    "plain-text-secret".to_string(),
+                ],
+                cwd: None,
+                environment: BTreeMap::new(),
+                enabled: true,
+                timeout_ms: None,
+            },
+        };
+        let url_with_query = ExtensionMcpManifest {
+            name: "remote".to_string(),
+            transport: ExtensionMcpTransport::Http {
+                url: "https://mcp.example.test?transport=stream".to_string(),
+                headers: BTreeMap::new(),
+                enabled: true,
+                timeout_ms: None,
+            },
+        };
+        let ordinary_command_argument = ExtensionMcpManifest {
+            name: "filesystem".to_string(),
+            transport: ExtensionMcpTransport::Stdio {
+                command: vec![
+                    "uvx".to_string(),
+                    "mcp-server-filesystem".to_string(),
+                    "--tokenizer=cl100k_base".to_string(),
+                ],
+                cwd: None,
+                environment: BTreeMap::new(),
+                enabled: true,
+                timeout_ms: None,
+            },
+        };
 
         assert!(validate_mcp_manifest(&valid_stdio).is_ok());
         assert!(validate_mcp_manifest(&empty_command).is_err());
@@ -266,8 +324,12 @@ mod tests {
         assert!(validate_mcp_manifest(&plaintext_header).is_err());
         assert!(validate_mcp_manifest(&disabled_stdio).is_err());
         assert!(validate_mcp_manifest(&invalid_server_name).is_err());
+        assert!(validate_mcp_manifest(&reserved_server_name).is_err());
         assert!(validate_mcp_manifest(&plaintext_command_secret).is_err());
         assert!(validate_mcp_manifest(&plaintext_url_secret).is_err());
         assert!(validate_mcp_manifest(&plaintext_url_api_key).is_err());
+        assert!(validate_mcp_manifest(&plaintext_access_key).is_err());
+        assert!(validate_mcp_manifest(&url_with_query).is_err());
+        assert!(validate_mcp_manifest(&ordinary_command_argument).is_ok());
     }
 }
