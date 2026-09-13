@@ -42,22 +42,6 @@ language_models = [
 anthropic_messages = "https://api.deepseek.com/anthropic"
 
 [[providers]]
-id = "kimi"
-name = "Kimi"
-auth_scheme = "bearer"
-base_url = "https://api.kimi.com/coding/v1"
-protocols = ["chat_completions", "responses", "anthropic_messages"]
-language_models = [
-  "k3",
-  "k3-256k",
-  "kimi-for-coding",
-  "kimi-for-coding-highspeed",
-]
-
-[providers.protocol_base_urls]
-anthropic_messages = "https://api.kimi.com/coding/"
-
-[[providers]]
 id = "bigmodel_coding_plan"
 name = "GLM Coding Plan"
 auth_scheme = "bearer"
@@ -81,6 +65,22 @@ language_models = [
 
 [providers.protocol_base_urls]
 anthropic_messages = "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic"
+
+[[providers]]
+id = "kimi"
+name = "Kimi Code"
+auth_scheme = "bearer"
+base_url = "https://api.kimi.com/coding/v1"
+protocols = ["chat_completions", "responses", "anthropic_messages"]
+language_models = [
+  "k3",
+  "k3-256k",
+  "kimi-for-coding",
+  "kimi-for-coding-highspeed",
+]
+
+[providers.protocol_base_urls]
+anthropic_messages = "https://api.kimi.com/coding/"
 
 [[providers]]
 id = "minimax"
