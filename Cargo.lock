@@ -1972,7 +1972,9 @@ dependencies = [
 name = "prelay-protocol"
 version = "0.1.0"
 dependencies = [
+ "http",
  "serde",
+ "url",
 ]
 
 [[package]]
