@@ -1,1 +1,4 @@
 * text=auto
+
+# 模型指令模板按官方原文逐字节保真：固定 LF，允许原文行尾空白
+config/catalog/models/instructions/*.md text eol=lf whitespace=-trailing-space
