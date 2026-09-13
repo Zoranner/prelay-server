@@ -1,4 +1,5 @@
 # 官方资料未明确时，在模型块内保留对应的英文键名注释；取消注释后直接填写值。
+# 基础指令默认不配置：按模型 id 放在 models/instructions/<id>.md，缺省时用该目录的 _default.md；仅在需要覆盖时才在模型块内写 base_instructions。
 # 完整字段示例：
 # id = "模型标识" # 上游模型名称
 # display_name = "模型展示名称" # 界面展示名称
@@ -23,7 +24,6 @@
 # visibility = "list" # 模型可见性
 # supported_in_api = true # 可通过接口使用
 # priority = 0 # 模型排序优先级
-# base_instructions = "基础指令" # 基础指令
 # experimental_supported_tools = [] # 实验性工具列表
 # minimal_client_version = "0.144.0" # 最低客户端版本
 
@@ -51,7 +51,6 @@ shell_type = "shell_command"
 visibility = "list"
 supported_in_api = true
 priority = 0
-base_instructions = ""
 experimental_supported_tools = []
 # minimal_client_version =
 
@@ -79,7 +78,6 @@ shell_type = "shell_command"
 visibility = "list"
 supported_in_api = true
 priority = 0
-base_instructions = ""
 experimental_supported_tools = []
 # minimal_client_version =
 
@@ -107,7 +105,6 @@ shell_type = "shell_command"
 visibility = "list"
 supported_in_api = true
 priority = 0
-base_instructions = ""
 experimental_supported_tools = []
 # minimal_client_version =
 
@@ -135,7 +132,6 @@ shell_type = "shell_command"
 visibility = "list"
 supported_in_api = true
 priority = 0
-base_instructions = ""
 experimental_supported_tools = []
 # minimal_client_version =
 
@@ -163,7 +159,6 @@ shell_type = "shell_command"
 visibility = "list"
 supported_in_api = true
 priority = 1
-# base_instructions =
 experimental_supported_tools = []
 minimal_client_version = "0.144.0"
 
@@ -191,7 +186,6 @@ shell_type = "shell_command"
 visibility = "list"
 supported_in_api = true
 priority = 3
-# base_instructions =
 experimental_supported_tools = []
 minimal_client_version = "0.144.0"
 
@@ -219,7 +213,6 @@ shell_type = "shell_command"
 visibility = "list"
 supported_in_api = true
 priority = 2
-# base_instructions =
 experimental_supported_tools = []
 minimal_client_version = "0.144.0"
 
@@ -247,7 +240,6 @@ shell_type = "default"
 visibility = "list"
 supported_in_api = true
 priority = 1
-base_instructions = ""
 experimental_supported_tools = []
 # minimal_client_version =
 
@@ -275,7 +267,6 @@ shell_type = "default"
 visibility = "list"
 supported_in_api = true
 priority = 1
-base_instructions = ""
 experimental_supported_tools = []
 # minimal_client_version =
 
@@ -303,7 +294,6 @@ shell_type = "shell_command"
 visibility = "list"
 supported_in_api = true
 priority = 0
-base_instructions = ""
 experimental_supported_tools = []
 # minimal_client_version =
 
@@ -331,7 +321,6 @@ shell_type = "shell_command"
 visibility = "list"
 supported_in_api = true
 priority = 1
-base_instructions = ""
 experimental_supported_tools = []
 # minimal_client_version =
 
@@ -359,7 +348,6 @@ truncation_policy = { mode = "bytes", limit = 10000 }
 # visibility =
 # supported_in_api =
 # priority =
-# base_instructions =
 # experimental_supported_tools =
 # minimal_client_version =
 
@@ -387,7 +375,6 @@ truncation_policy = { mode = "bytes", limit = 10000 }
 # visibility =
 # supported_in_api =
 # priority =
-# base_instructions =
 # experimental_supported_tools =
 # minimal_client_version =
 
@@ -415,7 +402,6 @@ shell_type = "shell_command"
 visibility = "list"
 supported_in_api = true
 priority = 0
-base_instructions = ""
 experimental_supported_tools = []
 # minimal_client_version =
 
@@ -443,7 +429,6 @@ shell_type = "shell_command"
 visibility = "list"
 supported_in_api = true
 priority = 1
-base_instructions = ""
 experimental_supported_tools = []
 # minimal_client_version =
 
@@ -470,7 +455,6 @@ shell_type = "shell_command"
 visibility = "list"
 supported_in_api = true
 priority = 1
-base_instructions = ""
 experimental_supported_tools = []
 # minimal_client_version =
 
@@ -498,6 +482,5 @@ shell_type = "shell_command"
 visibility = "list"
 supported_in_api = true
 priority = 0
-base_instructions = "You are Codex, a coding agent based on MiniMax-M3. You and the user share the same workspace and collaborate to achieve the user's goals."
 experimental_supported_tools = []
 # minimal_client_version =
