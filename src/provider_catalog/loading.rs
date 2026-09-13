@@ -30,6 +30,7 @@ struct ProvidersDocument {
 
 pub(super) fn load_language_models(
     path: &Path,
+    instructions_directory: &Path,
 ) -> Result<BTreeMap<String, CatalogLanguageModel>, ProviderCatalogError> {
     let document: LanguageModelsDocument = parse_document(path)?;
     let mut models = BTreeMap::new();
@@ -40,6 +41,8 @@ pub(super) fn load_language_models(
         if models.contains_key(&id) {
             return Err(ProviderCatalogError(format!("语言模型 ID 重复: {id}")));
         }
+        let base_instructions =
+            resolve_base_instructions(instructions_directory, &id, model.base_instructions)?;
         models.insert(
             id.clone(),
             CatalogLanguageModel {
@@ -66,13 +69,49 @@ pub(super) fn load_language_models(
                 visibility: model.visibility,
                 supported_in_api: model.supported_in_api,
                 priority: model.priority,
-                base_instructions: model.base_instructions,
+                base_instructions,
                 experimental_supported_tools: model.experimental_supported_tools,
                 minimal_client_version: model.minimal_client_version,
             },
         );
     }
     Ok(models)
+}
+
+const DEFAULT_INSTRUCTION_FILE: &str = "_default.md";
+
+fn resolve_base_instructions(
+    instructions_directory: &Path,
+    model_id: &str,
+    configured: Option<String>,
+) -> Result<Option<String>, ProviderCatalogError> {
+    if configured
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return Ok(configured);
+    }
+    let model_path = instructions_directory.join(format!("{model_id}.md"));
+    if let Some(contents) = read_instruction_template(&model_path)? {
+        return Ok(Some(contents));
+    }
+    let default_path = instructions_directory.join(DEFAULT_INSTRUCTION_FILE);
+    if let Some(contents) = read_instruction_template(&default_path)? {
+        return Ok(Some(contents));
+    }
+    Ok(configured)
+}
+
+fn read_instruction_template(path: &Path) -> Result<Option<String>, ProviderCatalogError> {
+    match fs::read_to_string(path) {
+        Ok(contents) if !contents.trim().is_empty() => Ok(Some(contents)),
+        Ok(_) => Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(ProviderCatalogError(format!(
+            "无法读取 {}: {error}",
+            path.display()
+        ))),
+    }
 }
 
 pub(super) fn load_image_generation_models(

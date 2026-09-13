@@ -169,7 +169,10 @@ pub(super) struct RawProvider {
 impl ProviderCatalog {
     pub fn load(directory: &std::path::Path) -> Result<Self, ProviderCatalogError> {
         let models_directory = directory.join("models");
-        let language_models = load_language_models(&models_directory.join("language.toml"))?;
+        let language_models = load_language_models(
+            &models_directory.join("language.toml"),
+            &models_directory.join("instructions"),
+        )?;
         let image_generation_models =
             load_image_generation_models(&models_directory.join("image-generation.toml"))?;
         let providers = load_providers(

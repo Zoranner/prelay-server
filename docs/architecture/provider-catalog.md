@@ -21,6 +21,8 @@ providers.toml
 
 它们不包含 API Key、Endpoint Token、设备凭据或数据库内容。
 
+`models/instructions/` 目录按语言模型 id 存放 `<id>.md` 基础指令模板，并以 `_default.md` 作为没有专属模板时的默认指令；加载时只按文件名精确查找，不扫描目录。模板文件内容按原文读取，不做裁剪。
+
 ### 语言模型
 
 `models/language.toml` 的字段顺序固定如下：
@@ -55,6 +57,8 @@ minimal_client_version = "0.144.0"
 ```
 
 官方资料未明确的字段以英文键名注释保留；缺省表示能力未知，不由客户端推断为具体能力。`reasoning_efforts` 只能使用 `none`、`minimal`、`low`、`medium`、`high`、`xhigh` 或 `max`；配置默认思考强度时必须同时给出非空档位列表，且 `default_reasoning_effort` 必须包含在该列表中。默认思考强度由服务端目录维护，客户端用户设置可以覆盖它。目录约定：可选档位超过三档时默认使用 `high`，三档或更少时使用列表中的最高档。
+
+目录条目默认不配置 `base_instructions`：缺省或为空白时，加载器依次使用 `models/instructions/<id>.md` 与 `models/instructions/_default.md`；条目显式填写的值优先于这两份模板，均为空时保持空。
 
 ### 图像生成模型
 
