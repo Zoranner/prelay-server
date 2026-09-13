@@ -163,8 +163,8 @@ experimental_supported_tools = []
 minimal_client_version = "0.144.0"
 
 [[models]]
-id = "deepseek-v4-flash-vision-exp"
-display_name = "DeepSeek V4 Flash Vision"
+id = "deepseek-flash"
+display_name = "DeepSeek V4.1 Flash"
 description = "Latest frontier agentic coding model with image input."
 reasoning_efforts = ["low", "high", "max"]
 default_reasoning_effort = "max"
