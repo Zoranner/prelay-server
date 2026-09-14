@@ -269,3 +269,61 @@ async fn management_provider_response_exposes_the_key_only_to_its_current_identi
         StatusCode::NOT_FOUND
     );
 }
+
+#[tokio::test]
+async fn management_provider_deletion_removes_endpoint_model_references() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let identity = register(&app, "machine-provider-delete", "S-1-5-21-provider-delete").await;
+    let credential = identity["credential"].as_str().expect("credential");
+
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Deletable provider",
+            "provider_type": "deepseek",
+            "base_url": "https://provider.example",
+            "api_key": "sk-deletable"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let provider_id = provider["id"].as_str().expect("provider id");
+
+    let (status, endpoint): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/endpoints",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Endpoint with deletable provider",
+            "models": [{ "provider_id": provider_id, "upstream_model": "deepseek-v4-pro" }]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(endpoint["models"].as_array().map(Vec::len), Some(1));
+
+    assert_eq!(
+        request_status(
+            &app,
+            "DELETE",
+            &format!("/api/providers/{provider_id}"),
+            Some(credential),
+        )
+        .await,
+        StatusCode::NO_CONTENT
+    );
+
+    let (status, endpoints): (StatusCode, Vec<serde_json::Value>) =
+        request_json(&app, "GET", "/api/endpoints", Some(credential), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let endpoint = endpoints.first().expect("endpoint still exists");
+    assert_eq!(
+        endpoint["models"].as_array().map(Vec::len),
+        Some(0),
+        "endpoint must not keep references to the deleted provider"
+    );
+}

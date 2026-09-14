@@ -5,8 +5,9 @@ use crate::{
     provider_catalog::ProviderCatalog,
 };
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
-    DbBackend, DbErr, EntityTrait, IntoActiveModel, Statement, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
+    DatabaseTransaction, DbBackend, DbErr, EntityTrait, IntoActiveModel, QueryFilter, Statement,
+    TransactionTrait,
 };
 
 const MIGRATION_VERSION: &str = "provider_catalog_v1";
@@ -234,6 +235,69 @@ async fn cleanup_endpoint_models(
                 .await?;
         }
     }
+    Ok(())
+}
+
+/// 接入点模型始终按当前目录推导：供应商缺失或模型不再由该供应商提供时删除映射，
+/// 供应商上游名变化时回填。启动时执行，幂等。
+pub(crate) async fn reconcile_endpoint_models(
+    db: &DatabaseConnection,
+    catalog: &ProviderCatalog,
+) -> Result<(), DbErr> {
+    let providers = provider_configs::Entity::find().all(db).await?;
+    let provider_types = providers
+        .into_iter()
+        .map(|provider| (provider.id, provider.provider_type))
+        .collect::<HashMap<_, _>>();
+
+    for model in endpoint_models::Entity::find().all(db).await? {
+        let Some(provider_type) = provider_types.get(&model.provider_id) else {
+            tracing::warn!(
+                endpoint_model = %model.id,
+                provider = %model.provider_id,
+                "removing endpoint model whose provider no longer exists"
+            );
+            delete_endpoint_model(db, &model).await?;
+            continue;
+        };
+        if catalog.provider(provider_type).is_none() {
+            continue;
+        }
+        if !catalog.provider_supports_language_model(provider_type, &model.model_name)
+            && !catalog.provider_supports_image_generation_model(provider_type, &model.model_name)
+        {
+            tracing::warn!(
+                endpoint_model = %model.id,
+                provider = %model.provider_id,
+                model = %model.model_name,
+                "removing endpoint model that the provider no longer serves"
+            );
+            delete_endpoint_model(db, &model).await?;
+            continue;
+        }
+        let upstream_model = catalog.provider_upstream_model(provider_type, &model.model_name);
+        if model.upstream_model != upstream_model {
+            let mut active = model.into_active_model();
+            active.upstream_model = Set(upstream_model);
+            active.update(db).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn delete_endpoint_model(
+    db: &DatabaseConnection,
+    model: &endpoint_models::Model,
+) -> Result<(), DbErr> {
+    endpoint_model_routes::Entity::delete_many()
+        .filter(endpoint_model_routes::Column::EndpointId.eq(model.endpoint_id.clone()))
+        .filter(endpoint_model_routes::Column::ModelName.eq(model.model_name.clone()))
+        .filter(endpoint_model_routes::Column::ProviderId.eq(model.provider_id.clone()))
+        .exec(db)
+        .await?;
+    endpoint_models::Entity::delete_by_id(model.id.clone())
+        .exec(db)
+        .await?;
     Ok(())
 }
 

@@ -4,3 +4,5 @@ mod contract;
 mod initialization;
 #[path = "schema/provider_sharing_migration.rs"]
 mod provider_sharing_migration;
+#[path = "schema/reconciliation.rs"]
+mod reconciliation;
