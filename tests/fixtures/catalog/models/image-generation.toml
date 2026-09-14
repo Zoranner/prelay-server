@@ -1,0 +1,13 @@
+# 集成测试专用目录：只保留测试需要的图像生成模型与字段。
+
+[[models]]
+id = "gpt-image-1"
+display_name = "GPT Image 1"
+description = "测试用图像生成模型"
+input_modalities = ["text"]
+output_modalities = ["image"]
+sizes = ["1024x1024"]
+quality_options = ["standard", "high"]
+background_options = ["transparent", "opaque"]
+output_formats = ["png"]
+supported_in_api = true

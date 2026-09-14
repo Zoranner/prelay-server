@@ -1,0 +1,55 @@
+# 集成测试专用目录：与 config/catalog 解耦，测试只依赖这里的稳定数据。
+
+[[providers]]
+id = "deepseek"
+name = "DeepSeek"
+auth_scheme = "bearer"
+base_url = "https://api.deepseek.example/v1"
+protocols = ["chat_completions", "anthropic_messages"]
+language_models = [
+  "deepseek-v4-flash",
+  "deepseek-v4-pro",
+]
+
+[[providers]]
+id = "gotoken"
+name = "GoToken"
+auth_scheme = "bearer"
+base_url = "https://gotoken.example"
+protocols = [
+  "chat_completions",
+  "responses",
+  "anthropic_messages",
+  "images_generations",
+]
+language_models = [
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+  "gpt-6-astra",
+]
+image_generation_models = ["gpt-image-1"]
+
+[[providers]]
+id = "image_only"
+name = "Image Only"
+auth_scheme = "bearer"
+base_url = "https://image.example/v1"
+protocols = ["images_generations"]
+image_generation_models = ["gpt-image-1"]
+
+# 目录模型 id 与该供应商上游名不一致的用例数据。
+[[providers]]
+id = "relay"
+name = "Relay"
+auth_scheme = "bearer"
+base_url = "https://relay.example/v1"
+protocols = ["chat_completions", "responses", "anthropic_messages"]
+language_models = [
+  "k3",
+  "deepseek-v4-pro",
+]
+
+[providers.upstream_model_names]
+k3 = "kimi-k3"
+deepseek-v4-pro = "relay-deepseek-v4-pro"

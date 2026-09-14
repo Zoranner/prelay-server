@@ -203,7 +203,6 @@ mod tests {
 
     use crate::{
         entity::identity::activities,
-        provider_catalog::ProviderCatalog,
         schema::initialize,
         stats::{ActivityInsert, StreamActivityUpdate},
         storage::{MasterKey, Storage, StorageError},
@@ -228,12 +227,7 @@ mod tests {
             .await
             .expect("insert unknown model log");
 
-        let catalog = ProviderCatalog::load(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("config/catalog")
-                .as_path(),
-        )
-        .expect("load provider catalog");
+        let catalog = crate::test_support::fixture_catalog();
         let rows = storage
             .list_activities_with_catalog(&identity, 10, &catalog)
             .await

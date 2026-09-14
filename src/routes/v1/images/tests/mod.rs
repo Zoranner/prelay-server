@@ -62,14 +62,7 @@ async fn test_state_with_connection() -> (AppState, DatabaseConnection) {
         .await
         .expect("initialize test database schema");
     let state = AppState {
-        provider_catalog: std::sync::Arc::new(
-            crate::provider_catalog::ProviderCatalog::load(
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("config/catalog")
-                    .as_path(),
-            )
-            .expect("load provider catalog"),
-        ),
+        provider_catalog: std::sync::Arc::new(crate::test_support::fixture_catalog()),
         storage: crate::storage::Storage::from_connection(
             connection.clone(),
             crate::storage::MasterKey::from_bytes([0; 32]),

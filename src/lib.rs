@@ -38,6 +38,16 @@ pub mod test_support {
         AppState,
     };
 
+    // 测试使用固定目录，避免用例断言随 config/catalog 变更而失效。
+    pub fn fixture_catalog() -> ProviderCatalog {
+        ProviderCatalog::load(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/catalog")
+                .as_path(),
+        )
+        .expect("load fixture provider catalog")
+    }
+
     pub async fn test_state() -> AppState {
         let database_config =
             DatabaseConfig::from_url("sqlite::memory:").expect("valid in-memory SQLite URL");
@@ -48,17 +58,9 @@ pub mod test_support {
             .await
             .expect("initialize test database schema");
         let storage = Storage::from_connection(db, MasterKey::from_bytes([0; 32]));
-        let provider_catalog = std::sync::Arc::new(
-            ProviderCatalog::load(
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("config/catalog")
-                    .as_path(),
-            )
-            .expect("load test provider catalog"),
-        );
 
         AppState {
-            provider_catalog,
+            provider_catalog: std::sync::Arc::new(fixture_catalog()),
             storage,
             client: reqwest::Client::new(),
             client_update: ClientUpdateCache::unavailable(reqwest::Client::new()),

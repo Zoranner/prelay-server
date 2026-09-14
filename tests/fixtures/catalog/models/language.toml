@@ -1,0 +1,76 @@
+# 集成测试专用目录：只保留测试需要的模型与字段。
+
+[[models]]
+id = "gpt-5.6-luna"
+display_name = "GPT-5.6 Luna"
+description = "测试用语言模型"
+reasoning_efforts = ["low", "medium", "high", "xhigh"]
+default_reasoning_effort = "high"
+context_window = 1050000
+max_context_window = 1050000
+input_modalities = ["text", "image"]
+supports_parallel_tool_calls = true
+supported_in_api = true
+priority = 0
+
+[[models]]
+id = "gpt-5.6-terra"
+display_name = "GPT-5.6 Terra"
+description = "测试用语言模型"
+context_window = 1050000
+max_context_window = 1050000
+input_modalities = ["text", "image"]
+supported_in_api = true
+priority = 1
+
+[[models]]
+id = "gpt-5.6-sol"
+display_name = "GPT-5.6 Sol"
+description = "测试用语言模型"
+context_window = 1050000
+max_context_window = 1050000
+input_modalities = ["text", "image"]
+supported_in_api = true
+priority = 2
+
+[[models]]
+id = "gpt-6-astra"
+display_name = "GPT-6 Astra"
+description = "测试用语言模型"
+context_window = 1050000
+max_context_window = 1050000
+input_modalities = ["text", "image"]
+supported_in_api = true
+priority = 3
+
+[[models]]
+id = "deepseek-v4-flash"
+display_name = "DeepSeek V4 Flash"
+description = "测试用语言模型"
+context_window = 1048576
+max_context_window = 1048576
+input_modalities = ["text"]
+supported_in_api = true
+priority = 4
+
+[[models]]
+id = "deepseek-v4-pro"
+display_name = "DeepSeek V4 Pro"
+description = "测试用语言模型"
+context_window = 1048576
+max_context_window = 1048576
+input_modalities = ["text"]
+supported_in_api = true
+priority = 5
+
+[[models]]
+id = "k3"
+display_name = "Kimi K3"
+description = "测试用语言模型"
+reasoning_efforts = ["low", "high", "max"]
+default_reasoning_effort = "max"
+context_window = 1048576
+max_context_window = 1048576
+input_modalities = ["text", "image"]
+supported_in_api = true
+priority = 6

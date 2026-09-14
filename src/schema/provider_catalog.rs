@@ -316,13 +316,10 @@ fn migration_error(message: impl Into<String>) -> DbErr {
 #[cfg(test)]
 mod tests {
     use super::{should_remove_model, target_provider_id};
-    use crate::provider_catalog::ProviderCatalog;
-    use std::path::Path;
 
     #[test]
     fn marks_models_outside_provider_catalog_for_cleanup() {
-        let catalog =
-            ProviderCatalog::load(Path::new("config/catalog")).expect("load provider catalog");
+        let catalog = crate::test_support::fixture_catalog();
 
         assert!(should_remove_model(
             &catalog,

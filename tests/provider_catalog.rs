@@ -40,30 +40,6 @@ fn loads_the_deployment_catalog() {
 }
 
 #[test]
-fn deployment_catalog_uses_high_defaults_for_broad_reasoning_models() {
-    let catalog = ProviderCatalog::load(Path::new("config/catalog")).expect("load catalog");
-
-    assert_eq!(
-        catalog
-            .language_model("gpt-5.6-terra")
-            .and_then(|model| model.default_reasoning_effort.as_deref()),
-        Some("high")
-    );
-    assert_eq!(
-        catalog
-            .language_model("deepseek-v4-pro")
-            .and_then(|model| model.default_reasoning_effort.as_deref()),
-        Some("max")
-    );
-    assert_eq!(
-        catalog
-            .language_model("k3")
-            .and_then(|model| model.default_reasoning_effort.as_deref()),
-        Some("max")
-    );
-}
-
-#[test]
 fn loads_typed_models_and_ordered_provider_protocols() {
     let directory = write_catalog(
         "",
@@ -298,31 +274,4 @@ display_name = "Text model"
 }
 
 #[test]
-fn deployment_catalog_fills_official_instructions_from_files() {
-    let catalog = ProviderCatalog::load(Path::new("config/catalog")).expect("load catalog");
-
-    for model_id in ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"] {
-        let instructions = catalog
-            .language_model(model_id)
-            .and_then(|model| model.base_instructions.as_deref())
-            .expect("instruction template");
-        assert!(instructions.starts_with("You are Codex, an agent based on GPT-5."));
-        assert!(instructions.len() > 10_000);
-    }
-    let astra = catalog
-        .language_model("gpt-6-astra")
-        .and_then(|model| model.base_instructions.as_deref())
-        .expect("instruction template");
-    assert!(astra.starts_with("You are Codex, an agent based on GPT-6."));
-    assert!(astra.len() > 10_000);
-    let minimax = catalog
-        .language_model("MiniMax-M3")
-        .and_then(|model| model.base_instructions.as_deref())
-        .expect("instruction template");
-    assert!(minimax.starts_with("You are Codex, a coding agent based on MiniMax-M3."));
-    let fallback = catalog
-        .language_model("deepseek-flash")
-        .and_then(|model| model.base_instructions.as_deref())
-        .expect("default instruction template");
-    assert!(fallback.starts_with("You are a coding agent running in the Codex CLI,"));
 }

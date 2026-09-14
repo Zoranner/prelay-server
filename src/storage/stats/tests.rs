@@ -1,7 +1,6 @@
 use sea_orm::Database;
 
 use crate::{
-    provider_catalog::ProviderCatalog,
     schema::initialize,
     stats::{ActivityInsert, StatsRange},
     storage::{MasterKey, Storage},
@@ -26,12 +25,7 @@ async fn model_stats_resolve_display_names_without_splitting_model_ids() {
         .await
         .expect("insert unknown model log");
 
-    let catalog = ProviderCatalog::load(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("config/catalog")
-            .as_path(),
-    )
-    .expect("load provider catalog");
+    let catalog = crate::test_support::fixture_catalog();
     let rows = storage
         .model_stats_with_catalog(&identity, StatsRange::All, &catalog)
         .await

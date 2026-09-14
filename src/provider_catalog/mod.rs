@@ -282,15 +282,9 @@ impl ProviderCatalog {
 #[cfg(test)]
 mod tests {
     use super::ProviderCatalog;
-    use std::path::Path;
 
     fn catalog() -> ProviderCatalog {
-        ProviderCatalog::load(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("config/catalog")
-                .as_path(),
-        )
-        .expect("load provider catalog")
+        crate::test_support::fixture_catalog()
     }
 
     #[test]

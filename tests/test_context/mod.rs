@@ -1,7 +1,6 @@
 use axum::Router;
 use prelay_server::{
-    app, client_update::ClientUpdateCache, extensions::ExtensionCatalog,
-    provider_catalog::ProviderCatalog, AppState,
+    app, client_update::ClientUpdateCache, extensions::ExtensionCatalog, AppState,
 };
 
 use crate::support::TestStorage;
@@ -13,12 +12,7 @@ pub struct TestContext {
 
 pub async fn test_context() -> TestContext {
     let storage = crate::support::test_storage().await;
-    let provider_catalog = ProviderCatalog::load(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("config/catalog")
-            .as_path(),
-    )
-    .expect("load provider catalog");
+    let provider_catalog = prelay_server::test_support::fixture_catalog();
     let app = app::router(AppState {
         provider_catalog: std::sync::Arc::new(provider_catalog),
         storage: storage.storage().clone(),
