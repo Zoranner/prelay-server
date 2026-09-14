@@ -7,8 +7,8 @@
 - 保真：内容与来源逐字节一致，不添加文件头、注释或排版调整；行尾固定 LF，且不做行尾转换。
 - 同步：升级 Codex 后按同一方式重新提取，并核对长度与内容。
 - 生效：服务端加载目录时按 id 读取本目录，用它填充 `base_instructions` 缺省或为空的条目；顺序为 `language.toml` 显式值 > `<id>.md` > `_default.md`。
-- 体量：默认模板会套用到没有专属模板的第三方模型，当前 17 个语言模型的基础指令合计约 318 KiB（字符数），随 `/api/catalog/models/language` 下发并由客户端写入本机模型档案；增删或替换模板后核对这一数值。
+- 体量：默认模板会套用到没有专属模板的第三方模型，当前 17 个语言模型的基础指令合计约 336 KiB（字符数，3 × 17730 + 21261 + 13 × 20751），随 `/api/catalog/models/language` 下发并由客户端写入本机模型档案；增删或替换模板后核对这一数值。
 
 `language.toml` 的模型条目默认不配置 `base_instructions`；需要覆盖时再在条目内显式填写。
 
-现有文件（字符数）：`gpt-5.6-sol.md`、`gpt-5.6-terra.md`、`gpt-5.6-luna.md` 各 17730（三条相同）；`gpt-6-astra.md` 21261；`MiniMax-M3.md` 137；`_default.md` 20751。
+现有文件（字符数）：`gpt-5.6-sol.md`、`gpt-5.6-terra.md`、`gpt-5.6-luna.md` 各 17730（三条相同）；`gpt-6-astra.md` 21261；`_default.md` 20751。其余模型使用默认模板。
