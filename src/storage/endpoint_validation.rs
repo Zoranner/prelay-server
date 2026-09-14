@@ -23,60 +23,55 @@ pub(super) fn normalize_models(
     let mut mappings = HashSet::with_capacity(models.len());
     let mut normalized = Vec::with_capacity(models.len());
     for model in models {
-        let upstream_model = model.upstream_model.trim().to_string();
-        let model_name = upstream_model.clone();
-        let mapping = (
-            model_name.clone(),
-            model.provider_id.clone(),
-            upstream_model.clone(),
-        );
-        if !mappings.insert(mapping) {
+        let model_name = model.upstream_model.trim().to_string();
+        if model_name.is_empty() {
+            return Err(StorageError::ValidationFailed(
+                "endpoint upstream model must not be empty".to_string(),
+            ));
+        }
+        if !mappings.insert((model_name.clone(), model.provider_id.clone())) {
             return Err(StorageError::ValidationFailed(
                 "endpoint model mappings must be unique".to_string(),
             ));
         }
         normalized.push(NormalizedModel {
             provider_id: model.provider_id,
-            upstream_model,
+            upstream_model: model_name.clone(),
             model_name,
         });
     }
     Ok(normalized)
 }
 
-pub(super) async fn validate_models(
+pub(super) async fn resolve_models(
     transaction: &DatabaseTransaction,
     identity_id: &str,
-    models: &[NormalizedModel],
+    mut models: Vec<NormalizedModel>,
     catalog: Option<&ProviderCatalog>,
-) -> Result<(), StorageError> {
-    for model in models {
-        if model.upstream_model.is_empty() {
-            return Err(StorageError::ValidationFailed(
-                "endpoint upstream model must not be empty".to_string(),
-            ));
-        }
+) -> Result<Vec<NormalizedModel>, StorageError> {
+    for model in &mut models {
         if !can_use_provider_on(transaction, identity_id, &model.provider_id).await? {
             return Err(StorageError::ProviderNotUsable);
         }
         let provider = identity_provider_configs::Entity::find_by_id(&model.provider_id)
             .one(transaction)
             .await?
-            .ok_or(StorageError::ProviderNotUsable)?;
-        if let Some(catalog) = catalog {
-            if !catalog
-                .provider_supports_language_model(&provider.provider_type, &model.upstream_model)
-                && !catalog.provider_supports_image_generation_model(
-                    &provider.provider_type,
-                    &model.upstream_model,
-                )
-            {
-                return Err(StorageError::ValidationFailed(format!(
-                    "provider {} does not support catalog model {}",
-                    provider.provider_type, model.upstream_model
-                )));
-            }
+            .ok_or(StorageError::ProviderNotUsable)?;        let Some(catalog) = catalog else {
+            continue;
+        };
+        if !catalog.provider_supports_language_model(&provider.provider_type, &model.model_name)
+            && !catalog.provider_supports_image_generation_model(
+                &provider.provider_type,
+                &model.model_name,
+            )
+        {
+            return Err(StorageError::ValidationFailed(format!(
+                "provider {} does not support catalog model {}",
+                provider.provider_type, model.model_name
+            )));
         }
+        model.upstream_model =
+            catalog.provider_upstream_model(&provider.provider_type, &model.model_name);
     }
-    Ok(())
+    Ok(models)
 }

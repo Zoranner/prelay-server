@@ -21,7 +21,7 @@ use crate::{
     provider_catalog::ProviderCatalog,
 };
 
-use super::endpoint_validation::{normalize_models, validate_models, NormalizedModel};
+use super::endpoint_validation::{normalize_models, resolve_models, NormalizedModel};
 use super::{Storage, StorageError};
 
 impl Storage {
@@ -126,14 +126,19 @@ pub(crate) async fn create(
     catalog: Option<&ProviderCatalog>,
 ) -> Result<EndpointResponse, StorageError> {
     let name = input.name.trim().to_string();
-    let models = normalize_models(input.models)?;
     let endpoint_id = Uuid::new_v4().to_string();
     let created_at = Utc::now().to_rfc3339();
     let protocol = input.protocol.unwrap_or_else(|| "all".to_string());
     let transaction = db.begin().await?;
     ensure_identity_exists(&transaction, identity_id).await?;
     ensure_name_available(&transaction, identity_id, &name, None).await?;
-    validate_models(&transaction, identity_id, &models, catalog).await?;
+    let models = resolve_models(
+        &transaction,
+        identity_id,
+        normalize_models(input.models)?,
+        catalog,
+    )
+    .await?;
 
     identity_endpoint_configs::ActiveModel {
         id: Set(endpoint_id.clone()),
@@ -194,9 +199,10 @@ pub(crate) async fn update(
     let models = input.models.map(normalize_models).transpose()?;
     let transaction = db.begin().await?;
     ensure_name_available(&transaction, identity_id, &name, Some(endpoint_id)).await?;
-    if let Some(models) = &models {
-        validate_models(&transaction, identity_id, models, catalog).await?;
-    }
+    let models = match models {
+        Some(models) => Some(resolve_models(&transaction, identity_id, models, catalog).await?),
+        None => None,
+    };
 
     let mut active = current.into_active_model();
     if input.name.is_some() {

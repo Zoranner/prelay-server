@@ -105,6 +105,20 @@ images_generations = "https://gotoken.cc/v1"
 
 `protocols` 必须按 `chat_completions`、`responses`、`anthropic_messages`、`images_generations` 的相对顺序排列。图像生成模型引用存在时，供应商必须声明 `images_generations`。两类引用分别只能指向对应目录中的模型，不能重复或交叉引用。
 
+同一模型在不同平台的上游名称不同时，供应商条目补充该供应商使用的上游模型名，其余情况不需要声明：
+
+```toml
+[[providers]]
+id = "tokenharbor"
+language_models = ["k3"]
+
+[providers.upstream_model_names]
+k3 = "kimi-k3"
+```
+
+映射的键必须是该供应商已引用的模型 id，值为该平台实际接受的上游模型名；引用未声明的模型或空值都会让服务拒绝启动。模型身份、能力、显示名和对外模型名始终以目录模型 id 为准，接入点保存的上游名只用于发往上游的请求，因此同一个模型在不同供应商处可以各自解析到不同的上游名。
+
+
 ## 接口边界
 
 认证后的目录接口分别返回供应商或单类模型数组：
@@ -124,10 +138,10 @@ GET /api/catalog/models/image-generation/{model_id}
 
 | 路径 | 内容 |
 | --- | --- |
-| `GET /v1/models` | 当前接入点已配置的语言模型，返回 OpenAI 标准模型对象字段 |
+| `GET /v1/models` | 当前接入点已配置的语言模型，返回 OpenAI 标准模型对象字段，`id` 为目录模型 id |
 | `POST /v1/images/generations` | 仅解析图像生成模型候选 |
 
-`/v1/responses`、`/v1/chat/completions` 与 `/v1/messages` 仅解析语言模型候选。服务端按候选的上游模型 ID 在启动时加载的目录中判定类别，因此同一接入点别名不会同时进入语言与图像生成链路。
+`/v1/responses`、`/v1/chat/completions` 与 `/v1/messages` 仅解析语言模型候选。服务端按候选的目录模型 id 在启动时加载的目录中判定类别，发往上游时再替换为该供应商的上游模型名，因此同一接入点的模型不会同时进入语言与图像生成链路。
 
 ## 目录生成
 

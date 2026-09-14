@@ -171,9 +171,7 @@ async fn apply_postgres_model_source_migration(
                     endpoint_model.id, endpoint_model.provider_id
                 ))
             })?;
-        if endpoint_model.model_name != endpoint_model.upstream_model
-            || should_remove_model(catalog, target, &endpoint_model.upstream_model)
-        {
+        if should_remove_model(catalog, target, &endpoint_model.model_name) {
             endpoint_model_routes::Entity::delete_by_id((
                 endpoint_model.endpoint_id.clone(),
                 endpoint_model.model_name.clone(),
@@ -225,7 +223,7 @@ async fn cleanup_endpoint_models(
     let rows = transaction
         .query_all_raw(Statement::from_string(
             DbBackend::Postgres,
-            "SELECT id, endpoint_id, provider_id, model_name, upstream_model FROM identity_endpoint_models ORDER BY id"
+            "SELECT id, endpoint_id, provider_id, model_name FROM identity_endpoint_models ORDER BY id"
                 .to_owned(),
         ))
         .await?;
@@ -233,11 +231,8 @@ async fn cleanup_endpoint_models(
         let endpoint_model_id: String = row.try_get("", "id")?;
         let provider_id: String = row.try_get("", "provider_id")?;
         let model_name: String = row.try_get("", "model_name")?;
-        let upstream_model: String = row.try_get("", "upstream_model")?;
         let target = provider_target(&provider_id, provider_targets)?;
-        if model_name.trim() != upstream_model.trim()
-            || should_remove_model(catalog, target, &upstream_model)
-        {
+        if should_remove_model(catalog, target, &model_name) {
             transaction
                 .execute_raw(Statement::from_sql_and_values(
                     DbBackend::Postgres,

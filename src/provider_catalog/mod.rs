@@ -89,6 +89,7 @@ pub struct CatalogProvider {
     pub protocol_base_urls: Vec<(ProviderProtocol, String)>,
     pub language_models: Vec<String>,
     pub image_generation_models: Vec<String>,
+    pub upstream_model_names: BTreeMap<String, String>,
 }
 
 #[derive(Debug)]
@@ -164,6 +165,8 @@ pub(super) struct RawProvider {
     pub(super) language_models: Vec<String>,
     #[serde(default)]
     pub(super) image_generation_models: Vec<String>,
+    #[serde(default)]
+    pub(super) upstream_model_names: BTreeMap<String, String>,
 }
 
 impl ProviderCatalog {
@@ -225,6 +228,13 @@ impl ProviderCatalog {
                 .iter()
                 .any(|id| id == model_id)
         })
+    }
+
+    pub fn provider_upstream_model(&self, provider_id: &str, model_id: &str) -> String {
+        self.provider(provider_id)
+            .and_then(|provider| provider.upstream_model_names.get(model_id))
+            .cloned()
+            .unwrap_or_else(|| model_id.to_string())
     }
 
     pub fn language_models(&self) -> Vec<CatalogLanguageModelResponse> {

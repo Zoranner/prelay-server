@@ -240,6 +240,25 @@ pub(super) fn validate_provider_model_references<T>(
     Ok(())
 }
 
+pub(super) fn validate_upstream_model_names(
+    provider_id: &str,
+    provider: &RawProvider,
+) -> Result<BTreeMap<String, String>, ProviderCatalogError> {
+    let mut names = BTreeMap::new();
+    for (model_id, upstream_model) in &provider.upstream_model_names {
+        if !provider.language_models.contains(model_id)
+            && !provider.image_generation_models.contains(model_id)
+        {
+            return Err(ProviderCatalogError(format!(
+                "供应商 {provider_id} 为未引用的模型 {model_id} 配置了上游名称"
+            )));
+        }
+        let upstream_model = required_value("上游模型名称", upstream_model)?;
+        names.insert(model_id.clone(), upstream_model);
+    }
+    Ok(names)
+}
+
 fn required_value(label: &str, value: &str) -> Result<String, ProviderCatalogError> {
     let value = value.trim();
     if value.is_empty() {

@@ -176,6 +176,7 @@ pub(super) fn load_providers(
             &provider.image_generation_models,
             image_generation_models,
         )?;
+        let upstream_model_names = validation::validate_upstream_model_names(&id, &provider)?;
         if !provider.image_generation_models.is_empty()
             && !provider
                 .protocols
@@ -199,6 +200,7 @@ pub(super) fn load_providers(
                 protocol_base_urls,
                 language_models: provider.language_models,
                 image_generation_models: provider.image_generation_models,
+                upstream_model_names,
             },
         );
     }

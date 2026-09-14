@@ -350,3 +350,44 @@ async fn management_endpoint_model_display_name_uses_catalog_id() {
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(endpoint["models"][0]["display_name"], "DeepSeek V4 Flash");
 }
+
+#[tokio::test]
+async fn management_endpoint_resolves_provider_upstream_model_name() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let identity = register(&app, "machine-upstream-model", "S-1-5-21-upstream-model").await;
+    let credential = identity["credential"].as_str().expect("credential");
+
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Relay",
+            "provider_type": "relay",
+            "base_url": "https://relay.example/v1",
+            "api_key": "sk-relay"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, endpoint): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/endpoints",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Relay Endpoint",
+            "models": [{
+                "provider_id": provider["id"],
+                "upstream_model": "k3"
+            }]
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(endpoint["models"][0]["model_name"], "k3");
+    assert_eq!(endpoint["models"][0]["upstream_model"], "kimi-k3");
+}
