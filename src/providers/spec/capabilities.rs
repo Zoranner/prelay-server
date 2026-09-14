@@ -1,4 +1,9 @@
-use crate::models::{ProviderCapabilityOverrides, ProviderConfig};
+use prelay_protocol::ProviderProtocol;
+
+use crate::{
+    models::{ProviderCapabilityOverrides, ProviderConfig},
+    provider_catalog::ProviderCatalog,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpstreamProtocol {
@@ -40,6 +45,15 @@ impl UpstreamProtocol {
             UpstreamProtocol::ChatCompletions => "openai",
             UpstreamProtocol::AnthropicMessages => "anthropic",
             UpstreamProtocol::ImageGenerations => "images_generations",
+        }
+    }
+
+    pub(crate) fn from_catalog(protocol: ProviderProtocol) -> Self {
+        match protocol {
+            ProviderProtocol::Responses => UpstreamProtocol::Responses,
+            ProviderProtocol::ChatCompletions => UpstreamProtocol::ChatCompletions,
+            ProviderProtocol::AnthropicMessages => UpstreamProtocol::AnthropicMessages,
+            ProviderProtocol::ImagesGenerations => UpstreamProtocol::ImageGenerations,
         }
     }
 }
@@ -106,14 +120,19 @@ pub struct ProviderSpec {
 }
 
 impl ProviderSpec {
-    pub fn from_provider_config(provider: &ProviderConfig) -> Self {
+    pub fn from_provider_config(
+        catalog: Option<&ProviderCatalog>,
+        provider: &ProviderConfig,
+    ) -> Self {
         Self::from_provider_type_and_overrides(
+            catalog,
             &provider.provider_type,
             &provider.capability_overrides(),
         )
     }
 
     fn from_provider_type_and_overrides(
+        catalog: Option<&ProviderCatalog>,
         provider_type: &str,
         overrides: &ProviderCapabilityOverrides,
     ) -> Self {
@@ -207,10 +226,19 @@ impl ProviderSpec {
             },
         };
         spec.capabilities = spec.capabilities.with_overrides(overrides);
-        if let Some(protocols) = supported_protocols_from_overrides(overrides) {
-            if let [protocol] = protocols.as_slice() {
-                spec.protocol = *protocol;
-            }
+        if let Some(protocols) = catalog
+            .and_then(|catalog| catalog.provider(provider_type))
+            .map(|provider| {
+                provider
+                    .protocols
+                    .iter()
+                    .copied()
+                    .map(UpstreamProtocol::from_catalog)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|protocols| !protocols.is_empty())
+        {
+            spec.protocol = protocols[0];
             spec.supported_protocols = protocols;
         }
         spec
@@ -245,36 +273,21 @@ impl ProviderSpec {
     }
 }
 
+/// 上游协议由目录定义；目录里没有这家供应商时回落到按 provider_type 的历史映射。
 pub fn resolved_upstream_protocols(
+    catalog: Option<&ProviderCatalog>,
     provider_type: &str,
-    configured_protocols: Option<&[String]>,
 ) -> Vec<String> {
-    let overrides = ProviderCapabilityOverrides {
-        upstream_protocols: configured_protocols.map(<[String]>::to_vec),
-        ..ProviderCapabilityOverrides::default()
-    };
-    ProviderSpec::from_provider_type_and_overrides(provider_type, &overrides)
-        .supported_protocols
-        .into_iter()
-        .map(UpstreamProtocol::capability_value)
-        .map(str::to_owned)
-        .collect()
-}
-
-fn supported_protocols_from_overrides(
-    overrides: &ProviderCapabilityOverrides,
-) -> Option<Vec<UpstreamProtocol>> {
-    let values = overrides.upstream_protocols.as_ref()?;
-    let mut protocols = Vec::new();
-    for value in values {
-        let Some(protocol) = UpstreamProtocol::from_capability_value(value) else {
-            continue;
-        };
-        if !protocols.contains(&protocol) {
-            protocols.push(protocol);
-        }
-    }
-    (!protocols.is_empty()).then_some(protocols)
+    ProviderSpec::from_provider_type_and_overrides(
+        catalog,
+        provider_type,
+        &ProviderCapabilityOverrides::default(),
+    )
+    .supported_protocols
+    .into_iter()
+    .map(UpstreamProtocol::capability_value)
+    .map(str::to_owned)
+    .collect()
 }
 
 fn provider_supported_protocols(

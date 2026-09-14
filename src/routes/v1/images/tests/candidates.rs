@@ -21,19 +21,19 @@ async fn fails_over_from_server_error_to_second_image_candidate() {
     let state = test_state().await;
     let primary_provider = test_provider_with_capabilities(
         "Primary image provider",
-        "custom_image",
+        "image_only",
         &primary.url,
         "sk-primary",
-        Some(&image_capabilities()),
+        None,
     )
     .await
     .expect("create primary provider");
     let backup_provider = test_provider_with_capabilities(
         "Backup image provider",
-        "custom_image",
+        "image_only",
         &backup.url,
         "sk-backup",
-        Some(&image_capabilities()),
+        None,
     )
     .await
     .expect("create backup provider");
@@ -95,19 +95,19 @@ async fn fails_over_when_failed_activity_cannot_be_written() {
     let (state, connection) = test_state_with_connection().await;
     let primary_provider = test_provider_with_capabilities(
         "Primary image provider",
-        "custom_image",
+        "image_only",
         &primary.url,
         "sk-primary",
-        Some(&image_capabilities()),
+        None,
     )
     .await
     .expect("create primary provider");
     let backup_provider = test_provider_with_capabilities(
         "Backup image provider",
-        "custom_image",
+        "image_only",
         &backup.url,
         "sk-backup",
-        Some(&image_capabilities()),
+        None,
     )
     .await
     .expect("create backup provider");

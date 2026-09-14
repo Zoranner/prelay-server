@@ -25,10 +25,10 @@ async fn forwards_only_to_image_generation_candidate_and_preserves_json_bytes() 
         .expect("create OpenAI provider");
     let image_provider = test_provider_with_capabilities(
         "Image provider",
-        "custom_image",
+        "image_only",
         &image.url,
         "sk-image",
-        Some(&image_capabilities()),
+        None,
     )
     .await
     .expect("create image provider");

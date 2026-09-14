@@ -10,7 +10,6 @@ use axum::{
 };
 use prelay_protocol::{
     CreateEndpointRequest, CreateIdentityRequest, CreateProviderRequest, EndpointModelInput,
-    ProviderCapabilityOverrides,
 };
 use serde_json::Value;
 use tokio::net::TcpListener;
@@ -152,10 +151,7 @@ async fn create_image_endpoint_for_url(
             provider_type: "gotoken".to_string(),
             base_url: base_url.to_string(),
             api_key: format!("sk-{provider_name}"),
-            capabilities: Some(ProviderCapabilityOverrides {
-                upstream_protocols: Some(vec!["images_generations".to_string()]),
-                ..ProviderCapabilityOverrides::default()
-            }),
+            capabilities: None,
         })
         .expect("serialize image provider"),
     )

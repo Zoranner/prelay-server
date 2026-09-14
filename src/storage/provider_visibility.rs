@@ -16,6 +16,7 @@ use crate::entity::{
         provider_configs as identity_provider_configs, provider_shares as identity_provider_shares,
     },
 };
+use crate::provider_catalog::ProviderCatalog;
 
 use super::{provider_views::provider_list_item, Storage, StorageError};
 
@@ -32,6 +33,7 @@ impl Storage {
     pub async fn list_visible_providers(
         &self,
         identity_id: &str,
+        catalog: Option<&ProviderCatalog>,
     ) -> Result<Vec<ProviderListItemResponse>, StorageError> {
         let providers = identity_provider_configs::Entity::find()
             .order_by_asc(identity_provider_configs::Column::CreatedAt)
@@ -48,6 +50,7 @@ impl Storage {
                 Vec::new()
             };
             visible.push(provider_list_item(
+                catalog,
                 provider.provider,
                 provider.owner_identity_id,
                 provider.owner_display_name,

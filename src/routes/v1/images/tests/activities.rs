@@ -14,10 +14,10 @@ async fn records_rate_limit_observability_without_image_or_prompt_content() {
     let state = test_state().await;
     let provider = test_provider_with_capabilities(
         "Rate limited image provider",
-        "custom_image",
+        "image_only",
         &upstream.url,
         "sk-image",
-        Some(&image_capabilities()),
+        None,
     )
     .await
     .expect("create provider");
@@ -80,10 +80,10 @@ async fn returns_success_bytes_when_activity_cannot_be_written() {
     let (state, connection) = test_state_with_connection().await;
     let provider = test_provider_with_capabilities(
         "Image provider",
-        "custom_image",
+        "image_only",
         &upstream.url,
         "sk-image",
-        Some(&image_capabilities()),
+        None,
     )
     .await
     .expect("create image provider");
@@ -130,10 +130,10 @@ async fn logs_sanitized_failure_when_upstream_connection_fails() {
         .expect("build direct test client");
     let provider = test_provider_with_capabilities(
         "Image provider",
-        "custom_image",
+        "image_only",
         &upstream_url,
         "sk-private-provider-key",
-        Some(&image_capabilities()),
+        None,
     )
     .await
     .expect("create image provider");
@@ -191,10 +191,10 @@ async fn logs_sanitized_failure_when_non_streaming_body_is_interrupted() {
     let state = test_state().await;
     let provider = test_provider_with_capabilities(
         "Image provider",
-        "custom_image",
+        "image_only",
         &upstream_url,
         "sk-private-provider-key",
-        Some(&image_capabilities()),
+        None,
     )
     .await
     .expect("create image provider");

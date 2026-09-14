@@ -10,7 +10,6 @@ use std::{
 
 use super::{handler::create_image_generation, router};
 use crate::{
-    models::ProviderCapabilityOverrides,
     routes::v1::endpoint_resolver::{
         create_test_endpoint_auth, create_test_endpoint_auth_with_candidates, test_provider,
         test_provider_with_capabilities,
@@ -81,13 +80,6 @@ async fn reject_activity_inserts(connection: &DatabaseConnection) {
             )
             .await
             .expect("create activity failure trigger");
-}
-
-fn image_capabilities() -> ProviderCapabilityOverrides {
-    ProviderCapabilityOverrides {
-        upstream_protocols: Some(vec!["images_generations".to_string()]),
-        ..ProviderCapabilityOverrides::default()
-    }
 }
 
 mod activities;

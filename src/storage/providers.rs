@@ -1,5 +1,7 @@
 use chrono::Utc;
-use prelay_protocol::{CreateProviderRequest, ProviderResponse, UpdateProviderRequest};
+use prelay_protocol::{
+    CreateProviderRequest, ProviderCapabilityOverrides, ProviderResponse, UpdateProviderRequest,
+};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
     EntityTrait, IntoActiveModel, QueryFilter, QueryOrder, TransactionTrait,
@@ -20,8 +22,10 @@ use crate::{
 };
 
 use super::{
-    crypto::KeyCipher, provider_validation::validate_catalog_provider,
-    provider_views::provider_response, provider_visibility::owned_provider, Storage, StorageError,
+    crypto::KeyCipher,
+    provider_views::provider_response,
+    provider_visibility::owned_provider,
+    Storage, StorageError,
 };
 
 impl Storage {
@@ -65,15 +69,15 @@ impl Storage {
         &self,
         identity_id: &str,
     ) -> Result<Vec<ProviderResponse>, StorageError> {
-        list(&self.db, &self.crypto, identity_id).await
+        list(&self.db, &self.crypto, identity_id, None).await
     }
 
     pub async fn list_providers_with_catalog(
         &self,
         identity_id: &str,
-        _catalog: &ProviderCatalog,
+        catalog: &ProviderCatalog,
     ) -> Result<Vec<ProviderResponse>, StorageError> {
-        list(&self.db, &self.crypto, identity_id).await
+        list(&self.db, &self.crypto, identity_id, Some(catalog)).await
     }
 
     pub async fn get_provider(
@@ -81,16 +85,23 @@ impl Storage {
         identity_id: &str,
         provider_id: &str,
     ) -> Result<ProviderResponse, StorageError> {
-        get(&self.db, &self.crypto, identity_id, provider_id).await
+        get(&self.db, &self.crypto, identity_id, provider_id, None).await
     }
 
     pub async fn get_provider_with_catalog(
         &self,
         identity_id: &str,
         provider_id: &str,
-        _catalog: &ProviderCatalog,
+        catalog: &ProviderCatalog,
     ) -> Result<ProviderResponse, StorageError> {
-        get(&self.db, &self.crypto, identity_id, provider_id).await
+        get(
+            &self.db,
+            &self.crypto,
+            identity_id,
+            provider_id,
+            Some(catalog),
+        )
+        .await
     }
 
     pub async fn update_provider(
@@ -171,7 +182,7 @@ async fn create_inner(
     let api_key_ciphertext = crypto.encrypt(&input.api_key)?;
     let capabilities_json = input
         .capabilities
-        .map(|capabilities| serde_json::to_string(&capabilities))
+        .map(|capabilities| serde_json::to_string(&without_protocol_set_override(capabilities)))
         .transpose()
         .map_err(|error| StorageError::Crypto(error.to_string()))?;
     let transaction = db.begin().await?;
@@ -214,6 +225,7 @@ pub(crate) async fn list(
     db: &DatabaseConnection,
     crypto: &KeyCipher,
     identity_id: &str,
+    catalog: Option<&ProviderCatalog>,
 ) -> Result<Vec<ProviderResponse>, StorageError> {
     let providers = identity_provider_configs::Entity::find()
         .filter(identity_provider_configs::Column::IdentityId.eq(identity_id))
@@ -222,7 +234,7 @@ pub(crate) async fn list(
         .await?;
     let mut responses = Vec::with_capacity(providers.len());
     for provider in providers {
-        responses.push(provider_response(crypto, provider)?);
+        responses.push(provider_response(crypto, catalog, provider)?);
     }
     Ok(responses)
 }
@@ -232,9 +244,10 @@ pub(crate) async fn get(
     crypto: &KeyCipher,
     identity_id: &str,
     provider_id: &str,
+    catalog: Option<&ProviderCatalog>,
 ) -> Result<ProviderResponse, StorageError> {
     let provider = find_provider(db, identity_id, provider_id).await?;
-    provider_response(crypto, provider)
+    provider_response(crypto, catalog, provider)
 }
 
 pub(crate) async fn update(
@@ -246,16 +259,18 @@ pub(crate) async fn update(
     catalog: Option<&ProviderCatalog>,
 ) -> Result<ProviderResponse, StorageError> {
     let existing = find_provider(db, identity_id, provider_id).await?;
+    let provider_type = input
+        .provider_type
+        .as_deref()
+        .unwrap_or(&existing.provider_type)
+        .trim()
+        .to_string();
     if let Some(catalog) = catalog {
-        let provider_type = input
-            .provider_type
-            .as_deref()
-            .unwrap_or(&existing.provider_type);
-        validate_catalog_provider(catalog, provider_type)?;
+        validate_catalog_provider(catalog, &provider_type)?;
     }
     let capabilities_json = match input.capabilities {
         Some(capabilities) => Some(
-            serde_json::to_string(&capabilities)
+            serde_json::to_string(&without_protocol_set_override(capabilities))
                 .map_err(|error| StorageError::Crypto(error.to_string()))?,
         ),
         None => existing.capabilities_json.clone(),
@@ -283,7 +298,7 @@ pub(crate) async fn update(
     active.update(&transaction).await?;
 
     transaction.commit().await?;
-    get(db, crypto, identity_id, provider_id).await
+    get(db, crypto, identity_id, provider_id, catalog).await
 }
 
 pub(crate) async fn delete(
@@ -321,6 +336,14 @@ where
     C: ConnectionTrait,
 {
     owned_provider(db, identity_id, provider_id).await
+}
+
+/// 协议集合由供应商目录定义，请求里的协议集合覆盖不落库。
+fn without_protocol_set_override(
+    mut capabilities: ProviderCapabilityOverrides,
+) -> ProviderCapabilityOverrides {
+    capabilities.upstream_protocols = None;
+    capabilities
 }
 
 #[cfg(test)]

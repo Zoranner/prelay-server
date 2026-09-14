@@ -4,24 +4,18 @@ use prelay_protocol::{
 
 use crate::{
     entity::identity::provider_configs as identity_provider_configs,
-    providers::spec::resolved_upstream_protocols,
+    provider_catalog::ProviderCatalog, providers::spec::resolved_upstream_protocols,
 };
 
 use super::{crypto::KeyCipher, StorageError};
 
 pub(super) fn provider_response(
     crypto: &KeyCipher,
+    catalog: Option<&ProviderCatalog>,
     provider: identity_provider_configs::Model,
 ) -> Result<ProviderResponse, StorageError> {
-    let capabilities: ProviderCapabilityOverrides = provider
-        .capabilities_json
-        .as_deref()
-        .and_then(|value| serde_json::from_str(value).ok())
-        .unwrap_or_default();
-    let upstream_protocols = resolved_upstream_protocols(
-        &provider.provider_type,
-        capabilities.upstream_protocols.as_deref(),
-    );
+    let capabilities = capabilities(&provider);
+    let upstream_protocols = resolved_upstream_protocols(catalog, &provider.provider_type);
     let api_key = crypto.decrypt(&provider.api_key_ciphertext)?;
     Ok(ProviderResponse {
         id: provider.id,
@@ -37,6 +31,7 @@ pub(super) fn provider_response(
 }
 
 pub(super) fn provider_list_item(
+    catalog: Option<&ProviderCatalog>,
     provider: identity_provider_configs::Model,
     owner_identity_id: String,
     owner_display_name: String,
@@ -45,10 +40,7 @@ pub(super) fn provider_list_item(
     can_manage: bool,
 ) -> Result<ProviderListItemResponse, StorageError> {
     let capabilities = capabilities(&provider);
-    let upstream_protocols = resolved_upstream_protocols(
-        &provider.provider_type,
-        capabilities.upstream_protocols.as_deref(),
-    );
+    let upstream_protocols = resolved_upstream_protocols(catalog, &provider.provider_type);
     Ok(ProviderListItemResponse {
         id: provider.id,
         name: provider.name,
@@ -66,11 +58,14 @@ pub(super) fn provider_list_item(
 }
 
 fn capabilities(provider: &identity_provider_configs::Model) -> ProviderCapabilityOverrides {
-    provider
+    let mut capabilities: ProviderCapabilityOverrides = provider
         .capabilities_json
         .as_deref()
         .and_then(|value| serde_json::from_str(value).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // 协议集合由目录定义，历史记录里的协议集合不再对外返回。
+    capabilities.upstream_protocols = None;
+    capabilities
 }
 
 fn mask_ciphertext(ciphertext: &str) -> String {

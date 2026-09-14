@@ -1,9 +1,8 @@
-use prelay_protocol::ProviderResponse;
-
 use crate::models::ProviderConfig;
 
 use super::UpstreamProtocol;
 
+/// 供应商记录里为该协议设置了地址就用设置，没有设置就用 base_url。
 pub fn provider_upstream_base_url(
     provider: &ProviderConfig,
     upstream_protocol: UpstreamProtocol,
@@ -11,30 +10,6 @@ pub fn provider_upstream_base_url(
     let overrides = provider.capability_overrides();
     let protocol_base_url =
         overrides
-            .protocol_base_urls
-            .as_ref()
-            .and_then(|base_urls| match upstream_protocol {
-                UpstreamProtocol::Responses => base_urls.responses.as_deref(),
-                UpstreamProtocol::ChatCompletions => base_urls.openai.as_deref(),
-                UpstreamProtocol::AnthropicMessages => base_urls.anthropic.as_deref(),
-                UpstreamProtocol::ImageGenerations => base_urls.images_generations.as_deref(),
-            });
-
-    resolve_provider_upstream_base_url(
-        &provider.provider_type,
-        &provider.base_url,
-        protocol_base_url,
-        upstream_protocol,
-    )
-}
-
-pub fn provider_response_upstream_base_url(
-    provider: &ProviderResponse,
-    upstream_protocol: UpstreamProtocol,
-) -> String {
-    let protocol_base_url =
-        provider
-            .capabilities
             .protocol_base_urls
             .as_ref()
             .and_then(|base_urls| match upstream_protocol {

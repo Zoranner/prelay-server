@@ -6,10 +6,10 @@ async fn streams_image_events_without_waiting_for_upstream_done() {
     let state = test_state().await;
     let provider = test_provider_with_capabilities(
         "Streaming image provider",
-        "custom_image",
+        "image_only",
         &upstream,
         "sk-image",
-        Some(&image_capabilities()),
+        None,
     )
     .await
     .expect("create provider");
@@ -89,10 +89,10 @@ async fn marks_image_request_failed_when_upstream_stream_is_interrupted() {
     let state = test_state().await;
     let provider = test_provider_with_capabilities(
         "Interrupted image provider",
-        "custom_image",
+        "image_only",
         &upstream,
         "sk-image",
-        Some(&image_capabilities()),
+        None,
     )
     .await
     .expect("create provider");

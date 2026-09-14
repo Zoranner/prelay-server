@@ -128,7 +128,7 @@ fn auth_scheme_for_provider_type(provider_type: &str) -> AuthScheme {
         capabilities_json: None,
         created_at: String::new(),
     };
-    ProviderSpec::from_provider_config(&provider).auth_scheme
+    ProviderSpec::from_provider_config(None, &provider).auth_scheme
 }
 
 fn models_fallback_base_url(provider_type: &str, base_url: &str) -> Option<String> {

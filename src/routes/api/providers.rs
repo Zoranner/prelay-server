@@ -49,7 +49,10 @@ async fn list(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
 ) -> Result<Json<Vec<ProviderListItemResponse>>, AppError> {
-    let providers = state.storage.list_visible_providers(&identity.id).await?;
+    let providers = state
+        .storage
+        .list_visible_providers(&identity.id, Some(&state.provider_catalog))
+        .await?;
     Ok(Json(providers))
 }
 

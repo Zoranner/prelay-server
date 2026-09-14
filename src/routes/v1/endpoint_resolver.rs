@@ -29,8 +29,10 @@ pub async fn resolve_endpoint_model_candidates(
     let candidates = resolved
         .into_iter()
         .filter_map(|resolved| {
-            let provider_spec =
-                crate::providers::spec::ProviderSpec::from_provider_config(&resolved.provider);
+            let provider_spec = crate::providers::spec::ProviderSpec::from_provider_config(
+                Some(&state.provider_catalog),
+                &resolved.provider,
+            );
             provider_spec
                 .upstream_for_downstream(downstream_protocol)
                 .map(|upstream_protocol| ResolvedEndpointProvider {

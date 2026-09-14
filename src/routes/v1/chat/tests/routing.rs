@@ -140,7 +140,7 @@ async fn forwards_chat_completion_to_protocol_specific_base_url() {
     let state = test_state().await;
     let provider = test_provider_with_capabilities(
         "deepseek-chat",
-        "openai_compatible",
+        "deepseek",
         &default_upstream,
         "sk-upstream",
         Some(&ProviderCapabilityOverrides {
