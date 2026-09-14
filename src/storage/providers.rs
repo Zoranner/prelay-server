@@ -23,6 +23,9 @@ use crate::{
 
 use super::{
     crypto::KeyCipher,
+    provider_validation::{
+        disabled_models_json, normalize_disabled_models, validate_catalog_provider,
+    },
     provider_views::provider_response,
     provider_visibility::owned_provider,
     Storage, StorageError,
@@ -177,6 +180,11 @@ async fn create_inner(
     if let Some(catalog) = catalog {
         validate_catalog_provider(catalog, &input.provider_type)?;
     }
+    let disabled_models = normalize_disabled_models(
+        catalog,
+        &input.provider_type,
+        input.disabled_models.unwrap_or_default(),
+    )?;
     let provider_id = Uuid::new_v4().to_string();
     let created_at = Utc::now().to_rfc3339();
     let api_key_ciphertext = crypto.encrypt(&input.api_key)?;
@@ -203,6 +211,7 @@ async fn create_inner(
         base_url: Set(input.base_url.trim().to_string()),
         api_key_ciphertext: Set(api_key_ciphertext),
         capabilities_json: Set(capabilities_json),
+        disabled_models_json: Set(disabled_models_json(&disabled_models)),
         created_at: Set(created_at.clone()),
     }
     .insert(&transaction)
@@ -268,6 +277,14 @@ pub(crate) async fn update(
     if let Some(catalog) = catalog {
         validate_catalog_provider(catalog, &provider_type)?;
     }
+    let disabled_models_json = match input.disabled_models {
+        Some(disabled_models) => disabled_models_json(&normalize_disabled_models(
+            catalog,
+            &provider_type,
+            disabled_models,
+        )?),
+        None => existing.disabled_models_json.clone(),
+    };
     let capabilities_json = match input.capabilities {
         Some(capabilities) => Some(
             serde_json::to_string(&without_protocol_set_override(capabilities))
@@ -295,6 +312,7 @@ pub(crate) async fn update(
     }
     active.api_key_ciphertext = Set(api_key_ciphertext);
     active.capabilities_json = Set(capabilities_json);
+    active.disabled_models_json = Set(disabled_models_json);
     active.update(&transaction).await?;
 
     transaction.commit().await?;
@@ -388,6 +406,7 @@ mod tests {
                     base_url: "https://provider.example".to_string(),
                     api_key: "provider-key".to_string(),
                     capabilities: None,
+                    disabled_models: None,
                 },
             )
             .await

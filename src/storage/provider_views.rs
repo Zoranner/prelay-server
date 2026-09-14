@@ -16,6 +16,7 @@ pub(super) fn provider_response(
 ) -> Result<ProviderResponse, StorageError> {
     let capabilities = capabilities(&provider);
     let upstream_protocols = resolved_upstream_protocols(catalog, &provider.provider_type);
+    let disabled_models = disabled_models(&provider);
     let api_key = crypto.decrypt(&provider.api_key_ciphertext)?;
     Ok(ProviderResponse {
         id: provider.id,
@@ -26,6 +27,7 @@ pub(super) fn provider_response(
         api_key_masked: mask_ciphertext(&provider.api_key_ciphertext),
         capabilities,
         upstream_protocols,
+        disabled_models,
         created_at: provider.created_at,
     })
 }
@@ -41,6 +43,7 @@ pub(super) fn provider_list_item(
 ) -> Result<ProviderListItemResponse, StorageError> {
     let capabilities = capabilities(&provider);
     let upstream_protocols = resolved_upstream_protocols(catalog, &provider.provider_type);
+    let disabled_models = disabled_models(&provider);
     Ok(ProviderListItemResponse {
         id: provider.id,
         name: provider.name,
@@ -48,6 +51,7 @@ pub(super) fn provider_list_item(
         base_url: provider.base_url,
         capabilities,
         upstream_protocols,
+        disabled_models,
         owner_identity_id,
         owner_display_name,
         visibility,
@@ -66,6 +70,10 @@ fn capabilities(provider: &identity_provider_configs::Model) -> ProviderCapabili
     // 协议集合由目录定义，历史记录里的协议集合不再对外返回。
     capabilities.upstream_protocols = None;
     capabilities
+}
+
+fn disabled_models(provider: &identity_provider_configs::Model) -> Vec<String> {
+    super::provider_validation::parse_disabled_models(provider.disabled_models_json.as_deref())
 }
 
 fn mask_ciphertext(ciphertext: &str) -> String {

@@ -44,7 +44,8 @@ async fn list_models(
     let mut data: Vec<ModelEntry> = Vec::new();
     for model in models.into_iter().filter(|model| {
         let model_id = model.model.model_name.as_str();
-        state.provider_catalog.language_model(model_id).is_some()
+        !model.provider.disables_model(model_id)
+            && state.provider_catalog.language_model(model_id).is_some()
             && state
                 .provider_catalog
                 .provider_supports_language_model(&model.provider.provider_type, model_id)

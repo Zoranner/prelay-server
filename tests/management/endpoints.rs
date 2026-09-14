@@ -391,3 +391,55 @@ async fn management_endpoint_resolves_provider_upstream_model_name() {
     assert_eq!(endpoint["models"][0]["model_name"], "k3");
     assert_eq!(endpoint["models"][0]["upstream_model"], "kimi-k3");
 }
+
+#[tokio::test]
+async fn management_endpoint_rejects_disabled_provider_model() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let identity = register(
+        &app,
+        "machine-disabled-endpoint",
+        "S-1-5-21-disabled-endpoint",
+    )
+    .await;
+    let credential = identity["credential"].as_str().expect("credential");
+
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Disabled provider",
+            "provider_type": "deepseek",
+            "base_url": "https://provider.example",
+            "api_key": "sk-disabled",
+            "disabled_models": ["deepseek-v4-pro"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, error): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/endpoints",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Disabled endpoint",
+            "models": [{
+                "provider_id": provider["id"],
+                "upstream_model": "deepseek-v4-pro"
+            }]
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("disabled model"),
+        "{error}"
+    );
+}

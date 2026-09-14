@@ -396,6 +396,7 @@ mod tests {
             api_key: "sk-test".to_string(),
             token: "token".to_string(),
             capabilities_json: None,
+            disabled_models: Vec::new(),
             created_at: "2026-06-05T00:00:00Z".to_string(),
         }
     }

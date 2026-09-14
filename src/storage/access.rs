@@ -227,6 +227,9 @@ impl Storage {
                     api_key: self.crypto.decrypt(&provider.api_key_ciphertext)?,
                     token: String::new(),
                     capabilities_json: provider.capabilities_json,
+                    disabled_models: super::provider_validation::parse_disabled_models(
+                        provider.disabled_models_json.as_deref(),
+                    ),
                     created_at: provider.created_at,
                 },
             });

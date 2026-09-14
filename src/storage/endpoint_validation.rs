@@ -56,7 +56,17 @@ pub(super) async fn resolve_models(
         let provider = identity_provider_configs::Entity::find_by_id(&model.provider_id)
             .one(transaction)
             .await?
-            .ok_or(StorageError::ProviderNotUsable)?;        let Some(catalog) = catalog else {
+            .ok_or(StorageError::ProviderNotUsable)?;
+        let disabled_models = super::provider_validation::parse_disabled_models(
+            provider.disabled_models_json.as_deref(),
+        );
+        if disabled_models.iter().any(|id| id == &model.model_name) {
+            return Err(StorageError::ValidationFailed(format!(
+                "provider {} disabled model {}",
+                provider.provider_type, model.model_name
+            )));
+        }
+        let Some(catalog) = catalog else {
             continue;
         };
         if !catalog.provider_supports_language_model(&provider.provider_type, &model.model_name)

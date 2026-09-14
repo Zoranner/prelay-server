@@ -5,6 +5,62 @@ use prelay_server::{app, test_support::test_state};
 use crate::{auth::register, http::request_json, status::request_status};
 
 #[tokio::test]
+async fn management_provider_round_trips_disabled_models() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let identity = register(&app, "machine-disabled", "S-1-5-21-disabled").await;
+    let credential = identity["credential"].as_str().expect("credential");
+
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(credential),
+        Some(serde_json::json!({
+            "name": "Disabled models provider",
+            "provider_type": "deepseek",
+            "base_url": "https://provider-disabled.example",
+            "api_key": "sk-disabled",
+            "disabled_models": ["deepseek-v4-pro"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(
+        provider["disabled_models"],
+        serde_json::json!(["deepseek-v4-pro"])
+    );
+    let provider_id = provider["id"].as_str().expect("provider id");
+
+    let (status, error): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "PATCH",
+        &format!("/api/providers/{provider_id}"),
+        Some(credential),
+        Some(serde_json::json!({ "disabled_models": ["unknown-model"] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("does not provide model"),
+        "{error}"
+    );
+
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "PATCH",
+        &format!("/api/providers/{provider_id}"),
+        Some(credential),
+        Some(serde_json::json!({ "disabled_models": [] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(provider["disabled_models"], serde_json::json!([]));
+}
+
+#[tokio::test]
 async fn management_credential_cannot_read_or_mutate_another_identity_provider() {
     let app = app::router(test_state().await).await.expect("build app");
     let identity_a = register(&app, "machine-a", "S-1-5-21-100").await;
@@ -15,6 +71,7 @@ async fn management_credential_cannot_read_or_mutate_another_identity_provider()
         base_url: "https://provider-a.example".to_string(),
         api_key: "sk-a".to_string(),
         capabilities: None,
+        disabled_models: None,
     };
     let (status, provider): (StatusCode, serde_json::Value) = request_json(
         &app,

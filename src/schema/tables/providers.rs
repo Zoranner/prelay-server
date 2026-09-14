@@ -36,6 +36,7 @@ pub(in crate::schema) fn configs() -> TableCreateStatement {
                 .not_null(),
         )
         .col(ColumnDef::new(ProviderConfigs::CapabilitiesJson).string())
+        .col(ColumnDef::new(ProviderConfigs::DisabledModelsJson).string())
         .col(
             ColumnDef::new(ProviderConfigs::CreatedAt)
                 .string()
@@ -61,5 +62,6 @@ pub(in crate::schema) enum ProviderConfigs {
     BaseUrl,
     ApiKeyCiphertext,
     CapabilitiesJson,
+    DisabledModelsJson,
     CreatedAt,
 }

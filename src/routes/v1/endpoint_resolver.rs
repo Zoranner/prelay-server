@@ -26,9 +26,14 @@ pub async fn resolve_endpoint_model_candidates(
         .storage
         .select_protocol_model_candidates(&access, model)
         .await?;
+    let mut disabled = false;
     let candidates = resolved
         .into_iter()
         .filter_map(|resolved| {
+            if resolved.provider.disables_model(model) {
+                disabled = true;
+                return None;
+            }
             let provider_spec = crate::providers::spec::ProviderSpec::from_provider_config(
                 Some(&state.provider_catalog),
                 &resolved.provider,
@@ -43,6 +48,9 @@ pub async fn resolve_endpoint_model_candidates(
         })
         .collect::<Vec<_>>();
     if candidates.is_empty() {
+        if disabled {
+            return Err(AppError::BadRequest(format!("模型 {model} 已被供应商禁用")));
+        }
         return Err(AppError::BadRequest(format!(
             "接入点未配置支持 {downstream_protocol} 的模型 {model}"
         )));
@@ -110,6 +118,7 @@ pub(crate) async fn create_test_endpoint_auth_with_candidates(
                         .capabilities_json
                         .as_deref()
                         .and_then(|value| serde_json::from_str(value).ok()),
+                    disabled_models: None,
                 },
             )
             .await
@@ -185,6 +194,7 @@ pub(crate) async fn test_provider_with_capabilities(
         api_key: api_key.to_string(),
         token: String::new(),
         capabilities_json: capabilities.map(serde_json::to_string).transpose()?,
+        disabled_models: Vec::new(),
         created_at: chrono::Utc::now().to_rfc3339(),
     })
 }

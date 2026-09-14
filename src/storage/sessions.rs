@@ -272,6 +272,7 @@ mod tests {
                     base_url: "https://provider.example".to_string(),
                     api_key: format!("key-{suffix}"),
                     capabilities: None,
+                    disabled_models: None,
                 },
             )
             .await

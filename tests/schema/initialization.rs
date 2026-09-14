@@ -360,3 +360,29 @@ async fn migrates_stale_activity_content_once_during_schema_initialization() {
         1
     );
 }
+#[tokio::test]
+async fn adds_disabled_models_column_when_migrating_an_existing_provider_table() {
+    let db = Database::connect("sqlite::memory:")
+        .await
+        .expect("connect to in-memory SQLite");
+    initialize(&db)
+        .await
+        .expect("initialize the current schema");
+    db.execute_unprepared("ALTER TABLE identity_provider_configs DROP COLUMN disabled_models_json")
+        .await
+        .expect("drop the disabled models column");
+
+    initialize(&db).await.expect("migrate the existing schema");
+
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS result_count FROM pragma_table_info('identity_provider_configs') \
+             WHERE name = 'disabled_models_json'"
+                .to_string(),
+        ))
+        .await
+        .expect("inspect provider columns")
+        .expect("disabled models column count");
+    assert_eq!(row.try_get::<i64>("", "result_count").unwrap(), 1);
+}

@@ -126,6 +126,7 @@ fn auth_scheme_for_provider_type(provider_type: &str) -> AuthScheme {
         api_key: String::new(),
         token: String::new(),
         capabilities_json: None,
+        disabled_models: Vec::new(),
         created_at: String::new(),
     };
     ProviderSpec::from_provider_config(None, &provider).auth_scheme

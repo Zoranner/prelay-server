@@ -47,7 +47,7 @@ pub async fn initialize(db: &DatabaseConnection) -> Result<(), DbErr> {
 
     let transaction = db.begin().await?;
     let manager = SchemaInitializer { db: &transaction };
-    manager.migrate_provider_sharing_schema().await?;
+    manager.migrate_provider_schema().await?;
     if !has_current_activities && has_legacy_activities {
         manager.rename_legacy_activities().await?;
     }
@@ -146,7 +146,14 @@ impl<C: ConnectionTrait> SchemaInitializer<'_, C> {
         self.db.execute(&statement).await.map(|_| ())
     }
 
-    async fn migrate_provider_sharing_schema(&self) -> Result<(), DbErr> {
+    async fn migrate_provider_schema(&self) -> Result<(), DbErr> {
+        if !column_exists(self.db, "identity_provider_configs", "disabled_models_json").await? {
+            self.db
+                .execute_unprepared(
+                    "ALTER TABLE identity_provider_configs ADD COLUMN disabled_models_json TEXT",
+                )
+                .await?;
+        }
         if !column_exists(self.db, "identity_provider_configs", "visibility").await? {
             self.db
                 .execute_unprepared(
