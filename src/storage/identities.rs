@@ -12,7 +12,7 @@ use crate::{
         identity::{
             activities as identity_activities, endpoint_configs as identity_endpoint_configs,
             endpoint_model_routes as identity_endpoint_model_routes,
-            endpoint_models as identity_endpoint_models, model_aliases as identity_model_aliases,
+            endpoint_models as identity_endpoint_models,
             provider_configs as identity_provider_configs,
             response_sessions as identity_response_sessions,
         },
@@ -322,10 +322,6 @@ pub(crate) async fn delete_inactive(
     }
     identity_endpoint_configs::Entity::delete_many()
         .filter(identity_endpoint_configs::Column::IdentityId.is_in(identity_ids.clone()))
-        .exec(&transaction)
-        .await?;
-    identity_model_aliases::Entity::delete_many()
-        .filter(identity_model_aliases::Column::IdentityId.is_in(identity_ids.clone()))
         .exec(&transaction)
         .await?;
     identity_provider_configs::Entity::delete_many()

@@ -7,7 +7,6 @@ use super::tables::{
     identity::Identities,
     memories::Memories,
     memory_sources::MemorySources,
-    model_aliases::ModelAliases,
     provider_shares::ProviderShares,
     sessions::ResponseSessions,
 };
@@ -100,15 +99,6 @@ pub(super) fn memory_sources_unique() -> IndexCreateStatement {
         .col(MemorySources::IdentityId)
         .col(MemorySources::EvidenceHash)
         .col(MemorySources::ObservedAt)
-        .unique()
-        .to_owned()
-}
-
-pub(super) fn model_aliases_alias() -> IndexCreateStatement {
-    Index::create()
-        .name("uq_identity_model_aliases_alias")
-        .col(ModelAliases::IdentityId)
-        .col(ModelAliases::Alias)
         .unique()
         .to_owned()
 }

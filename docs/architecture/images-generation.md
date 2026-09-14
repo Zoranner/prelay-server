@@ -21,11 +21,11 @@ anthropic
 images_generations
 ```
 
-它与 `responses`、`openai`、`anthropic` 一样由供应商配置声明，而非由服务端按供应商品牌判断。供应商的 `upstream_protocols` 包含 `images_generations` 时，才可处理图像生成请求；对应的 `protocol_base_urls.images_generations` 是该协议的上游 Base URL。
+它与 `responses`、`openai`、`anthropic` 一样由供应商目录条目声明，而非由服务端按供应商品牌判断。目录条目的 `protocols` 包含 `images_generations` 时，该供应商才可处理图像生成请求；对应的 `protocol_base_urls.images_generations` 是该协议的上游 Base URL，缺省用供应商记录里的 base_url。
 
 供应商目录中的 GoToken 条目默认声明该协议并设置其 OpenAI 兼容 Base URL。其他目录条目默认不声明。任何拥有兼容接口的供应商都可在管理台配置此协议和地址。
 
-已有供应商配置不做数据库或数据迁移。需要图像生成的既有供应商应通过管理 API 或桌面管理台保存 `images_generations` 配置。
+供应商是否支持图像生成由目录决定，已有供应商记录不需要额外配置；服务端在启动时按目录对账接入点模型。
 
 ## 请求与响应
 

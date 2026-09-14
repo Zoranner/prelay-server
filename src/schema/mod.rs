@@ -3,10 +3,15 @@ mod indexes;
 mod provider_catalog;
 mod tables;
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement, TransactionTrait};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ConnectionTrait, DatabaseConnection, DbBackend, DbErr,
+    EntityTrait, IntoActiveModel, Statement, TransactionTrait,
+};
 use sea_query::{IndexCreateStatement, TableCreateStatement};
 
-const BASE_TABLES: [&str; 8] = [
+use crate::entity::identity::provider_configs;
+
+const BASE_TABLES: [&str; 7] = [
     "identities",
     "identity_provider_configs",
     "identity_provider_shares",
@@ -14,8 +19,8 @@ const BASE_TABLES: [&str; 8] = [
     "identity_endpoint_models",
     "identity_endpoint_model_routes",
     "identity_response_sessions",
-    "identity_model_aliases",
 ];
+const LEGACY_ALIAS_TABLE: &str = "identity_model_aliases";
 const LEGACY_ACTIVITY_TABLE: &str = "identity_request_logs";
 const LEGACY_ACTIVITY_INDEX: &str = "idx_identity_request_logs_identity_created_at";
 const MEMORY_TABLES: [&str; 3] = ["activity_contents", "memories", "memory_sources"];
@@ -91,9 +96,6 @@ async fn initialize_empty_schema<C: ConnectionTrait>(
     manager
         .create_index(indexes::activities_identity_created_at())
         .await?;
-    manager
-        .create_table(tables::model_aliases::statement())
-        .await?;
     initialize_memory_schema(manager).await
 }
 
@@ -147,12 +149,10 @@ impl<C: ConnectionTrait> SchemaInitializer<'_, C> {
     }
 
     async fn migrate_provider_schema(&self) -> Result<(), DbErr> {
-        if !column_exists(self.db, "identity_provider_configs", "disabled_models_json").await? {
-            self.db
-                .execute_unprepared(
-                    "ALTER TABLE identity_provider_configs ADD COLUMN disabled_models_json TEXT",
-                )
-                .await?;
+        self.drop_legacy_alias_table().await?;
+        // 只有真正当前的供应商表才做结构与数据迁移；表名齐全但结构不对的库留给校验报错。
+        if !self.provider_table_is_current().await? {
+            return Ok(());
         }
         if !column_exists(self.db, "identity_provider_configs", "visibility").await? {
             self.db
@@ -162,11 +162,67 @@ impl<C: ConnectionTrait> SchemaInitializer<'_, C> {
                 )
                 .await?;
         }
+        if !column_exists(self.db, "identity_provider_configs", "disabled_models_json").await? {
+            self.db
+                .execute_unprepared(
+                    "ALTER TABLE identity_provider_configs ADD COLUMN disabled_models_json TEXT",
+                )
+                .await?;
+        }
         if !table_exists(self.db, "identity_provider_shares").await? {
             self.create_table(tables::provider_shares::statement())
                 .await?;
             self.create_index(indexes::provider_shares_provider_grantee())
                 .await?;
+        }
+        self.strip_legacy_protocol_overrides().await?;
+        Ok(())
+    }
+
+    async fn provider_table_is_current(&self) -> Result<bool, DbErr> {
+        for column in [
+            "identity_id",
+            "provider_type",
+            "api_key_ciphertext",
+            "created_at",
+        ] {
+            if !column_exists(self.db, "identity_provider_configs", column).await? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// 模型别名表已退出请求链路，删除遗留表。
+    async fn drop_legacy_alias_table(&self) -> Result<(), DbErr> {
+        if table_exists(self.db, LEGACY_ALIAS_TABLE).await? {
+            self.db
+                .execute_unprepared(&format!("DROP TABLE {LEGACY_ALIAS_TABLE}"))
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// 协议集合改由目录决定，清掉供应商记录里遗留的协议集合覆盖；协议地址覆盖保留。
+    async fn strip_legacy_protocol_overrides(&self) -> Result<(), DbErr> {
+        for provider in provider_configs::Entity::find().all(self.db).await? {
+            let Some(raw) = provider.capabilities_json.as_deref() else {
+                continue;
+            };
+            let Ok(mut capabilities) = serde_json::from_str::<serde_json::Value>(raw) else {
+                continue;
+            };
+            let Some(object) = capabilities.as_object_mut() else {
+                continue;
+            };
+            if object.remove("upstream_protocols").is_none() {
+                continue;
+            }
+            let updated = serde_json::to_string(&capabilities)
+                .map_err(|error| DbErr::Custom(format!("serialize capabilities: {error}")))?;
+            let mut active = provider.into_active_model();
+            active.capabilities_json = Set(Some(updated));
+            active.update(self.db).await?;
         }
         Ok(())
     }

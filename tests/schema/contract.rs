@@ -2,7 +2,7 @@ use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statemen
 
 use prelay_server::schema::initialize;
 
-const TABLES: [&str; 12] = [
+const TABLES: [&str; 11] = [
     "identities",
     "identity_provider_configs",
     "identity_provider_shares",
@@ -11,7 +11,6 @@ const TABLES: [&str; 12] = [
     "identity_endpoint_model_routes",
     "identity_response_sessions",
     "identity_activities",
-    "identity_model_aliases",
     "activity_contents",
     "memories",
     "memory_sources",
@@ -226,13 +225,6 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
             .eq_ignore_ascii_case(expected_integer_type),
         "candidate_order must map to an i64-compatible {expected_integer_type}"
     );
-    assert_eq!(
-        column_type(db, "identity_model_aliases", "enabled")
-            .await
-            .to_ascii_uppercase(),
-        "BOOLEAN"
-    );
-
     for column in [
         "activity_id",
         "input_text",

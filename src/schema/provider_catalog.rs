@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    entity::identity::{endpoint_model_routes, endpoint_models, model_aliases, provider_configs},
+    entity::identity::{endpoint_model_routes, endpoint_models, provider_configs},
     provider_catalog::ProviderCatalog,
 };
 use sea_orm::{
@@ -86,7 +86,6 @@ async fn apply_postgres_legacy_migration(
     }
 
     cleanup_endpoint_models(&transaction, catalog, &provider_targets).await?;
-    cleanup_model_aliases(&transaction, catalog, &provider_targets).await?;
 
     for (provider_id, (provider_type, target)) in &provider_targets {
         if provider_type != target {
@@ -184,24 +183,6 @@ async fn apply_postgres_model_source_migration(
         }
     }
 
-    let aliases = model_aliases::Entity::find().all(&transaction).await?;
-    for alias in aliases {
-        let target = provider_targets
-            .get(&alias.provider_id)
-            .copied()
-            .ok_or_else(|| {
-                migration_error(format!(
-                    "模型别名 {} 引用了不存在的供应商 {}",
-                    alias.id, alias.provider_id
-                ))
-            })?;
-        if should_remove_model(catalog, target, &alias.upstream_model) {
-            model_aliases::Entity::delete_by_id(alias.id)
-                .exec(&transaction)
-                .await?;
-        }
-    }
-
     transaction
         .execute_unprepared("DROP TABLE IF EXISTS identity_provider_models")
         .await?;
@@ -249,36 +230,6 @@ async fn cleanup_endpoint_models(
                     DbBackend::Postgres,
                     "DELETE FROM identity_endpoint_models WHERE id = $1",
                     [endpoint_model_id.into()],
-                ))
-                .await?;
-        }
-    }
-    Ok(())
-}
-
-async fn cleanup_model_aliases(
-    transaction: &DatabaseTransaction,
-    catalog: &ProviderCatalog,
-    provider_targets: &HashMap<String, (String, &'static str)>,
-) -> Result<(), DbErr> {
-    let rows = transaction
-        .query_all_raw(Statement::from_string(
-            DbBackend::Postgres,
-            "SELECT id, provider_id, upstream_model FROM identity_model_aliases ORDER BY id"
-                .to_owned(),
-        ))
-        .await?;
-    for row in rows {
-        let alias_id: String = row.try_get("", "id")?;
-        let provider_id: String = row.try_get("", "provider_id")?;
-        let upstream_model: String = row.try_get("", "upstream_model")?;
-        let target = provider_target(&provider_id, provider_targets)?;
-        if should_remove_model(catalog, target, &upstream_model) {
-            transaction
-                .execute_raw(Statement::from_sql_and_values(
-                    DbBackend::Postgres,
-                    "DELETE FROM identity_model_aliases WHERE id = $1",
-                    [alias_id.into()],
                 ))
                 .await?;
         }

@@ -8,7 +8,6 @@ async fn create_existing_base_tables(db: &DatabaseConnection) {
         "identity_endpoint_models",
         "identity_endpoint_model_routes",
         "identity_response_sessions",
-        "identity_model_aliases",
     ] {
         db.execute_unprepared(&format!("CREATE TABLE {table} (id TEXT PRIMARY KEY)"))
             .await
@@ -128,7 +127,6 @@ async fn rejects_complete_table_names_without_provider_visibility_column() {
         "identity_endpoint_models",
         "identity_endpoint_model_routes",
         "identity_response_sessions",
-        "identity_model_aliases",
     ] {
         db.execute_unprepared(&format!("CREATE TABLE {table} (id TEXT PRIMARY KEY)"))
             .await
@@ -161,7 +159,6 @@ async fn rejects_provider_shares_without_required_unique_index() {
         "identity_endpoint_models",
         "identity_endpoint_model_routes",
         "identity_response_sessions",
-        "identity_model_aliases",
     ] {
         db.execute_unprepared(&format!("CREATE TABLE {table} (id TEXT PRIMARY KEY)"))
             .await

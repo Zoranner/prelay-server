@@ -24,6 +24,7 @@ fn source_modules_use_domain_directories() {
         "entity/identity_endpoint_model_routes.rs",
         "entity/identity_endpoint_models.rs",
         "entity/identity_model_aliases.rs",
+        "entity/identity/model_aliases.rs",
         "entity/identity_provider_configs.rs",
         "entity/identity_provider_models.rs",
         "entity/identity_activities.rs",
@@ -48,6 +49,7 @@ fn source_modules_use_domain_directories() {
         "routes/v1/responses/tests/cases_b.rs",
         "routes/v1/responses/tests/support.rs",
         "schema.rs",
+        "schema/tables/model_aliases.rs",
     ];
     let required_files = [
         "bridge/anthropic/mod.rs",
@@ -69,7 +71,6 @@ fn source_modules_use_domain_directories() {
         "entity/identity/endpoint_configs.rs",
         "entity/identity/endpoint_model_routes.rs",
         "entity/identity/endpoint_models.rs",
-        "entity/identity/model_aliases.rs",
         "entity/identity/provider_configs.rs",
         "entity/identity/activities.rs",
         "entity/identity/response_sessions.rs",
@@ -138,7 +139,6 @@ fn source_modules_use_domain_directories() {
         "schema/tables/endpoints.rs",
         "schema/tables/sessions.rs",
         "schema/tables/activities.rs",
-        "schema/tables/model_aliases.rs",
         "storage/access.rs",
         "storage/activities.rs",
     ];

@@ -23,8 +23,6 @@ pub enum Relation {
     ResponseSessions,
     #[sea_orm(has_many = "super::identity::activities::Entity")]
     Activities,
-    #[sea_orm(has_many = "super::identity::model_aliases::Entity")]
-    ModelAliases,
 }
 
 impl Related<super::identity::provider_configs::Entity> for Entity {
@@ -48,12 +46,6 @@ impl Related<super::identity::response_sessions::Entity> for Entity {
 impl Related<super::identity::activities::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Activities.def()
-    }
-}
-
-impl Related<super::identity::model_aliases::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::ModelAliases.def()
     }
 }
 
