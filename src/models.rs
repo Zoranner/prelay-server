@@ -12,8 +12,8 @@ pub struct ProviderConfig {
     /// Internal token used by clients to authenticate with this proxy
     pub token: String,
     pub capabilities_json: Option<String>,
-    /// 该供应商禁用的目录模型 id，禁用后不再提供给接入点，已有接入点也会被拦。
-    pub disabled_models: Vec<String>,
+    /// 该供应商启用的模型清单；清单外的模型不再提供给接入点。
+    pub models: Vec<String>,
     pub created_at: String,
 }
 
@@ -73,8 +73,8 @@ impl ProviderConfig {
 }
 
 impl ProviderConfig {
-    pub fn disables_model(&self, model_id: &str) -> bool {
-        self.disabled_models.iter().any(|id| id == model_id)
+    pub fn provides_model(&self, model_id: &str) -> bool {
+        self.models.iter().any(|id| id == model_id)
     }
 
     pub fn capability_overrides(&self) -> ProviderCapabilityOverrides {
@@ -138,7 +138,7 @@ mod tests {
             api_key: "sk-test".to_string(),
             token: "token".to_string(),
             capabilities_json: None,
-            disabled_models: Vec::new(),
+            models: Vec::new(),
             created_at: "2026-06-05T00:00:00Z".to_string(),
         }
     }

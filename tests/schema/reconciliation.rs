@@ -29,6 +29,21 @@ async fn table_exists(db: &DatabaseConnection, table: &str) -> bool {
     row.try_get::<i64>("", "result_count").unwrap() == 1
 }
 
+async fn column_exists(db: &DatabaseConnection, table: &str, column: &str) -> bool {
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                "SELECT COUNT(*) AS result_count FROM pragma_table_info('{table}') \
+                 WHERE name = '{column}'"
+            ),
+        ))
+        .await
+        .expect("inspect sqlite schema")
+        .expect("column count row");
+    row.try_get::<i64>("", "result_count").unwrap() == 1
+}
+
 async fn insert_identity(db: &DatabaseConnection) {
     db.execute_unprepared(
         "INSERT INTO identities \
@@ -55,6 +70,7 @@ async fn insert_provider(
     id: &str,
     provider_type: &str,
     capabilities_json: Option<String>,
+    models_json: Option<String>,
 ) {
     provider_configs::ActiveModel {
         id: Set(id.to_string()),
@@ -65,7 +81,7 @@ async fn insert_provider(
         base_url: Set("https://provider.example/v1".to_string()),
         api_key_ciphertext: Set("ciphertext".to_string()),
         capabilities_json: Set(capabilities_json),
-        disabled_models_json: Set(None),
+        models_json: Set(models_json),
         created_at: Set("2026-09-14T00:00:00Z".to_string()),
     }
     .insert(db)
@@ -107,23 +123,34 @@ async fn insert_route(db: &DatabaseConnection, model_name: &str, provider_id: &s
 }
 
 #[tokio::test]
-async fn drops_legacy_alias_table_and_protocol_overrides_on_startup() {
+async fn migrates_legacy_provider_columns_on_startup() {
     let db = connect().await;
     initialize(&db).await.expect("initialize schema");
     insert_identity(&db).await;
     db.execute_unprepared("CREATE TABLE identity_model_aliases (id TEXT PRIMARY KEY)")
         .await
         .expect("create legacy alias table");
+    db.execute_unprepared(
+        "ALTER TABLE identity_provider_configs ADD COLUMN disabled_models_json TEXT",
+    )
+    .await
+    .expect("add legacy disabled models column");
     insert_provider(
         &db,
         "provider-a",
-        "relay",
+        "gotoken",
         Some(
             r#"{"upstream_protocols":["openai"],"protocol_base_urls":{"openai":"https://gateway.example/v1"}}"#
                 .to_string(),
         ),
+        None,
     )
     .await;
+    db.execute_unprepared(
+        "UPDATE identity_provider_configs SET disabled_models_json = '[\"gpt-5.6-sol\"]'",
+    )
+    .await
+    .expect("store legacy disabled models");
 
     initialize_with_catalog(&db, &fixture_catalog())
         .await
@@ -133,11 +160,26 @@ async fn drops_legacy_alias_table_and_protocol_overrides_on_startup() {
         !table_exists(&db, "identity_model_aliases").await,
         "legacy alias table must be dropped"
     );
+    assert!(
+        !column_exists(&db, "identity_provider_configs", "disabled_models_json").await,
+        "legacy disabled models column must be dropped"
+    );
     let provider = provider_configs::Entity::find_by_id("provider-a")
         .one(&db)
         .await
         .expect("load provider")
         .expect("provider row");
+    assert_eq!(
+        serde_json::from_str::<Vec<String>>(provider.models_json.as_deref().expect("models json"))
+            .expect("parse models"),
+        vec![
+            "gpt-5.6-luna".to_string(),
+            "gpt-5.6-terra".to_string(),
+            "gpt-6-astra".to_string(),
+            "gpt-image-1".to_string(),
+        ],
+        "enabled models come from the catalog entry minus the legacy disabled list"
+    );
     let capabilities: serde_json::Value = serde_json::from_str(
         provider
             .capabilities_json
@@ -161,7 +203,14 @@ async fn reconciles_endpoint_models_with_the_current_catalog() {
     initialize(&db).await.expect("initialize schema");
     insert_identity(&db).await;
     insert_endpoint(&db).await;
-    insert_provider(&db, "provider-relay", "relay", None).await;
+    insert_provider(
+        &db,
+        "provider-relay",
+        "relay",
+        None,
+        Some(r#"["k3"]"#.to_string()),
+    )
+    .await;
     insert_endpoint_model(&db, "model-mapped", "provider-relay", "k3", "k3").await;
     insert_endpoint_model(
         &db,
@@ -190,7 +239,7 @@ async fn reconciles_endpoint_models_with_the_current_catalog() {
             .await
             .expect("load unsupported model")
             .is_none(),
-        "model the provider no longer serves must be removed"
+        "model outside the enabled list must be removed"
     );
     assert!(
         endpoint_model_routes::Entity::find()

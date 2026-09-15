@@ -57,27 +57,15 @@ pub(super) async fn resolve_models(
             .one(transaction)
             .await?
             .ok_or(StorageError::ProviderNotUsable)?;
-        let disabled_models = super::provider_validation::parse_disabled_models(
-            provider.disabled_models_json.as_deref(),
-        );
-        if disabled_models.iter().any(|id| id == &model.model_name) {
-            return Err(StorageError::ValidationFailed(format!(
-                "provider {} disabled model {}",
-                provider.provider_type, model.model_name
-            )));
-        }
         let Some(catalog) = catalog else {
             continue;
         };
-        if !catalog.provider_supports_language_model(&provider.provider_type, &model.model_name)
-            && !catalog.provider_supports_image_generation_model(
-                &provider.provider_type,
-                &model.model_name,
-            )
-        {
+        let provider_models =
+            super::provider_validation::parse_models(provider.models_json.as_deref());
+        if !provider_models.iter().any(|id| id == &model.model_name) {
             return Err(StorageError::ValidationFailed(format!(
-                "provider {} does not support catalog model {}",
-                provider.provider_type, model.model_name
+                "模型 {} 不在供应商 {} 的模型清单里",
+                model.model_name, provider.provider_type
             )));
         }
         model.upstream_model =

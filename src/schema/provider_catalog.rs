@@ -238,6 +238,80 @@ async fn cleanup_endpoint_models(
     Ok(())
 }
 
+/// 供应商的模型清单落库：存量记录按目录条目回填（扣掉旧的禁用清单），随后删除旧列。
+pub(crate) async fn migrate_provider_models(
+    db: &DatabaseConnection,
+    catalog: &ProviderCatalog,
+) -> Result<(), DbErr> {
+    let has_legacy_column =
+        super::column_exists(db, "identity_provider_configs", "disabled_models_json").await?;
+    let legacy_disabled = if has_legacy_column {
+        legacy_disabled_models(db).await?
+    } else {
+        HashMap::new()
+    };
+
+    for provider in provider_configs::Entity::find().all(db).await? {
+        if provider.models_json.is_some() {
+            continue;
+        }
+        let Some(catalog_provider) = catalog.provider(&provider.provider_type) else {
+            tracing::warn!(
+                provider = %provider.id,
+                provider_type = %provider.provider_type,
+                "provider catalog entry is gone; keeping the provider without a model list"
+            );
+            continue;
+        };
+        let disabled = legacy_disabled
+            .get(&provider.id)
+            .cloned()
+            .unwrap_or_default();
+        let models = catalog_provider
+            .language_models
+            .iter()
+            .chain(catalog_provider.image_generation_models.iter())
+            .filter(|model_id| !disabled.contains(model_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut active = provider.into_active_model();
+        active.models_json =
+            Set(Some(serde_json::to_string(&models).map_err(|error| {
+                DbErr::Custom(format!("serialize provider models: {error}"))
+            })?));
+        active.update(db).await?;
+    }
+    if has_legacy_column {
+        db.execute_unprepared(
+            "ALTER TABLE identity_provider_configs DROP COLUMN disabled_models_json",
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn legacy_disabled_models(
+    db: &DatabaseConnection,
+) -> Result<HashMap<String, Vec<String>>, DbErr> {
+    let rows = db
+        .query_all_raw(Statement::from_string(
+            db.get_database_backend(),
+            "SELECT id, disabled_models_json FROM identity_provider_configs \
+             WHERE disabled_models_json IS NOT NULL"
+                .to_owned(),
+        ))
+        .await?;
+    let mut disabled = HashMap::new();
+    for row in rows {
+        let id: String = row.try_get("", "id")?;
+        let Some(raw) = row.try_get::<Option<String>>("", "disabled_models_json")? else {
+            continue;
+        };
+        disabled.insert(id, serde_json::from_str(&raw).unwrap_or_default());
+    }
+    Ok(disabled)
+}
+
 /// 接入点模型始终按当前目录推导：供应商缺失或模型不再由该供应商提供时删除映射，
 /// 供应商上游名变化时回填。启动时执行，幂等。
 pub(crate) async fn reconcile_endpoint_models(
@@ -247,11 +321,19 @@ pub(crate) async fn reconcile_endpoint_models(
     let providers = provider_configs::Entity::find().all(db).await?;
     let provider_types = providers
         .into_iter()
-        .map(|provider| (provider.id, provider.provider_type))
+        .map(|provider| {
+            (
+                provider.id,
+                (
+                    provider.provider_type,
+                    crate::storage::parse_models(provider.models_json.as_deref()),
+                ),
+            )
+        })
         .collect::<HashMap<_, _>>();
 
     for model in endpoint_models::Entity::find().all(db).await? {
-        let Some(provider_type) = provider_types.get(&model.provider_id) else {
+        let Some((provider_type, provider_models)) = provider_types.get(&model.provider_id) else {
             tracing::warn!(
                 endpoint_model = %model.id,
                 provider = %model.provider_id,
@@ -260,19 +342,17 @@ pub(crate) async fn reconcile_endpoint_models(
             delete_endpoint_model(db, &model).await?;
             continue;
         };
-        if catalog.provider(provider_type).is_none() {
-            continue;
-        }
-        if !catalog.provider_supports_language_model(provider_type, &model.model_name)
-            && !catalog.provider_supports_image_generation_model(provider_type, &model.model_name)
-        {
+        if !provider_models.contains(&model.model_name) {
             tracing::warn!(
                 endpoint_model = %model.id,
                 provider = %model.provider_id,
                 model = %model.model_name,
-                "removing endpoint model that the provider no longer serves"
+                "removing endpoint model that the provider no longer enables"
             );
             delete_endpoint_model(db, &model).await?;
+            continue;
+        }
+        if catalog.provider(provider_type).is_none() {
             continue;
         }
         let upstream_model = catalog.provider_upstream_model(provider_type, &model.model_name);

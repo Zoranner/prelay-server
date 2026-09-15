@@ -145,7 +145,7 @@ async fn management_stats_only_return_the_current_identity_request_data() {
                 base_url: "https://provider-a.example".to_string(),
                 api_key: "sk-a".to_string(),
                 capabilities: None,
-                disabled_models: None,
+                models: None,
             })
             .expect("serialize provider A"),
         ),
@@ -169,7 +169,7 @@ async fn management_stats_only_return_the_current_identity_request_data() {
                 base_url: "https://provider-b.example".to_string(),
                 api_key: "sk-b".to_string(),
                 capabilities: None,
-                disabled_models: None,
+                models: None,
             })
             .expect("serialize provider B"),
         ),

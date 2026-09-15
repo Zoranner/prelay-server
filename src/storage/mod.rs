@@ -24,6 +24,7 @@ use sea_orm::{DatabaseConnection, DbErr};
 
 pub use crypto::MasterKey;
 pub use identities::AuthenticatedIdentity;
+pub(crate) use provider_validation::parse_models;
 pub use sessions::ResponseSessionInsert;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

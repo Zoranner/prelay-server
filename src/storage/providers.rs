@@ -24,12 +24,38 @@ use crate::{
 use super::{
     crypto::KeyCipher,
     provider_validation::{
-        disabled_models_json, normalize_disabled_models, validate_catalog_provider,
+        models_json, normalize_models, validate_catalog_provider, validate_models,
     },
     provider_views::provider_response,
     provider_visibility::owned_provider,
     Storage, StorageError,
 };
+
+/// 供应商创建/更新时的模型清单：去空白去重后必须仍由目录条目提供。
+fn resolve_provider_models(
+    catalog: Option<&ProviderCatalog>,
+    provider_type: &str,
+    models: Vec<String>,
+) -> Result<Vec<String>, StorageError> {
+    let models = normalize_models(models)?;
+    if let Some(catalog) = catalog {
+        validate_models(catalog, provider_type, &models)?;
+    }
+    Ok(models)
+}
+
+/// 未指定清单时默认启用目录条目里的全部模型。
+fn catalog_models(catalog: Option<&ProviderCatalog>, provider_type: &str) -> Vec<String> {
+    let Some(provider) = catalog.and_then(|catalog| catalog.provider(provider_type)) else {
+        return Vec::new();
+    };
+    provider
+        .language_models
+        .iter()
+        .chain(provider.image_generation_models.iter())
+        .cloned()
+        .collect()
+}
 
 impl Storage {
     pub async fn create_provider(
@@ -180,11 +206,10 @@ async fn create_inner(
     if let Some(catalog) = catalog {
         validate_catalog_provider(catalog, &input.provider_type)?;
     }
-    let disabled_models = normalize_disabled_models(
-        catalog,
-        &input.provider_type,
-        input.disabled_models.unwrap_or_default(),
-    )?;
+    let models = match input.models {
+        Some(models) => resolve_provider_models(catalog, &input.provider_type, models)?,
+        None => catalog_models(catalog, &input.provider_type),
+    };
     let provider_id = Uuid::new_v4().to_string();
     let created_at = Utc::now().to_rfc3339();
     let api_key_ciphertext = crypto.encrypt(&input.api_key)?;
@@ -211,7 +236,7 @@ async fn create_inner(
         base_url: Set(input.base_url.trim().to_string()),
         api_key_ciphertext: Set(api_key_ciphertext),
         capabilities_json: Set(capabilities_json),
-        disabled_models_json: Set(disabled_models_json(&disabled_models)),
+        models_json: Set(models_json(&models)),
         created_at: Set(created_at.clone()),
     }
     .insert(&transaction)
@@ -277,13 +302,9 @@ pub(crate) async fn update(
     if let Some(catalog) = catalog {
         validate_catalog_provider(catalog, &provider_type)?;
     }
-    let disabled_models_json = match input.disabled_models {
-        Some(disabled_models) => disabled_models_json(&normalize_disabled_models(
-            catalog,
-            &provider_type,
-            disabled_models,
-        )?),
-        None => existing.disabled_models_json.clone(),
+    let models_json = match input.models {
+        Some(models) => models_json(&resolve_provider_models(catalog, &provider_type, models)?),
+        None => existing.models_json.clone(),
     };
     let capabilities_json = match input.capabilities {
         Some(capabilities) => Some(
@@ -312,7 +333,7 @@ pub(crate) async fn update(
     }
     active.api_key_ciphertext = Set(api_key_ciphertext);
     active.capabilities_json = Set(capabilities_json);
-    active.disabled_models_json = Set(disabled_models_json);
+    active.models_json = Set(models_json);
     active.update(&transaction).await?;
 
     transaction.commit().await?;
@@ -406,7 +427,7 @@ mod tests {
                     base_url: "https://provider.example".to_string(),
                     api_key: "provider-key".to_string(),
                     capabilities: None,
-                    disabled_models: None,
+                    models: None,
                 },
             )
             .await

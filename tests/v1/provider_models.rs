@@ -5,9 +5,9 @@ use prelay_server::{app, test_support::test_state};
 use crate::{auth::register, http::request_json};
 
 #[tokio::test]
-async fn disabled_provider_model_is_neither_listed_nor_routable() {
+async fn model_removed_from_provider_list_is_neither_listed_nor_routable() {
     let app = app::router(test_state().await).await.expect("build app");
-    let identity = register(&app, "machine-disabled-model", "S-1-5-21-disabled-model").await;
+    let identity = register(&app, "machine-provider-models", "S-1-5-21-provider-models").await;
     let credential = identity["credential"].as_str().expect("credential");
 
     let (status, provider): (StatusCode, serde_json::Value) = request_json(
@@ -16,14 +16,18 @@ async fn disabled_provider_model_is_neither_listed_nor_routable() {
         "/api/providers",
         Some(credential),
         Some(serde_json::json!({
-            "name": "Disabled model provider",
+            "name": "Provider with full model list",
             "provider_type": "deepseek",
             "base_url": "http://127.0.0.1:1",
-            "api_key": "sk-disabled"
+            "api_key": "sk-models"
         })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(
+        provider["models"],
+        serde_json::json!(["deepseek-v4-flash", "deepseek-v4-pro"])
+    );
     let provider_id = provider["id"].as_str().expect("provider id");
 
     let (status, endpoint): (StatusCode, serde_json::Value) = request_json(
@@ -32,7 +36,7 @@ async fn disabled_provider_model_is_neither_listed_nor_routable() {
         "/api/endpoints",
         Some(credential),
         Some(serde_json::json!({
-            "name": "Disabled model endpoint",
+            "name": "Provider models endpoint",
             "models": [{ "provider_id": provider_id, "upstream_model": "deepseek-v4-pro" }]
         })),
     )
@@ -50,7 +54,7 @@ async fn disabled_provider_model_is_neither_listed_nor_routable() {
         "PATCH",
         &format!("/api/providers/{provider_id}"),
         Some(credential),
-        Some(serde_json::json!({ "disabled_models": ["deepseek-v4-pro"] })),
+        Some(serde_json::json!({ "models": ["deepseek-v4-flash"] })),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -76,7 +80,7 @@ async fn disabled_provider_model_is_neither_listed_nor_routable() {
         error["error"]
             .as_str()
             .unwrap_or_default()
-            .contains("已被供应商禁用"),
+            .contains("不在供应商的模型清单里"),
         "{error}"
     );
 }

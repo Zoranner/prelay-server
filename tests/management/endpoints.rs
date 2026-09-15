@@ -393,14 +393,9 @@ async fn management_endpoint_resolves_provider_upstream_model_name() {
 }
 
 #[tokio::test]
-async fn management_endpoint_rejects_disabled_provider_model() {
+async fn management_endpoint_rejects_model_outside_provider_list() {
     let app = app::router(test_state().await).await.expect("build app");
-    let identity = register(
-        &app,
-        "machine-disabled-endpoint",
-        "S-1-5-21-disabled-endpoint",
-    )
-    .await;
+    let identity = register(&app, "machine-unlisted-model", "S-1-5-21-unlisted-model").await;
     let credential = identity["credential"].as_str().expect("credential");
 
     let (status, provider): (StatusCode, serde_json::Value) = request_json(
@@ -409,11 +404,11 @@ async fn management_endpoint_rejects_disabled_provider_model() {
         "/api/providers",
         Some(credential),
         Some(serde_json::json!({
-            "name": "Disabled provider",
+            "name": "Selected models provider",
             "provider_type": "deepseek",
             "base_url": "https://provider.example",
-            "api_key": "sk-disabled",
-            "disabled_models": ["deepseek-v4-pro"]
+            "api_key": "sk-selected",
+            "models": ["deepseek-v4-flash"]
         })),
     )
     .await;
@@ -425,7 +420,7 @@ async fn management_endpoint_rejects_disabled_provider_model() {
         "/api/endpoints",
         Some(credential),
         Some(serde_json::json!({
-            "name": "Disabled endpoint",
+            "name": "Unlisted model endpoint",
             "models": [{
                 "provider_id": provider["id"],
                 "upstream_model": "deepseek-v4-pro"
@@ -439,7 +434,7 @@ async fn management_endpoint_rejects_disabled_provider_model() {
         error["error"]["message"]
             .as_str()
             .unwrap_or_default()
-            .contains("disabled model"),
+            .contains("不在供应商"),
         "{error}"
     );
 }

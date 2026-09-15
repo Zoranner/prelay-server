@@ -91,7 +91,7 @@ async fn create_endpoint_for_url(
             base_url: base_url.to_string(),
             api_key: format!("sk-{provider_name}"),
             capabilities: None,
-            disabled_models: None,
+            models: None,
         })
         .expect("serialize provider"),
     )
@@ -153,7 +153,7 @@ async fn create_image_endpoint_for_url(
             base_url: base_url.to_string(),
             api_key: format!("sk-{provider_name}"),
             capabilities: None,
-            disabled_models: None,
+            models: None,
         })
         .expect("serialize image provider"),
     )

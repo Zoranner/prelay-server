@@ -16,7 +16,7 @@ pub(super) fn provider_response(
 ) -> Result<ProviderResponse, StorageError> {
     let capabilities = capabilities(&provider);
     let upstream_protocols = resolved_upstream_protocols(catalog, &provider.provider_type);
-    let disabled_models = disabled_models(&provider);
+    let models = models(&provider);
     let api_key = crypto.decrypt(&provider.api_key_ciphertext)?;
     Ok(ProviderResponse {
         id: provider.id,
@@ -27,7 +27,7 @@ pub(super) fn provider_response(
         api_key_masked: mask_ciphertext(&provider.api_key_ciphertext),
         capabilities,
         upstream_protocols,
-        disabled_models,
+        models,
         created_at: provider.created_at,
     })
 }
@@ -43,7 +43,7 @@ pub(super) fn provider_list_item(
 ) -> Result<ProviderListItemResponse, StorageError> {
     let capabilities = capabilities(&provider);
     let upstream_protocols = resolved_upstream_protocols(catalog, &provider.provider_type);
-    let disabled_models = disabled_models(&provider);
+    let models = models(&provider);
     Ok(ProviderListItemResponse {
         id: provider.id,
         name: provider.name,
@@ -51,7 +51,7 @@ pub(super) fn provider_list_item(
         base_url: provider.base_url,
         capabilities,
         upstream_protocols,
-        disabled_models,
+        models,
         owner_identity_id,
         owner_display_name,
         visibility,
@@ -72,8 +72,8 @@ fn capabilities(provider: &identity_provider_configs::Model) -> ProviderCapabili
     capabilities
 }
 
-fn disabled_models(provider: &identity_provider_configs::Model) -> Vec<String> {
-    super::provider_validation::parse_disabled_models(provider.disabled_models_json.as_deref())
+fn models(provider: &identity_provider_configs::Model) -> Vec<String> {
+    super::provider_validation::parse_models(provider.models_json.as_deref())
 }
 
 fn mask_ciphertext(ciphertext: &str) -> String {

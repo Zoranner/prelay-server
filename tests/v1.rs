@@ -7,9 +7,9 @@ mod support;
 #[path = "test_context/mod.rs"]
 mod test_context;
 
-#[path = "v1/disabled_models.rs"]
-mod disabled_models;
 #[path = "v1/identity_scope.rs"]
 mod identity_scope;
+#[path = "v1/provider_models.rs"]
+mod provider_models;
 #[path = "v1/routes.rs"]
 mod routes;

@@ -5,9 +5,9 @@ use prelay_server::{app, test_support::test_state};
 use crate::{auth::register, http::request_json, status::request_status};
 
 #[tokio::test]
-async fn management_provider_round_trips_disabled_models() {
+async fn management_provider_round_trips_model_list() {
     let app = app::router(test_state().await).await.expect("build app");
-    let identity = register(&app, "machine-disabled", "S-1-5-21-disabled").await;
+    let identity = register(&app, "machine-models", "S-1-5-21-models").await;
     let credential = identity["credential"].as_str().expect("credential");
 
     let (status, provider): (StatusCode, serde_json::Value) = request_json(
@@ -16,19 +16,16 @@ async fn management_provider_round_trips_disabled_models() {
         "/api/providers",
         Some(credential),
         Some(serde_json::json!({
-            "name": "Disabled models provider",
+            "name": "Selected models provider",
             "provider_type": "deepseek",
-            "base_url": "https://provider-disabled.example",
-            "api_key": "sk-disabled",
-            "disabled_models": ["deepseek-v4-pro"]
+            "base_url": "https://provider-models.example",
+            "api_key": "sk-models",
+            "models": ["deepseek-v4-pro"]
         })),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(
-        provider["disabled_models"],
-        serde_json::json!(["deepseek-v4-pro"])
-    );
+    assert_eq!(provider["models"], serde_json::json!(["deepseek-v4-pro"]));
     let provider_id = provider["id"].as_str().expect("provider id");
 
     let (status, error): (StatusCode, serde_json::Value) = request_json(
@@ -36,7 +33,7 @@ async fn management_provider_round_trips_disabled_models() {
         "PATCH",
         &format!("/api/providers/{provider_id}"),
         Some(credential),
-        Some(serde_json::json!({ "disabled_models": ["unknown-model"] })),
+        Some(serde_json::json!({ "models": ["unknown-model"] })),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -44,7 +41,7 @@ async fn management_provider_round_trips_disabled_models() {
         error["error"]["message"]
             .as_str()
             .unwrap_or_default()
-            .contains("does not provide model"),
+            .contains("unknown-model"),
         "{error}"
     );
 
@@ -53,11 +50,11 @@ async fn management_provider_round_trips_disabled_models() {
         "PATCH",
         &format!("/api/providers/{provider_id}"),
         Some(credential),
-        Some(serde_json::json!({ "disabled_models": [] })),
+        Some(serde_json::json!({ "models": [] })),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(provider["disabled_models"], serde_json::json!([]));
+    assert_eq!(provider["models"], serde_json::json!([]));
 }
 
 #[tokio::test]
@@ -71,7 +68,7 @@ async fn management_credential_cannot_read_or_mutate_another_identity_provider()
         base_url: "https://provider-a.example".to_string(),
         api_key: "sk-a".to_string(),
         capabilities: None,
-        disabled_models: None,
+        models: None,
     };
     let (status, provider): (StatusCode, serde_json::Value) = request_json(
         &app,
@@ -119,7 +116,7 @@ async fn management_credential_cannot_read_or_mutate_another_identity_provider()
 }
 
 #[tokio::test]
-async fn management_provider_response_does_not_duplicate_catalog_models() {
+async fn management_provider_response_carries_its_own_model_list() {
     let app = app::router(test_state().await).await.expect("build app");
     let identity = register(
         &app,
@@ -144,7 +141,11 @@ async fn management_provider_response_does_not_duplicate_catalog_models() {
     .await;
 
     assert_eq!(status, StatusCode::CREATED);
-    assert!(provider.get("models").is_none());
+    assert_eq!(
+        provider["models"],
+        serde_json::json!(["deepseek-v4-flash", "deepseek-v4-pro"]),
+        "creating without an explicit list enables every model of the catalog entry"
+    );
 }
 
 #[tokio::test]

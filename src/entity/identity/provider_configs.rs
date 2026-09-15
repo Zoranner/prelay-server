@@ -12,7 +12,7 @@ pub struct Model {
     pub base_url: String,
     pub api_key_ciphertext: String,
     pub capabilities_json: Option<String>,
-    pub disabled_models_json: Option<String>,
+    pub models_json: Option<String>,
     pub created_at: String,
 }
 

@@ -73,6 +73,7 @@ pub async fn initialize_with_catalog(
 ) -> Result<(), DbErr> {
     initialize(db).await?;
     provider_catalog::apply(db, catalog).await?;
+    provider_catalog::migrate_provider_models(db, catalog).await?;
     provider_catalog::reconcile_endpoint_models(db, catalog).await
 }
 
@@ -163,10 +164,10 @@ impl<C: ConnectionTrait> SchemaInitializer<'_, C> {
                 )
                 .await?;
         }
-        if !column_exists(self.db, "identity_provider_configs", "disabled_models_json").await? {
+        if !column_exists(self.db, "identity_provider_configs", "models_json").await? {
             self.db
                 .execute_unprepared(
-                    "ALTER TABLE identity_provider_configs ADD COLUMN disabled_models_json TEXT",
+                    "ALTER TABLE identity_provider_configs ADD COLUMN models_json TEXT",
                 )
                 .await?;
         }
@@ -298,7 +299,7 @@ async fn table_exists<C: ConnectionTrait>(db: &C, table: &str) -> Result<bool, D
         .map(|count| count == 1)
 }
 
-async fn column_exists<C: ConnectionTrait>(
+pub(crate) async fn column_exists<C: ConnectionTrait>(
     db: &C,
     table: &str,
     column: &str,
