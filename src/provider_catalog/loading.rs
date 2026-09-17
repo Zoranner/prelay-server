@@ -177,6 +177,7 @@ pub(super) fn load_providers(
             image_generation_models,
         )?;
         let upstream_model_names = validation::validate_upstream_model_names(&id, &provider)?;
+        let proxy_url = validation::validate_proxy_url(&id, provider.proxy_url.as_deref())?;
         if !provider.image_generation_models.is_empty()
             && !provider
                 .protocols
@@ -201,6 +202,7 @@ pub(super) fn load_providers(
                 language_models: provider.language_models,
                 image_generation_models: provider.image_generation_models,
                 upstream_model_names,
+                proxy_url,
             },
         );
     }

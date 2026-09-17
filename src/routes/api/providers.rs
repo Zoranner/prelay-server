@@ -130,7 +130,11 @@ async fn ping(
         .get_visible_provider(&identity.id, &provider_id)
         .await?;
     let started_at = std::time::Instant::now();
-    let response = state.client.head(&provider.provider.base_url).send().await;
+    let response = state
+        .provider_client(&provider.provider.provider_type)?
+        .head(&provider.provider.base_url)
+        .send()
+        .await;
     let latency_ms = Some(started_at.elapsed().as_millis() as i64);
 
     Ok(Json(match response {
@@ -203,7 +207,7 @@ async fn discover_models(
     Json(input): Json<ProviderOperationRequest>,
 ) -> Result<Json<ProviderOperationResponse>, AppError> {
     let models = match model_discovery::discover_models(
-        &state.client,
+        &state.provider_client(&input.provider_type)?,
         &input.provider_type,
         &input.base_url,
         &input.api_key,
@@ -238,7 +242,7 @@ async fn test_protocol(
 ) -> Result<Json<ProviderOperationResponse>, AppError> {
     Ok(Json(
         run_protocol_test(
-            &state.client,
+            &state.provider_client(&input.provider_type)?,
             &input.provider_type,
             input.protocol.as_deref(),
             &input.base_url,
@@ -268,7 +272,7 @@ async fn test_protocol_for_provider(
         .await?;
     Ok(Json(
         run_protocol_test(
-            &state.client,
+            &state.provider_client(&provider.provider.provider_type)?,
             &provider.provider.provider_type,
             Some(&input.protocol),
             &provider.provider.base_url,

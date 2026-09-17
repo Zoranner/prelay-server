@@ -30,8 +30,8 @@ pub(super) async fn create_native_response(
     let upstream_base_url = provider_upstream_base_url(&provider, UpstreamProtocol::Responses);
     let upstream_url = format!("{}/responses", upstream_base_url.trim_end_matches('/'));
     let upstream_started_at = std::time::Instant::now();
-    let upstream_response = state
-        .client
+    let client = state.provider_client(&provider.provider_type)?;
+    let upstream_response = client
         .post(upstream_url)
         .bearer_auth(&provider.api_key)
         .json(&payload)

@@ -93,6 +93,56 @@ pub fn build_client(policy: &UpstreamPolicy) -> Result<reqwest::Client, reqwest:
         .build()
 }
 
+/// 供应商配置了代理时使用：显式指定代理，并关闭系统代理探测。
+pub fn build_proxied_client(
+    policy: &UpstreamPolicy,
+    proxy_url: &str,
+) -> Result<reqwest::Client, reqwest::Error> {
+    let proxy = reqwest::Proxy::all(proxy_url)?;
+    reqwest::Client::builder()
+        .no_proxy()
+        .proxy(proxy)
+        .connect_timeout(policy.connect_timeout)
+        .read_timeout(policy.read_timeout)
+        .build()
+}
+
+/// 按代理地址缓存上游客户端，同一个代理地址复用连接池。
+#[derive(Clone, Default)]
+pub struct ProviderClientCache {
+    clients: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, reqwest::Client>>>,
+}
+
+impl ProviderClientCache {
+    /// 构造（或取出）走指定代理的客户端；同一地址只建一次。
+    pub fn client(
+        &self,
+        proxy_url: &str,
+        policy: &UpstreamPolicy,
+    ) -> Result<reqwest::Client, reqwest::Error> {
+        if let Some(client) = self.lookup(proxy_url) {
+            return Ok(client);
+        }
+        let client = build_proxied_client(policy, proxy_url)?;
+        let mut clients = self
+            .clients
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Ok(clients
+            .entry(proxy_url.to_string())
+            .or_insert_with(|| client.clone())
+            .clone())
+    }
+
+    fn lookup(&self, proxy_url: &str) -> Option<reqwest::Client> {
+        self.clients
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(proxy_url)
+            .cloned()
+    }
+}
+
 pub async fn retry_with_policy<T, F, Fut>(
     policy: &UpstreamPolicy,
     mut request: F,

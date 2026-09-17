@@ -155,6 +155,7 @@ async fn main() -> anyhow::Result<()> {
         provider_catalog,
         storage,
         client,
+        provider_clients: Default::default(),
         client_update,
         extensions,
     };

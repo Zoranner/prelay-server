@@ -43,8 +43,8 @@ pub(super) async fn create_anthropic_messages_response(
         provider_upstream_base_url(&provider, UpstreamProtocol::AnthropicMessages);
     let upstream_url = format!("{}/messages", upstream_base_url.trim_end_matches('/'));
     let upstream_started_at = std::time::Instant::now();
-    let upstream_response = state
-        .client
+    let client = state.provider_client(&provider.provider_type)?;
+    let upstream_response = client
         .post(upstream_url)
         .header("x-api-key", &provider.api_key)
         .header("anthropic-version", "2023-06-01")

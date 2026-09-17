@@ -11,5 +11,7 @@ mod test_context;
 mod identity_scope;
 #[path = "v1/provider_models.rs"]
 mod provider_models;
+#[path = "v1/provider_proxy.rs"]
+mod provider_proxy;
 #[path = "v1/routes.rs"]
 mod routes;

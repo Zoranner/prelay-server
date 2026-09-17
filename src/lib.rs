@@ -18,13 +18,32 @@ pub mod stats;
 pub mod storage;
 pub mod upstream;
 
+use error::AppError;
+
 #[derive(Clone)]
 pub struct AppState {
     pub provider_catalog: std::sync::Arc<provider_catalog::ProviderCatalog>,
     pub storage: storage::Storage,
     pub client: reqwest::Client,
+    pub provider_clients: upstream::ProviderClientCache,
     pub client_update: client_update::ClientUpdateCache,
     pub extensions: extensions::ExtensionCatalog,
+}
+
+impl AppState {
+    /// 供应商的上游客户端：目录条目配了代理就用带代理的，没配就用直连客户端。
+    pub fn provider_client(&self, provider_type: &str) -> Result<reqwest::Client, AppError> {
+        let proxy_url = self.provider_catalog.provider_proxy_url(provider_type);
+        let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
+            return Ok(self.client.clone());
+        };
+        self.provider_clients
+            .client(proxy_url, upstream::policy())
+            .map_err(|error| AppError::Upstream {
+                status: None,
+                message: format!("供应商代理地址不可用 {proxy_url}: {error}"),
+            })
+    }
 }
 
 pub mod test_support {
@@ -63,6 +82,7 @@ pub mod test_support {
             provider_catalog: std::sync::Arc::new(fixture_catalog()),
             storage,
             client: reqwest::Client::new(),
+            provider_clients: Default::default(),
             client_update: ClientUpdateCache::unavailable(reqwest::Client::new()),
             extensions: ExtensionCatalog::unavailable(reqwest::Client::new()),
         }

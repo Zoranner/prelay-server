@@ -267,11 +267,70 @@ fn required_value(label: &str, value: &str) -> Result<String, ProviderCatalogErr
     Ok(value.to_string())
 }
 
+/// 供应商条目的上游代理只接受 http/https；留空表示直连。
+pub(super) fn validate_proxy_url(
+    provider_id: &str,
+    value: Option<&str>,
+) -> Result<Option<String>, ProviderCatalogError> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let parsed = reqwest::Url::parse(value).map_err(|_| {
+        ProviderCatalogError(format!(
+            "供应商 {provider_id} 的代理地址不是合法 URL: {value}"
+        ))
+    })?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(ProviderCatalogError(format!(
+            "供应商 {provider_id} 的代理地址只支持 http 或 https，收到 {}",
+            parsed.scheme()
+        )));
+    }
+    Ok(Some(value.to_string()))
+}
+
 fn protocol_key(protocol: ProviderProtocol) -> &'static str {
     match protocol {
         ProviderProtocol::ChatCompletions => "chat_completions",
         ProviderProtocol::Responses => "responses",
         ProviderProtocol::AnthropicMessages => "anthropic_messages",
         ProviderProtocol::ImagesGenerations => "images_generations",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_proxy_url;
+
+    #[test]
+    fn accepts_http_and_https_proxies_and_empty_values() {
+        assert_eq!(
+            validate_proxy_url("provider-a", Some(" http://127.0.0.1:7890 ")).expect("http proxy"),
+            Some("http://127.0.0.1:7890".to_string())
+        );
+        assert_eq!(
+            validate_proxy_url("provider-a", Some("https://proxy.internal:3128"))
+                .expect("https proxy"),
+            Some("https://proxy.internal:3128".to_string())
+        );
+        assert_eq!(
+            validate_proxy_url("provider-a", Some("   ")).expect("blank proxy"),
+            None
+        );
+        assert_eq!(
+            validate_proxy_url("provider-a", None).expect("missing proxy"),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_other_proxy_schemes_and_invalid_urls() {
+        let error = validate_proxy_url("provider-a", Some("socks5://127.0.0.1:1080"))
+            .expect_err("socks5 must be rejected");
+        assert!(error.to_string().contains("http"), "{error}");
+
+        let error = validate_proxy_url("provider-a", Some("127.0.0.1:7890"))
+            .expect_err("invalid URL must be rejected");
+        assert!(error.to_string().contains("不是合法 URL"), "{error}");
     }
 }

@@ -90,6 +90,8 @@ pub struct CatalogProvider {
     pub language_models: Vec<String>,
     pub image_generation_models: Vec<String>,
     pub upstream_model_names: BTreeMap<String, String>,
+    /// 访问该供应商上游时使用的代理地址；缺省表示直连。
+    pub proxy_url: Option<String>,
 }
 
 #[derive(Debug)]
@@ -167,6 +169,8 @@ pub(super) struct RawProvider {
     pub(super) image_generation_models: Vec<String>,
     #[serde(default)]
     pub(super) upstream_model_names: BTreeMap<String, String>,
+    #[serde(default)]
+    pub(super) proxy_url: Option<String>,
 }
 
 impl ProviderCatalog {
@@ -210,6 +214,12 @@ impl ProviderCatalog {
 
     pub fn provider(&self, provider_id: &str) -> Option<&CatalogProvider> {
         self.providers.get(provider_id)
+    }
+
+    /// 供应商条目配置的上游代理地址；缺省表示直连。
+    pub fn provider_proxy_url(&self, provider_id: &str) -> Option<&str> {
+        self.provider(provider_id)
+            .and_then(|provider| provider.proxy_url.as_deref())
     }
 
     pub fn provider_supports_language_model(&self, provider_id: &str, model_id: &str) -> bool {

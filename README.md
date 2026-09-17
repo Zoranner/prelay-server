@@ -51,6 +51,19 @@ cargo run
 
 启动时及之后每 24 小时会删除连续 90 天未活动身份及其所有配置、会话和日志。
 
+## 供应商代理
+
+需要让某个供应商的上游请求经过代理时，在 `providers.toml` 的对应条目上加一行 `proxy_url`：
+
+```text
+[[providers]]
+id = "tokenharbor"
+name = "Token Harbor"
+proxy_url = "http://127.0.0.1:7890"
+```
+
+只支持 `http` 与 `https`，留空或不写表示直连。配置后，该供应商的协议转发、连通性检查、协议测试和模型发现都经过这个代理，其他供应商不受影响；同一个代理地址只建一个 HTTP 客户端，连接池复用。代理地址属于目录配置，改动后需要重启服务生效。没有配置代理的供应商仍走直连，客户端更新下载链路不受影响，仍按 `CLIENT_UPDATE_PROXY` 处理。
+
 ## 客户端更新
 
 服务启动时会检查 GitHub Release，并每 6 小时刷新一次 Windows NSIS 安装包缓存。默认仓库是 `Zoranner/prelay-client`，缓存目录是 `updates`；分别可通过 `CLIENT_UPDATE_REPOSITORY`（`owner/repository` 格式）、`CLIENT_UPDATE_PROXY`（仅用于客户端更新检查和安装包下载的 HTTP/HTTPS 代理地址）和 `CLIENT_UPDATE_DIR` 覆盖。直接运行服务时，代理可以填写 `http://127.0.0.1:7890`；Docker 部署时应填写容器可访问的代理地址。上游请求使用独立的直连 HTTP Client，不读取 `CLIENT_UPDATE_PROXY`。刷新失败时，服务会继续保留并提供最近一次成功缓存的安装包。也可以直接按 `updates/<平台>/<架构>/<版本>/<发布产物原文件名>` 放入安装包，服务会选择对应平台和架构目录中的最高版本，无需额外清单。
