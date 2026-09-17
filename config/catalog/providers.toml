@@ -33,7 +33,6 @@ auth_scheme = "bearer"
 base_url = "https://api.deepseek.com/v1"
 protocols = ["chat_completions", "responses", "anthropic_messages"]
 language_models = [
-  "deepseek-v4-flash",
   "deepseek-v4-pro",
   "deepseek-flash",
 ]
@@ -47,7 +46,7 @@ name = "GLM Coding Plan"
 auth_scheme = "bearer"
 base_url = "https://open.bigmodel.cn/api/v1"
 protocols = ["chat_completions", "responses", "anthropic_messages"]
-language_models = ["glm-5.3", "glm-5.3-flash", "glm-5-turbo"]
+language_models = ["glm-5.3", "glm-5.3-flash"]
 
 [providers.protocol_base_urls]
 anthropic_messages = "https://open.bigmodel.cn/api/anthropic"
@@ -74,9 +73,6 @@ base_url = "https://api.kimi.com/coding/v1"
 protocols = ["chat_completions", "responses", "anthropic_messages"]
 language_models = [
   "k3",
-  "k3-256k",
-  "kimi-for-coding",
-  "kimi-for-coding-highspeed",
 ]
 
 [providers.protocol_base_urls]
