@@ -92,26 +92,3 @@ language_models = ["MiniMax-M3"]
 
 [providers.protocol_base_urls]
 anthropic_messages = "https://api.minimax.cn/anthropic/v1"
-
-[[providers]]
-id = "tokenharbor"
-name = "Token Harbor"
-auth_scheme = "bearer"
-base_url = "https://tokenharbor.ai/v1"
-protocols = ["chat_completions", "responses", "anthropic_messages"]
-language_models = [
-  "gpt-5.6-luna",
-  "gpt-5.6-terra",
-  "gpt-5.6-sol",
-  "gpt-6-astra",
-  "deepseek-flash",
-  "glm-5.3",
-  "glm-5.3-flash",
-  "qwen3.8-max",
-  "qwen3.8-flash",
-  "k3",
-]
-
-[providers.upstream_model_names]
-deepseek-flash = "deepseek-v4.1-flash"
-k3 = "kimi-k3"
