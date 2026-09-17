@@ -10,9 +10,10 @@ use prelay_protocol::{
 };
 use serde::Deserialize;
 
-use crate::{error::AppError, stats::StatsRange, AppState};
+use crate::{stats::StatsRange, AppState};
 
 use super::auth::CurrentIdentity;
+use super::ApiError;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -39,7 +40,7 @@ async fn timeline(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Query(query): Query<StatsQuery>,
-) -> Result<Json<Vec<TokenUsageTimelinePoint>>, AppError> {
+) -> Result<Json<Vec<TokenUsageTimelinePoint>>, ApiError> {
     Ok(Json(
         state
             .storage
@@ -52,7 +53,7 @@ async fn overview(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Query(query): Query<StatsQuery>,
-) -> Result<Json<StatsOverview>, AppError> {
+) -> Result<Json<StatsOverview>, ApiError> {
     Ok(Json(
         state
             .storage
@@ -77,7 +78,7 @@ async fn activities(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Query(query): Query<RequestQuery>,
-) -> Result<Json<Vec<ActivitySummary>>, AppError> {
+) -> Result<Json<Vec<ActivitySummary>>, ApiError> {
     Ok(Json(
         state
             .storage
@@ -94,7 +95,7 @@ async fn leaderboard(
     State(state): State<AppState>,
     Extension(_identity): Extension<CurrentIdentity>,
     Query(query): Query<LeaderboardQuery>,
-) -> Result<Json<Vec<UserLeaderboardEntry>>, AppError> {
+) -> Result<Json<Vec<UserLeaderboardEntry>>, ApiError> {
     Ok(Json(
         state
             .storage
@@ -111,7 +112,7 @@ async fn models(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Query(query): Query<StatsQuery>,
-) -> Result<Json<Vec<ModelStatsSummary>>, AppError> {
+) -> Result<Json<Vec<ModelStatsSummary>>, ApiError> {
     Ok(Json(
         state
             .storage
@@ -124,7 +125,7 @@ async fn providers(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Query(query): Query<StatsQuery>,
-) -> Result<Json<Vec<ProviderStatsSummary>>, AppError> {
+) -> Result<Json<Vec<ProviderStatsSummary>>, ApiError> {
     Ok(Json(
         state
             .storage

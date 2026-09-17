@@ -13,6 +13,8 @@ mod test_context;
 mod endpoint_access;
 #[path = "management/endpoints.rs"]
 mod endpoints;
+#[path = "management/error_contract.rs"]
+mod error_contract;
 #[path = "management/identity.rs"]
 mod identity;
 #[path = "management/leaderboard.rs"]

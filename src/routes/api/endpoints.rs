@@ -6,9 +6,10 @@ use axum::{
 };
 use prelay_protocol::{CreateEndpointRequest, EndpointResponse, UpdateEndpointRequest};
 
-use crate::{error::AppError, AppState};
+use crate::AppState;
 
 use super::auth::CurrentIdentity;
+use super::ApiError;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -26,7 +27,7 @@ pub fn router() -> Router<AppState> {
 async fn list(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
-) -> Result<Json<Vec<EndpointResponse>>, AppError> {
+) -> Result<Json<Vec<EndpointResponse>>, ApiError> {
     Ok(Json(
         state
             .storage
@@ -39,7 +40,7 @@ async fn create(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Json(input): Json<CreateEndpointRequest>,
-) -> Result<(StatusCode, Json<EndpointResponse>), AppError> {
+) -> Result<(StatusCode, Json<EndpointResponse>), ApiError> {
     Ok((
         StatusCode::CREATED,
         Json(
@@ -55,7 +56,7 @@ async fn get_one(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Path(endpoint_id): Path<String>,
-) -> Result<Json<EndpointResponse>, AppError> {
+) -> Result<Json<EndpointResponse>, ApiError> {
     Ok(Json(
         state
             .storage
@@ -69,7 +70,7 @@ async fn update(
     Extension(identity): Extension<CurrentIdentity>,
     Path(endpoint_id): Path<String>,
     Json(input): Json<UpdateEndpointRequest>,
-) -> Result<Json<EndpointResponse>, AppError> {
+) -> Result<Json<EndpointResponse>, ApiError> {
     Ok(Json(
         state
             .storage
@@ -87,7 +88,7 @@ async fn delete_one(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Path(endpoint_id): Path<String>,
-) -> Result<StatusCode, AppError> {
+) -> Result<StatusCode, ApiError> {
     state
         .storage
         .delete_interface(&identity.id, &endpoint_id)
@@ -99,7 +100,7 @@ async fn regenerate_token(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Path(endpoint_id): Path<String>,
-) -> Result<Json<EndpointResponse>, AppError> {
+) -> Result<Json<EndpointResponse>, ApiError> {
     Ok(Json(
         state
             .storage

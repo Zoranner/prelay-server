@@ -6,7 +6,9 @@ use axum::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
-use crate::{error::AppError, AppState};
+use crate::AppState;
+
+use super::ApiError;
 
 #[derive(Clone, Debug)]
 pub struct CurrentIdentity {
@@ -18,14 +20,15 @@ pub async fn require_device_credential(
     State(state): State<AppState>,
     mut request: Request,
     next: Next,
-) -> Result<Response, AppError> {
-    let credential = extract_bearer_credential(request.headers()).ok_or(AppError::Unauthorized)?;
+) -> Result<Response, ApiError> {
+    let credential =
+        extract_bearer_credential(request.headers()).ok_or_else(ApiError::invalid_credential)?;
     let display_name = extract_display_name(request.headers());
     let identity = state
         .storage
         .authenticate_identity_with_display_name(&credential, display_name.as_deref())
         .await?
-        .ok_or(AppError::Unauthorized)?;
+        .ok_or_else(ApiError::invalid_credential)?;
     request.extensions_mut().insert(CurrentIdentity {
         id: identity.id,
         credential_hash: identity.credential_hash,

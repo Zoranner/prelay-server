@@ -8,10 +8,11 @@ use axum::{
 use prelay_protocol::{ExtensionKind, ExtensionSummary, ExtensionVersion, ProtocolErrorCode};
 
 use crate::{
-    error::AppError,
     extensions::{CatalogError, ExtensionCatalog},
     AppState,
 };
+
+use super::ApiError;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -28,31 +29,31 @@ pub fn router() -> Router<AppState> {
 
 async fn list_rules(
     State(state): State<AppState>,
-) -> Result<Json<Vec<ExtensionSummary>>, AppError> {
+) -> Result<Json<Vec<ExtensionSummary>>, ApiError> {
     list(&state.extensions, ExtensionKind::Rule).await
 }
 
 async fn list_skills(
     State(state): State<AppState>,
-) -> Result<Json<Vec<ExtensionSummary>>, AppError> {
+) -> Result<Json<Vec<ExtensionSummary>>, ApiError> {
     list(&state.extensions, ExtensionKind::Skill).await
 }
 
-async fn list_mcp(State(state): State<AppState>) -> Result<Json<Vec<ExtensionSummary>>, AppError> {
+async fn list_mcp(State(state): State<AppState>) -> Result<Json<Vec<ExtensionSummary>>, ApiError> {
     list(&state.extensions, ExtensionKind::Mcp).await
 }
 
 async fn list(
     catalog: &ExtensionCatalog,
     kind: ExtensionKind,
-) -> Result<Json<Vec<ExtensionSummary>>, AppError> {
+) -> Result<Json<Vec<ExtensionSummary>>, ApiError> {
     Ok(Json(catalog.list(kind).await.map_err(catalog_error)?))
 }
 
 async fn list_versions(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<Json<Vec<ExtensionVersion>>, AppError> {
+) -> Result<Json<Vec<ExtensionVersion>>, ApiError> {
     Ok(Json(
         state
             .extensions
@@ -65,7 +66,7 @@ async fn list_versions(
 async fn readme(
     State(state): State<AppState>,
     Path((name, tag)): Path<(String, String)>,
-) -> Result<impl IntoResponse, AppError> {
+) -> Result<impl IntoResponse, ApiError> {
     let content = state
         .extensions
         .readme(&name, &tag)
@@ -80,7 +81,7 @@ async fn readme(
 async fn install_bundle(
     State(state): State<AppState>,
     Path((name, tag)): Path<(String, String)>,
-) -> Result<impl IntoResponse, AppError> {
+) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(
         state
             .extensions
@@ -90,7 +91,7 @@ async fn install_bundle(
     ))
 }
 
-fn catalog_error(error: CatalogError) -> AppError {
+fn catalog_error(error: CatalogError) -> ApiError {
     let (code, message) = match error {
         CatalogError::Unavailable => (
             ProtocolErrorCode::ExtensionCatalogUnavailable,
@@ -105,8 +106,5 @@ fn catalog_error(error: CatalogError) -> AppError {
             "扩展版本不存在",
         ),
     };
-    AppError::Protocol {
-        code,
-        message: message.to_string(),
-    }
+    ApiError::new(code, message)
 }

@@ -39,26 +39,7 @@ impl IntoResponse for AppError {
                 (StatusCode::BAD_GATEWAY, json!(message))
             }
             AppError::Protocol { code, message } => {
-                let status = match code {
-                    ProtocolErrorCode::NotFound => StatusCode::NOT_FOUND,
-                    ProtocolErrorCode::ClientUpdateUnavailable => StatusCode::NOT_FOUND,
-                    ProtocolErrorCode::ExtensionCatalogUnavailable => {
-                        StatusCode::SERVICE_UNAVAILABLE
-                    }
-                    ProtocolErrorCode::ExtensionContentInvalid => StatusCode::UNPROCESSABLE_ENTITY,
-                    ProtocolErrorCode::ExtensionNotFound
-                    | ProtocolErrorCode::ExtensionVersionNotFound => StatusCode::NOT_FOUND,
-                    ProtocolErrorCode::InvalidProviderSharing => StatusCode::BAD_REQUEST,
-                    ProtocolErrorCode::ProviderSharingNotAllowed => StatusCode::FORBIDDEN,
-                    ProtocolErrorCode::ProviderNotVisible => StatusCode::NOT_FOUND,
-                    ProtocolErrorCode::ProviderNotUsable => StatusCode::UNPROCESSABLE_ENTITY,
-                    ProtocolErrorCode::ProviderRouteUnavailable => StatusCode::SERVICE_UNAVAILABLE,
-                    ProtocolErrorCode::InvalidCredential => StatusCode::UNAUTHORIZED,
-                    ProtocolErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
-                    ProtocolErrorCode::ExtensionInstallUnsupported
-                    | ProtocolErrorCode::IdentityAlreadyRegistered
-                    | ProtocolErrorCode::ValidationFailed => StatusCode::BAD_REQUEST,
-                };
+                let status = http_status_for(code);
                 let message = if code == ProtocolErrorCode::Internal {
                     tracing::error!(
                         error_code = code.as_str(),
@@ -86,6 +67,28 @@ impl IntoResponse for AppError {
         };
 
         (status, Json(json!({ "error": error }))).into_response()
+    }
+}
+
+pub(crate) fn http_status_for(code: ProtocolErrorCode) -> StatusCode {
+    match code {
+        ProtocolErrorCode::NotFound => StatusCode::NOT_FOUND,
+        ProtocolErrorCode::ClientUpdateUnavailable => StatusCode::NOT_FOUND,
+        ProtocolErrorCode::ExtensionCatalogUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+        ProtocolErrorCode::ExtensionContentInvalid => StatusCode::UNPROCESSABLE_ENTITY,
+        ProtocolErrorCode::ExtensionNotFound | ProtocolErrorCode::ExtensionVersionNotFound => {
+            StatusCode::NOT_FOUND
+        }
+        ProtocolErrorCode::InvalidProviderSharing => StatusCode::BAD_REQUEST,
+        ProtocolErrorCode::ProviderSharingNotAllowed => StatusCode::FORBIDDEN,
+        ProtocolErrorCode::ProviderNotVisible => StatusCode::NOT_FOUND,
+        ProtocolErrorCode::ProviderNotUsable => StatusCode::UNPROCESSABLE_ENTITY,
+        ProtocolErrorCode::ProviderRouteUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+        ProtocolErrorCode::InvalidCredential => StatusCode::UNAUTHORIZED,
+        ProtocolErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+        ProtocolErrorCode::ExtensionInstallUnsupported
+        | ProtocolErrorCode::IdentityAlreadyRegistered
+        | ProtocolErrorCode::ValidationFailed => StatusCode::BAD_REQUEST,
     }
 }
 

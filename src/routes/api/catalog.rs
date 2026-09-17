@@ -8,7 +8,9 @@ use prelay_protocol::{
     ProviderCatalogResponse,
 };
 
-use crate::{error::AppError, AppState};
+use crate::AppState;
+
+use super::ApiError;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -36,51 +38,51 @@ async fn get_catalog(State(state): State<AppState>) -> Json<ProviderCatalogRespo
 
 async fn list_providers(
     State(state): State<AppState>,
-) -> Result<Json<Vec<CatalogProviderResponse>>, AppError> {
+) -> Result<Json<Vec<CatalogProviderResponse>>, ApiError> {
     Ok(Json(state.provider_catalog.providers()))
 }
 
 async fn get_provider(
     State(state): State<AppState>,
     Path(provider_id): Path<String>,
-) -> Result<Json<CatalogProviderResponse>, AppError> {
+) -> Result<Json<CatalogProviderResponse>, ApiError> {
     state
         .provider_catalog
         .provider_response(&provider_id)
         .map(Json)
-        .ok_or_else(|| AppError::NotFound(format!("供应商目录项不存在: {provider_id}")))
+        .ok_or_else(|| ApiError::not_found(format!("供应商目录项不存在: {provider_id}")))
 }
 
 async fn list_language_models(
     State(state): State<AppState>,
-) -> Result<Json<Vec<CatalogLanguageModelResponse>>, AppError> {
+) -> Result<Json<Vec<CatalogLanguageModelResponse>>, ApiError> {
     Ok(Json(state.provider_catalog.language_models()))
 }
 
 async fn get_language_model(
     State(state): State<AppState>,
     Path(model_id): Path<String>,
-) -> Result<Json<CatalogLanguageModelResponse>, AppError> {
+) -> Result<Json<CatalogLanguageModelResponse>, ApiError> {
     state
         .provider_catalog
         .language_model_response(&model_id)
         .map(Json)
-        .ok_or_else(|| AppError::NotFound(format!("语言模型目录项不存在: {model_id}")))
+        .ok_or_else(|| ApiError::not_found(format!("语言模型目录项不存在: {model_id}")))
 }
 
 async fn list_image_generation_models(
     State(state): State<AppState>,
-) -> Result<Json<Vec<CatalogImageGenerationModelResponse>>, AppError> {
+) -> Result<Json<Vec<CatalogImageGenerationModelResponse>>, ApiError> {
     Ok(Json(state.provider_catalog.image_generation_models()))
 }
 
 async fn get_image_generation_model(
     State(state): State<AppState>,
     Path(model_id): Path<String>,
-) -> Result<Json<CatalogImageGenerationModelResponse>, AppError> {
+) -> Result<Json<CatalogImageGenerationModelResponse>, ApiError> {
     state
         .provider_catalog
         .image_generation_model_response(&model_id)
         .map(Json)
-        .ok_or_else(|| AppError::NotFound(format!("图像生成模型目录项不存在: {model_id}")))
+        .ok_or_else(|| ApiError::not_found(format!("图像生成模型目录项不存在: {model_id}")))
 }

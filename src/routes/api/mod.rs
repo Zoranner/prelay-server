@@ -10,10 +10,13 @@ pub mod auth;
 mod catalog;
 mod client_update;
 mod endpoints;
+mod error;
 mod extensions;
 mod identities;
 mod providers;
 mod stats;
+
+pub use error::ApiError;
 
 pub fn router(state: AppState) -> Router {
     let authenticated = Router::new()

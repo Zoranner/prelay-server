@@ -9,9 +9,10 @@ use prelay_protocol::{
 };
 use serde::Serialize;
 
-use crate::{error::AppError, AppState};
+use crate::AppState;
 
 use super::auth::{extract_display_name, CurrentIdentity};
+use super::ApiError;
 
 #[derive(Debug, Serialize)]
 pub struct CurrentIdentityResponse {
@@ -28,7 +29,7 @@ pub async fn current_identity(
 
 pub async fn directory(
     State(state): State<AppState>,
-) -> Result<Json<Vec<IdentityDirectoryEntry>>, AppError> {
+) -> Result<Json<Vec<IdentityDirectoryEntry>>, ApiError> {
     Ok(Json(state.storage.list_identity_directory().await?))
 }
 
@@ -36,7 +37,7 @@ pub async fn create_identity(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(request): Json<CreateIdentityRequest>,
-) -> Result<(StatusCode, Json<CreateIdentityResponse>), AppError> {
+) -> Result<(StatusCode, Json<CreateIdentityResponse>), ApiError> {
     let header_display_name = extract_display_name(&headers);
     let response = state
         .storage
@@ -62,7 +63,7 @@ pub async fn rotate_credential(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Json(request): Json<RotateCredentialRequest>,
-) -> Result<Json<RotateCredentialResponse>, AppError> {
+) -> Result<Json<RotateCredentialResponse>, ApiError> {
     Ok(Json(
         state
             .storage

@@ -14,9 +14,10 @@ use prelay_protocol::{
 };
 use serde::Deserialize;
 
-use crate::{error::AppError, providers::model_discovery, stats::StatsRange, AppState};
+use crate::{providers::model_discovery, stats::StatsRange, AppState};
 
 use super::auth::CurrentIdentity;
+use super::ApiError;
 use provider_protocol_test::run_protocol_test;
 
 pub fn router() -> Router<AppState> {
@@ -48,7 +49,7 @@ struct ProviderUsageQuery {
 async fn list(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
-) -> Result<Json<Vec<ProviderListItemResponse>>, AppError> {
+) -> Result<Json<Vec<ProviderListItemResponse>>, ApiError> {
     let providers = state
         .storage
         .list_visible_providers(&identity.id, Some(&state.provider_catalog))
@@ -60,7 +61,7 @@ async fn create(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Json(input): Json<CreateProviderRequest>,
-) -> Result<(StatusCode, Json<ProviderResponse>), AppError> {
+) -> Result<(StatusCode, Json<ProviderResponse>), ApiError> {
     let provider_id = state
         .storage
         .create_provider_with_catalog(&identity.id, input, &state.provider_catalog)
@@ -80,7 +81,7 @@ async fn get_one(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Path(provider_id): Path<String>,
-) -> Result<Json<ProviderResponse>, AppError> {
+) -> Result<Json<ProviderResponse>, ApiError> {
     Ok(Json(
         state
             .storage
@@ -94,7 +95,7 @@ async fn update(
     Extension(identity): Extension<CurrentIdentity>,
     Path(provider_id): Path<String>,
     Json(input): Json<UpdateProviderRequest>,
-) -> Result<Json<ProviderResponse>, AppError> {
+) -> Result<Json<ProviderResponse>, ApiError> {
     Ok(Json(
         state
             .storage
@@ -112,7 +113,7 @@ async fn delete_one(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Path(provider_id): Path<String>,
-) -> Result<StatusCode, AppError> {
+) -> Result<StatusCode, ApiError> {
     state
         .storage
         .delete_provider(&identity.id, &provider_id)
@@ -124,7 +125,7 @@ async fn ping(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Path(provider_id): Path<String>,
-) -> Result<Json<ProviderOperationResponse>, AppError> {
+) -> Result<Json<ProviderOperationResponse>, ApiError> {
     let provider = state
         .storage
         .get_visible_provider(&identity.id, &provider_id)
@@ -165,7 +166,7 @@ async fn get_sharing(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Path(provider_id): Path<String>,
-) -> Result<Json<prelay_protocol::ProviderSharingResponse>, AppError> {
+) -> Result<Json<prelay_protocol::ProviderSharingResponse>, ApiError> {
     Ok(Json(
         state
             .storage
@@ -179,7 +180,7 @@ async fn update_sharing(
     Extension(identity): Extension<CurrentIdentity>,
     Path(provider_id): Path<String>,
     Json(input): Json<prelay_protocol::UpdateProviderSharingRequest>,
-) -> Result<Json<prelay_protocol::ProviderSharingResponse>, AppError> {
+) -> Result<Json<prelay_protocol::ProviderSharingResponse>, ApiError> {
     Ok(Json(
         state
             .storage
@@ -193,7 +194,7 @@ async fn get_usage(
     Extension(identity): Extension<CurrentIdentity>,
     Path(provider_id): Path<String>,
     Query(query): Query<ProviderUsageQuery>,
-) -> Result<Json<ProviderUsageResponse>, AppError> {
+) -> Result<Json<ProviderUsageResponse>, ApiError> {
     Ok(Json(
         state
             .storage
@@ -205,7 +206,7 @@ async fn get_usage(
 async fn discover_models(
     State(state): State<AppState>,
     Json(input): Json<ProviderOperationRequest>,
-) -> Result<Json<ProviderOperationResponse>, AppError> {
+) -> Result<Json<ProviderOperationResponse>, ApiError> {
     let models = match model_discovery::discover_models(
         &state.provider_client(&input.provider_type)?,
         &input.provider_type,
@@ -239,7 +240,7 @@ async fn discover_models(
 async fn test_protocol(
     State(state): State<AppState>,
     Json(input): Json<ProviderOperationRequest>,
-) -> Result<Json<ProviderOperationResponse>, AppError> {
+) -> Result<Json<ProviderOperationResponse>, ApiError> {
     Ok(Json(
         run_protocol_test(
             &state.provider_client(&input.provider_type)?,
@@ -258,7 +259,7 @@ async fn test_protocol_for_provider(
     Extension(identity): Extension<CurrentIdentity>,
     Path(provider_id): Path<String>,
     Json(input): Json<TestProviderProtocolRequest>,
-) -> Result<Json<ProviderOperationResponse>, AppError> {
+) -> Result<Json<ProviderOperationResponse>, ApiError> {
     let provider = state
         .storage
         .get_visible_provider(&identity.id, &provider_id)

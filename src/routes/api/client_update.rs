@@ -9,7 +9,9 @@ use axum::{
 use prelay_protocol::{ClientUpdateResponse, ClientUpdateTarget, ProtocolErrorCode};
 use tokio_util::io::ReaderStream;
 
-use crate::{client_update::CachedClientUpdate, error::AppError, AppState};
+use crate::{client_update::CachedClientUpdate, AppState};
+
+use super::ApiError;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -20,7 +22,7 @@ pub fn router() -> Router<AppState> {
 async fn latest(
     State(state): State<AppState>,
     Query(target): Query<ClientUpdateTarget>,
-) -> Result<Json<ClientUpdateResponse>, AppError> {
+) -> Result<Json<ClientUpdateResponse>, ApiError> {
     let update = cached_update(&state, &target).await?;
     let file_name = update.file_name().to_string();
     Ok(Json(ClientUpdateResponse {
@@ -36,7 +38,7 @@ async fn latest(
 async fn download(
     State(state): State<AppState>,
     Query(target): Query<ClientUpdateTarget>,
-) -> Result<Response, AppError> {
+) -> Result<Response, ApiError> {
     let update = cached_update(&state, &target).await?;
     let path = update
         .installer_path(&state.client_update.cache_directory(), &target)
@@ -54,13 +56,13 @@ async fn download(
         .header(header::CONTENT_LENGTH, metadata.len())
         .header(header::CONTENT_DISPOSITION, content_disposition)
         .body(Body::from_stream(ReaderStream::new(file)))
-        .map_err(|error| AppError::Internal(error.into()))
+        .map_err(ApiError::internal)
 }
 
 async fn cached_update(
     state: &AppState,
     target: &ClientUpdateTarget,
-) -> Result<CachedClientUpdate, AppError> {
+) -> Result<CachedClientUpdate, ApiError> {
     state
         .client_update
         .latest(target)
@@ -68,9 +70,9 @@ async fn cached_update(
         .ok_or_else(unavailable_error)
 }
 
-fn unavailable_error() -> AppError {
-    AppError::Protocol {
-        code: ProtocolErrorCode::ClientUpdateUnavailable,
-        message: "客户端更新包暂不可用".to_string(),
-    }
+fn unavailable_error() -> ApiError {
+    ApiError::new(
+        ProtocolErrorCode::ClientUpdateUnavailable,
+        "客户端更新包暂不可用",
+    )
 }
