@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Query, State},
+    extract::{Extension, State},
     routing::get,
     Json, Router,
 };
@@ -13,7 +13,7 @@ use serde::Deserialize;
 use crate::{stats::StatsRange, AppState};
 
 use super::auth::CurrentIdentity;
-use super::ApiError;
+use super::{ApiError, ApiQuery};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -39,7 +39,7 @@ impl StatsQuery {
 async fn timeline(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
-    Query(query): Query<StatsQuery>,
+    ApiQuery(query): ApiQuery<StatsQuery>,
 ) -> Result<Json<Vec<TokenUsageTimelinePoint>>, ApiError> {
     Ok(Json(
         state
@@ -52,7 +52,7 @@ async fn timeline(
 async fn overview(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
-    Query(query): Query<StatsQuery>,
+    ApiQuery(query): ApiQuery<StatsQuery>,
 ) -> Result<Json<StatsOverview>, ApiError> {
     Ok(Json(
         state
@@ -77,7 +77,7 @@ struct LeaderboardQuery {
 async fn activities(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
-    Query(query): Query<RequestQuery>,
+    ApiQuery(query): ApiQuery<RequestQuery>,
 ) -> Result<Json<Vec<ActivitySummary>>, ApiError> {
     Ok(Json(
         state
@@ -94,7 +94,7 @@ async fn activities(
 async fn leaderboard(
     State(state): State<AppState>,
     Extension(_identity): Extension<CurrentIdentity>,
-    Query(query): Query<LeaderboardQuery>,
+    ApiQuery(query): ApiQuery<LeaderboardQuery>,
 ) -> Result<Json<Vec<UserLeaderboardEntry>>, ApiError> {
     Ok(Json(
         state
@@ -111,7 +111,7 @@ async fn leaderboard(
 async fn models(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
-    Query(query): Query<StatsQuery>,
+    ApiQuery(query): ApiQuery<StatsQuery>,
 ) -> Result<Json<Vec<ModelStatsSummary>>, ApiError> {
     Ok(Json(
         state
@@ -124,7 +124,7 @@ async fn models(
 async fn providers(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
-    Query(query): Query<StatsQuery>,
+    ApiQuery(query): ApiQuery<StatsQuery>,
 ) -> Result<Json<Vec<ProviderStatsSummary>>, ApiError> {
     Ok(Json(
         state

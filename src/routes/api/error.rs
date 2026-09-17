@@ -1,5 +1,10 @@
 use axum::{
-    http::StatusCode,
+    async_trait,
+    extract::{
+        rejection::{JsonRejection, QueryRejection},
+        FromRequest, FromRequestParts, Query, Request,
+    },
+    http::{request::Parts, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -68,6 +73,22 @@ impl ApiError {
         }
         self
     }
+
+    fn from_json_rejection(rejection: JsonRejection) -> Self {
+        Self::rejected_by_extractor(rejection.status(), rejection.body_text())
+    }
+
+    fn from_query_rejection(rejection: QueryRejection) -> Self {
+        Self::rejected_by_extractor(rejection.status(), rejection.body_text())
+    }
+
+    /// 提取器拒绝：请求本身不合法，归到 validation_failed，保留原始状态与诊断。
+    fn rejected_by_extractor(status: StatusCode, message: String) -> Self {
+        if status.is_client_error() {
+            return Self::validation_failed(message).with_status(Some(status));
+        }
+        Self::internal(anyhow::anyhow!(message))
+    }
 }
 
 impl From<AppError> for ApiError {
@@ -105,6 +126,47 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let body = ProtocolErrorBody::new(self.code, self.message);
         (self.status, Json(ProtocolErrorResponse { error: body })).into_response()
+    }
+}
+
+/// 管理 API 的 JSON 提取器。
+///
+/// 请求体解析失败（语法错误、字段不匹配、Content-Type 不对、超出体积上限）同样走
+/// [`ApiError`]，保证管理面任何错误响应都是 `{"error": {"code", "message"}}`。
+pub struct ApiJson<T>(pub T);
+
+#[async_trait]
+impl<S, T> FromRequest<S> for ApiJson<T>
+where
+    Json<T>: FromRequest<S, Rejection = JsonRejection>,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
+        let Json(value) = Json::<T>::from_request(request, state)
+            .await
+            .map_err(ApiError::from_json_rejection)?;
+        Ok(Self(value))
+    }
+}
+
+/// 管理 API 的查询参数提取器，拒绝行为与 [`ApiJson`] 一致。
+pub struct ApiQuery<T>(pub T);
+
+#[async_trait]
+impl<S, T> FromRequestParts<S> for ApiQuery<T>
+where
+    Query<T>: FromRequestParts<S, Rejection = QueryRejection>,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let Query(value) = Query::<T>::from_request_parts(parts, state)
+            .await
+            .map_err(ApiError::from_query_rejection)?;
+        Ok(Self(value))
     }
 }
 

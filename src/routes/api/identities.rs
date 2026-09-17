@@ -12,7 +12,7 @@ use serde::Serialize;
 use crate::AppState;
 
 use super::auth::{extract_display_name, CurrentIdentity};
-use super::ApiError;
+use super::{ApiError, ApiJson};
 
 #[derive(Debug, Serialize)]
 pub struct CurrentIdentityResponse {
@@ -36,7 +36,7 @@ pub async fn directory(
 pub async fn create_identity(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<CreateIdentityRequest>,
+    ApiJson(request): ApiJson<CreateIdentityRequest>,
 ) -> Result<(StatusCode, Json<CreateIdentityResponse>), ApiError> {
     let header_display_name = extract_display_name(&headers);
     let response = state
@@ -62,7 +62,7 @@ pub async fn create_identity(
 pub async fn rotate_credential(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
-    Json(request): Json<RotateCredentialRequest>,
+    ApiJson(request): ApiJson<RotateCredentialRequest>,
 ) -> Result<Json<RotateCredentialResponse>, ApiError> {
     Ok(Json(
         state

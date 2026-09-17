@@ -16,7 +16,7 @@ mod identities;
 mod providers;
 mod stats;
 
-pub use error::ApiError;
+pub use error::{ApiError, ApiJson, ApiQuery};
 
 pub fn router(state: AppState) -> Router {
     let authenticated = Router::new()
@@ -39,5 +39,17 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/identities", post(identities::create_identity))
         .merge(authenticated)
+        .fallback(unknown_route)
+        .method_not_allowed_fallback(method_not_allowed)
         .with_state(state)
+}
+
+async fn unknown_route() -> ApiError {
+    ApiError::not_found("management API route does not exist")
+}
+
+/// 路径存在但方法不匹配：管理面按"该路径没有这个方法的管理接口"处理，
+/// 与未知路径使用同一个错误码，客户端只需按 not_found 提示。
+async fn method_not_allowed() -> ApiError {
+    ApiError::not_found("management API route does not exist for this request method")
 }

@@ -9,7 +9,7 @@ use prelay_protocol::{CreateEndpointRequest, EndpointResponse, UpdateEndpointReq
 use crate::AppState;
 
 use super::auth::CurrentIdentity;
-use super::ApiError;
+use super::{ApiError, ApiJson};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -39,7 +39,7 @@ async fn list(
 async fn create(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
-    Json(input): Json<CreateEndpointRequest>,
+    ApiJson(input): ApiJson<CreateEndpointRequest>,
 ) -> Result<(StatusCode, Json<EndpointResponse>), ApiError> {
     Ok((
         StatusCode::CREATED,
@@ -69,7 +69,7 @@ async fn update(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Path(endpoint_id): Path<String>,
-    Json(input): Json<UpdateEndpointRequest>,
+    ApiJson(input): ApiJson<UpdateEndpointRequest>,
 ) -> Result<Json<EndpointResponse>, ApiError> {
     Ok(Json(
         state

@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    extract::{Query, State},
+    extract::State,
     http::{header, HeaderValue},
     response::Response,
     routing::get,
@@ -11,7 +11,7 @@ use tokio_util::io::ReaderStream;
 
 use crate::{client_update::CachedClientUpdate, AppState};
 
-use super::ApiError;
+use super::{ApiError, ApiQuery};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -21,7 +21,7 @@ pub fn router() -> Router<AppState> {
 
 async fn latest(
     State(state): State<AppState>,
-    Query(target): Query<ClientUpdateTarget>,
+    ApiQuery(target): ApiQuery<ClientUpdateTarget>,
 ) -> Result<Json<ClientUpdateResponse>, ApiError> {
     let update = cached_update(&state, &target).await?;
     let file_name = update.file_name().to_string();
@@ -37,7 +37,7 @@ async fn latest(
 
 async fn download(
     State(state): State<AppState>,
-    Query(target): Query<ClientUpdateTarget>,
+    ApiQuery(target): ApiQuery<ClientUpdateTarget>,
 ) -> Result<Response, ApiError> {
     let update = cached_update(&state, &target).await?;
     let path = update

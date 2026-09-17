@@ -2,7 +2,7 @@
 mod provider_protocol_test;
 
 use axum::{
-    extract::{Extension, Path, Query, State},
+    extract::{Extension, Path, State},
     http::StatusCode,
     routing::{get, post},
     Json, Router,
@@ -17,7 +17,7 @@ use serde::Deserialize;
 use crate::{providers::model_discovery, stats::StatsRange, AppState};
 
 use super::auth::CurrentIdentity;
-use super::ApiError;
+use super::{ApiError, ApiJson, ApiQuery};
 use provider_protocol_test::run_protocol_test;
 
 pub fn router() -> Router<AppState> {
@@ -60,7 +60,7 @@ async fn list(
 async fn create(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
-    Json(input): Json<CreateProviderRequest>,
+    ApiJson(input): ApiJson<CreateProviderRequest>,
 ) -> Result<(StatusCode, Json<ProviderResponse>), ApiError> {
     let provider_id = state
         .storage
@@ -94,7 +94,7 @@ async fn update(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Path(provider_id): Path<String>,
-    Json(input): Json<UpdateProviderRequest>,
+    ApiJson(input): ApiJson<UpdateProviderRequest>,
 ) -> Result<Json<ProviderResponse>, ApiError> {
     Ok(Json(
         state
@@ -179,7 +179,7 @@ async fn update_sharing(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Path(provider_id): Path<String>,
-    Json(input): Json<prelay_protocol::UpdateProviderSharingRequest>,
+    ApiJson(input): ApiJson<prelay_protocol::UpdateProviderSharingRequest>,
 ) -> Result<Json<prelay_protocol::ProviderSharingResponse>, ApiError> {
     Ok(Json(
         state
@@ -193,7 +193,7 @@ async fn get_usage(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Path(provider_id): Path<String>,
-    Query(query): Query<ProviderUsageQuery>,
+    ApiQuery(query): ApiQuery<ProviderUsageQuery>,
 ) -> Result<Json<ProviderUsageResponse>, ApiError> {
     Ok(Json(
         state
@@ -205,7 +205,7 @@ async fn get_usage(
 
 async fn discover_models(
     State(state): State<AppState>,
-    Json(input): Json<ProviderOperationRequest>,
+    ApiJson(input): ApiJson<ProviderOperationRequest>,
 ) -> Result<Json<ProviderOperationResponse>, ApiError> {
     let models = match model_discovery::discover_models(
         &state.provider_client(&input.provider_type)?,
@@ -239,7 +239,7 @@ async fn discover_models(
 
 async fn test_protocol(
     State(state): State<AppState>,
-    Json(input): Json<ProviderOperationRequest>,
+    ApiJson(input): ApiJson<ProviderOperationRequest>,
 ) -> Result<Json<ProviderOperationResponse>, ApiError> {
     Ok(Json(
         run_protocol_test(
@@ -258,7 +258,7 @@ async fn test_protocol_for_provider(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Path(provider_id): Path<String>,
-    Json(input): Json<TestProviderProtocolRequest>,
+    ApiJson(input): ApiJson<TestProviderProtocolRequest>,
 ) -> Result<Json<ProviderOperationResponse>, ApiError> {
     let provider = state
         .storage
