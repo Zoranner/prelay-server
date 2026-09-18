@@ -1,12 +1,12 @@
 use chrono::Utc;
 use sea_orm::{
     sea_query::{Expr, ExprTrait},
-    ColumnTrait, DatabaseConnection, EntityTrait, FromQueryResult, QueryFilter, QuerySelect,
-    Select,
+    ColumnTrait, DatabaseConnection, EntityTrait, FromQueryResult, JoinType, QueryFilter,
+    QuerySelect, RelationTrait, Select,
 };
 
 use crate::{
-    entity::identity::activities as identity_activities,
+    entity::{identities, identity::activities as identity_activities},
     stats::{ProviderStatsSummary, StatsOverview, StatsRange, TimeBounds},
     storage::{Storage, StorageError},
 };
@@ -30,6 +30,19 @@ impl Storage {
     ) -> Result<Vec<ProviderStatsSummary>, StorageError> {
         list_provider_stats(&self.db, identity_id, range).await
     }
+}
+
+/// 全站口径：与用户排行榜一致，从 identities 与活动表内连接出发，
+/// 不按身份过滤，只保留请求时间范围条件。
+fn team_aggregate_query(bounds: Option<TimeBounds>) -> Select<identities::Entity> {
+    let mut query = identities::Entity::find()
+        .join(JoinType::InnerJoin, identities::Relation::Activities.def());
+    if let Some(bounds) = bounds {
+        query = query
+            .filter(identity_activities::Column::CreatedAt.gte(bounds.start.to_rfc3339()))
+            .filter(identity_activities::Column::CreatedAt.lt(bounds.end.to_rfc3339()));
+    }
+    query
 }
 
 async fn overview(

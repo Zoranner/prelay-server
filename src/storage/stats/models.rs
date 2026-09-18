@@ -1,18 +1,16 @@
 use chrono::Utc;
-use sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, FromQueryResult, JoinType, QueryFilter,
-    QuerySelect, RelationTrait, Select,
-};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, FromQueryResult, QuerySelect, Select};
 
 use crate::{
-    entity::{identities, identity::activities as identity_activities},
+    entity::identity::activities as identity_activities,
     provider_catalog::ProviderCatalog,
-    stats::{ModelStatsScope, ModelStatsSummary, StatsRange, TimeBounds},
+    stats::{ModelStatsScope, ModelStatsSummary, StatsRange},
     storage::{Storage, StorageError},
 };
 
 use super::{
     aggregate_query, failed_count_expr, floating_average, integer_sum, success_count_expr,
+    team_aggregate_query,
 };
 
 impl Storage {
@@ -51,19 +49,6 @@ async fn list_model_stats(
         ModelStatsScope::Team => list_model_aggregates(db, team_aggregate_query(bounds)).await?,
     };
     Ok(model_summaries(rows, catalog))
-}
-
-/// 全站口径：与用户排行榜一致，从 identities 与活动表内连接出发，
-/// 不按身份过滤，只保留请求时间范围条件。
-fn team_aggregate_query(bounds: Option<TimeBounds>) -> Select<identities::Entity> {
-    let mut query = identities::Entity::find()
-        .join(JoinType::InnerJoin, identities::Relation::Activities.def());
-    if let Some(bounds) = bounds {
-        query = query
-            .filter(identity_activities::Column::CreatedAt.gte(bounds.start.to_rfc3339()))
-            .filter(identity_activities::Column::CreatedAt.lt(bounds.end.to_rfc3339()));
-    }
-    query
 }
 
 /// personal 与 team 两条路径共用同一套聚合投影和分组，避免列定义漂移。
