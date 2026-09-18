@@ -1,6 +1,6 @@
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
-use prelay_server::{schema::initialize, test_support::test_database_connection};
+use prelay_server::{schema::initialize, test_support::test_empty_database_connection};
 
 const TABLES: [&str; 11] = [
     "identities",
@@ -238,7 +238,7 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
         column_type(db, "activity_contents", "attempts")
             .await
             .to_ascii_uppercase(),
-        "INTEGER"
+        "BIGINT"
     );
     for column in [
         "normalized_key",
@@ -316,7 +316,7 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
 
 #[tokio::test]
 async fn initializes_the_complete_identity_schema_with_core_constraints() {
-    let db = test_database_connection().await;
+    let db = test_empty_database_connection().await;
 
     initialize(&db).await.unwrap();
     assert_complete_schema(&db).await;
@@ -324,7 +324,7 @@ async fn initializes_the_complete_identity_schema_with_core_constraints() {
 
 #[tokio::test]
 async fn reuses_the_current_identity_schema_without_changes() {
-    let db = test_database_connection().await;
+    let db = test_empty_database_connection().await;
 
     initialize(&db).await.unwrap();
     initialize(&db).await.unwrap();

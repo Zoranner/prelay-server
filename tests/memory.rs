@@ -70,10 +70,10 @@ async fn low_confidence_and_conflicting_candidates_remain_reviewable() {
             &identity,
             MemoryCandidate {
                 kind: "fact".to_string(),
-                content: "当前默认数据库是 PostgreSQL".to_string(),
+                content: "部署默认数据库是 PostgreSQL 14".to_string(),
                 conflict_key: Some("deployment:default_database".to_string()),
                 confidence: 0.9,
-                evidence: "配置显示 PostgreSQL".to_string(),
+                evidence: "部署配置显示 PostgreSQL 14".to_string(),
                 observed_at: "2026-08-31T00:00:00Z".to_string(),
             },
         )
@@ -84,10 +84,10 @@ async fn low_confidence_and_conflicting_candidates_remain_reviewable() {
             &identity,
             MemoryCandidate {
                 kind: "fact".to_string(),
-                content: "当前默认数据库是 PostgreSQL".to_string(),
+                content: "部署默认数据库是 PostgreSQL 16".to_string(),
                 conflict_key: Some("deployment:default_database".to_string()),
                 confidence: 0.9,
-                evidence: "配置显示 PostgreSQL".to_string(),
+                evidence: "部署配置显示 PostgreSQL 16".to_string(),
                 observed_at: "2026-08-31T00:01:00Z".to_string(),
             },
         )

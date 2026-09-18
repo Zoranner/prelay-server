@@ -1,4 +1,4 @@
-use prelay_server::{schema::initialize, test_support::test_database_connection};
+use prelay_server::{schema::initialize, test_support::test_empty_database_connection};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 async fn create_legacy_provider_sharing_tables(db: &DatabaseConnection) {
@@ -32,7 +32,8 @@ async fn create_legacy_provider_sharing_tables(db: &DatabaseConnection) {
         "CREATE TABLE identity_activities (
             id TEXT PRIMARY KEY,
             identity_id TEXT NOT NULL,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            status TEXT
         )",
     )
     .await
@@ -50,7 +51,7 @@ async fn count_rows(db: &DatabaseConnection, sql: &str) -> i64 {
 
 #[tokio::test]
 async fn upgrades_legacy_provider_sharing_schema_without_losing_provider_data() {
-    let db = test_database_connection().await;
+    let db = test_empty_database_connection().await;
     create_legacy_provider_sharing_tables(&db).await;
     db.execute_unprepared(
         "INSERT INTO identity_provider_configs
@@ -108,7 +109,7 @@ async fn upgrades_legacy_provider_sharing_schema_without_losing_provider_data() 
 
 #[tokio::test]
 async fn rolls_back_legacy_provider_sharing_upgrade_when_index_creation_fails() {
-    let db = test_database_connection().await;
+    let db = test_empty_database_connection().await;
     create_legacy_provider_sharing_tables(&db).await;
     db.execute_unprepared(
         "CREATE UNIQUE INDEX uq_identity_provider_shares_provider_grantee
@@ -121,7 +122,9 @@ async fn rolls_back_legacy_provider_sharing_upgrade_when_index_creation_fails() 
         .await
         .expect_err("conflicting migration index must fail");
     assert!(
-        error.to_string().contains("already exists"),
+        error
+            .to_string()
+            .contains("uq_identity_provider_shares_provider_grantee"),
         "unexpected migration error: {error}"
     );
 

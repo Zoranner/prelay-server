@@ -1,4 +1,4 @@
-use prelay_server::{schema::initialize, test_support::test_database_connection};
+use prelay_server::{schema::initialize, test_support::test_empty_database_connection};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, Statement};
 
 async fn column_exists(db: &DatabaseConnection, table: &str, column: &str) -> bool {
@@ -72,7 +72,7 @@ async fn create_existing_base_tables(db: &DatabaseConnection) {
 
 #[tokio::test]
 async fn initializes_an_empty_database_without_migration_metadata() {
-    let db = test_database_connection().await;
+    let db = test_empty_database_connection().await;
 
     initialize(&db)
         .await
@@ -87,7 +87,7 @@ async fn initializes_an_empty_database_without_migration_metadata() {
 
 #[tokio::test]
 async fn initializes_provider_sharing_structures_in_an_empty_database() {
-    let db = test_database_connection().await;
+    let db = test_empty_database_connection().await;
 
     initialize(&db)
         .await
@@ -108,7 +108,7 @@ async fn initializes_provider_sharing_structures_in_an_empty_database() {
 
 #[tokio::test]
 async fn rejects_a_partially_initialized_database() {
-    let db = test_database_connection().await;
+    let db = test_empty_database_connection().await;
     db.execute_unprepared("CREATE TABLE identities (id TEXT PRIMARY KEY)")
         .await
         .expect("create an incomplete schema");
@@ -121,7 +121,7 @@ async fn rejects_a_partially_initialized_database() {
 
 #[tokio::test]
 async fn rejects_complete_table_names_without_provider_visibility_column() {
-    let db = test_database_connection().await;
+    let db = test_empty_database_connection().await;
     for table in [
         "identities",
         "identity_provider_configs",
@@ -153,7 +153,7 @@ async fn rejects_complete_table_names_without_provider_visibility_column() {
 
 #[tokio::test]
 async fn rejects_provider_shares_without_required_unique_index() {
-    let db = test_database_connection().await;
+    let db = test_empty_database_connection().await;
     for table in [
         "identities",
         "identity_endpoint_configs",
@@ -200,10 +200,15 @@ async fn rejects_provider_shares_without_required_unique_index() {
 
 #[tokio::test]
 async fn migrates_the_complete_legacy_activity_table_without_losing_rows() {
-    let db = test_database_connection().await;
+    let db = test_empty_database_connection().await;
     create_existing_base_tables(&db).await;
     db.execute_unprepared(
-        "CREATE TABLE identity_activities (id TEXT PRIMARY KEY, identity_id TEXT NOT NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE identity_activities (
+            id TEXT PRIMARY KEY,
+            identity_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            status TEXT
+        )",
     )
     .await
     .expect("create legacy activity table");
@@ -231,13 +236,14 @@ async fn migrates_the_complete_legacy_activity_table_without_losing_rows() {
 
 #[tokio::test]
 async fn removes_legacy_cost_columns_from_an_existing_activity_table() {
-    let db = test_database_connection().await;
+    let db = test_empty_database_connection().await;
     create_existing_base_tables(&db).await;
     db.execute_unprepared(
         "CREATE TABLE identity_activities (
             id TEXT PRIMARY KEY,
             identity_id TEXT NOT NULL,
             created_at TEXT NOT NULL,
+            status TEXT,
             estimated_cost DOUBLE PRECISION,
             currency TEXT
         )",
@@ -257,7 +263,7 @@ async fn removes_legacy_cost_columns_from_an_existing_activity_table() {
 
 #[tokio::test]
 async fn migrates_stale_activity_content_once_during_schema_initialization() {
-    let db = test_database_connection().await;
+    let db = test_empty_database_connection().await;
 
     initialize(&db).await.expect("initialize current schema");
     db.execute_unprepared(
@@ -343,7 +349,7 @@ async fn migrates_stale_activity_content_once_during_schema_initialization() {
 
 #[tokio::test]
 async fn adds_models_column_when_migrating_an_existing_provider_table() {
-    let db = test_database_connection().await;
+    let db = test_empty_database_connection().await;
     initialize(&db)
         .await
         .expect("initialize the current schema");

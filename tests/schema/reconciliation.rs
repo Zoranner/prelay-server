@@ -9,7 +9,7 @@ use sea_orm::{
 };
 
 async fn connect() -> DatabaseConnection {
-    prelay_server::test_support::test_database_connection().await
+    prelay_server::test_support::test_empty_database_connection().await
 }
 
 async fn table_exists(db: &DatabaseConnection, table: &str) -> bool {
@@ -200,7 +200,10 @@ async fn migrates_legacy_provider_columns_on_startup() {
 #[tokio::test]
 async fn reconciles_endpoint_models_with_the_current_catalog() {
     let db = connect().await;
-    initialize(&db).await.expect("initialize schema");
+    // 第一次初始化记录目录迁移版本，第二次只跑接入点模型对账。
+    initialize_with_catalog(&db, &fixture_catalog())
+        .await
+        .expect("initialize schema and catalog");
     insert_identity(&db).await;
     insert_endpoint(&db).await;
     insert_provider(
