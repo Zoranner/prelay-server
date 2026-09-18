@@ -4,7 +4,7 @@ use chrono::{Datelike, FixedOffset, NaiveDate, Utc};
 use sea_orm::{sea_query::Value, ConnectionTrait, DbBackend, MockDatabase};
 
 use crate::{
-    stats::StatsRange,
+    stats::{ModelStatsScope, StatsRange},
     storage::{MasterKey, Storage, StorageError},
 };
 
@@ -24,7 +24,7 @@ async fn today_timeline_fills_empty_beijing_hour_buckets() {
         .expect("insert timeline log");
 
     let timeline = storage
-        .token_usage_timeline(&identity, StatsRange::Today)
+        .token_usage_timeline(&identity, ModelStatsScope::Personal, StatsRange::Today)
         .await
         .expect("load today timeline");
 
@@ -51,11 +51,11 @@ async fn week_and_year_timelines_use_dense_buckets() {
     let identity = register_identity(&storage, "dense-timeline").await;
 
     let week = storage
-        .token_usage_timeline(&identity, StatsRange::ThisWeek)
+        .token_usage_timeline(&identity, ModelStatsScope::Personal, StatsRange::ThisWeek)
         .await
         .expect("load week timeline");
     let year = storage
-        .token_usage_timeline(&identity, StatsRange::ThisYear)
+        .token_usage_timeline(&identity, ModelStatsScope::Personal, StatsRange::ThisYear)
         .await
         .expect("load year timeline");
 
@@ -85,7 +85,7 @@ async fn mapped_timelines_merge_bucket_rows_for_every_granularity() {
         StatsRange::All,
     ] {
         let points = storage
-            .token_usage_timeline(&identity, range)
+            .token_usage_timeline(&identity, ModelStatsScope::Personal, range)
             .await
             .expect("load merged timeline");
         assert_eq!(
@@ -104,6 +104,65 @@ async fn mapped_timelines_merge_bucket_rows_for_every_granularity() {
             "{range:?}"
         );
     }
+}
+
+#[tokio::test]
+async fn timeline_scope_selects_personal_or_team_aggregation() {
+    let storage = test_storage().await;
+    let identity_a = register_identity(&storage, "timeline-scope-a").await;
+    let identity_b = register_identity(&storage, "timeline-scope-b").await;
+    storage
+        .insert_activity_with_id(
+            &identity_a,
+            "timeline-scope-a-log".to_string(),
+            test_log(Some(3), Some(4)),
+        )
+        .await
+        .expect("insert identity A log");
+    storage
+        .insert_activity_with_id(
+            &identity_b,
+            "timeline-scope-b-log".to_string(),
+            test_log(Some(5), Some(6)),
+        )
+        .await
+        .expect("insert identity B log");
+
+    let personal = storage
+        .token_usage_timeline(&identity_a, ModelStatsScope::Personal, StatsRange::Today)
+        .await
+        .expect("load personal timeline");
+    assert_eq!(
+        personal.iter().map(|point| point.input_tokens).sum::<i64>(),
+        3
+    );
+
+    let team = storage
+        .token_usage_timeline(&identity_a, ModelStatsScope::Team, StatsRange::Today)
+        .await
+        .expect("load team timeline");
+    assert_eq!(team.len(), 24);
+    assert_eq!(team.iter().map(|point| point.input_tokens).sum::<i64>(), 8);
+    assert_eq!(
+        team.iter().map(|point| point.output_tokens).sum::<i64>(),
+        10
+    );
+
+    let team_daily = storage
+        .daily_token_usage_timeline(&identity_a, ModelStatsScope::Team, StatsRange::Today)
+        .await
+        .expect("load team daily timeline");
+    assert_eq!(team_daily.len(), 1);
+    assert_eq!(team_daily[0].input_tokens, 8);
+
+    let team_all = storage
+        .token_usage_timeline(&identity_a, ModelStatsScope::Team, StatsRange::All)
+        .await
+        .expect("load team timeline for all ranges");
+    assert_eq!(
+        team_all.iter().map(|point| point.input_tokens).sum::<i64>(),
+        8
+    );
 }
 
 #[tokio::test]
@@ -130,7 +189,7 @@ async fn daily_timeline_covers_last_year_with_beijing_day_buckets() {
         .expect("move activity onto the Beijing day boundary");
 
     let points = storage
-        .daily_token_usage_timeline(&identity, StatsRange::LastYear)
+        .daily_token_usage_timeline(&identity, ModelStatsScope::Personal, StatsRange::LastYear)
         .await
         .expect("load daily timeline");
 
@@ -181,7 +240,7 @@ async fn daily_timeline_rejects_ranges_wider_than_the_bucket_limit() {
         .expect("move activity beyond the daily bucket limit");
 
     let error = storage
-        .daily_token_usage_timeline(&identity, StatsRange::All)
+        .daily_token_usage_timeline(&identity, ModelStatsScope::Personal, StatsRange::All)
         .await
         .expect_err("range=all beyond the cap must be rejected");
 
@@ -200,7 +259,11 @@ async fn daily_timeline_uses_a_single_grouped_query() {
     let this_year = Utc::now().with_timezone(&beijing_offset()).year();
 
     let points = storage
-        .daily_token_usage_timeline("identity-daily", StatsRange::ThisYear)
+        .daily_token_usage_timeline(
+            "identity-daily",
+            ModelStatsScope::Personal,
+            StatsRange::ThisYear,
+        )
         .await
         .expect("load daily timeline");
     assert_eq!(points.len(), days_in_year(this_year));
@@ -229,11 +292,19 @@ async fn mapped_timelines_use_one_grouped_query_per_request() {
     let storage = Storage::from_connection(mock.clone(), MasterKey::from_bytes([0; 32]));
 
     storage
-        .token_usage_timeline("identity-trend", StatsRange::Today)
+        .token_usage_timeline(
+            "identity-trend",
+            ModelStatsScope::Personal,
+            StatsRange::Today,
+        )
         .await
         .expect("load hourly timeline");
     storage
-        .token_usage_timeline("identity-trend", StatsRange::ThisMonth)
+        .token_usage_timeline(
+            "identity-trend",
+            ModelStatsScope::Personal,
+            StatsRange::ThisMonth,
+        )
         .await
         .expect("load daily timeline");
 
@@ -263,7 +334,11 @@ async fn daily_timeline_groups_by_beijing_day_on_postgres() {
     let storage = Storage::from_connection(mock.clone(), MasterKey::from_bytes([0; 32]));
 
     storage
-        .daily_token_usage_timeline("identity-daily", StatsRange::Today)
+        .daily_token_usage_timeline(
+            "identity-daily",
+            ModelStatsScope::Personal,
+            StatsRange::Today,
+        )
         .await
         .expect("load daily timeline");
 

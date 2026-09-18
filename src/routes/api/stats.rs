@@ -31,11 +31,16 @@ pub fn router() -> Router<AppState> {
 #[derive(Deserialize)]
 struct StatsQuery {
     range: Option<StatsRange>,
+    scope: Option<ModelStatsScope>,
 }
 
 impl StatsQuery {
     fn range(&self) -> StatsRange {
         self.range.unwrap_or_default()
+    }
+
+    fn scope(&self) -> ModelStatsScope {
+        self.scope.unwrap_or_default()
     }
 }
 
@@ -66,11 +71,16 @@ enum TimelineGranularityParam {
 struct TimelineQuery {
     range: Option<StatsRange>,
     granularity: Option<TimelineGranularityParam>,
+    scope: Option<ModelStatsScope>,
 }
 
 impl TimelineQuery {
     fn range(&self) -> StatsRange {
         self.range.unwrap_or_default()
+    }
+
+    fn scope(&self) -> ModelStatsScope {
+        self.scope.unwrap_or_default()
     }
 }
 
@@ -83,13 +93,13 @@ async fn timeline(
         Some(TimelineGranularityParam::Day) => {
             state
                 .storage
-                .daily_token_usage_timeline(&identity.id, query.range())
+                .daily_token_usage_timeline(&identity.id, query.scope(), query.range())
                 .await?
         }
         None => {
             state
                 .storage
-                .token_usage_timeline(&identity.id, query.range())
+                .token_usage_timeline(&identity.id, query.scope(), query.range())
                 .await?
         }
     };
@@ -104,7 +114,7 @@ async fn overview(
     Ok(Json(
         state
             .storage
-            .stats_overview(&identity.id, query.range())
+            .stats_overview(&identity.id, query.scope(), query.range())
             .await?,
     ))
 }
@@ -181,7 +191,7 @@ async fn providers(
     Ok(Json(
         state
             .storage
-            .provider_stats(&identity.id, query.range())
+            .provider_stats(&identity.id, query.scope(), query.range())
             .await?,
     ))
 }

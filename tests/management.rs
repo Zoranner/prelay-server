@@ -31,5 +31,7 @@ mod provider_usage;
 mod providers;
 #[path = "management/stats.rs"]
 mod stats;
+#[path = "management/stats_scope.rs"]
+mod stats_scope;
 #[path = "management/timeline.rs"]
 mod timeline;

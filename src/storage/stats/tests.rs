@@ -127,7 +127,7 @@ async fn overview_is_scoped_to_one_identity() {
         .expect("insert identity B log");
 
     let overview = storage
-        .stats_overview(&identity_a, StatsRange::Today)
+        .stats_overview(&identity_a, ModelStatsScope::Personal, StatsRange::Today)
         .await
         .expect("load identity A overview");
 
@@ -136,6 +136,106 @@ async fn overview_is_scoped_to_one_identity() {
     assert_eq!(overview.failed_requests, 0);
     assert_eq!(overview.input_tokens, 3);
     assert_eq!(overview.output_tokens, 4);
+}
+
+#[tokio::test]
+async fn overview_scope_selects_personal_or_team_aggregation() {
+    let storage = test_storage().await;
+    let identity_a = register_identity(&storage, "overview-scope-a").await;
+    let identity_b = register_identity(&storage, "overview-scope-b").await;
+    storage
+        .insert_activity_with_id(
+            &identity_a,
+            "overview-scope-a-log".to_string(),
+            test_log(Some(3), Some(4)),
+        )
+        .await
+        .expect("insert identity A log");
+    storage
+        .insert_activity_with_id(
+            &identity_b,
+            "overview-scope-b-log".to_string(),
+            test_log(Some(5), Some(6)),
+        )
+        .await
+        .expect("insert identity B log");
+
+    let personal = storage
+        .stats_overview(&identity_a, ModelStatsScope::Personal, StatsRange::Today)
+        .await
+        .expect("load personal overview");
+    assert_eq!(personal.total_requests, 1);
+    assert_eq!(personal.successful_requests, 1);
+    assert_eq!(personal.input_tokens, 3);
+    assert_eq!(personal.output_tokens, 4);
+
+    let team = storage
+        .stats_overview(&identity_a, ModelStatsScope::Team, StatsRange::Today)
+        .await
+        .expect("load team overview");
+    assert_eq!(team.total_requests, 2);
+    assert_eq!(team.successful_requests, 2);
+    assert_eq!(team.failed_requests, 0);
+    assert_eq!(team.input_tokens, 8);
+    assert_eq!(team.output_tokens, 10);
+    assert_eq!(team.average_latency_ms, Some(10));
+}
+
+#[tokio::test]
+async fn provider_stats_scope_selects_personal_or_team_aggregation() {
+    let storage = test_storage().await;
+    let identity_a = register_identity(&storage, "provider-scope-a").await;
+    let identity_b = register_identity(&storage, "provider-scope-b").await;
+    let mut identity_a_log = test_log(Some(3), Some(4));
+    identity_a_log.provider_id = "provider-shared".to_string();
+    identity_a_log.provider_name = "Provider Shared".to_string();
+    identity_a_log.first_token_ms = Some(100);
+    let mut identity_b_log = identity_a_log.clone();
+    identity_b_log.input_tokens = Some(5);
+    identity_b_log.output_tokens = Some(6);
+    identity_b_log.first_token_ms = Some(300);
+    storage
+        .insert_activity_with_id(
+            &identity_a,
+            "provider-scope-a-log".to_string(),
+            identity_a_log,
+        )
+        .await
+        .expect("insert identity A log");
+    storage
+        .insert_activity_with_id(
+            &identity_b,
+            "provider-scope-b-log".to_string(),
+            identity_b_log,
+        )
+        .await
+        .expect("insert identity B log");
+
+    let personal = storage
+        .provider_stats(&identity_a, ModelStatsScope::Personal, StatsRange::Today)
+        .await
+        .expect("load personal provider stats");
+    assert_eq!(personal.len(), 1);
+    assert_eq!(personal[0].provider_id.as_deref(), Some("provider-shared"));
+    assert_eq!(
+        personal[0].provider_name.as_deref(),
+        Some("Provider Shared")
+    );
+    assert_eq!(personal[0].total_requests, 1);
+    assert_eq!(personal[0].input_tokens, 3);
+    assert_eq!(personal[0].output_tokens, 4);
+    assert_eq!(personal[0].average_first_token_ms, Some(100.0));
+
+    let team = storage
+        .provider_stats(&identity_a, ModelStatsScope::Team, StatsRange::Today)
+        .await
+        .expect("load team provider stats");
+    assert_eq!(team.len(), 1);
+    assert_eq!(team[0].provider_id.as_deref(), Some("provider-shared"));
+    assert_eq!(team[0].total_requests, 2);
+    assert_eq!(team[0].input_tokens, 8);
+    assert_eq!(team[0].output_tokens, 10);
+    assert_eq!(team[0].average_first_token_ms, Some(200.0));
 }
 
 pub(super) async fn test_storage() -> Storage {

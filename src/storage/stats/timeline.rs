@@ -1,19 +1,20 @@
 use chrono::{DateTime, Utc};
 use sea_orm::{
     sea_query::Expr, ColumnTrait, DatabaseConnection, EntityTrait, FromQueryResult, QueryFilter,
-    QuerySelect,
+    QuerySelect, Select,
 };
 
 use crate::{
     entity::identity::activities as identity_activities,
     stats::{
         all_daily_bounds, all_timeline_bounds, parse_beijing_timestamp, timeline_buckets,
-        StatsRange, TimeBounds, TimelineBucket, TimelineGranularity, TokenUsageTimelinePoint,
+        ModelStatsScope, StatsRange, TimeBounds, TimelineBucket, TimelineGranularity,
+        TokenUsageTimelinePoint,
     },
     storage::{Storage, StorageError},
 };
 
-use super::{aggregate_query, integer_sum, total_input_tokens_expr};
+use super::{aggregate_query, integer_sum, team_aggregate_query, total_input_tokens_expr};
 
 /// 按天粒度一次最多返回的自然日数量：覆盖一整年（366 天）并留出余量，
 /// 更宽的窗口（例如 range=all 的历史超过 400 天）按非法请求拒绝。
@@ -24,24 +25,41 @@ impl Storage {
     pub async fn token_usage_timeline(
         &self,
         identity_id: &str,
+        scope: ModelStatsScope,
         range: StatsRange,
     ) -> Result<Vec<TokenUsageTimelinePoint>, StorageError> {
-        timeline(&self.db, identity_id, range, range.timeline_granularity()).await
+        timeline(
+            &self.db,
+            identity_id,
+            scope,
+            range,
+            range.timeline_granularity(),
+        )
+        .await
     }
 
     /// 强制按北京时间自然日聚合的时间线；同样只查一次库。
     pub async fn daily_token_usage_timeline(
         &self,
         identity_id: &str,
+        scope: ModelStatsScope,
         range: StatsRange,
     ) -> Result<Vec<TokenUsageTimelinePoint>, StorageError> {
-        timeline(&self.db, identity_id, range, TimelineGranularity::Day).await
+        timeline(
+            &self.db,
+            identity_id,
+            scope,
+            range,
+            TimelineGranularity::Day,
+        )
+        .await
     }
 }
 
 async fn timeline(
     db: &DatabaseConnection,
     identity_id: &str,
+    scope: ModelStatsScope,
     range: StatsRange,
     granularity: TimelineGranularity,
 ) -> Result<Vec<TokenUsageTimelinePoint>, StorageError> {
@@ -49,7 +67,11 @@ async fn timeline(
     let bounds = match range.bounds(now) {
         Some(bounds) => bounds,
         None => {
-            let Some(earliest) = earliest_log_time(db, identity_id).await? else {
+            let earliest = match scope {
+                ModelStatsScope::Personal => earliest_log_time(db, Some(identity_id)).await?,
+                ModelStatsScope::Team => earliest_log_time(db, None).await?,
+            };
+            let Some(earliest) = earliest else {
                 return Ok(Vec::new());
             };
             match granularity {
@@ -65,19 +87,37 @@ async fn timeline(
             buckets.len()
         )));
     }
-    let rows = bucket_totals(db, identity_id, bounds, granularity).await?;
+    let rows = bucket_totals(db, identity_id, scope, bounds, granularity).await?;
     merge_buckets(buckets, rows)
 }
 
-/// SQL 只按小时或按天分组，更粗的粒度在内存里合并，避免每个桶查一次库。
+/// 一次分组查询取回有数据的桶；SQL 只按小时或按天分组，更粗的粒度在内存里合并。
 async fn bucket_totals(
     db: &DatabaseConnection,
     identity_id: &str,
+    scope: ModelStatsScope,
     bounds: TimeBounds,
     granularity: TimelineGranularity,
 ) -> Result<Vec<BucketTokenAggregate>, StorageError> {
     let bucket = beijing_bucket_expr(query_bucket(granularity));
-    Ok(aggregate_query(identity_id, Some(bounds))
+    match scope {
+        ModelStatsScope::Personal => {
+            bucket_rows(db, aggregate_query(identity_id, Some(bounds)), bucket).await
+        }
+        ModelStatsScope::Team => bucket_rows(db, team_aggregate_query(Some(bounds)), bucket).await,
+    }
+}
+
+/// personal 与 team 两条路径共用同一套桶聚合投影和分组。
+async fn bucket_rows<E>(
+    db: &DatabaseConnection,
+    query: Select<E>,
+    bucket: Expr,
+) -> Result<Vec<BucketTokenAggregate>, StorageError>
+where
+    E: EntityTrait,
+{
+    Ok(query
         .select_only()
         .expr_as(bucket.clone(), "bucket")
         .column_as(
@@ -160,15 +200,18 @@ fn beijing_bucket_expr(bucket: QueryBucket) -> Expr {
 
 async fn earliest_log_time(
     db: &DatabaseConnection,
-    identity_id: &str,
+    identity_id: Option<&str>,
 ) -> Result<Option<DateTime<Utc>>, StorageError> {
     #[derive(FromQueryResult)]
     struct Earliest {
         created_at: Option<String>,
     }
 
-    let earliest = identity_activities::Entity::find()
-        .filter(identity_activities::Column::IdentityId.eq(identity_id))
+    let mut query = identity_activities::Entity::find();
+    if let Some(identity_id) = identity_id {
+        query = query.filter(identity_activities::Column::IdentityId.eq(identity_id));
+    }
+    let earliest = query
         .select_only()
         .column_as(identity_activities::Column::CreatedAt.min(), "created_at")
         .into_model::<Earliest>()

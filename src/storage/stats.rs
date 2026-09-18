@@ -7,7 +7,7 @@ use sea_orm::{
 
 use crate::{
     entity::{identities, identity::activities as identity_activities},
-    stats::{ProviderStatsSummary, StatsOverview, StatsRange, TimeBounds},
+    stats::{ModelStatsScope, ProviderStatsSummary, StatsOverview, StatsRange, TimeBounds},
     storage::{Storage, StorageError},
 };
 
@@ -18,17 +18,19 @@ impl Storage {
     pub async fn stats_overview(
         &self,
         identity_id: &str,
+        scope: ModelStatsScope,
         range: StatsRange,
     ) -> Result<StatsOverview, StorageError> {
-        overview(&self.db, identity_id, range).await
+        overview(&self.db, identity_id, scope, range).await
     }
 
     pub async fn provider_stats(
         &self,
         identity_id: &str,
+        scope: ModelStatsScope,
         range: StatsRange,
     ) -> Result<Vec<ProviderStatsSummary>, StorageError> {
-        list_provider_stats(&self.db, identity_id, range).await
+        list_provider_stats(&self.db, identity_id, scope, range).await
     }
 }
 
@@ -48,9 +50,38 @@ fn team_aggregate_query(bounds: Option<TimeBounds>) -> Select<identities::Entity
 async fn overview(
     db: &DatabaseConnection,
     identity_id: &str,
+    scope: ModelStatsScope,
     range: StatsRange,
 ) -> Result<StatsOverview, StorageError> {
-    let row = aggregate_query(identity_id, range.bounds(Utc::now()))
+    let bounds = range.bounds(Utc::now());
+    let row = match scope {
+        ModelStatsScope::Personal => {
+            overview_aggregate(db, aggregate_query(identity_id, bounds)).await?
+        }
+        ModelStatsScope::Team => overview_aggregate(db, team_aggregate_query(bounds)).await?,
+    };
+    Ok(StatsOverview {
+        total_requests: row.total_requests,
+        successful_requests: row.successful_requests.unwrap_or_default(),
+        failed_requests: row.failed_requests.unwrap_or_default(),
+        input_tokens: row.input_tokens.unwrap_or_default(),
+        total_input_tokens: row.total_input_tokens.unwrap_or_default(),
+        output_tokens: row.output_tokens.unwrap_or_default(),
+        cache_read_tokens: row.cache_read_tokens.unwrap_or_default(),
+        cache_write_tokens: row.cache_write_tokens.unwrap_or_default(),
+        average_latency_ms: integer_average(row.latency_total, row.latency_count),
+    })
+}
+
+/// personal 与 team 两条路径共用同一套总览聚合投影。
+async fn overview_aggregate<E>(
+    db: &DatabaseConnection,
+    query: Select<E>,
+) -> Result<OverviewAggregate, StorageError>
+where
+    E: EntityTrait,
+{
+    Ok(query
         .select_only()
         .column_as(identity_activities::Column::Id.count(), "total_requests")
         .column_as(success_count_expr(), "successful_requests")
@@ -83,26 +114,54 @@ async fn overview(
         .into_model::<OverviewAggregate>()
         .one(db)
         .await?
-        .unwrap_or_default();
-    Ok(StatsOverview {
-        total_requests: row.total_requests,
-        successful_requests: row.successful_requests.unwrap_or_default(),
-        failed_requests: row.failed_requests.unwrap_or_default(),
-        input_tokens: row.input_tokens.unwrap_or_default(),
-        total_input_tokens: row.total_input_tokens.unwrap_or_default(),
-        output_tokens: row.output_tokens.unwrap_or_default(),
-        cache_read_tokens: row.cache_read_tokens.unwrap_or_default(),
-        cache_write_tokens: row.cache_write_tokens.unwrap_or_default(),
-        average_latency_ms: integer_average(row.latency_total, row.latency_count),
-    })
+        .unwrap_or_default())
 }
 
 async fn list_provider_stats(
     db: &DatabaseConnection,
     identity_id: &str,
+    scope: ModelStatsScope,
     range: StatsRange,
 ) -> Result<Vec<ProviderStatsSummary>, StorageError> {
-    let rows = aggregate_query(identity_id, range.bounds(Utc::now()))
+    let bounds = range.bounds(Utc::now());
+    let rows = match scope {
+        ModelStatsScope::Personal => {
+            provider_aggregate_rows(db, aggregate_query(identity_id, bounds)).await?
+        }
+        ModelStatsScope::Team => provider_aggregate_rows(db, team_aggregate_query(bounds)).await?,
+    };
+    let mut summaries = rows
+        .into_iter()
+        .map(|row| ProviderStatsSummary {
+            provider_id: row.provider_id,
+            provider_name: row.provider_name,
+            total_requests: row.total_requests,
+            successful_requests: row.successful_requests.unwrap_or_default(),
+            failed_requests: row.failed_requests.unwrap_or_default(),
+            input_tokens: row.input_tokens.unwrap_or_default(),
+            output_tokens: row.output_tokens.unwrap_or_default(),
+            average_latency_ms: floating_average(row.latency_total, row.latency_count),
+            average_first_token_ms: floating_average(row.first_token_total, row.first_token_count),
+        })
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        right
+            .total_requests
+            .cmp(&left.total_requests)
+            .then_with(|| left.provider_name.cmp(&right.provider_name))
+    });
+    Ok(summaries)
+}
+
+/// personal 与 team 两条路径共用同一套供应商聚合投影和分组。
+async fn provider_aggregate_rows<E>(
+    db: &DatabaseConnection,
+    query: Select<E>,
+) -> Result<Vec<ProviderAggregate>, StorageError>
+where
+    E: EntityTrait,
+{
+    Ok(query
         .select_only()
         .column(identity_activities::Column::ProviderId)
         .column(identity_activities::Column::ProviderName)
@@ -137,28 +196,7 @@ async fn list_provider_stats(
         .group_by(identity_activities::Column::ProviderName)
         .into_model::<ProviderAggregate>()
         .all(db)
-        .await?;
-    let mut summaries = rows
-        .into_iter()
-        .map(|row| ProviderStatsSummary {
-            provider_id: row.provider_id,
-            provider_name: row.provider_name,
-            total_requests: row.total_requests,
-            successful_requests: row.successful_requests.unwrap_or_default(),
-            failed_requests: row.failed_requests.unwrap_or_default(),
-            input_tokens: row.input_tokens.unwrap_or_default(),
-            output_tokens: row.output_tokens.unwrap_or_default(),
-            average_latency_ms: floating_average(row.latency_total, row.latency_count),
-            average_first_token_ms: floating_average(row.first_token_total, row.first_token_count),
-        })
-        .collect::<Vec<_>>();
-    summaries.sort_by(|left, right| {
-        right
-            .total_requests
-            .cmp(&left.total_requests)
-            .then_with(|| left.provider_name.cmp(&right.provider_name))
-    });
-    Ok(summaries)
+        .await?)
 }
 
 fn aggregate_query(
