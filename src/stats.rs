@@ -65,6 +65,15 @@ pub enum StatsRange {
     All,
 }
 
+/// 统计口径：personal 只看当前身份，team 聚合部署内全部身份。
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelStatsScope {
+    #[default]
+    Personal,
+    Team,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct TimeBounds {
     pub(crate) start: DateTime<Utc>,

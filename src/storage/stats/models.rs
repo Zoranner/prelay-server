@@ -1,10 +1,13 @@
 use chrono::Utc;
-use sea_orm::{ColumnTrait, DatabaseConnection, FromQueryResult, QuerySelect};
+use sea_orm::{
+    ColumnTrait, DatabaseConnection, EntityTrait, FromQueryResult, JoinType, QueryFilter,
+    QuerySelect, RelationTrait, Select,
+};
 
 use crate::{
-    entity::identity::activities as identity_activities,
+    entity::{identities, identity::activities as identity_activities},
     provider_catalog::ProviderCatalog,
-    stats::{ModelStatsSummary, StatsRange},
+    stats::{ModelStatsScope, ModelStatsSummary, StatsRange, TimeBounds},
     storage::{Storage, StorageError},
 };
 
@@ -16,28 +19,62 @@ impl Storage {
     pub async fn model_stats(
         &self,
         identity_id: &str,
+        scope: ModelStatsScope,
         range: StatsRange,
     ) -> Result<Vec<ModelStatsSummary>, StorageError> {
-        list_model_stats(&self.db, identity_id, range, None).await
+        list_model_stats(&self.db, identity_id, scope, range, None).await
     }
 
     pub async fn model_stats_with_catalog(
         &self,
         identity_id: &str,
+        scope: ModelStatsScope,
         range: StatsRange,
         catalog: &ProviderCatalog,
     ) -> Result<Vec<ModelStatsSummary>, StorageError> {
-        list_model_stats(&self.db, identity_id, range, Some(catalog)).await
+        list_model_stats(&self.db, identity_id, scope, range, Some(catalog)).await
     }
 }
 
 async fn list_model_stats(
     db: &DatabaseConnection,
     identity_id: &str,
+    scope: ModelStatsScope,
     range: StatsRange,
     catalog: Option<&ProviderCatalog>,
 ) -> Result<Vec<ModelStatsSummary>, StorageError> {
-    let rows = aggregate_query(identity_id, range.bounds(Utc::now()))
+    let bounds = range.bounds(Utc::now());
+    let rows = match scope {
+        ModelStatsScope::Personal => {
+            list_model_aggregates(db, aggregate_query(identity_id, bounds)).await?
+        }
+        ModelStatsScope::Team => list_model_aggregates(db, team_aggregate_query(bounds)).await?,
+    };
+    Ok(model_summaries(rows, catalog))
+}
+
+/// 全站口径：与用户排行榜一致，从 identities 与活动表内连接出发，
+/// 不按身份过滤，只保留请求时间范围条件。
+fn team_aggregate_query(bounds: Option<TimeBounds>) -> Select<identities::Entity> {
+    let mut query = identities::Entity::find()
+        .join(JoinType::InnerJoin, identities::Relation::Activities.def());
+    if let Some(bounds) = bounds {
+        query = query
+            .filter(identity_activities::Column::CreatedAt.gte(bounds.start.to_rfc3339()))
+            .filter(identity_activities::Column::CreatedAt.lt(bounds.end.to_rfc3339()));
+    }
+    query
+}
+
+/// personal 与 team 两条路径共用同一套聚合投影和分组，避免列定义漂移。
+async fn list_model_aggregates<E>(
+    db: &DatabaseConnection,
+    query: Select<E>,
+) -> Result<Vec<ModelAggregate>, StorageError>
+where
+    E: EntityTrait,
+{
+    Ok(query
         .select_only()
         .column(identity_activities::Column::ModelRequested)
         .column_as(identity_activities::Column::Id.count(), "total_requests")
@@ -62,7 +99,14 @@ async fn list_model_stats(
         .group_by(identity_activities::Column::ModelRequested)
         .into_model::<ModelAggregate>()
         .all(db)
-        .await?;
+        .await?)
+}
+
+/// 聚合结果 → 对外结构：解析目录显示名，并按请求数排序。
+fn model_summaries(
+    rows: Vec<ModelAggregate>,
+    catalog: Option<&ProviderCatalog>,
+) -> Vec<ModelStatsSummary> {
     let mut summaries =
         rows.into_iter()
             .map(|row| ModelStatsSummary {
@@ -84,7 +128,7 @@ async fn list_model_stats(
             .cmp(&left.total_requests)
             .then_with(|| left.model_requested.cmp(&right.model_requested))
     });
-    Ok(summaries)
+    summaries
 }
 
 #[derive(FromQueryResult)]

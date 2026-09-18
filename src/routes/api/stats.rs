@@ -10,7 +10,10 @@ use prelay_protocol::{
 };
 use serde::Deserialize;
 
-use crate::{stats::StatsRange, AppState};
+use crate::{
+    stats::{ModelStatsScope, StatsRange},
+    AppState,
+};
 
 use super::auth::CurrentIdentity;
 use super::{ApiError, ApiQuery};
@@ -33,6 +36,22 @@ struct StatsQuery {
 impl StatsQuery {
     fn range(&self) -> StatsRange {
         self.range.unwrap_or_default()
+    }
+}
+
+#[derive(Deserialize)]
+struct ModelStatsQuery {
+    range: Option<StatsRange>,
+    scope: Option<ModelStatsScope>,
+}
+
+impl ModelStatsQuery {
+    fn range(&self) -> StatsRange {
+        self.range.unwrap_or_default()
+    }
+
+    fn scope(&self) -> ModelStatsScope {
+        self.scope.unwrap_or_default()
     }
 }
 
@@ -111,12 +130,17 @@ async fn leaderboard(
 async fn models(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
-    ApiQuery(query): ApiQuery<StatsQuery>,
+    ApiQuery(query): ApiQuery<ModelStatsQuery>,
 ) -> Result<Json<Vec<ModelStatsSummary>>, ApiError> {
     Ok(Json(
         state
             .storage
-            .model_stats_with_catalog(&identity.id, query.range(), &state.provider_catalog)
+            .model_stats_with_catalog(
+                &identity.id,
+                query.scope(),
+                query.range(),
+                &state.provider_catalog,
+            )
             .await?,
     ))
 }

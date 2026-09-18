@@ -2,7 +2,7 @@ use sea_orm::Database;
 
 use crate::{
     schema::initialize,
-    stats::{ActivityInsert, StatsRange},
+    stats::{ActivityInsert, ModelStatsScope, StatsRange},
     storage::{MasterKey, Storage},
 };
 
@@ -27,7 +27,12 @@ async fn model_stats_resolve_display_names_without_splitting_model_ids() {
 
     let catalog = crate::test_support::fixture_catalog();
     let rows = storage
-        .model_stats_with_catalog(&identity, StatsRange::All, &catalog)
+        .model_stats_with_catalog(
+            &identity,
+            ModelStatsScope::Personal,
+            StatsRange::All,
+            &catalog,
+        )
         .await
         .expect("load model stats with catalog");
 
@@ -49,6 +54,58 @@ async fn model_stats_resolve_display_names_without_splitting_model_ids() {
         Some("unknown-model")
     );
     assert_eq!(rows.len(), 2);
+}
+
+#[tokio::test]
+async fn model_stats_scope_selects_personal_or_team_aggregation() {
+    let storage = test_storage().await;
+    let identity_a = register_identity(&storage, "scope-a").await;
+    let identity_b = register_identity(&storage, "scope-b").await;
+    for (identity, id, model, input_tokens, output_tokens) in [
+        (&identity_a, "scope-a-shared", "shared-model", 3, 4),
+        (&identity_b, "scope-b-shared", "shared-model", 5, 6),
+        (&identity_b, "scope-b-other", "other-model", 7, 8),
+    ] {
+        let mut log = test_log(Some(input_tokens), Some(output_tokens));
+        log.model_requested = model.to_string();
+        storage
+            .insert_activity_with_id(identity, id.to_string(), log)
+            .await
+            .expect("insert scoped model log");
+    }
+
+    let catalog = crate::test_support::fixture_catalog();
+    let personal = storage
+        .model_stats_with_catalog(
+            &identity_a,
+            ModelStatsScope::Personal,
+            StatsRange::All,
+            &catalog,
+        )
+        .await
+        .expect("load personal model stats");
+    assert_eq!(personal.len(), 1);
+    assert_eq!(personal[0].model_requested.as_deref(), Some("shared-model"));
+    assert_eq!(personal[0].total_requests, 1);
+    assert_eq!(personal[0].input_tokens, 3);
+    assert_eq!(personal[0].output_tokens, 4);
+
+    let team = storage
+        .model_stats_with_catalog(
+            &identity_a,
+            ModelStatsScope::Team,
+            StatsRange::All,
+            &catalog,
+        )
+        .await
+        .expect("load team model stats");
+    assert_eq!(team.len(), 2);
+    assert_eq!(team[0].model_requested.as_deref(), Some("shared-model"));
+    assert_eq!(team[0].total_requests, 2);
+    assert_eq!(team[0].input_tokens, 8);
+    assert_eq!(team[0].output_tokens, 10);
+    assert_eq!(team[1].model_requested.as_deref(), Some("other-model"));
+    assert_eq!(team[1].total_requests, 1);
 }
 
 #[tokio::test]

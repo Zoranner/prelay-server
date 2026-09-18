@@ -286,6 +286,40 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     assert_eq!(models_a[0].input_tokens, 3);
     assert_eq!(models_a[0].output_tokens, 4);
 
+    let (status, models_a_personal): (StatusCode, Vec<ModelStatsSummary>) = request_json(
+        &app,
+        "GET",
+        "/api/stats/models?range=today&scope=personal",
+        Some(credential_a),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(models_a_personal, models_a);
+
+    let (status, models_team): (StatusCode, Vec<ModelStatsSummary>) = request_json(
+        &app,
+        "GET",
+        "/api/stats/models?range=today&scope=team",
+        Some(credential_a),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let team_flash = models_team
+        .iter()
+        .find(|row| row.model_requested.as_deref() == Some("deepseek-v4-flash"))
+        .expect("team stats include the current identity model");
+    let team_pro = models_team
+        .iter()
+        .find(|row| row.model_requested.as_deref() == Some("deepseek-v4-pro"))
+        .expect("team stats include the other identity model");
+    assert_eq!(team_flash.total_requests, 1);
+    assert_eq!(team_flash.input_tokens, 3);
+    assert_eq!(team_pro.total_requests, 1);
+    assert_eq!(team_pro.failed_requests, 1);
+    assert_eq!(team_pro.input_tokens, 5);
+
     let (status, providers_a): (StatusCode, Vec<ProviderStatsSummary>) = request_json(
         &app,
         "GET",
