@@ -1,6 +1,7 @@
 use prelay_server::{
     database::{connect, DatabaseConfig, DatabaseConfigError},
     schema::initialize,
+    test_support::{test_database_config, test_database_connection},
 };
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use std::sync::{Mutex, OnceLock};
@@ -27,16 +28,14 @@ fn rejects_missing_or_unsupported_database_url() {
         DatabaseConfig::from_url("mysql://localhost/prelay"),
         Err(DatabaseConfigError::UnsupportedScheme { .. })
     ));
+    assert!(matches!(
+        DatabaseConfig::from_url("sqlite::memory:"),
+        Err(DatabaseConfigError::UnsupportedScheme { .. })
+    ));
 }
 
 #[test]
-fn sqlite_is_single_connection_and_postgres_uses_configured_limit() {
-    assert_eq!(
-        DatabaseConfig::from_url("sqlite::memory:")
-            .expect("SQLite URL is supported")
-            .max_connections(),
-        1
-    );
+fn postgres_uses_the_configured_connection_limit() {
     assert_eq!(
         DatabaseConfig::from_url("postgres://user:pass@host/prelay")
             .expect("PostgreSQL URL is supported")
@@ -53,10 +52,6 @@ fn reads_database_url_from_environment() {
 
     let config = DatabaseConfig::from_environment().expect("read PostgreSQL configuration");
 
-    assert_eq!(
-        config.kind(),
-        prelay_server::database::DatabaseKind::Postgres
-    );
     assert_eq!(config.max_connections(), 10);
     set_environment_variable("DATABASE_URL", None);
 }
@@ -87,19 +82,6 @@ fn rejects_missing_or_invalid_postgres_connection_limit_from_environment() {
     set_environment_variable("DATABASE_MAX_CONNECTIONS", None);
 }
 
-#[test]
-fn ignores_connection_limit_override_for_sqlite() {
-    let _guard = environment_lock().lock().expect("lock environment");
-    set_environment_variable("DATABASE_URL", Some("sqlite::memory:"));
-    set_environment_variable("DATABASE_MAX_CONNECTIONS", Some("not-a-number"));
-
-    let config = DatabaseConfig::from_environment().expect("read SQLite configuration");
-
-    assert_eq!(config.max_connections(), 1);
-    set_environment_variable("DATABASE_URL", None);
-    set_environment_variable("DATABASE_MAX_CONNECTIONS", None);
-}
-
 #[tokio::test]
 async fn connection_errors_do_not_expose_database_credentials() {
     let config = DatabaseConfig::from_url("postgres://user:secret@127.0.0.1:1/prelay")
@@ -115,32 +97,36 @@ async fn connection_errors_do_not_expose_database_credentials() {
 }
 
 #[tokio::test]
-async fn connects_to_a_supported_sqlite_database() {
-    let config = DatabaseConfig::from_url("sqlite::memory:").expect("SQLite URL is supported");
-    let connection = connect(&config).await.expect("connect to in-memory SQLite");
+async fn connects_to_the_configured_test_database() {
+    let config = test_database_config();
+    let connection = connect(&config)
+        .await
+        .expect("connect to the test PostgreSQL database");
 
-    connection.ping().await.expect("ping SQLite connection");
+    connection.ping().await.expect("ping the test database");
 }
 
 #[tokio::test]
-async fn initializes_an_empty_database_without_migration_history() {
-    let config = DatabaseConfig::from_url("sqlite::memory:").expect("SQLite URL is supported");
-    let connection = connect(&config).await.expect("connect to in-memory SQLite");
+async fn initializes_a_database_without_migration_history() {
+    let connection = test_database_connection().await;
 
     initialize(&connection)
         .await
-        .expect("initialize the current schema");
+        .expect("reuse the initialized schema");
     let migration_history = connection
         .query_one_raw(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'seaql_migrations'"
+            DbBackend::Postgres,
+            "SELECT COUNT(*) AS history_count FROM information_schema.tables \
+             WHERE table_schema = current_schema() AND table_name = 'seaql_migrations'"
                 .to_owned(),
         ))
         .await
-        .expect("inspect SQLite schema")
+        .expect("inspect the schema")
         .expect("migration history count");
-    assert_eq!(migration_history.try_get::<i64>("", "COUNT(*)").unwrap(), 0);
-    initialize(&connection)
-        .await
-        .expect("reuse the initialized schema");
+    assert_eq!(
+        migration_history
+            .try_get::<i64>("", "history_count")
+            .unwrap(),
+        0
+    );
 }

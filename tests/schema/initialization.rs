@@ -1,5 +1,37 @@
-use prelay_server::schema::initialize;
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, EntityTrait, Statement};
+use prelay_server::{schema::initialize, test_support::test_database_connection};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, Statement};
+
+async fn column_exists(db: &DatabaseConnection, table: &str, column: &str) -> bool {
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Postgres,
+            format!(
+                "SELECT COUNT(*) AS result_count FROM information_schema.columns \
+                 WHERE table_schema = current_schema() \
+                 AND table_name = '{table}' \
+                 AND column_name = '{column}'"
+            ),
+        ))
+        .await
+        .expect("inspect schema columns")
+        .expect("column count result");
+    row.try_get::<i64>("", "result_count").unwrap() == 1
+}
+
+async fn table_exists(db: &DatabaseConnection, table: &str) -> bool {
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Postgres,
+            format!(
+                "SELECT COUNT(*) AS result_count FROM information_schema.tables \
+                 WHERE table_schema = current_schema() AND table_name = '{table}'"
+            ),
+        ))
+        .await
+        .expect("inspect schema tables")
+        .expect("table count result");
+    row.try_get::<i64>("", "result_count").unwrap() == 1
+}
 
 async fn create_existing_base_tables(db: &DatabaseConnection) {
     for table in [
@@ -40,9 +72,7 @@ async fn create_existing_base_tables(db: &DatabaseConnection) {
 
 #[tokio::test]
 async fn initializes_an_empty_database_without_migration_metadata() {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("connect to in-memory SQLite");
+    let db = test_database_connection().await;
 
     initialize(&db)
         .await
@@ -52,23 +82,12 @@ async fn initializes_an_empty_database_without_migration_metadata() {
         .await
         .expect("identities table exists");
 
-    let row = db
-        .query_one_raw(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'seaql_migrations'"
-                .to_owned(),
-        ))
-        .await
-        .expect("inspect SQLite schema")
-        .expect("migration table count result");
-    assert_eq!(row.try_get::<i64>("", "COUNT(*)").unwrap(), 0);
+    assert!(!table_exists(&db, "seaql_migrations").await);
 }
 
 #[tokio::test]
 async fn initializes_provider_sharing_structures_in_an_empty_database() {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("connect to in-memory SQLite");
+    let db = test_database_connection().await;
 
     initialize(&db)
         .await
@@ -80,20 +99,8 @@ async fn initializes_provider_sharing_structures_in_an_empty_database() {
         ("identity_provider_shares", "grantee_identity_id"),
         ("identity_provider_shares", "created_at"),
     ] {
-        let row = db
-            .query_one_raw(Statement::from_string(
-                DbBackend::Sqlite,
-                format!(
-                    "SELECT COUNT(*) AS result_count FROM pragma_table_info('{table}') \
-                     WHERE name = '{column}'"
-                ),
-            ))
-            .await
-            .expect("inspect provider sharing schema")
-            .expect("provider sharing column count");
-        assert_eq!(
-            row.try_get::<i64>("", "result_count").unwrap(),
-            1,
+        assert!(
+            column_exists(&db, table, column).await,
             "missing {table}.{column}"
         );
     }
@@ -101,9 +108,7 @@ async fn initializes_provider_sharing_structures_in_an_empty_database() {
 
 #[tokio::test]
 async fn rejects_a_partially_initialized_database() {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("connect to in-memory SQLite");
+    let db = test_database_connection().await;
     db.execute_unprepared("CREATE TABLE identities (id TEXT PRIMARY KEY)")
         .await
         .expect("create an incomplete schema");
@@ -116,9 +121,7 @@ async fn rejects_a_partially_initialized_database() {
 
 #[tokio::test]
 async fn rejects_complete_table_names_without_provider_visibility_column() {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("connect to in-memory SQLite");
+    let db = test_database_connection().await;
     for table in [
         "identities",
         "identity_provider_configs",
@@ -150,9 +153,7 @@ async fn rejects_complete_table_names_without_provider_visibility_column() {
 
 #[tokio::test]
 async fn rejects_provider_shares_without_required_unique_index() {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("connect to in-memory SQLite");
+    let db = test_database_connection().await;
     for table in [
         "identities",
         "identity_endpoint_configs",
@@ -199,9 +200,7 @@ async fn rejects_provider_shares_without_required_unique_index() {
 
 #[tokio::test]
 async fn migrates_the_complete_legacy_activity_table_without_losing_rows() {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("connect to in-memory SQLite");
+    let db = test_database_connection().await;
     create_existing_base_tables(&db).await;
     db.execute_unprepared(
         "CREATE TABLE identity_activities (id TEXT PRIMARY KEY, identity_id TEXT NOT NULL, created_at TEXT NOT NULL)",
@@ -221,7 +220,7 @@ async fn migrates_the_complete_legacy_activity_table_without_losing_rows() {
 
     let row = db
         .query_one_raw(Statement::from_string(
-            DbBackend::Sqlite,
+            DbBackend::Postgres,
             "SELECT id FROM identity_activities WHERE id = 'activity-1'".to_owned(),
         ))
         .await
@@ -232,16 +231,14 @@ async fn migrates_the_complete_legacy_activity_table_without_losing_rows() {
 
 #[tokio::test]
 async fn removes_legacy_cost_columns_from_an_existing_activity_table() {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("connect to in-memory SQLite");
+    let db = test_database_connection().await;
     create_existing_base_tables(&db).await;
     db.execute_unprepared(
         "CREATE TABLE identity_activities (
             id TEXT PRIMARY KEY,
             identity_id TEXT NOT NULL,
             created_at TEXT NOT NULL,
-            estimated_cost DOUBLE,
+            estimated_cost DOUBLE PRECISION,
             currency TEXT
         )",
     )
@@ -251,20 +248,8 @@ async fn removes_legacy_cost_columns_from_an_existing_activity_table() {
     initialize(&db).await.expect("initialize existing schema");
 
     for column in ["estimated_cost", "currency"] {
-        let row = db
-            .query_one_raw(Statement::from_string(
-                DbBackend::Sqlite,
-                format!(
-                    "SELECT COUNT(*) AS result_count FROM pragma_table_info('identity_activities') \
-                     WHERE name = '{column}'"
-                ),
-            ))
-            .await
-            .expect("inspect activity columns")
-            .expect("activity column count");
-        assert_eq!(
-            row.try_get::<i64>("", "result_count").unwrap(),
-            0,
+        assert!(
+            !column_exists(&db, "identity_activities", column).await,
             "legacy cost column {column} must be removed"
         );
     }
@@ -272,15 +257,13 @@ async fn removes_legacy_cost_columns_from_an_existing_activity_table() {
 
 #[tokio::test]
 async fn migrates_stale_activity_content_once_during_schema_initialization() {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("connect to in-memory SQLite");
+    let db = test_database_connection().await;
 
     initialize(&db).await.expect("initialize current schema");
     db.execute_unprepared(
         "CREATE TABLE IF NOT EXISTS prelay_schema_migrations (
             version VARCHAR(128) PRIMARY KEY,
-            applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )",
     )
     .await
@@ -312,7 +295,7 @@ async fn migrates_stale_activity_content_once_during_schema_initialization() {
              attempts, created_at, updated_at)
          VALUES
             ('content-migration', 'activity-migration', 'input', 'output', 'hash', 'capturing',
-             0, 0, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')",
+             false, 0, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')",
     )
     .await
     .expect("insert stale activity content");
@@ -323,7 +306,7 @@ async fn migrates_stale_activity_content_once_during_schema_initialization() {
 
     let row = db
         .query_one_raw(Statement::from_string(
-            DbBackend::Sqlite,
+            DbBackend::Postgres,
             "SELECT status, input_text, output_text
              FROM activity_contents
              WHERE id = 'content-migration'"
@@ -341,7 +324,7 @@ async fn migrates_stale_activity_content_once_during_schema_initialization() {
         .expect("re-running schema initialization is idempotent");
     let migration_count = db
         .query_one_raw(Statement::from_string(
-            DbBackend::Sqlite,
+            DbBackend::Postgres,
             "SELECT COUNT(*) AS migration_count
              FROM prelay_schema_migrations
              WHERE version = 'activity_content_lifecycle_v1'"
@@ -357,11 +340,10 @@ async fn migrates_stale_activity_content_once_during_schema_initialization() {
         1
     );
 }
+
 #[tokio::test]
 async fn adds_models_column_when_migrating_an_existing_provider_table() {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("connect to in-memory SQLite");
+    let db = test_database_connection().await;
     initialize(&db)
         .await
         .expect("initialize the current schema");
@@ -371,15 +353,5 @@ async fn adds_models_column_when_migrating_an_existing_provider_table() {
 
     initialize(&db).await.expect("migrate the existing schema");
 
-    let row = db
-        .query_one_raw(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) AS result_count FROM pragma_table_info('identity_provider_configs') \
-             WHERE name = 'models_json'"
-                .to_string(),
-        ))
-        .await
-        .expect("inspect provider columns")
-        .expect("models column count");
-    assert_eq!(row.try_get::<i64>("", "result_count").unwrap(), 1);
+    assert!(column_exists(&db, "identity_provider_configs", "models_json").await);
 }

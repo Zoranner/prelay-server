@@ -1,13 +1,6 @@
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DatabaseKind {
-    Sqlite,
-    Postgres,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DatabaseConfig {
     url: String,
-    kind: DatabaseKind,
     max_connections: u32,
 }
 
@@ -19,13 +12,13 @@ pub enum DatabaseConfigError {
 }
 
 pub enum DatabaseError {
-    Connect { kind: DatabaseKind },
+    Connect,
 }
 
 impl std::fmt::Display for DatabaseError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Connect { kind } => write!(formatter, "failed to connect to {kind} database"),
+            Self::Connect => formatter.write_str("failed to connect to the PostgreSQL database"),
         }
     }
 }
@@ -37,15 +30,6 @@ impl std::fmt::Debug for DatabaseError {
 }
 
 impl std::error::Error for DatabaseError {}
-
-impl std::fmt::Display for DatabaseKind {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Sqlite => formatter.write_str("SQLite"),
-            Self::Postgres => formatter.write_str("PostgreSQL"),
-        }
-    }
-}
 
 impl std::fmt::Display for DatabaseConfigError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -77,16 +61,13 @@ impl DatabaseConfig {
             .ok_or_else(|| DatabaseConfigError::UnsupportedScheme {
                 scheme: "<missing>".to_owned(),
             })?;
-        let (kind, max_connections) = match scheme.as_str() {
-            "sqlite" => (DatabaseKind::Sqlite, 1),
-            "postgres" | "postgresql" => (DatabaseKind::Postgres, 10),
-            _ => return Err(DatabaseConfigError::UnsupportedScheme { scheme }),
-        };
+        if !matches!(scheme.as_str(), "postgres" | "postgresql") {
+            return Err(DatabaseConfigError::UnsupportedScheme { scheme });
+        }
 
         Ok(Self {
             url: url.to_string(),
-            kind,
-            max_connections,
+            max_connections: 10,
         })
     }
 
@@ -94,14 +75,12 @@ impl DatabaseConfig {
         let url = std::env::var("DATABASE_URL").map_err(|_| DatabaseConfigError::MissingUrl)?;
         let mut config = Self::from_url(&url)?;
 
-        if config.kind == DatabaseKind::Postgres {
-            if let Ok(value) = std::env::var("DATABASE_MAX_CONNECTIONS") {
-                config.max_connections = value
-                    .parse()
-                    .ok()
-                    .filter(|limit| *limit > 0)
-                    .ok_or(DatabaseConfigError::InvalidMaxConnections { value })?;
-            }
+        if let Ok(value) = std::env::var("DATABASE_MAX_CONNECTIONS") {
+            config.max_connections = value
+                .parse()
+                .ok()
+                .filter(|limit| *limit > 0)
+                .ok_or(DatabaseConfigError::InvalidMaxConnections { value })?;
         }
 
         Ok(config)
@@ -109,10 +88,6 @@ impl DatabaseConfig {
 
     pub fn url(&self) -> &str {
         &self.url
-    }
-
-    pub const fn kind(&self) -> DatabaseKind {
-        self.kind
     }
 
     pub const fn max_connections(&self) -> u32 {
@@ -127,8 +102,6 @@ pub async fn connect(config: &DatabaseConfig) -> Result<DatabaseConnection, Data
         .sqlx_logging(false);
     Database::connect(options)
         .await
-        .map_err(|_: DbErr| DatabaseError::Connect {
-            kind: config.kind(),
-        })
+        .map_err(|_: DbErr| DatabaseError::Connect)
 }
 use sea_orm::{ConnectOptions, Database, DatabaseConnection, DbErr};

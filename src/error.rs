@@ -224,7 +224,7 @@ mod tests {
     async fn internal_protocol_error_hides_storage_diagnostics() {
         let response = AppError::Protocol {
             code: ProtocolErrorCode::Internal,
-            message: "SQLite error: no such table: provider_keys; credential=secret-value"
+            message: "PostgreSQL error: no such table: provider_keys; credential=secret-value"
                 .to_string(),
         }
         .into_response();

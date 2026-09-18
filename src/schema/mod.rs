@@ -279,17 +279,11 @@ async fn required_base_tables_exist<C: ConnectionTrait>(db: &C) -> Result<bool, 
 async fn table_exists<C: ConnectionTrait>(db: &C, table: &str) -> Result<bool, DbErr> {
     let backend = db.get_database_backend();
     let sql = match backend {
-        DbBackend::Sqlite => {
-            format!(
-                "SELECT COUNT(*) AS table_exists FROM sqlite_master \
-                 WHERE type = 'table' AND name = '{table}'"
-            )
-        }
         DbBackend::Postgres => format!(
             "SELECT COUNT(*) AS table_exists FROM information_schema.tables \
              WHERE table_schema = current_schema() AND table_name = '{table}'"
         ),
-        _ => unreachable!("only SQLite and PostgreSQL are supported"),
+        _ => unreachable!("only PostgreSQL is supported"),
     };
     let row = db
         .query_one_raw(Statement::from_string(backend, sql))
@@ -306,16 +300,13 @@ pub(crate) async fn column_exists<C: ConnectionTrait>(
 ) -> Result<bool, DbErr> {
     let backend = db.get_database_backend();
     let sql = match backend {
-        DbBackend::Sqlite => format!(
-            "SELECT COUNT(*) AS column_exists FROM pragma_table_info('{table}') WHERE name = '{column}'"
-        ),
         DbBackend::Postgres => format!(
             "SELECT COUNT(*) AS column_exists FROM information_schema.columns \
              WHERE table_schema = current_schema() \
              AND table_name = '{table}' \
              AND column_name = '{column}'"
         ),
-        _ => unreachable!("only SQLite and PostgreSQL are supported"),
+        _ => unreachable!("only PostgreSQL is supported"),
     };
     let row = db
         .query_one_raw(Statement::from_string(backend, sql))
@@ -328,17 +319,13 @@ pub(crate) async fn column_exists<C: ConnectionTrait>(
 async fn index_exists<C: ConnectionTrait>(db: &C, table: &str, index: &str) -> Result<bool, DbErr> {
     let backend = db.get_database_backend();
     let sql = match backend {
-        DbBackend::Sqlite => format!(
-            "SELECT COUNT(*) AS index_exists FROM sqlite_master \
-             WHERE type = 'index' AND tbl_name = '{table}' AND name = '{index}'"
-        ),
         DbBackend::Postgres => format!(
             "SELECT COUNT(*) AS index_exists FROM pg_indexes \
              WHERE schemaname = current_schema() \
              AND tablename = '{table}' \
              AND indexname = '{index}'"
         ),
-        _ => unreachable!("only SQLite and PostgreSQL are supported"),
+        _ => unreachable!("only PostgreSQL is supported"),
     };
     let row = db
         .query_one_raw(Statement::from_string(backend, sql))

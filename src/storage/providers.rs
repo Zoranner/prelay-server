@@ -391,24 +391,13 @@ mod tests {
 
     use super::*;
     use crate::{
-        database::{connect, DatabaseConfig},
         entity::identity::provider_configs as identity_provider_configs,
         identity::credential::generate_credential,
-        schema::initialize,
-        storage::MasterKey,
     };
 
     #[tokio::test]
     async fn create_provider_defaults_visibility_to_private() {
-        let database_config =
-            DatabaseConfig::from_url("sqlite::memory:").expect("valid in-memory SQLite URL");
-        let db = connect(&database_config)
-            .await
-            .expect("connect to in-memory SQLite");
-        initialize(&db)
-            .await
-            .expect("initialize test database schema");
-        let storage = Storage::from_connection(db, MasterKey::from_bytes([0; 32]));
+        let storage = crate::test_support::test_storage().await;
         let identity = storage
             .register_identity(
                 "machine-provider-visibility",

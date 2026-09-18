@@ -21,10 +21,7 @@ pub(super) async fn apply(db: &DatabaseConnection) -> Result<(), DbErr> {
                 DbBackend::Postgres => {
                     "INSERT INTO prelay_schema_migrations (version) VALUES ($1) ON CONFLICT (version) DO NOTHING"
                 }
-                DbBackend::Sqlite => {
-                    "INSERT OR IGNORE INTO prelay_schema_migrations (version) VALUES ($1)"
-                }
-                _ => unreachable!("only SQLite and PostgreSQL are supported"),
+                _ => unreachable!("only PostgreSQL is supported"),
             },
             [MIGRATION_VERSION.into()],
         ))
@@ -51,22 +48,7 @@ pub(super) async fn apply(db: &DatabaseConnection) -> Result<(), DbErr> {
                      AND a.status IN ('success', 'failed')
                )"
         }
-        DbBackend::Sqlite => {
-            "UPDATE activity_contents
-             SET status = 'pending',
-                 next_attempt_at = datetime('now'),
-                 lease_owner = NULL,
-                 lease_expires_at = NULL,
-                 updated_at = datetime('now')
-             WHERE status = 'capturing'
-               AND datetime(updated_at) < datetime('now', '-5 minutes')
-               AND activity_id IN (
-                   SELECT id
-                   FROM identity_activities
-                   WHERE status IN ('success', 'failed')
-               )"
-        }
-        _ => unreachable!("only SQLite and PostgreSQL are supported"),
+        _ => unreachable!("only PostgreSQL is supported"),
     };
     transaction.execute_unprepared(update_sql).await?;
     transaction.commit().await

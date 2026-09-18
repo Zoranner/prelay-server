@@ -193,7 +193,7 @@ async fn daily_timeline_rejects_ranges_wider_than_the_bucket_limit() {
 
 #[tokio::test]
 async fn daily_timeline_uses_a_single_grouped_query() {
-    let mock = MockDatabase::new(DbBackend::Sqlite)
+    let mock = MockDatabase::new(DbBackend::Postgres)
         .append_query_results(vec![Vec::<BTreeMap<String, Value>>::new()])
         .into_connection();
     let storage = Storage::from_connection(mock.clone(), MasterKey::from_bytes([0; 32]));
@@ -214,12 +214,13 @@ async fn daily_timeline_uses_a_single_grouped_query() {
     assert_eq!(statements.len(), 1, "按天时间线必须只查一次库");
     let sql = &statements[0].sql;
     assert!(sql.contains("GROUP BY"), "{sql}");
-    assert!(sql.contains("strftime('%Y-%m-%d 00:00:00'"), "{sql}");
+    assert!(sql.contains("'YYYY-MM-DD 00:00:00'"), "{sql}");
+    assert!(sql.contains("AT TIME ZONE 'UTC'"), "{sql}");
 }
 
 #[tokio::test]
 async fn mapped_timelines_use_one_grouped_query_per_request() {
-    let mock = MockDatabase::new(DbBackend::Sqlite)
+    let mock = MockDatabase::new(DbBackend::Postgres)
         .append_query_results(vec![
             Vec::<BTreeMap<String, Value>>::new(),
             Vec::<BTreeMap<String, Value>>::new(),
@@ -245,11 +246,11 @@ async fn mapped_timelines_use_one_grouped_query_per_request() {
     let hourly = &statements[0].sql;
     let daily = &statements[1].sql;
     assert!(
-        hourly.contains("GROUP BY") && hourly.contains("strftime('%Y-%m-%d %H:00:00'"),
+        hourly.contains("GROUP BY") && hourly.contains("'YYYY-MM-DD HH24:00:00'"),
         "{hourly}"
     );
     assert!(
-        daily.contains("GROUP BY") && daily.contains("strftime('%Y-%m-%d 00:00:00'"),
+        daily.contains("GROUP BY") && daily.contains("'YYYY-MM-DD 00:00:00'"),
         "{daily}"
     );
 }

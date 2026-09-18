@@ -12,7 +12,7 @@
 
 ## 数据与安全边界
 
-- 不提交 SQLite 数据库文件、PostgreSQL 数据卷或导出、其他运行时数据库数据、`.env`、主密钥、设备凭据、Endpoint Token 或 Provider API Key。
+- 不提交 PostgreSQL 数据卷或导出、其他运行时数据库数据、`.env`、主密钥、设备凭据、Endpoint Token 或 Provider API Key。
 - 旧版未按身份归属的数据库会被有意丢弃，不能在未重新定义迁移和密钥边界的情况下恢复兼容路径。
 - 服务本身不提供 TLS。任何暴露到非受信网络的部署必须在运行环境中提供 TLS 与网络访问控制；不要把该部署责任伪装成路由层功能。
 - 不终止用户正在运行的 `prelay-server.exe`。若 Cargo 因 Windows 文件锁失败，报告锁和命令，不使用外部 target 目录规避。
@@ -21,6 +21,7 @@
 
 - 首次获取源码或协议变更后，执行 `git submodule update --init --recursive`。
 - 本地运行需要有效的 `ENCRYPTION_KEY`；可由仓库根 `.env` 加载。默认监听 `0.0.0.0:18080`，`LISTEN_ADDRESS` 可覆盖完整地址。
+- 服务端只支持 PostgreSQL；`DATABASE_URL` 必须指向 PostgreSQL。测试需要 `TEST_POSTGRES_URL` 指向专用测试库：每个用例会创建并清理自己的 `prelay_test_*` schema，缺失该变量时测试直接失败，不会回退到其它数据库。
 - 修改 Rust 代码后在仓库根目录执行：
 
 ```text
@@ -30,5 +31,5 @@ cargo test --all-targets --all-features
 git diff --check
 ```
 
-- 修改数据库初始化、原始 SQL、SeaORM 映射或 PostgreSQL 连接配置时，除上述检查外，仍须执行受影响的存储或路由集成测试。SQLite 与 mock 测试不能证明 PostgreSQL 部署可用，正式部署前应使用独立环境验收；不得使用运行中或生产数据库作为测试库。
+- 修改数据库初始化、原始 SQL、SeaORM 映射或 PostgreSQL 连接配置时，除上述检查外，仍须执行受影响的存储或路由集成测试。mock 测试不能证明 PostgreSQL 部署可用，正式部署前应使用独立环境验收；不得使用运行中或生产数据库作为测试库。
 - 自动化测试主要验证本地转换和 mock upstream；真实 Codex、Claude Code、上游服务和 Docker 部署需独立联调，不得将前者表述为后者已验收。

@@ -1,6 +1,29 @@
+use std::ffi::OsString;
+
 use prelay_server::storage::MasterKey;
 
-use crate::support;
+struct EnvironmentVariableRestore {
+    name: &'static str,
+    original: Option<OsString>,
+}
+
+impl EnvironmentVariableRestore {
+    fn capture(name: &'static str) -> Self {
+        Self {
+            name,
+            original: std::env::var_os(name),
+        }
+    }
+}
+
+impl Drop for EnvironmentVariableRestore {
+    fn drop(&mut self) {
+        match &self.original {
+            Some(value) => std::env::set_var(self.name, value),
+            None => std::env::remove_var(self.name),
+        }
+    }
+}
 
 #[test]
 fn master_key_requires_base64_encoded_32_bytes() {
@@ -11,7 +34,7 @@ fn master_key_requires_base64_encoded_32_bytes() {
 
 #[test]
 fn master_key_environment_requires_a_valid_base64_encoded_32_byte_value() {
-    let _restore = support::EnvironmentVariableRestore::capture("ENCRYPTION_KEY");
+    let _restore = EnvironmentVariableRestore::capture("ENCRYPTION_KEY");
 
     std::env::remove_var("ENCRYPTION_KEY");
     assert!(MasterKey::from_environment().is_err());

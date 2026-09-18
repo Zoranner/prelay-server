@@ -199,11 +199,10 @@ fn request_summary(row: activities::Model, catalog: Option<&ProviderCatalog>) ->
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::{ColumnTrait, Database, EntityTrait, QueryFilter};
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
     use crate::{
         entity::identity::activities,
-        schema::initialize,
         stats::{ActivityInsert, StreamActivityUpdate},
         storage::{MasterKey, Storage, StorageError},
     };
@@ -318,10 +317,7 @@ mod tests {
     }
 
     async fn test_storage() -> (Storage, sea_orm::DatabaseConnection) {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("connect test database");
-        initialize(&db).await.expect("initialize test schema");
+        let db = crate::test_support::test_database_connection().await;
         (
             Storage::from_connection(db.clone(), MasterKey::from_bytes([0; 32])),
             db,

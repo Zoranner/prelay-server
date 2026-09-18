@@ -182,7 +182,7 @@ mod tests {
     };
 
     use prelay_server::{entity::identities, schema::initialize, storage::StorageError};
-    use sea_orm::{Database, EntityTrait};
+    use sea_orm::EntityTrait;
     use tracing::{
         field::{Field, Visit},
         Event, Subscriber,
@@ -240,9 +240,7 @@ mod tests {
 
     #[tokio::test]
     async fn service_startup_initializes_an_empty_database() {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("connect to in-memory SQLite");
+        let db = prelay_server::test_support::test_database_connection().await;
 
         initialize(&db).await.expect("initialize service database");
         identities::Entity::find()

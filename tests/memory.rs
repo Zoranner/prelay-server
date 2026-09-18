@@ -1,9 +1,7 @@
 use prelay_server::{
     memory::{MemoryCandidate, MemorySearch},
-    schema::initialize,
-    storage::{MasterKey, Storage},
+    storage::Storage,
 };
-use sea_orm::Database;
 
 #[tokio::test]
 async fn exact_candidates_are_idempotent_and_keep_each_identity_source() {
@@ -72,10 +70,10 @@ async fn low_confidence_and_conflicting_candidates_remain_reviewable() {
             &identity,
             MemoryCandidate {
                 kind: "fact".to_string(),
-                content: "当前默认数据库是 SQLite".to_string(),
+                content: "当前默认数据库是 PostgreSQL".to_string(),
                 conflict_key: Some("deployment:default_database".to_string()),
                 confidence: 0.9,
-                evidence: "配置显示 SQLite".to_string(),
+                evidence: "配置显示 PostgreSQL".to_string(),
                 observed_at: "2026-08-31T00:00:00Z".to_string(),
             },
         )
@@ -114,11 +112,7 @@ async fn low_confidence_and_conflicting_candidates_remain_reviewable() {
 }
 
 async fn test_storage() -> Storage {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("connect SQLite");
-    initialize(&db).await.expect("initialize schema");
-    Storage::from_connection(db, MasterKey::from_bytes([0; 32]))
+    prelay_server::test_support::test_storage().await
 }
 
 async fn register_identity(storage: &Storage, suffix: &str) -> String {

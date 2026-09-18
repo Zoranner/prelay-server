@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use sea_orm::{
-    sea_query::Expr, ColumnTrait, DatabaseConnection, DbBackend, EntityTrait, FromQueryResult,
-    QueryFilter, QuerySelect,
+    sea_query::Expr, ColumnTrait, DatabaseConnection, EntityTrait, FromQueryResult, QueryFilter,
+    QuerySelect,
 };
 
 use crate::{
@@ -76,7 +76,7 @@ async fn bucket_totals(
     bounds: TimeBounds,
     granularity: TimelineGranularity,
 ) -> Result<Vec<BucketTokenAggregate>, StorageError> {
-    let bucket = beijing_bucket_expr(db.get_database_backend(), query_bucket(granularity));
+    let bucket = beijing_bucket_expr(query_bucket(granularity));
     Ok(aggregate_query(identity_id, Some(bounds))
         .select_only()
         .expr_as(bucket.clone(), "bucket")
@@ -147,22 +147,15 @@ fn query_bucket(granularity: TimelineGranularity) -> QueryBucket {
 }
 
 /// 北京时间桶起始时间的分组表达式。created_at 以 RFC3339 UTC 文本保存，
-/// SQLite 与 PostgreSQL 的日期函数不同，这里按后端分别生成。
-fn beijing_bucket_expr(backend: DbBackend, bucket: QueryBucket) -> Expr {
+/// 先按 UTC 解析成 timestamptz，再加 8 小时得到北京时间。
+fn beijing_bucket_expr(bucket: QueryBucket) -> Expr {
     let format = match bucket {
-        QueryBucket::Hour => ("%Y-%m-%d %H:00:00", "YYYY-MM-DD HH24:00:00"),
-        QueryBucket::Day => ("%Y-%m-%d 00:00:00", "YYYY-MM-DD 00:00:00"),
+        QueryBucket::Hour => "YYYY-MM-DD HH24:00:00",
+        QueryBucket::Day => "YYYY-MM-DD 00:00:00",
     };
-    match backend {
-        DbBackend::Postgres => Expr::cust(format!(
-            "to_char((identity_activities.created_at::timestamptz AT TIME ZONE 'UTC') + interval '8 hours', '{}')",
-            format.1
-        )),
-        _ => Expr::cust(format!(
-            "strftime('{}', identity_activities.created_at, '+8 hours')",
-            format.0
-        )),
-    }
+    Expr::cust(format!(
+        "to_char((identity_activities.created_at::timestamptz AT TIME ZONE 'UTC') + interval '8 hours', '{format}')"
+    ))
 }
 
 async fn earliest_log_time(

@@ -124,7 +124,7 @@ fn output_item_to_message(item: InternalOutputItem) -> InternalMessage {
 #[cfg(test)]
 mod tests {
     use prelay_protocol::CreateProviderRequest;
-    use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 
     use super::ResponseSessionInsert;
     use crate::{
@@ -133,8 +133,7 @@ mod tests {
             InternalRole,
         },
         entity::identity::response_sessions as identity_response_sessions,
-        schema::initialize,
-        storage::{MasterKey, Storage},
+        storage::Storage,
     };
 
     #[tokio::test]
@@ -247,11 +246,7 @@ mod tests {
     }
 
     async fn test_storage() -> Storage {
-        let db = Database::connect("sqlite::memory:")
-            .await
-            .expect("connect test database");
-        initialize(&db).await.expect("initialize test schema");
-        Storage::from_connection(db, MasterKey::from_bytes([0; 32]))
+        crate::test_support::test_storage().await
     }
 
     async fn seed_identity_and_provider(storage: &Storage, suffix: &str) -> (String, String) {

@@ -52,14 +52,7 @@ async fn test_state() -> AppState {
 }
 
 async fn test_state_with_connection() -> (AppState, DatabaseConnection) {
-    let config = crate::database::DatabaseConfig::from_url("sqlite::memory:")
-        .expect("valid in-memory SQLite URL");
-    let connection = crate::database::connect(&config)
-        .await
-        .expect("connect to in-memory SQLite");
-    crate::schema::initialize(&connection)
-        .await
-        .expect("initialize test database schema");
+    let connection = crate::test_support::test_database_connection().await;
     let state = AppState {
         provider_catalog: std::sync::Arc::new(crate::test_support::fixture_catalog()),
         storage: crate::storage::Storage::from_connection(
@@ -74,13 +67,22 @@ async fn test_state_with_connection() -> (AppState, DatabaseConnection) {
     (state, connection)
 }
 
+/// 让活动插入必然失败，用于验证活动写入失败时的路由行为。
 async fn reject_activity_inserts(connection: &DatabaseConnection) {
     connection
-            .execute_unprepared(
-                "CREATE TRIGGER reject_activity_inserts BEFORE INSERT ON identity_activities BEGIN SELECT RAISE(FAIL, 'forced activity failure'); END",
-            )
-            .await
-            .expect("create activity failure trigger");
+        .execute_unprepared(
+            "CREATE OR REPLACE FUNCTION reject_activity_inserts() RETURNS trigger AS $$ \
+             BEGIN RAISE EXCEPTION 'forced activity failure'; END $$ LANGUAGE plpgsql",
+        )
+        .await
+        .expect("create activity failure function");
+    connection
+        .execute_unprepared(
+            "CREATE TRIGGER reject_activity_inserts BEFORE INSERT ON identity_activities \
+             FOR EACH ROW EXECUTE FUNCTION reject_activity_inserts()",
+        )
+        .await
+        .expect("create activity failure trigger");
 }
 
 mod activities;

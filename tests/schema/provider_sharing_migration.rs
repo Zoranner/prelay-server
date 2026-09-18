@@ -1,5 +1,5 @@
-use prelay_server::schema::initialize;
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+use prelay_server::{schema::initialize, test_support::test_database_connection};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 async fn create_legacy_provider_sharing_tables(db: &DatabaseConnection) {
     for table in [
@@ -39,11 +39,18 @@ async fn create_legacy_provider_sharing_tables(db: &DatabaseConnection) {
     .expect("create current activity table");
 }
 
+async fn count_rows(db: &DatabaseConnection, sql: &str) -> i64 {
+    db.query_one_raw(Statement::from_string(DbBackend::Postgres, sql.to_owned()))
+        .await
+        .expect("inspect schema")
+        .expect("schema count result")
+        .try_get::<i64>("", "result_count")
+        .unwrap()
+}
+
 #[tokio::test]
 async fn upgrades_legacy_provider_sharing_schema_without_losing_provider_data() {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("connect to in-memory SQLite");
+    let db = test_database_connection().await;
     create_legacy_provider_sharing_tables(&db).await;
     db.execute_unprepared(
         "INSERT INTO identity_provider_configs
@@ -62,7 +69,7 @@ async fn upgrades_legacy_provider_sharing_schema_without_losing_provider_data() 
 
     let row = db
         .query_one_raw(Statement::from_string(
-            DbBackend::Sqlite,
+            DbBackend::Postgres,
             "SELECT id, name, visibility
              FROM identity_provider_configs
              WHERE id = 'provider-legacy'"
@@ -78,39 +85,30 @@ async fn upgrades_legacy_provider_sharing_schema_without_losing_provider_data() 
     );
     assert_eq!(row.try_get::<String>("", "visibility").unwrap(), "private");
 
-    let shares_table = db
-        .query_one_raw(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) AS result_count
-             FROM sqlite_master
-             WHERE type = 'table' AND name = 'identity_provider_shares'"
-                .to_owned(),
-        ))
-        .await
-        .expect("inspect migrated provider shares table")
-        .expect("provider shares table count");
-    assert_eq!(shares_table.try_get::<i64>("", "result_count").unwrap(), 1);
-
-    let shares_index = db
-        .query_one_raw(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) AS result_count
-             FROM sqlite_master
-             WHERE type = 'index'
-               AND name = 'uq_identity_provider_shares_provider_grantee'"
-                .to_owned(),
-        ))
-        .await
-        .expect("inspect migrated provider shares index")
-        .expect("provider shares index count");
-    assert_eq!(shares_index.try_get::<i64>("", "result_count").unwrap(), 1);
+    assert_eq!(
+        count_rows(
+            &db,
+            "SELECT COUNT(*) AS result_count FROM information_schema.tables \
+             WHERE table_schema = current_schema() AND table_name = 'identity_provider_shares'",
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        count_rows(
+            &db,
+            "SELECT COUNT(*) AS result_count FROM pg_indexes \
+             WHERE schemaname = current_schema() \
+             AND indexname = 'uq_identity_provider_shares_provider_grantee'",
+        )
+        .await,
+        1
+    );
 }
 
 #[tokio::test]
 async fn rolls_back_legacy_provider_sharing_upgrade_when_index_creation_fails() {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("connect to in-memory SQLite");
+    let db = test_database_connection().await;
     create_legacy_provider_sharing_tables(&db).await;
     db.execute_unprepared(
         "CREATE UNIQUE INDEX uq_identity_provider_shares_provider_grantee
@@ -127,34 +125,24 @@ async fn rolls_back_legacy_provider_sharing_upgrade_when_index_creation_fails() 
         "unexpected migration error: {error}"
     );
 
-    let visibility_column = db
-        .query_one_raw(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) AS result_count
-             FROM pragma_table_info('identity_provider_configs')
-             WHERE name = 'visibility'"
-                .to_owned(),
-        ))
-        .await
-        .expect("inspect provider visibility column")
-        .expect("provider visibility column count");
     assert_eq!(
-        visibility_column
-            .try_get::<i64>("", "result_count")
-            .unwrap(),
+        count_rows(
+            &db,
+            "SELECT COUNT(*) AS result_count FROM information_schema.columns \
+             WHERE table_schema = current_schema() \
+             AND table_name = 'identity_provider_configs' \
+             AND column_name = 'visibility'",
+        )
+        .await,
         0
     );
-
-    let shares_table = db
-        .query_one_raw(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) AS result_count
-             FROM sqlite_master
-             WHERE type = 'table' AND name = 'identity_provider_shares'"
-                .to_owned(),
-        ))
-        .await
-        .expect("inspect rolled back provider shares table")
-        .expect("provider shares table count");
-    assert_eq!(shares_table.try_get::<i64>("", "result_count").unwrap(), 0);
+    assert_eq!(
+        count_rows(
+            &db,
+            "SELECT COUNT(*) AS result_count FROM information_schema.tables \
+             WHERE table_schema = current_schema() AND table_name = 'identity_provider_shares'",
+        )
+        .await,
+        0
+    );
 }

@@ -4,27 +4,25 @@ use prelay_server::{
     test_support::fixture_catalog,
 };
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, Database, DatabaseConnection,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
     DbBackend, EntityTrait, QueryFilter, Statement,
 };
 
 async fn connect() -> DatabaseConnection {
-    Database::connect("sqlite::memory:")
-        .await
-        .expect("connect to in-memory SQLite")
+    prelay_server::test_support::test_database_connection().await
 }
 
 async fn table_exists(db: &DatabaseConnection, table: &str) -> bool {
     let row = db
         .query_one_raw(Statement::from_string(
-            DbBackend::Sqlite,
+            DbBackend::Postgres,
             format!(
-                "SELECT COUNT(*) AS result_count FROM sqlite_master \
-                 WHERE type = 'table' AND name = '{table}'"
+                "SELECT COUNT(*) AS result_count FROM information_schema.tables \
+                 WHERE table_schema = current_schema() AND table_name = '{table}'"
             ),
         ))
         .await
-        .expect("inspect sqlite schema")
+        .expect("inspect database schema")
         .expect("table count row");
     row.try_get::<i64>("", "result_count").unwrap() == 1
 }
@@ -32,14 +30,16 @@ async fn table_exists(db: &DatabaseConnection, table: &str) -> bool {
 async fn column_exists(db: &DatabaseConnection, table: &str, column: &str) -> bool {
     let row = db
         .query_one_raw(Statement::from_string(
-            DbBackend::Sqlite,
+            DbBackend::Postgres,
             format!(
-                "SELECT COUNT(*) AS result_count FROM pragma_table_info('{table}') \
-                 WHERE name = '{column}'"
+                "SELECT COUNT(*) AS result_count FROM information_schema.columns \
+                 WHERE table_schema = current_schema() \
+                 AND table_name = '{table}' \
+                 AND column_name = '{column}'"
             ),
         ))
         .await
-        .expect("inspect sqlite schema")
+        .expect("inspect database schema")
         .expect("column count row");
     row.try_get::<i64>("", "result_count").unwrap() == 1
 }

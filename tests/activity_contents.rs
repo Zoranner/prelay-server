@@ -5,11 +5,10 @@ use prelay_server::{
     },
     entity::activity_contents,
     identity::credential::generate_credential,
-    schema::initialize,
     stats::ActivityInsert,
     storage::{MasterKey, Storage},
 };
-use sea_orm::{ColumnTrait, Database, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use std::time::Duration;
 
 #[test]
@@ -165,10 +164,7 @@ async fn does_not_recover_capturing_content_for_an_active_activity() {
 }
 
 async fn test_storage() -> (Storage, sea_orm::DatabaseConnection) {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("connect SQLite");
-    initialize(&db).await.expect("initialize schema");
+    let db = prelay_server::test_support::test_database_connection().await;
     (
         Storage::from_connection(db.clone(), MasterKey::from_bytes([0; 32])),
         db,

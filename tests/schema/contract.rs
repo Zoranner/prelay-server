@@ -1,6 +1,6 @@
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
-use prelay_server::schema::initialize;
+use prelay_server::{schema::initialize, test_support::test_database_connection};
 
 const TABLES: [&str; 11] = [
     "identities",
@@ -18,69 +18,68 @@ const TABLES: [&str; 11] = [
 const COUNT_COLUMN: &str = "result_count";
 
 async fn table_exists(db: &DatabaseConnection, table: &str) -> bool {
-    let sql = match db.get_database_backend() {
-        DbBackend::Sqlite => {
-            format!(
-                "SELECT COUNT(*) AS {COUNT_COLUMN} FROM sqlite_master \
-                 WHERE type = 'table' AND name = '{table}'"
-            )
-        }
-        DbBackend::Postgres => format!(
-            "SELECT COUNT(*) AS {COUNT_COLUMN} FROM information_schema.tables \
-             WHERE table_schema = current_schema() AND table_name = '{table}'"
-        ),
-        _ => unreachable!("only SQLite and PostgreSQL are supported"),
-    };
-    let statement = Statement::from_string(db.get_database_backend(), sql);
-    let row = db.query_one_raw(statement).await.unwrap().unwrap();
+    let sql = format!(
+        "SELECT COUNT(*) AS {COUNT_COLUMN} FROM information_schema.tables \
+         WHERE table_schema = current_schema() AND table_name = '{table}'"
+    );
+    let row = db
+        .query_one_raw(Statement::from_string(DbBackend::Postgres, sql))
+        .await
+        .unwrap()
+        .unwrap();
     row.try_get::<i64>("", COUNT_COLUMN).unwrap() == 1
 }
 
 async fn column_type(db: &DatabaseConnection, table: &str, column: &str) -> String {
-    let sql = match db.get_database_backend() {
-        DbBackend::Sqlite => {
-            format!("SELECT type FROM pragma_table_info('{table}') WHERE name = '{column}'")
-        }
-        DbBackend::Postgres => format!(
-            "SELECT data_type FROM information_schema.columns \
-             WHERE table_schema = current_schema() \
-             AND table_name = '{table}' \
-             AND column_name = '{column}'"
-        ),
-        _ => unreachable!("only SQLite and PostgreSQL are supported"),
-    };
-    let statement = Statement::from_string(db.get_database_backend(), sql);
-    let row = db.query_one_raw(statement).await.unwrap().unwrap();
-    let column_name = if db.get_database_backend() == DbBackend::Sqlite {
-        "type"
-    } else {
-        "data_type"
-    };
-    row.try_get("", column_name).unwrap()
+    let sql = format!(
+        "SELECT data_type FROM information_schema.columns \
+         WHERE table_schema = current_schema() \
+         AND table_name = '{table}' \
+         AND column_name = '{column}'"
+    );
+    let row = db
+        .query_one_raw(Statement::from_string(DbBackend::Postgres, sql))
+        .await
+        .unwrap()
+        .unwrap();
+    row.try_get("", "data_type").unwrap()
 }
 
 async fn column_exists(db: &DatabaseConnection, table: &str, column: &str) -> bool {
-    let sql = match db.get_database_backend() {
-        DbBackend::Sqlite => {
-            format!("SELECT COUNT(*) AS {COUNT_COLUMN} FROM pragma_table_info('{table}') WHERE name = '{column}'")
-        }
-        DbBackend::Postgres => format!(
-            "SELECT COUNT(*) AS {COUNT_COLUMN} FROM information_schema.columns \
-             WHERE table_schema = current_schema() \
-             AND table_name = '{table}' \
-             AND column_name = '{column}'"
-        ),
-        _ => unreachable!("only SQLite and PostgreSQL are supported"),
-    };
-    let statement = Statement::from_string(db.get_database_backend(), sql);
-    let row = db.query_one_raw(statement).await.unwrap().unwrap();
+    let sql = format!(
+        "SELECT COUNT(*) AS {COUNT_COLUMN} FROM information_schema.columns \
+         WHERE table_schema = current_schema() \
+         AND table_name = '{table}' \
+         AND column_name = '{column}'"
+    );
+    let row = db
+        .query_one_raw(Statement::from_string(DbBackend::Postgres, sql))
+        .await
+        .unwrap()
+        .unwrap();
+    row.try_get::<i64>("", COUNT_COLUMN).unwrap() == 1
+}
+
+async fn index_exists(db: &DatabaseConnection, table: &str, index: &str) -> bool {
+    let sql = format!(
+        "SELECT COUNT(*) AS {COUNT_COLUMN} FROM pg_indexes \
+         WHERE schemaname = current_schema() AND tablename = '{table}' AND indexname = '{index}'"
+    );
+    let row = db
+        .query_one_raw(Statement::from_string(DbBackend::Postgres, sql))
+        .await
+        .unwrap()
+        .unwrap();
     row.try_get::<i64>("", COUNT_COLUMN).unwrap() == 1
 }
 
 async fn assert_string_column(db: &DatabaseConnection, table: &str, column: &str) {
     let column_type = column_type(db, table, column).await.to_ascii_uppercase();
     assert!(
-        matches!(column_type.as_str(), "TEXT" | "VARCHAR"),
+        matches!(
+            column_type.as_str(),
+            "TEXT" | "VARCHAR" | "CHARACTER VARYING"
+        ),
         "{table}.{column} must be stored as text, got {column_type}"
     );
 }
@@ -190,16 +189,11 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
         "first_token_ms",
         "tool_call_count",
     ] {
-        let expected_type = match db.get_database_backend() {
-            DbBackend::Sqlite => "INTEGER",
-            DbBackend::Postgres => "BIGINT",
-            _ => unreachable!("only SQLite and PostgreSQL are supported"),
-        };
         assert!(
             column_type(db, "identity_activities", column)
                 .await
-                .eq_ignore_ascii_case(expected_type),
-            "{column} must map to an i64-compatible {expected_type}"
+                .eq_ignore_ascii_case("BIGINT"),
+            "{column} must map to an i64-compatible BIGINT"
         );
     }
     for column in ["estimated_cost", "currency"] {
@@ -208,11 +202,6 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
             "identity_activities.{column} must not exist"
         );
     }
-    let expected_integer_type = match db.get_database_backend() {
-        DbBackend::Sqlite => "INTEGER",
-        DbBackend::Postgres => "BIGINT",
-        _ => unreachable!("only SQLite and PostgreSQL are supported"),
-    };
     assert_eq!(
         column_type(db, "identity_activities", "is_streaming")
             .await
@@ -222,8 +211,8 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
     assert!(
         column_type(db, "identity_endpoint_models", "candidate_order")
             .await
-            .eq_ignore_ascii_case(expected_integer_type),
-        "candidate_order must map to an i64-compatible {expected_integer_type}"
+            .eq_ignore_ascii_case("BIGINT"),
+        "candidate_order must map to an i64-compatible BIGINT"
     );
     for column in [
         "activity_id",
@@ -266,7 +255,7 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
         .await
         .to_ascii_uppercase();
     assert!(
-        matches!(confidence_type.as_str(), "DOUBLE" | "REAL"),
+        matches!(confidence_type.as_str(), "DOUBLE PRECISION" | "REAL"),
         "memories.confidence must be stored as a floating-point value, got {confidence_type}"
     );
     for column in [
@@ -282,7 +271,7 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
     let activity_content_without_activity = db
         .execute_unprepared(
             "INSERT INTO activity_contents (id, activity_id, input_text, output_text, content_hash, status, is_truncated, attempts, created_at, updated_at) \
-             VALUES ('content-1', 'missing', '', '', 'hash', 'pending', 0, 0, '2026-08-31T00:00:00Z', '2026-08-31T00:00:00Z')",
+             VALUES ('content-1', 'missing', '', '', 'hash', 'pending', false, 0, '2026-08-31T00:00:00Z', '2026-08-31T00:00:00Z')",
         )
         .await;
     assert!(activity_content_without_activity.is_err());
@@ -307,43 +296,27 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
         .await;
     assert!(duplicate_memory.is_err());
 
-    let index_sql = match db.get_database_backend() {
-        DbBackend::Sqlite => {
-            "SELECT COUNT(*) AS result_count FROM pragma_index_list('identity_activities') \
-             WHERE name = 'idx_identity_activities_identity_created_at'"
-                .to_owned()
-        }
-        DbBackend::Postgres => "SELECT COUNT(*) AS result_count FROM pg_indexes \
-             WHERE schemaname = current_schema() \
-             AND tablename = 'identity_activities' \
-             AND indexname = 'idx_identity_activities_identity_created_at'"
-            .to_owned(),
-        _ => unreachable!("only SQLite and PostgreSQL are supported"),
-    };
-    let index_statement = Statement::from_string(db.get_database_backend(), index_sql);
-    let row = db.query_one_raw(index_statement).await.unwrap().unwrap();
-    assert_eq!(row.try_get::<i64>("", COUNT_COLUMN).unwrap(), 1);
-
-    let sharing_index_sql = "SELECT COUNT(*) AS result_count
-        FROM pragma_index_list('identity_provider_shares')
-        WHERE name = 'uq_identity_provider_shares_provider_grantee'";
-    let sharing_index_row = db
-        .query_one_raw(Statement::from_string(
-            DbBackend::Sqlite,
-            sharing_index_sql.to_owned(),
-        ))
+    assert!(
+        index_exists(
+            db,
+            "identity_activities",
+            "idx_identity_activities_identity_created_at"
+        )
         .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        sharing_index_row.try_get::<i64>("", COUNT_COLUMN).unwrap(),
-        1
+    );
+    assert!(
+        index_exists(
+            db,
+            "identity_provider_shares",
+            "uq_identity_provider_shares_provider_grantee"
+        )
+        .await
     );
 }
 
 #[tokio::test]
 async fn initializes_the_complete_identity_schema_with_core_constraints() {
-    let db = Database::connect("sqlite::memory:").await.unwrap();
+    let db = test_database_connection().await;
 
     initialize(&db).await.unwrap();
     assert_complete_schema(&db).await;
@@ -351,7 +324,7 @@ async fn initializes_the_complete_identity_schema_with_core_constraints() {
 
 #[tokio::test]
 async fn reuses_the_current_identity_schema_without_changes() {
-    let db = Database::connect("sqlite::memory:").await.unwrap();
+    let db = test_database_connection().await;
 
     initialize(&db).await.unwrap();
     initialize(&db).await.unwrap();

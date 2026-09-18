@@ -1,9 +1,6 @@
-use sea_orm::Database;
-
 use crate::{
-    schema::initialize,
     stats::{ActivityInsert, ModelStatsScope, StatsRange},
-    storage::{MasterKey, Storage},
+    storage::Storage,
 };
 
 #[tokio::test]
@@ -142,11 +139,7 @@ async fn overview_is_scoped_to_one_identity() {
 }
 
 pub(super) async fn test_storage() -> Storage {
-    let db = Database::connect("sqlite::memory:")
-        .await
-        .expect("connect test database");
-    initialize(&db).await.expect("initialize test schema");
-    Storage::from_connection(db, MasterKey::from_bytes([0; 32]))
+    crate::test_support::test_storage().await
 }
 
 pub(super) async fn register_identity(storage: &Storage, suffix: &str) -> String {
