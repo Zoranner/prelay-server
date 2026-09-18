@@ -82,7 +82,7 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --pull 
 
 也可以让服务连接外部 PostgreSQL 实例：为服务设置固定的 `ENCRYPTION_KEY`，并将 `DATABASE_URL` 设为该实例中一个全新空数据库的连接串。
 
-Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.3.4`，并以只读方式挂载 `app/config/catalog/`；目录内必须包含 `providers.toml` 和 `models/` 下的两类模型文件，语言模型的基础指令模板放在同一目录的 `models/instructions/`。
+Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.3.5`，并以只读方式挂载 `app/config/catalog/`；目录内必须包含 `providers.toml` 和 `models/` 下的两类模型文件，语言模型的基础指令模板放在同一目录的 `models/instructions/`。
 
 ## 服务边界
 
