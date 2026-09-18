@@ -1,4 +1,4 @@
-use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use serde::Deserialize;
 
 pub use prelay_protocol::{
@@ -163,6 +163,15 @@ pub(crate) fn all_daily_bounds(earliest: DateTime<Utc>, now: DateTime<Utc>) -> T
     let start = earliest.with_timezone(&beijing_offset()).date_naive();
     let end = now.with_timezone(&beijing_offset()).date_naive() + Duration::days(1);
     TimeBounds::from_beijing_dates(start, end)
+}
+
+/// 解析 SQL 生成的桶起始时间（北京时间墙上时间），转成 UTC 时刻。
+pub(crate) fn parse_beijing_timestamp(value: &str) -> Option<DateTime<Utc>> {
+    let naive = NaiveDateTime::parse_from_str(value.trim(), "%Y-%m-%d %H:%M:%S").ok()?;
+    beijing_offset()
+        .from_local_datetime(&naive)
+        .single()
+        .map(|value| value.with_timezone(&Utc))
 }
 
 pub(crate) fn timeline_buckets(
