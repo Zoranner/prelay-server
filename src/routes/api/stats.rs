@@ -55,17 +55,45 @@ impl ModelStatsQuery {
     }
 }
 
+/// 目前只放开按天粒度：其余粒度仍按 range 的默认映射，其它取值按非法参数拒绝。
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TimelineGranularityParam {
+    Day,
+}
+
+#[derive(Deserialize)]
+struct TimelineQuery {
+    range: Option<StatsRange>,
+    granularity: Option<TimelineGranularityParam>,
+}
+
+impl TimelineQuery {
+    fn range(&self) -> StatsRange {
+        self.range.unwrap_or_default()
+    }
+}
+
 async fn timeline(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
-    ApiQuery(query): ApiQuery<StatsQuery>,
+    ApiQuery(query): ApiQuery<TimelineQuery>,
 ) -> Result<Json<Vec<TokenUsageTimelinePoint>>, ApiError> {
-    Ok(Json(
-        state
-            .storage
-            .token_usage_timeline(&identity.id, query.range())
-            .await?,
-    ))
+    let points = match query.granularity {
+        Some(TimelineGranularityParam::Day) => {
+            state
+                .storage
+                .daily_token_usage_timeline(&identity.id, query.range())
+                .await?
+        }
+        None => {
+            state
+                .storage
+                .token_usage_timeline(&identity.id, query.range())
+                .await?
+        }
+    };
+    Ok(Json(points))
 }
 
 async fn overview(

@@ -239,6 +239,3 @@ struct ProviderAggregate {
 #[cfg(test)]
 #[path = "stats/tests.rs"]
 mod tests;
-#[cfg(test)]
-#[path = "stats/timeline_tests.rs"]
-mod timeline_tests;

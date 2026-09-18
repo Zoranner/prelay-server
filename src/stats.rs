@@ -158,6 +158,13 @@ pub(crate) fn all_timeline_bounds(earliest: DateTime<Utc>, now: DateTime<Utc>) -
     TimeBounds::from_beijing_dates(start, end)
 }
 
+/// 按天展开全量时间线时的边界：从最早活动所在的北京时间自然日，到今天结束。
+pub(crate) fn all_daily_bounds(earliest: DateTime<Utc>, now: DateTime<Utc>) -> TimeBounds {
+    let start = earliest.with_timezone(&beijing_offset()).date_naive();
+    let end = now.with_timezone(&beijing_offset()).date_naive() + Duration::days(1);
+    TimeBounds::from_beijing_dates(start, end)
+}
+
 pub(crate) fn timeline_buckets(
     bounds: TimeBounds,
     granularity: TimelineGranularity,

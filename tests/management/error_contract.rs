@@ -84,6 +84,14 @@ async fn management_rejections_use_the_error_envelope() {
             "validation_failed",
         ),
         (
+            "GET",
+            "/api/stats/timeline?granularity=bogus",
+            None,
+            "",
+            StatusCode::BAD_REQUEST,
+            "validation_failed",
+        ),
+        (
             "DELETE",
             "/api/identity",
             None,
