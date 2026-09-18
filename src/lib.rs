@@ -98,13 +98,23 @@ pub mod test_support {
 
     /// 独立 schema 里的已初始化连接：用例之间不共享任何数据。
     pub async fn test_database_connection() -> DatabaseConnection {
+        let db = test_empty_database_connection().await;
+        initialize(&db)
+            .await
+            .expect("initialize test database schema");
+        db
+    }
+
+    /// 独立 schema 里的空连接：供 schema 初始化测试自行建表。
+    pub async fn test_empty_database_connection() -> DatabaseConnection {
         let config = test_database_config();
         let admin = crate::database::connect(&config)
             .await
             .expect("connect to the test PostgreSQL database");
         let schema = format!(
-            "{TEST_SCHEMA_PREFIX}{}_{}",
+            "{TEST_SCHEMA_PREFIX}{}_{}_{}",
             now_millis(),
+            std::process::id(),
             TEST_SCHEMA_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         );
         admin
@@ -121,9 +131,6 @@ pub mod test_support {
         let db = Database::connect(options)
             .await
             .expect("connect to the test schema");
-        initialize(&db)
-            .await
-            .expect("initialize test database schema");
         db
     }
 
