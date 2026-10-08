@@ -90,3 +90,59 @@ language_models = ["MiniMax-M3"]
 
 [providers.protocol_base_urls]
 anthropic_messages = "https://api.minimax.cn/anthropic/v1"
+
+[[providers]]
+id = "supergpt"
+name = "SuperGPT"
+auth_scheme = "bearer"
+base_url = "https://api.supergpt.dev/v1"
+protocols = ["chat_completions", "responses", "anthropic_messages"]
+language_models = [
+  "gpt-6-astra",
+  "gpt-6-sol",
+  "gpt-6.1-sol",
+  "claude-fable-5-1",
+  "claude-fable-5",
+  "claude-opus-5-5",
+  "claude-opus-5",
+  "claude-sonnet-5-5",
+  "claude-sonnet-5",
+]
+
+[[providers]]
+id = "commandcode"
+name = "Command Code"
+auth_scheme = "bearer"
+base_url = "https://api.commandcode.ai/provider/v1"
+protocols = ["chat_completions", "responses", "anthropic_messages"]
+language_models = [
+  "gpt-6-astra",
+  "gpt-6-luna",
+  "gpt-6-sol",
+  "gpt-6.1-sol",
+  "deepseek-flash",
+  "deepseek-v4-pro",
+  "qwen3.8-max",
+  "qwen3.8-flash",
+  "k3",
+  "glm-5.3",
+  "glm-5.3-flash",
+  "MiniMax-M3",
+  "claude-fable-5-1",
+  "claude-fable-5",
+  "claude-opus-5-5",
+  "claude-opus-5",
+  "claude-sonnet-5-5",
+  "claude-sonnet-5",
+  "claude-haiku-5-5",
+]
+
+[providers.upstream_model_names]
+deepseek-flash = "deepseek/deepseek-v4.1-flash"
+deepseek-v4-pro = "deepseek/deepseek-v4-pro"
+"qwen3.8-max" = "Qwen/Qwen3.8-Max"
+"qwen3.8-flash" = "Qwen/Qwen3.8-Flash"
+k3 = "moonshotai/Kimi-K3"
+"glm-5.3" = "zai-org/GLM-5.3"
+"glm-5.3-flash" = "z-ai/glm-5.3-flash"
+MiniMax-M3 = "MiniMaxAI/MiniMax-M3"
