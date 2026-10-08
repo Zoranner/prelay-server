@@ -324,9 +324,9 @@ async fn ensure_name_available(
         query = query.filter(identity_endpoint_configs::Column::Id.ne(current_endpoint_id));
     }
     if query.one(transaction).await?.is_some() {
-        return Err(StorageError::ValidationFailed(
-            "endpoint name already exists".to_string(),
-        ));
+        return Err(StorageError::ValidationFailed(format!(
+            "接入点名称“{name}”已被占用，请换一个名称"
+        )));
     }
     Ok(())
 }

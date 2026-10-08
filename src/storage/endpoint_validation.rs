@@ -26,13 +26,13 @@ pub(super) fn normalize_models(
         let model_name = model.upstream_model.trim().to_string();
         if model_name.is_empty() {
             return Err(StorageError::ValidationFailed(
-                "endpoint upstream model must not be empty".to_string(),
+                "接入点模型不能为空".to_string(),
             ));
         }
         if !mappings.insert((model_name.clone(), model.provider_id.clone())) {
-            return Err(StorageError::ValidationFailed(
-                "endpoint model mappings must be unique".to_string(),
-            ));
+            return Err(StorageError::ValidationFailed(format!(
+                "模型 {model_name} 在同一个供应商下重复绑定，请先移除重复项"
+            )));
         }
         normalized.push(NormalizedModel {
             provider_id: model.provider_id,
@@ -64,8 +64,8 @@ pub(super) async fn resolve_models(
             super::provider_validation::parse_models(provider.models_json.as_deref());
         if !provider_models.iter().any(|id| id == &model.model_name) {
             return Err(StorageError::ValidationFailed(format!(
-                "模型 {} 不在供应商 {} 的模型清单里",
-                model.model_name, provider.provider_type
+                "模型 {} 不在供应商“{}”的模型清单里，请先移除或改选后再保存",
+                model.model_name, provider.name
             )));
         }
         model.upstream_model =

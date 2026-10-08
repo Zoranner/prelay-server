@@ -9,7 +9,7 @@ pub(super) fn normalize_models(models: Vec<String>) -> Result<Vec<String>, Stora
         let model_id = model_id.trim().to_string();
         if model_id.is_empty() {
             return Err(StorageError::ValidationFailed(
-                "provider model must not be empty".to_string(),
+                "供应商模型不能为空".to_string(),
             ));
         }
         if normalized.contains(&model_id) {
@@ -62,7 +62,7 @@ pub(super) fn validate_catalog_provider(
 ) -> Result<(), StorageError> {
     let provider_type = provider_type.trim();
     catalog.provider(provider_type).ok_or_else(|| {
-        StorageError::ValidationFailed(format!("unknown provider type: {provider_type}"))
+        StorageError::ValidationFailed(format!("供应商类型 {provider_type} 不在当前模型目录里"))
     })?;
     Ok(())
 }
