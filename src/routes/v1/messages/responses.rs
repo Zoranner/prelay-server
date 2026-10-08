@@ -49,10 +49,10 @@ pub(super) async fn create_responses_anthropic_message(
     if !upstream_response.status().is_success() {
         let status = upstream_response.status();
         let upstream_body = upstream_response.text().await.unwrap_or_default();
-        let error_message =
-            crate::observability::upstream_observability::upstream_error_message(&upstream_body)
-                .map(|message| format!("上游请求失败: {status}: {message}"))
-                .unwrap_or_else(|| format!("上游请求失败: {status}"));
+        let error_message = crate::observability::upstream_observability::upstream_failure_message(
+            status,
+            &upstream_body,
+        );
         state
             .storage
             .insert_activity(

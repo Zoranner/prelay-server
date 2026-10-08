@@ -12,7 +12,7 @@ use crate::{
     error::AppError,
     observability::{
         stream_stats::record_stream_with_activity_content,
-        upstream_observability::upstream_observability,
+        upstream_observability::{upstream_failure_message, upstream_observability},
     },
     providers::spec::provider_upstream_base_url,
     routes::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
@@ -90,7 +90,7 @@ pub(super) async fn create_chat_completion_with_candidate(
             .await?;
         return Err(AppError::Upstream {
             status: Some(status),
-            message: format!("上游请求失败: {status}"),
+            message: upstream_failure_message(status, error_body.as_deref().unwrap_or_default()),
         });
     }
 

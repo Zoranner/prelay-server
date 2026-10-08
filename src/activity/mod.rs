@@ -17,6 +17,7 @@ pub use content::{
     activity_content_from_text_with_media_or_empty, ActivityContentDraft, ActivityMediaMetadata,
     NormalizedActivityContent,
 };
+pub(crate) use redaction::redact_sensitive_text;
 pub use stream::{RawStreamContentCapture, RawStreamProtocol};
 
 pub const DEFAULT_ACTIVITY_CONTENT_MAX_BYTES: usize = 64 * 1024;

@@ -54,7 +54,7 @@ async fn records_failed_response_activity_when_upstream_fails() {
         create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
             .await;
 
-    create_response(
+    let error = create_response(
         State(state.clone()),
         auth.access.clone(),
         axum::Json(json!({
@@ -64,6 +64,10 @@ async fn records_failed_response_activity_when_upstream_fails() {
     )
     .await
     .expect_err("upstream failure should fail");
+    assert!(
+        format!("{error:?}").contains("上游请求失败: 500 Internal Server Error: upstream failed"),
+        "client-facing error should carry the upstream reason: {error:?}"
+    );
     let logs = state
         .storage
         .list_activities(&auth.access.0.identity_id, 10)
@@ -72,4 +76,8 @@ async fn records_failed_response_activity_when_upstream_fails() {
 
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].status, "failed");
+    assert_eq!(
+        logs[0].error_message.as_deref(),
+        Some("上游请求失败: 500 Internal Server Error: upstream failed")
+    );
 }

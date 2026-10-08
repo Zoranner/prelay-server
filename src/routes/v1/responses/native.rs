@@ -10,7 +10,10 @@ use crate::{
     activity::{insert_activity_with_content, internal_request_text, internal_response_text},
     bridge::{internal::InternalRequest, stream::native_responses_sse_with_stats},
     error::AppError,
-    observability::stream_stats::record_stream_with_activity_content,
+    observability::{
+        stream_stats::record_stream_with_activity_content,
+        upstream_observability::upstream_failure_message,
+    },
     providers::spec::{provider_upstream_base_url, UpstreamProtocol},
     stats::ActivityInsert,
     storage::ResponseSessionInsert,
@@ -45,7 +48,8 @@ pub(super) async fn create_native_response(
 
     if !upstream_response.status().is_success() {
         let status = upstream_response.status();
-        let error_message = format!("上游请求失败: {status}");
+        let upstream_body = upstream_response.text().await.unwrap_or_default();
+        let error_message = upstream_failure_message(status, &upstream_body);
         state
             .storage
             .insert_activity(

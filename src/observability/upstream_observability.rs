@@ -1,6 +1,8 @@
 use axum::http::HeaderMap;
 use serde_json::Value;
 
+use crate::activity::redact_sensitive_text;
+
 const ERROR_MESSAGE_LIMIT: usize = 512;
 const REQUEST_ID_HEADERS: &[&str] = &[
     "x-request-id",
@@ -43,10 +45,20 @@ pub fn upstream_error_message(body: &str) -> Option<String> {
     if let Ok(value) = serde_json::from_str::<Value>(body) {
         return error_message_from_json(&value)
             .or_else(|| plain_text_summary(body))
-            .map(limit_summary);
+            .map(summarize_error_message);
     }
 
-    plain_text_summary(body).map(limit_summary)
+    plain_text_summary(body).map(summarize_error_message)
+}
+
+/// 上游失败时的统一文本：状态码加脱敏后的上游原因。
+///
+/// 响应体与请求记录共用同一份文本，避免记录里有原因、返回给客户端却没有。
+pub fn upstream_failure_message(status: impl std::fmt::Display, body: &str) -> String {
+    match upstream_error_message(body) {
+        Some(message) => format!("上游请求失败: {status}: {message}"),
+        None => format!("上游请求失败: {status}"),
+    }
 }
 
 fn error_message_from_json(value: &Value) -> Option<String> {
@@ -80,11 +92,15 @@ fn limit_summary(message: String) -> String {
     format!("{}...", &message[..end])
 }
 
+fn summarize_error_message(message: String) -> String {
+    limit_summary(redact_sensitive_text(&message))
+}
+
 #[cfg(test)]
 mod tests {
     use axum::http::{HeaderMap, HeaderValue};
 
-    use super::{upstream_error_message, upstream_request_id};
+    use super::{upstream_error_message, upstream_failure_message, upstream_request_id};
 
     #[test]
     fn extracts_request_id_from_common_headers() {
@@ -112,5 +128,28 @@ mod tests {
 
         assert!(message.len() <= 515);
         assert!(message.ends_with("..."));
+    }
+
+    #[test]
+    fn redacts_credentials_from_error_summary() {
+        let body = r#"{"error":{"message":"rejected api_key=sk-live-secret-value"}}"#;
+        let message = upstream_error_message(body).expect("error message");
+
+        assert!(!message.contains("sk-live-secret-value"));
+        assert!(message.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn builds_status_prefixed_failure_message() {
+        let body = r#"{"error":{"message":"upstream failed"}}"#;
+
+        assert_eq!(
+            upstream_failure_message("403 Forbidden", body),
+            "上游请求失败: 403 Forbidden: upstream failed"
+        );
+        assert_eq!(
+            upstream_failure_message("429 Too Many Requests", ""),
+            "上游请求失败: 429 Too Many Requests"
+        );
     }
 }

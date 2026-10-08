@@ -105,7 +105,7 @@ async fn fails_over_responses_when_primary_forbids_the_request() {
     assert_eq!(failed.error_code.as_deref(), Some("upstream_status"));
     assert_eq!(
         failed.error_message.as_deref(),
-        Some("上游请求失败: 403 Forbidden")
+        Some("上游请求失败: 403 Forbidden: upstream failed")
     );
 }
 

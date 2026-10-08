@@ -15,7 +15,10 @@ use crate::{
     },
     error::AppError,
     models::ProviderConfig,
-    observability::stream_stats::record_stream_with_activity_content,
+    observability::{
+        stream_stats::record_stream_with_activity_content,
+        upstream_observability::upstream_failure_message,
+    },
     providers::{
         chat_completions::{decode_chat_response, encode_chat_request},
         spec::{provider_upstream_base_url, UpstreamProtocol},
@@ -67,7 +70,8 @@ pub(super) async fn create_chat_response(
 
     if !upstream_response.status().is_success() {
         let status = upstream_response.status();
-        let error_message = format!("上游请求失败: {status}");
+        let upstream_body = upstream_response.text().await.unwrap_or_default();
+        let error_message = upstream_failure_message(status, &upstream_body);
         state
             .storage
             .insert_activity(

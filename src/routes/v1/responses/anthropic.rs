@@ -14,7 +14,10 @@ use crate::{
         stream::anthropic_messages_sse_response_to_responses_sse_with_stats,
     },
     error::AppError,
-    observability::stream_stats::record_stream_with_activity_content,
+    observability::{
+        stream_stats::record_stream_with_activity_content,
+        upstream_observability::upstream_failure_message,
+    },
     providers::{
         anthropic_messages::{
             decode_anthropic_messages_response, encode_anthropic_messages_request,
@@ -59,7 +62,8 @@ pub(super) async fn create_anthropic_messages_response(
 
     if !upstream_response.status().is_success() {
         let status = upstream_response.status();
-        let error_message = format!("上游请求失败: {status}");
+        let upstream_body = upstream_response.text().await.unwrap_or_default();
+        let error_message = upstream_failure_message(status, &upstream_body);
         state
             .storage
             .insert_activity(

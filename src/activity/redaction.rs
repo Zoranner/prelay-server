@@ -45,7 +45,7 @@ static PGP_PRIVATE_KEY_BLOCK: LazyLock<Regex> = LazyLock::new(|| {
         .expect("valid PGP private key block redaction pattern")
 });
 
-pub(super) fn redact_sensitive_text(value: &str) -> String {
+pub(crate) fn redact_sensitive_text(value: &str) -> String {
     let value = PRIVATE_KEY_BLOCK.replace_all(value, "[REDACTED]");
     let value = PGP_PRIVATE_KEY_BLOCK.replace_all(&value, "[REDACTED]");
     let value = BEARER_TOKEN.replace_all(&value, "Bearer [REDACTED]");
