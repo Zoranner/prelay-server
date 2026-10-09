@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::{
     activity::{chat_message_text, chat_response_text, insert_activity_with_content},
-    bridge::stream::native_chat_sse_with_stats,
+    bridge::stream::{native_chat_sse_with_stats, with_sse_keepalive},
     error::AppError,
     observability::{
         stream_stats::record_stream_with_activity_content,
@@ -124,7 +124,7 @@ pub(super) async fn create_chat_completion_with_candidate(
             upstream_request_id,
         };
         let (stream, stream_stats) = native_chat_sse_with_stats(upstream_response).await?;
-        let body = Body::from_stream(
+        let body = Body::from_stream(with_sse_keepalive(
             record_stream_with_activity_content(
                 state.storage.clone(),
                 access.identity_id.clone(),
@@ -135,7 +135,7 @@ pub(super) async fn create_chat_completion_with_candidate(
                 input_text,
             )
             .await?,
-        );
+        ));
         return Ok(([(header::CONTENT_TYPE, "text/event-stream")], body).into_response());
     }
 

@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::{
     activity::{media_metadata_from_bytes, RawStreamContentCapture, RawStreamProtocol},
-    bridge::stream::{upstream_bytes_stream, verify_upstream_sse_head},
+    bridge::stream::{upstream_bytes_stream, verify_upstream_sse_head, with_sse_keepalive},
     error::AppError,
     observability::{
         stream_stats::record_first_chunk_with_activity_content_best_effort,
@@ -134,7 +134,7 @@ pub(super) async fn create_image_generation_with_candidate(
         });
         let head = verify_upstream_sse_head(&mut upstream_response).await?;
         let stream = upstream_bytes_stream(upstream_response, head).map_err(std::io::Error::other);
-        let body = Body::from_stream(
+        let body = Body::from_stream(with_sse_keepalive(
             record_first_chunk_with_activity_content_best_effort(
                 state.storage.clone(),
                 access.identity_id.clone(),
@@ -145,7 +145,7 @@ pub(super) async fn create_image_generation_with_candidate(
                 RawStreamContentCapture::new(RawStreamProtocol::ImageGeneration),
             )
             .await,
-        );
+        ));
         return Ok(upstream_response_with_body(
             upstream_status,
             content_type,

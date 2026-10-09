@@ -12,7 +12,7 @@ use crate::{
         anthropic_message_text, anthropic_request_text, insert_activity_with_content,
         RawStreamContentCapture, RawStreamProtocol,
     },
-    bridge::stream::{upstream_bytes_stream, verify_upstream_sse_head},
+    bridge::stream::{upstream_bytes_stream, verify_upstream_sse_head, with_sse_keepalive},
     error::AppError,
     observability::stream_stats::record_first_chunk_with_activity_content,
     providers::spec::{provider_upstream_base_url, UpstreamProtocol},
@@ -128,7 +128,7 @@ pub(super) async fn create_native_anthropic_message(
 
         return Response::builder()
             .header(header::CONTENT_TYPE, "text/event-stream")
-            .body(Body::from_stream(
+            .body(Body::from_stream(with_sse_keepalive(
                 record_first_chunk_with_activity_content(
                     state.storage.clone(),
                     context.identity_id,
@@ -139,7 +139,7 @@ pub(super) async fn create_native_anthropic_message(
                     RawStreamContentCapture::new(RawStreamProtocol::AnthropicMessages),
                 )
                 .await?,
-            ))
+            )))
             .map_err(|error| AppError::Internal(error.into()));
     }
 

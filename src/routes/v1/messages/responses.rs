@@ -10,7 +10,7 @@ use crate::{
     activity::{insert_activity_with_content, internal_request_text, internal_response_text},
     bridge::{
         anthropic::encode::encode_anthropic_response,
-        stream::responses_sse_response_to_anthropic_messages_sse_with_stats,
+        stream::{responses_sse_response_to_anthropic_messages_sse_with_stats, with_sse_keepalive},
     },
     error::AppError,
     observability::stream_stats::record_stream_with_activity_content,
@@ -124,7 +124,7 @@ pub(super) async fn create_responses_anthropic_message(
         .await?;
         return Response::builder()
             .header(header::CONTENT_TYPE, "text/event-stream")
-            .body(Body::from_stream(
+            .body(Body::from_stream(with_sse_keepalive(
                 record_stream_with_activity_content(
                     state.storage.clone(),
                     context.identity_id,
@@ -135,7 +135,7 @@ pub(super) async fn create_responses_anthropic_message(
                     input_text,
                 )
                 .await?,
-            ))
+            )))
             .map_err(|error| AppError::Internal(error.into()));
     }
 

@@ -15,7 +15,7 @@ pub(crate) use encode::responses::responses_completed_sse_with_usage;
 pub(crate) use events::InternalFinishReason;
 pub(crate) use events::StreamStatsSnapshot;
 pub(crate) use events::{InternalStreamEvent, StreamUsage};
-pub(crate) use pipeline::{upstream_bytes_stream, SharedStreamStats};
+pub(crate) use pipeline::{upstream_bytes_stream, with_sse_keepalive, SharedStreamStats};
 pub(crate) use verify::verify_upstream_sse_head;
 
 use self::{

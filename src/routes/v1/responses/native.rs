@@ -8,7 +8,10 @@ use serde_json::Value;
 
 use crate::{
     activity::{insert_activity_with_content, internal_request_text, internal_response_text},
-    bridge::{internal::InternalRequest, stream::native_responses_sse_with_stats},
+    bridge::{
+        internal::InternalRequest,
+        stream::{native_responses_sse_with_stats, with_sse_keepalive},
+    },
     error::AppError,
     observability::{
         stream_stats::record_stream_with_activity_content,
@@ -118,7 +121,7 @@ pub(super) async fn create_native_response(
             upstream_request_id: None,
         };
         let (stream, stream_stats) = native_responses_sse_with_stats(upstream_response).await?;
-        let body = Body::from_stream(
+        let body = Body::from_stream(with_sse_keepalive(
             record_stream_with_activity_content(
                 state.storage.clone(),
                 context.identity_id.clone(),
@@ -129,7 +132,7 @@ pub(super) async fn create_native_response(
                 internal_request_text(&request),
             )
             .await?,
-        );
+        ));
         return Ok((
             [(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")],
             body,
