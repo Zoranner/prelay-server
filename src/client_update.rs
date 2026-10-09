@@ -138,6 +138,20 @@ impl ClientUpdateCache {
         update: &CachedClientUpdate,
         target: &ClientUpdateTarget,
     ) -> Result<()> {
+        let directory = cache_directory_for_target(&self.cache_directory, target, &update.version)
+            .context("invalid client update target")?;
+        let installer_path = directory.join(&update.file_name);
+        if tokio::fs::try_exists(&installer_path)
+            .await
+            .unwrap_or(false)
+        {
+            tracing::info!(
+                file_name = %update.file_name,
+                version = %update.version,
+                "client installer already cached"
+            );
+            return Ok(());
+        }
         let response = self
             .client
             .get(&asset.browser_download_url)
@@ -147,12 +161,9 @@ impl ClientUpdateCache {
             .context("download client installer")?
             .error_for_status()
             .context("client installer download failed")?;
-        let directory = cache_directory_for_target(&self.cache_directory, target, &update.version)
-            .context("invalid client update target")?;
         tokio::fs::create_dir_all(&directory)
             .await
             .context("create client update cache directory")?;
-        let installer_path = directory.join(&update.file_name);
         let temporary = directory.join(format!(".{}.{}.tmp", update.file_name, Uuid::new_v4()));
         let mut file = tokio::fs::File::create(&temporary)
             .await
@@ -382,68 +393,4 @@ fn parse_version(value: &str) -> Option<[u64; 3]> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        build_http_client, cache_directory_for_target, client_update_proxy_from_value,
-        is_windows_nsis_asset, normalize_version, validate_repository, windows_nsis_target,
-        DEFAULT_CACHE_DIRECTORY,
-    };
-    use prelay_protocol::ClientUpdateTarget;
-    use std::{path::Path, time::Duration};
-
-    #[test]
-    fn stores_client_updates_outside_the_database_directory_by_default() {
-        assert_eq!(DEFAULT_CACHE_DIRECTORY, "updates");
-    }
-
-    #[test]
-    fn selects_tauri_windows_nsis_installer() {
-        assert!(is_windows_nsis_asset("Prelay_0.2.0_x64-setup.exe"));
-        assert!(!is_windows_nsis_asset("Prelay_0.2.0_x64_en-US.msi"));
-        assert!(!is_windows_nsis_asset("Prelay_0.2.0_x64.AppImage"));
-    }
-
-    #[test]
-    fn validates_repository_and_version_values_before_using_them_as_paths() {
-        assert!(validate_repository("Zoranner/prelay-client").is_ok());
-        assert!(validate_repository("https://github.com/Zoranner/prelay-client").is_err());
-        assert_eq!(normalize_version("v0.2.0").unwrap(), "0.2.0");
-        assert!(normalize_version("../../installer").is_err());
-    }
-
-    #[test]
-    fn selects_original_installers_from_the_requested_target_directory() {
-        let target = ClientUpdateTarget {
-            platform: "windows".to_string(),
-            architecture: "x64".to_string(),
-        };
-        assert_eq!(
-            cache_directory_for_target(Path::new("updates"), &target, "0.3.0").unwrap(),
-            Path::new("updates/windows/x64/0.3.0")
-        );
-        assert_eq!(
-            windows_nsis_target("Prelay_0.3.0_arm64-setup.exe")
-                .unwrap()
-                .architecture,
-            "arm64"
-        );
-    }
-
-    #[test]
-    fn accepts_an_optional_client_update_proxy() {
-        assert_eq!(client_update_proxy_from_value(None).unwrap(), None);
-        assert_eq!(client_update_proxy_from_value(Some("  ")).unwrap(), None);
-        assert_eq!(
-            client_update_proxy_from_value(Some(" http://127.0.0.1:7890 ")).unwrap(),
-            Some("http://127.0.0.1:7890".to_string())
-        );
-    }
-
-    #[test]
-    fn rejects_an_invalid_client_update_proxy() {
-        let error = build_http_client(Duration::ZERO, Duration::ZERO, Some("not a URL"))
-            .expect_err("invalid proxy should be rejected");
-
-        assert!(format!("{error:#}").contains("CLIENT_UPDATE_PROXY"));
-    }
-}
+mod tests;
