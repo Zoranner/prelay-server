@@ -129,7 +129,7 @@ pub(super) async fn create_anthropic_messages_response(
             upstream_request_id: None,
         };
         let (stream, stream_stats) =
-            anthropic_messages_sse_response_to_responses_sse_with_stats(upstream_response);
+            anthropic_messages_sse_response_to_responses_sse_with_stats(upstream_response).await?;
         let body = Body::from_stream(
             record_stream_with_activity_content(
                 state.storage.clone(),

@@ -12,6 +12,7 @@ use crate::{
         anthropic_message_text, anthropic_request_text, insert_activity_with_content,
         RawStreamContentCapture, RawStreamProtocol,
     },
+    bridge::stream::{upstream_bytes_stream, verify_upstream_sse_head},
     error::AppError,
     observability::stream_stats::record_first_chunk_with_activity_content,
     providers::spec::{provider_upstream_base_url, UpstreamProtocol},
@@ -32,7 +33,7 @@ pub(super) async fn create_native_anthropic_message(
     let upstream_url = format!("{}/messages", upstream_base_url.trim_end_matches('/'));
     let upstream_started_at = std::time::Instant::now();
     let client = state.provider_client(&provider.provider_type)?;
-    let upstream_response = client
+    let mut upstream_response = client
         .post(upstream_url)
         .header("x-api-key", &provider.api_key)
         .header("anthropic-version", "2023-06-01")
@@ -122,15 +123,16 @@ pub(super) async fn create_native_anthropic_message(
             upstream_request_id: None,
         };
 
+        let head = verify_upstream_sse_head(&mut upstream_response).await?;
+        let stream = upstream_bytes_stream(upstream_response, head).map_err(std::io::Error::other);
+
         return Response::builder()
             .header(header::CONTENT_TYPE, "text/event-stream")
             .body(Body::from_stream(
                 record_first_chunk_with_activity_content(
                     state.storage.clone(),
                     context.identity_id,
-                    upstream_response
-                        .bytes_stream()
-                        .map_err(std::io::Error::other),
+                    stream,
                     log,
                     context.started_at,
                     input_text,

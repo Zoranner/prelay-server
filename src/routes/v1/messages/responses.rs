@@ -120,7 +120,8 @@ pub(super) async fn create_responses_anthropic_message(
         let (stream, stream_stats) = responses_sse_response_to_anthropic_messages_sse_with_stats(
             upstream_response,
             request.model,
-        );
+        )
+        .await?;
         return Response::builder()
             .header(header::CONTENT_TYPE, "text/event-stream")
             .body(Body::from_stream(

@@ -5,7 +5,7 @@ use std::{
 };
 
 use axum::body::Bytes;
-use futures::{Stream, StreamExt};
+use futures::{stream, Stream, StreamExt};
 
 use super::events::StreamStatsSnapshot;
 
@@ -39,6 +39,22 @@ where
 
 pub(crate) fn map_response_stream_with_stats<D>(
     response: reqwest::Response,
+    decoder: D,
+) -> (
+    impl Stream<Item = Result<Bytes, std::io::Error>>,
+    SharedStreamStats,
+)
+where
+    D: ByteStreamDecoder,
+{
+    map_response_stream_with_stats_and_head(response, None, decoder)
+}
+
+/// 与 `map_response_stream_with_stats` 相同，但把已经检出的首块拼回上游字节流，
+/// 避免校验消费掉的数据丢失。
+pub(crate) fn map_response_stream_with_stats_and_head<D>(
+    response: reqwest::Response,
+    head: Option<Bytes>,
     mut decoder: D,
 ) -> (
     impl Stream<Item = Result<Bytes, std::io::Error>>,
@@ -47,11 +63,11 @@ pub(crate) fn map_response_stream_with_stats<D>(
 where
     D: ByteStreamDecoder,
 {
-    let upstream = response.bytes_stream();
+    let upstream = upstream_bytes_stream(response, head);
     let stats = Arc::new(Mutex::new(StreamStatsSnapshot::default()));
     decoder.set_stats(stats.clone());
     let state = StreamState {
-        upstream: Box::pin(upstream),
+        upstream,
         decoder,
         pending: VecDeque::new(),
         upstream_done: false,
@@ -83,6 +99,20 @@ where
         }),
         stats,
     )
+}
+
+/// 上游字节流；`head` 是校验阶段取出的首块，拼回后再交给后续处理。
+pub(crate) fn upstream_bytes_stream(
+    response: reqwest::Response,
+    head: Option<Bytes>,
+) -> Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>> {
+    let upstream = response.bytes_stream();
+    match head {
+        Some(bytes) => Box::pin(
+            stream::once(async move { Ok::<Bytes, reqwest::Error>(bytes) }).chain(upstream),
+        ),
+        None => Box::pin(upstream),
+    }
 }
 
 #[cfg(test)]

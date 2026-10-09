@@ -3,16 +3,20 @@ mod encode;
 mod events;
 mod pipeline;
 pub(crate) mod sse;
+mod verify;
 
 use axum::body::Bytes;
 use futures::Stream;
+
+use crate::error::AppError;
 
 pub(crate) use encode::responses::responses_completed_sse_with_usage;
 #[cfg(test)]
 pub(crate) use events::InternalFinishReason;
 pub(crate) use events::StreamStatsSnapshot;
 pub(crate) use events::{InternalStreamEvent, StreamUsage};
-pub(crate) use pipeline::SharedStreamStats;
+pub(crate) use pipeline::{upstream_bytes_stream, SharedStreamStats};
+pub(crate) use verify::verify_upstream_sse_head;
 
 use self::{
     decode::{
@@ -21,7 +25,7 @@ use self::{
         responses::{NativeResponsesSseStatsDecoder, ResponsesSseAnthropicMessagesSseDecoder},
     },
     encode::anthropic::AnthropicMessagesSseDecoder,
-    pipeline::{map_response_stream, map_response_stream_with_stats},
+    pipeline::{map_response_stream, map_response_stream_with_stats_and_head},
 };
 
 #[allow(dead_code)]
@@ -57,63 +61,108 @@ pub fn anthropic_messages_sse_response_to_responses_sse(
     map_response_stream(response, AnthropicMessagesToResponsesSseDecoder::default())
 }
 
-pub(crate) fn chat_sse_response_to_responses_sse_with_stats(
-    response: reqwest::Response,
-) -> (
-    impl Stream<Item = Result<Bytes, std::io::Error>>,
-    SharedStreamStats,
-) {
-    map_response_stream_with_stats(response, ChatToResponsesSseDecoder::default())
-}
-
-pub(crate) fn chat_sse_response_to_anthropic_messages_sse_with_stats(
-    response: reqwest::Response,
-    model: String,
-) -> (
-    impl Stream<Item = Result<Bytes, std::io::Error>>,
-    SharedStreamStats,
-) {
-    map_response_stream_with_stats(response, AnthropicMessagesSseDecoder::new(model))
-}
-
-pub(crate) fn responses_sse_response_to_anthropic_messages_sse_with_stats(
-    response: reqwest::Response,
-    model: String,
-) -> (
-    impl Stream<Item = Result<Bytes, std::io::Error>>,
-    SharedStreamStats,
-) {
-    map_response_stream_with_stats(
+pub(crate) async fn chat_sse_response_to_responses_sse_with_stats(
+    mut response: reqwest::Response,
+) -> Result<
+    (
+        impl Stream<Item = Result<Bytes, std::io::Error>>,
+        SharedStreamStats,
+    ),
+    AppError,
+> {
+    let head = verify_upstream_sse_head(&mut response).await?;
+    Ok(map_response_stream_with_stats_and_head(
         response,
+        head,
+        ChatToResponsesSseDecoder::default(),
+    ))
+}
+
+pub(crate) async fn chat_sse_response_to_anthropic_messages_sse_with_stats(
+    mut response: reqwest::Response,
+    model: String,
+) -> Result<
+    (
+        impl Stream<Item = Result<Bytes, std::io::Error>>,
+        SharedStreamStats,
+    ),
+    AppError,
+> {
+    let head = verify_upstream_sse_head(&mut response).await?;
+    Ok(map_response_stream_with_stats_and_head(
+        response,
+        head,
+        AnthropicMessagesSseDecoder::new(model),
+    ))
+}
+
+pub(crate) async fn responses_sse_response_to_anthropic_messages_sse_with_stats(
+    mut response: reqwest::Response,
+    model: String,
+) -> Result<
+    (
+        impl Stream<Item = Result<Bytes, std::io::Error>>,
+        SharedStreamStats,
+    ),
+    AppError,
+> {
+    let head = verify_upstream_sse_head(&mut response).await?;
+    Ok(map_response_stream_with_stats_and_head(
+        response,
+        head,
         ResponsesSseAnthropicMessagesSseDecoder::new(model),
-    )
+    ))
 }
 
-pub(crate) fn native_responses_sse_with_stats(
-    response: reqwest::Response,
-) -> (
-    impl Stream<Item = Result<Bytes, std::io::Error>>,
-    SharedStreamStats,
-) {
-    map_response_stream_with_stats(response, NativeResponsesSseStatsDecoder::default())
+pub(crate) async fn native_responses_sse_with_stats(
+    mut response: reqwest::Response,
+) -> Result<
+    (
+        impl Stream<Item = Result<Bytes, std::io::Error>>,
+        SharedStreamStats,
+    ),
+    AppError,
+> {
+    let head = verify_upstream_sse_head(&mut response).await?;
+    Ok(map_response_stream_with_stats_and_head(
+        response,
+        head,
+        NativeResponsesSseStatsDecoder::default(),
+    ))
 }
 
-pub(crate) fn native_chat_sse_with_stats(
-    response: reqwest::Response,
-) -> (
-    impl Stream<Item = Result<Bytes, std::io::Error>>,
-    SharedStreamStats,
-) {
-    map_response_stream_with_stats(response, ChatSseStatsDecoder::default())
+pub(crate) async fn native_chat_sse_with_stats(
+    mut response: reqwest::Response,
+) -> Result<
+    (
+        impl Stream<Item = Result<Bytes, std::io::Error>>,
+        SharedStreamStats,
+    ),
+    AppError,
+> {
+    let head = verify_upstream_sse_head(&mut response).await?;
+    Ok(map_response_stream_with_stats_and_head(
+        response,
+        head,
+        ChatSseStatsDecoder::default(),
+    ))
 }
 
-pub(crate) fn anthropic_messages_sse_response_to_responses_sse_with_stats(
-    response: reqwest::Response,
-) -> (
-    impl Stream<Item = Result<Bytes, std::io::Error>>,
-    SharedStreamStats,
-) {
-    map_response_stream_with_stats(response, AnthropicMessagesToResponsesSseDecoder::default())
+pub(crate) async fn anthropic_messages_sse_response_to_responses_sse_with_stats(
+    mut response: reqwest::Response,
+) -> Result<
+    (
+        impl Stream<Item = Result<Bytes, std::io::Error>>,
+        SharedStreamStats,
+    ),
+    AppError,
+> {
+    let head = verify_upstream_sse_head(&mut response).await?;
+    Ok(map_response_stream_with_stats_and_head(
+        response,
+        head,
+        AnthropicMessagesToResponsesSseDecoder::default(),
+    ))
 }
 
 pub fn responses_text_delta_sse(delta: &str) -> Bytes {

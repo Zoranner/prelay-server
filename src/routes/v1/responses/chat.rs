@@ -137,7 +137,7 @@ pub(super) async fn create_chat_response(
             upstream_request_id: None,
         };
         let (stream, stream_stats) =
-            chat_sse_response_to_responses_sse_with_stats(upstream_response);
+            chat_sse_response_to_responses_sse_with_stats(upstream_response).await?;
         let body = Body::from_stream(
             record_stream_with_activity_content(
                 state.storage.clone(),

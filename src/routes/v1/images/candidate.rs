@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use crate::{
     activity::{media_metadata_from_bytes, RawStreamContentCapture, RawStreamProtocol},
+    bridge::stream::{upstream_bytes_stream, verify_upstream_sse_head},
     error::AppError,
     observability::{
         stream_stats::record_first_chunk_with_activity_content_best_effort,
@@ -39,7 +40,7 @@ pub(super) async fn create_image_generation_with_candidate(
     );
     let upstream_started_at = std::time::Instant::now();
     let client = state.provider_client(&provider.provider_type)?;
-    let upstream_response = match client
+    let mut upstream_response = match client
         .post(upstream_url)
         .bearer_auth(&provider.api_key)
         .json(&payload)
@@ -131,13 +132,13 @@ pub(super) async fn create_image_generation_with_candidate(
             upstream_request_id,
             error_message: None,
         });
+        let head = verify_upstream_sse_head(&mut upstream_response).await?;
+        let stream = upstream_bytes_stream(upstream_response, head).map_err(std::io::Error::other);
         let body = Body::from_stream(
             record_first_chunk_with_activity_content_best_effort(
                 state.storage.clone(),
                 access.identity_id.clone(),
-                upstream_response
-                    .bytes_stream()
-                    .map_err(std::io::Error::other),
+                stream,
                 log,
                 started_at,
                 input_text,

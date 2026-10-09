@@ -117,7 +117,7 @@ pub(super) async fn create_native_response(
             tool_call_count: None,
             upstream_request_id: None,
         };
-        let (stream, stream_stats) = native_responses_sse_with_stats(upstream_response);
+        let (stream, stream_stats) = native_responses_sse_with_stats(upstream_response).await?;
         let body = Body::from_stream(
             record_stream_with_activity_content(
                 state.storage.clone(),
