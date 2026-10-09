@@ -158,6 +158,7 @@ async fn main() -> anyhow::Result<()> {
         provider_clients: Default::default(),
         client_update,
         extensions,
+        failover: Default::default(),
     };
     let app = app::router(state).await?;
 

@@ -35,6 +35,7 @@ pub(super) async fn create_chat_completion(
         resolve_language_model_candidates(&state, &access, &model, "chat_completions").await?;
     let (response, provider_id) = run_endpoint_model_candidates(
         candidates,
+        &state.failover,
         AppError::BadRequest(format!("接入点未配置模型 {model}")),
         |resolved| {
             create_chat_completion_with_candidate(

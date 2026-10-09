@@ -41,6 +41,7 @@ pub(super) async fn create_response(
         resolve_language_model_candidates(&state, &access, &request.model, "responses").await?;
     let (response, provider_id) = run_endpoint_model_candidates(
         candidates,
+        &state.failover,
         AppError::BadRequest(format!("接入点未配置模型 {model_requested}")),
         |resolved| {
             create_response_with_candidate(

@@ -24,6 +24,7 @@ pub async fn test_context_with_catalog(provider_catalog: ProviderCatalog) -> Tes
         provider_clients: Default::default(),
         client_update: ClientUpdateCache::unavailable(reqwest::Client::new()),
         extensions: ExtensionCatalog::unavailable(reqwest::Client::new()),
+        failover: Default::default(),
     })
     .await
     .expect("build application router");

@@ -40,6 +40,7 @@ pub(super) async fn create_message(
             .await?;
     let (response, provider_id) = run_endpoint_model_candidates(
         candidates,
+        &state.failover,
         AppError::BadRequest(format!("接入点未配置模型 {}", request.model)),
         |resolved| {
             create_message_with_candidate(

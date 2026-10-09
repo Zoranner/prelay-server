@@ -6,6 +6,7 @@ pub mod database;
 pub mod entity;
 pub mod error;
 pub mod extensions;
+pub mod failover;
 pub mod identity;
 pub mod memory;
 pub mod models;
@@ -28,6 +29,7 @@ pub struct AppState {
     pub provider_clients: upstream::ProviderClientCache,
     pub client_update: client_update::ClientUpdateCache,
     pub extensions: extensions::ExtensionCatalog,
+    pub failover: failover::FailoverRegistry,
 }
 
 impl AppState {
@@ -147,6 +149,7 @@ pub mod test_support {
             provider_clients: Default::default(),
             client_update: ClientUpdateCache::unavailable(reqwest::Client::new()),
             extensions: ExtensionCatalog::unavailable(reqwest::Client::new()),
+            failover: Default::default(),
         }
     }
 

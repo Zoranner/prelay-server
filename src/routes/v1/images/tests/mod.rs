@@ -63,6 +63,7 @@ async fn test_state_with_connection() -> (AppState, DatabaseConnection) {
         provider_clients: Default::default(),
         client_update: crate::client_update::ClientUpdateCache::unavailable(reqwest::Client::new()),
         extensions: crate::extensions::ExtensionCatalog::unavailable(reqwest::Client::new()),
+        failover: Default::default(),
     };
     (state, connection)
 }
