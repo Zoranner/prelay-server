@@ -50,6 +50,9 @@ language_models = [
   "deepseek-v4-pro",
 ]
 
+[providers.protocol_base_urls]
+anthropic_messages = "https://relay.example/anthropic/v1"
+
 [providers.upstream_model_names]
 k3 = "kimi-k3"
 deepseek-v4-pro = "relay-deepseek-v4-pro"

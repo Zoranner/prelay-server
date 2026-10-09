@@ -1,6 +1,7 @@
 mod activity_content;
 mod indexes;
 mod provider_catalog;
+mod reconciliation;
 mod tables;
 
 use sea_orm::{
@@ -74,7 +75,8 @@ pub async fn initialize_with_catalog(
     initialize(db).await?;
     provider_catalog::apply(db, catalog).await?;
     provider_catalog::migrate_provider_models(db, catalog).await?;
-    provider_catalog::reconcile_endpoint_models(db, catalog).await
+    reconciliation::reconcile_protocol_base_urls(db, catalog).await?;
+    reconciliation::reconcile_endpoint_models(db, catalog).await
 }
 
 async fn initialize_empty_schema<C: ConnectionTrait>(

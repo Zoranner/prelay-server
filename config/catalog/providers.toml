@@ -38,7 +38,7 @@ language_models = [
 ]
 
 [providers.protocol_base_urls]
-anthropic_messages = "https://api.deepseek.com/anthropic"
+anthropic_messages = "https://api.deepseek.com/anthropic/v1"
 
 [[providers]]
 id = "bigmodel_coding_plan"
@@ -49,7 +49,7 @@ protocols = ["chat_completions", "responses", "anthropic_messages"]
 language_models = ["glm-5.3", "glm-5.3-flash"]
 
 [providers.protocol_base_urls]
-anthropic_messages = "https://open.bigmodel.cn/api/anthropic"
+anthropic_messages = "https://open.bigmodel.cn/api/anthropic/v1"
 
 [[providers]]
 id = "qwen_token_plan"
@@ -63,7 +63,7 @@ language_models = [
 ]
 
 [providers.protocol_base_urls]
-anthropic_messages = "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic"
+anthropic_messages = "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1"
 
 [[providers]]
 id = "kimi"
@@ -76,7 +76,7 @@ language_models = [
 ]
 
 [providers.protocol_base_urls]
-anthropic_messages = "https://api.kimi.com/coding/"
+anthropic_messages = "https://api.kimi.com/coding/v1"
 
 [[providers]]
 id = "minimax"

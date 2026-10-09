@@ -254,3 +254,81 @@ async fn reconciles_endpoint_models_with_the_current_catalog() {
         "routes of removed models must be removed"
     );
 }
+
+#[tokio::test]
+async fn reconciles_protocol_base_urls_with_the_catalog() {
+    let db = connect().await;
+    // 第一次初始化记录目录迁移版本，第二次只跑供应商记录对账。
+    initialize_with_catalog(&db, &fixture_catalog())
+        .await
+        .expect("initialize schema and catalog");
+    insert_identity(&db).await;
+    insert_provider(
+        &db,
+        "provider-relay",
+        "relay",
+        Some(
+            r#"{"protocol_base_urls":{"openai":"https://custom.example/v1","anthropic":"https://stale.example/v1"}}"#
+                .to_string(),
+        ),
+        Some(r#"["k3"]"#.to_string()),
+    )
+    .await;
+    insert_provider(
+        &db,
+        "provider-outside-catalog",
+        "supergpt",
+        Some(r#"{"protocol_base_urls":{"anthropic":"https://keep.example/v1"}}"#.to_string()),
+        None,
+    )
+    .await;
+
+    initialize_with_catalog(&db, &fixture_catalog())
+        .await
+        .expect("reconcile protocol base urls");
+
+    let relay = provider_configs::Entity::find_by_id("provider-relay")
+        .one(&db)
+        .await
+        .expect("load relay provider")
+        .expect("relay provider row");
+    let capabilities: serde_json::Value = serde_json::from_str(
+        relay
+            .capabilities_json
+            .as_deref()
+            .expect("relay capabilities json"),
+    )
+    .expect("parse relay capabilities");
+    assert_eq!(
+        capabilities["protocol_base_urls"]["anthropic"],
+        serde_json::json!("https://relay.example/anthropic/v1"),
+        "catalog declared protocol urls must be applied"
+    );
+    assert_eq!(
+        capabilities["protocol_base_urls"]["openai"],
+        serde_json::json!("https://custom.example/v1"),
+        "protocol urls not declared by the catalog must be kept"
+    );
+
+    let outside = provider_configs::Entity::find_by_id("provider-outside-catalog")
+        .one(&db)
+        .await
+        .expect("load provider outside the catalog")
+        .expect("provider row outside the catalog");
+    let capabilities: serde_json::Value = serde_json::from_str(
+        outside
+            .capabilities_json
+            .as_deref()
+            .expect("outside capabilities json"),
+    )
+    .expect("parse outside capabilities");
+    assert_eq!(
+        capabilities["protocol_base_urls"]["anthropic"],
+        serde_json::json!("https://keep.example/v1"),
+        "providers missing from the catalog must keep their stored values"
+    );
+
+    initialize_with_catalog(&db, &fixture_catalog())
+        .await
+        .expect("protocol base url reconciliation is idempotent");
+}
