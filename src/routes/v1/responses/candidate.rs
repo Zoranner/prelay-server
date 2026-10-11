@@ -1,8 +1,7 @@
 use axum::response::Response;
-use serde_json::Value;
 
 use crate::{
-    bridge::responses::decode::validate_responses_bridge_payload,
+    bridge::{internal::InternalRequest, responses::decode::validate_responses_bridge_payload},
     error::AppError,
     providers::{responses::encode_responses_request, spec::UpstreamProtocol},
     routes::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
@@ -30,7 +29,7 @@ pub(super) async fn create_response_with_candidate(
     resolved: ResolvedEndpointProvider,
 ) -> Result<Response, AppError> {
     let ResponseCandidateRequest {
-        original_payload,
+        payload,
         request,
         model_requested,
         is_streaming,
@@ -40,48 +39,55 @@ pub(super) async fn create_response_with_candidate(
     let provider = resolved.provider;
     let upstream_protocol = resolved.upstream_protocol;
     let model_upstream = resolved.model_upstream;
-    let mut upstream_payload = original_payload;
-    upstream_payload["model"] = Value::String(model_upstream.clone());
-    let mut request = request;
-    request.model = model_upstream;
+    let context = ResponseBridgeContext {
+        identity_id: access.identity_id.clone(),
+        endpoint_name: access.endpoint_name.clone(),
+        model_requested,
+        is_streaming,
+        started_at,
+    };
+
     if upstream_protocol == UpstreamProtocol::Responses {
-        let (upstream_payload, request) = if previous_response_id.is_some() {
-            let request =
-                request_with_session_history(&state.storage, &access.identity_id, request).await?;
-            (encode_responses_request(&request), request)
-        } else {
-            (upstream_payload, request)
-        };
+        if previous_response_id.is_some() {
+            let request = request_with_session_history(
+                &state.storage,
+                &access.identity_id,
+                request_for_upstream(request.as_ref(), &model_upstream),
+            )
+            .await?;
+            let payload = encode_responses_request(&request);
+            return create_native_response(
+                state,
+                &payload,
+                &request,
+                &model_upstream,
+                provider,
+                previous_response_id,
+                context,
+            )
+            .await;
+        }
         return create_native_response(
             state,
-            upstream_payload,
+            payload.as_ref(),
+            request.as_ref(),
+            &model_upstream,
             provider,
-            request,
             previous_response_id,
-            ResponseBridgeContext {
-                identity_id: access.identity_id.clone(),
-                endpoint_name: access.endpoint_name.clone(),
-                model_requested,
-                is_streaming,
-                started_at,
-            },
+            context,
         )
         .await;
     }
-    validate_responses_bridge_payload(&upstream_payload)?;
+
+    validate_responses_bridge_payload(payload.as_ref())?;
+    let request = request_for_upstream(request.as_ref(), &model_upstream);
     if upstream_protocol == UpstreamProtocol::AnthropicMessages {
         return create_anthropic_messages_response(
             state,
             request,
             provider,
             previous_response_id,
-            ResponseBridgeContext {
-                identity_id: access.identity_id.clone(),
-                endpoint_name: access.endpoint_name.clone(),
-                model_requested,
-                is_streaming,
-                started_at,
-            },
+            context,
         )
         .await;
     }
@@ -92,13 +98,14 @@ pub(super) async fn create_response_with_candidate(
         provider,
         upstream_protocol,
         previous_response_id,
-        ResponseBridgeContext {
-            identity_id: access.identity_id.clone(),
-            endpoint_name: access.endpoint_name.clone(),
-            model_requested,
-            is_streaming,
-            started_at,
-        },
+        context,
     )
     .await
+}
+
+/// 桥接与历史会话路径需要请求带上游模型名；原生直通路径不拷贝请求。
+fn request_for_upstream(request: &InternalRequest, model_upstream: &str) -> InternalRequest {
+    let mut request = request.clone();
+    request.model = model_upstream.to_string();
+    request
 }

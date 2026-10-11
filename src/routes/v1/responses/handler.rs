@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{
     extract::{Extension, State},
     response::Response,
@@ -18,8 +20,8 @@ use crate::{
 use super::candidate::create_response_with_candidate;
 
 pub(super) struct ResponseCandidateRequest {
-    pub(super) original_payload: Value,
-    pub(super) request: InternalRequest,
+    pub(super) payload: Arc<Value>,
+    pub(super) request: Arc<InternalRequest>,
     pub(super) model_requested: String,
     pub(super) is_streaming: bool,
     pub(super) previous_response_id: Option<String>,
@@ -32,8 +34,8 @@ pub(super) async fn create_response(
     Json(payload): Json<Value>,
 ) -> Result<Response, AppError> {
     let started_at = std::time::Instant::now();
-    let original_payload = payload.clone();
-    let request = decode_responses_request(payload)?;
+    let request = Arc::new(decode_responses_request(&payload)?);
+    let payload = Arc::new(payload);
     let model_requested = request.model.clone();
     let is_streaming = request.stream;
     let previous_response_id = request.previous_response_id.clone();
@@ -48,8 +50,8 @@ pub(super) async fn create_response(
                 &state,
                 &access,
                 ResponseCandidateRequest {
-                    original_payload: original_payload.clone(),
-                    request: request.clone(),
+                    payload: Arc::clone(&payload),
+                    request: Arc::clone(&request),
                     model_requested: model_requested.clone(),
                     is_streaming,
                     previous_response_id: previous_response_id.clone(),

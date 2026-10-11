@@ -5,7 +5,7 @@ use crate::bridge::internal::{
 };
 use crate::error::AppError;
 
-pub fn decode_responses_request(value: Value) -> Result<InternalRequest, AppError> {
+pub fn decode_responses_request(value: &Value) -> Result<InternalRequest, AppError> {
     let model = value
         .get("model")
         .and_then(Value::as_str)
@@ -34,7 +34,7 @@ pub fn decode_responses_request(value: Value) -> Result<InternalRequest, AppErro
     let text = value.get("text").cloned();
     let reasoning_requested = reasoning.is_some();
     let tool_choice_requested = tool_choice.is_some();
-    let structured_output_requested = responses_structured_output_requested(&value);
+    let structured_output_requested = responses_structured_output_requested(value);
     let streaming_usage_requested = value
         .pointer("/stream_options/include_usage")
         .and_then(Value::as_bool)

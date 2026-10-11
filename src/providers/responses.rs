@@ -1,3 +1,5 @@
+use serde::ser::SerializeMap;
+use serde::{Serialize, Serializer};
 use serde_json::{json, Value};
 
 use crate::{
@@ -37,6 +39,48 @@ pub fn encode_responses_request(request: &InternalRequest) -> Value {
         value["tools"] = json!(request.tools.iter().map(encode_tool).collect::<Vec<_>>());
     }
     value
+}
+
+/// 原生 Responses 直通的上行请求体：按原 payload 写出，只替换顶层 `model`。
+///
+/// 直通时 payload 可能就是几十 MB（长会话、截图），为换一个模型名深拷贝整个
+/// `Value` 代价过高；这里直接序列化写出，结果与“先替换 `model` 再序列化”一致。
+pub fn encode_native_responses_request_body(payload: &Value, model: &str) -> Vec<u8> {
+    let mut body = Vec::new();
+    serde_json::to_writer(&mut body, &PayloadWithModel { payload, model })
+        .expect("serializing a JSON payload into a Vec cannot fail");
+    body
+}
+
+struct PayloadWithModel<'a> {
+    payload: &'a Value,
+    model: &'a str,
+}
+
+impl Serialize for PayloadWithModel<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let Some(object) = self.payload.as_object() else {
+            return self.payload.serialize(serializer);
+        };
+
+        let mut map = serializer.serialize_map(Some(object.len().max(1)))?;
+        let mut replaced = false;
+        for (key, value) in object {
+            if key == "model" {
+                map.serialize_entry(key, self.model)?;
+                replaced = true;
+            } else {
+                map.serialize_entry(key, value)?;
+            }
+        }
+        if !replaced {
+            map.serialize_entry("model", self.model)?;
+        }
+        map.end()
+    }
 }
 
 fn encode_message(message: &InternalMessage) -> Value {
@@ -174,10 +218,42 @@ fn join_text_content(content: &[InternalContentPart]) -> String {
 mod tests {
     use serde_json::json;
 
-    use super::{decode_responses_response, encode_responses_request};
+    use super::{
+        decode_responses_response, encode_native_responses_request_body, encode_responses_request,
+    };
     use crate::bridge::internal::{
         InternalContentPart, InternalMessage, InternalRequest, InternalRole, InternalTool,
     };
+
+    #[test]
+    fn native_request_body_replaces_only_the_model_field() {
+        let payload = json!({
+            "model": "gpt-6.1-sol",
+            "stream": true,
+            "input": "hello",
+            "metadata": { "nested": [1, 2, 3] }
+        });
+        let mut expected_payload = payload.clone();
+        expected_payload["model"] = json!("gpt-6.1-sol-upstream");
+
+        let body = encode_native_responses_request_body(&payload, "gpt-6.1-sol-upstream");
+
+        assert_eq!(
+            body,
+            serde_json::to_vec(&expected_payload).expect("expected body")
+        );
+        assert_eq!(payload["model"], "gpt-6.1-sol");
+    }
+
+    #[test]
+    fn native_request_body_adds_model_when_absent() {
+        let body = encode_native_responses_request_body(&json!({ "input": "hello" }), "k3");
+
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).expect("body is json")["model"],
+            "k3"
+        );
+    }
 
     #[test]
     fn encodes_internal_request_to_responses_shape() {

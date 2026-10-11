@@ -27,9 +27,10 @@ use super::candidate::ResponseBridgeContext;
 
 pub(super) async fn create_native_response(
     state: &AppState,
-    payload: Value,
+    payload: &Value,
+    request: &InternalRequest,
+    model_upstream: &str,
     provider: crate::models::ProviderConfig,
-    request: InternalRequest,
     previous_response_id: Option<String>,
     context: ResponseBridgeContext,
 ) -> Result<Response, AppError> {
@@ -37,10 +38,13 @@ pub(super) async fn create_native_response(
     let upstream_url = format!("{}/responses", upstream_base_url.trim_end_matches('/'));
     let upstream_started_at = std::time::Instant::now();
     let client = state.provider_client(&provider.provider_type)?;
+    let upstream_request_body =
+        crate::providers::responses::encode_native_responses_request_body(payload, model_upstream);
     let upstream_response = client
         .post(upstream_url)
         .bearer_auth(&provider.api_key)
-        .json(&payload)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(upstream_request_body)
         .send()
         .await
         .map_err(|error| AppError::Upstream {
@@ -99,11 +103,7 @@ pub(super) async fn create_native_response(
             provider_name: provider.name,
             endpoint_name: context.endpoint_name.clone(),
             model_requested: context.model_requested,
-            model_upstream: payload
-                .get("model")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown")
-                .to_string(),
+            model_upstream: model_upstream.to_string(),
             status: "streaming".to_string(),
             http_status: 200,
             error_code: None,
@@ -129,7 +129,7 @@ pub(super) async fn create_native_response(
                 log,
                 context.started_at,
                 stream_stats,
-                internal_request_text(&request),
+                internal_request_text(request),
             )
             .await?,
         ));
@@ -217,7 +217,7 @@ pub(super) async fn create_native_response(
             tool_call_count: None,
             upstream_request_id: None,
         },
-        &internal_request_text(&request),
+        &internal_request_text(request),
         &internal_response_text(&decoded_response),
         None,
     )

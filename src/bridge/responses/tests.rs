@@ -5,7 +5,7 @@ use crate::bridge::internal::{InternalContentPart, InternalRole};
 
 #[test]
 fn decodes_string_input_into_user_message() {
-    let request = decode_responses_request(json!({
+    let request = decode_responses_request(&json!({
         "model": "deepseek-chat",
         "input": "hello",
         "stream": true,
@@ -29,7 +29,7 @@ fn decodes_string_input_into_user_message() {
 
 #[test]
 fn decodes_max_output_tokens_to_internal_max_tokens() {
-    let request = decode_responses_request(json!({
+    let request = decode_responses_request(&json!({
         "model": "deepseek-chat",
         "input": "hello",
         "max_output_tokens": 1024
@@ -41,7 +41,7 @@ fn decodes_max_output_tokens_to_internal_max_tokens() {
 
 #[test]
 fn decodes_responses_capability_request_flags() {
-    let request = decode_responses_request(json!({
+    let request = decode_responses_request(&json!({
         "model": "deepseek-chat",
         "input": "hello",
         "stream": true,
@@ -58,7 +58,7 @@ fn decodes_responses_capability_request_flags() {
 
 #[test]
 fn decodes_message_array_input_into_internal_messages() {
-    let request = decode_responses_request(json!({
+    let request = decode_responses_request(&json!({
         "model": "deepseek-chat",
         "input": [
             {
@@ -95,7 +95,7 @@ fn decodes_message_array_input_into_internal_messages() {
 
 #[test]
 fn decodes_function_tools_to_internal_tools() {
-    let request = decode_responses_request(json!({
+    let request = decode_responses_request(&json!({
         "model": "deepseek-chat",
         "input": "hello",
         "tools": [
@@ -127,7 +127,7 @@ fn decodes_function_tools_to_internal_tools() {
 
 #[test]
 fn decodes_responses_extensions_without_rejecting_request() {
-    let request = decode_responses_request(json!({
+    let request = decode_responses_request(&json!({
         "model": "deepseek-chat",
         "input": [
             {
@@ -179,7 +179,7 @@ fn decodes_responses_extensions_without_rejecting_request() {
 
 #[test]
 fn decodes_function_call_output_into_tool_message() {
-    let request = decode_responses_request(json!({
+    let request = decode_responses_request(&json!({
         "model": "deepseek-chat",
         "input": [
             {
@@ -204,7 +204,7 @@ fn decodes_function_call_output_into_tool_message() {
 
 #[test]
 fn decodes_responses_request_options_without_input() {
-    let request = decode_responses_request(json!({
+    let request = decode_responses_request(&json!({
         "model": "gpt-4.1",
         "store": false,
         "instructions": "Be concise.",
