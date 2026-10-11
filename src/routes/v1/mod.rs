@@ -2,7 +2,7 @@ use axum::{extract::DefaultBodyLimit, middleware, Router};
 
 use crate::AppState;
 
-const MAX_PROTOCOL_REQUEST_BODY_BYTES: usize = 128 * 1024 * 1024;
+const MAX_PROTOCOL_REQUEST_BODY_BYTES: usize = 256 * 1024 * 1024;
 
 pub mod auth;
 mod candidates;
