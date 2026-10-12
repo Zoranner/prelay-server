@@ -13,6 +13,7 @@ use crate::{
         stream::{native_responses_sse_with_stats, with_sse_keepalive},
     },
     error::AppError,
+    image_budget,
     observability::{
         stream_stats::record_stream_with_activity_content,
         upstream_observability::upstream_failure_message,
@@ -38,6 +39,8 @@ pub(super) async fn create_native_response(
     let upstream_url = format!("{}/responses", upstream_base_url.trim_end_matches('/'));
     let upstream_started_at = std::time::Instant::now();
     let client = state.provider_client(&provider.provider_type)?;
+    let pruned_payload = image_budget::apply(payload, image_budget::policy());
+    let payload = pruned_payload.as_ref().unwrap_or(payload);
     let upstream_request_body =
         crate::providers::responses::encode_native_responses_request_body(payload, model_upstream);
     let upstream_response = client

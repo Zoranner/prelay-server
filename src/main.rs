@@ -131,6 +131,8 @@ async fn main() -> anyhow::Result<()> {
 
     let upstream_policy =
         prelay_server::upstream::initialize_from_environment().map_err(anyhow::Error::msg)?;
+    // 图片预算的默认值按协议入口上限推导，入口上限已在启动时先初始化。
+    prelay_server::image_budget::initialize_from_environment().map_err(anyhow::Error::msg)?;
     let client = prelay_server::upstream::build_client(upstream_policy)?;
     let client_update_client = prelay_server::client_update::http_client_from_environment(
         upstream_policy.connect_timeout,

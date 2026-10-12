@@ -8,6 +8,7 @@ pub mod error;
 pub mod extensions;
 pub mod failover;
 pub mod identity;
+pub mod image_budget;
 pub mod memory;
 pub mod models;
 pub mod observability;
