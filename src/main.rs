@@ -90,6 +90,8 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     prelay_server::activity::initialize_from_environment().map_err(anyhow::Error::msg)?;
+    prelay_server::protocol_body_limit::initialize_from_environment()
+        .map_err(anyhow::Error::msg)?;
     let provider_catalog = Arc::new(ProviderCatalog::load(&catalog_directory())?);
     let database_config = DatabaseConfig::from_environment()?;
     let db = connect(&database_config).await?;

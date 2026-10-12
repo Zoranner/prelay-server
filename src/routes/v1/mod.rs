@@ -1,8 +1,6 @@
 use axum::{extract::DefaultBodyLimit, middleware, Router};
 
-use crate::AppState;
-
-const MAX_PROTOCOL_REQUEST_BODY_BYTES: usize = 256 * 1024 * 1024;
+use crate::{protocol_body_limit, AppState};
 
 pub mod auth;
 mod candidates;
@@ -21,7 +19,7 @@ pub fn router(state: AppState) -> Router {
         .merge(models::router())
         .merge(responses::router())
         .with_state(state.clone())
-        .layer(DefaultBodyLimit::max(MAX_PROTOCOL_REQUEST_BODY_BYTES))
+        .layer(DefaultBodyLimit::max(protocol_body_limit::limit()))
         .layer(middleware::from_fn_with_state(
             state,
             auth::require_protocol_auth,
@@ -40,7 +38,7 @@ mod tests {
     use serde_json::Value;
     use tower::ServiceExt;
 
-    use super::MAX_PROTOCOL_REQUEST_BODY_BYTES;
+    use crate::protocol_body_limit;
 
     #[tokio::test]
     async fn protocol_body_limit_accepts_screenshot_session_payloads() {
@@ -50,7 +48,7 @@ mod tests {
                 "/request",
                 post(|Json(_): Json<Value>| async { StatusCode::NO_CONTENT }),
             )
-            .layer(DefaultBodyLimit::max(MAX_PROTOCOL_REQUEST_BODY_BYTES));
+            .layer(DefaultBodyLimit::max(protocol_body_limit::limit()));
 
         let response = app
             .oneshot(
