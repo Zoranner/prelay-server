@@ -5,7 +5,9 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use prelay_protocol::{ExtensionKind, ExtensionSummary, ExtensionVersion, ProtocolErrorCode};
+use prelay_protocol::{
+    CatalogKind, ExtensionKind, ExtensionSummary, ExtensionVersion, ProtocolErrorCode,
+};
 
 use crate::{
     extensions::{CatalogError, ExtensionCatalog},
@@ -17,6 +19,7 @@ use super::ApiError;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/extensions/rules", get(list_rules))
+        .route("/extensions/plugins", get(list_plugins))
         .route("/extensions/skills", get(list_skills))
         .route("/extensions/mcp", get(list_mcp))
         .route("/extensions/:name/versions", get(list_versions))
@@ -30,24 +33,44 @@ pub fn router() -> Router<AppState> {
 async fn list_rules(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ExtensionSummary>>, ApiError> {
-    list(&state.extensions, ExtensionKind::Rule).await
+    list(&state.extensions, CatalogKind::Rule).await
+}
+
+async fn list_plugins(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<ExtensionSummary>>, ApiError> {
+    list(&state.extensions, CatalogKind::Plugin).await
 }
 
 async fn list_skills(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ExtensionSummary>>, ApiError> {
-    list(&state.extensions, ExtensionKind::Skill).await
+    list_by_artifact(&state.extensions, ExtensionKind::Skill).await
 }
 
 async fn list_mcp(State(state): State<AppState>) -> Result<Json<Vec<ExtensionSummary>>, ApiError> {
-    list(&state.extensions, ExtensionKind::Mcp).await
+    list_by_artifact(&state.extensions, ExtensionKind::Mcp).await
 }
 
 async fn list(
     catalog: &ExtensionCatalog,
+    catalog_kind: CatalogKind,
+) -> Result<Json<Vec<ExtensionSummary>>, ApiError> {
+    Ok(Json(
+        catalog.list(catalog_kind).await.map_err(catalog_error)?,
+    ))
+}
+
+async fn list_by_artifact(
+    catalog: &ExtensionCatalog,
     kind: ExtensionKind,
 ) -> Result<Json<Vec<ExtensionSummary>>, ApiError> {
-    Ok(Json(catalog.list(kind).await.map_err(catalog_error)?))
+    Ok(Json(
+        catalog
+            .list_by_artifact(kind)
+            .await
+            .map_err(catalog_error)?,
+    ))
 }
 
 async fn list_versions(

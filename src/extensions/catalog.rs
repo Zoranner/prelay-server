@@ -10,8 +10,8 @@ use std::{
 use anyhow::Result;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use prelay_protocol::{
-    ExtensionFile, ExtensionInstallBundle, ExtensionKind, ExtensionMcpManifest, ExtensionSummary,
-    ExtensionVersion,
+    CatalogKind, ExtensionArtifact, ExtensionFile, ExtensionInstallBundle, ExtensionKind,
+    ExtensionMcpManifest, ExtensionSummary, ExtensionVersion,
 };
 use tokio::sync::{Mutex, RwLock};
 
@@ -20,14 +20,12 @@ use super::{
     gitea::{GiteaClient, GiteaFileError},
     mcp::validate_mcp_manifest,
     package::{
-        classify_paths, valid_extension_file_path, valid_repository_name, versions_from_tags,
+        classify_manifest, classify_paths, parse_prelay_manifest, valid_extension_file_path,
+        valid_repository_name, versions_from_tags, ClassifiedPackage, PRELAY_MANIFEST_PATH,
     },
 };
 
 const README_PATH: &str = "README.md";
-const RULES_PATH: &str = "AGENTS.md";
-const SKILLS_PREFIX: &str = "skills/";
-const MCP_MANIFEST_PATH: &str = "server.json";
 
 #[derive(Clone)]
 pub struct ExtensionCatalog {
@@ -50,7 +48,7 @@ pub enum CatalogError {
 #[derive(Clone)]
 struct CatalogEntry {
     summary: ExtensionSummary,
-    kind: ExtensionKind,
+    classification: ClassifiedPackage,
 }
 
 struct CachedCatalog {
@@ -96,12 +94,34 @@ impl ExtensionCatalog {
         self.refresh_in_background();
     }
 
-    pub async fn list(&self, kind: ExtensionKind) -> Result<Vec<ExtensionSummary>, CatalogError> {
+    pub async fn list(
+        &self,
+        catalog_kind: CatalogKind,
+    ) -> Result<Vec<ExtensionSummary>, CatalogError> {
         Ok(self
             .entries()
             .await?
             .into_iter()
-            .filter(|entry| entry.kind == kind)
+            .filter(|entry| entry.summary.catalog_kind == Some(catalog_kind))
+            .map(|entry| entry.summary)
+            .collect())
+    }
+
+    pub async fn list_by_artifact(
+        &self,
+        kind: ExtensionKind,
+    ) -> Result<Vec<ExtensionSummary>, CatalogError> {
+        Ok(self
+            .entries()
+            .await?
+            .into_iter()
+            .filter(|entry| {
+                entry
+                    .classification
+                    .artifacts
+                    .iter()
+                    .any(|artifact| artifact.kind == kind)
+            })
             .map(|entry| entry.summary)
             .collect())
     }
@@ -133,55 +153,67 @@ impl ExtensionCatalog {
         repository: &str,
         tag: &str,
     ) -> Result<ExtensionInstallBundle, CatalogError> {
-        let entry = self.entry(repository).await?;
+        self.entry(repository).await?;
         let version = self.version(repository, tag).await?;
         let paths = self
             .gitea
             .tree_paths(repository, &version.commit_sha)
             .await
             .map_err(|_| CatalogError::Unavailable)?;
-        let install_paths = match entry.kind {
-            ExtensionKind::Rule if paths.iter().any(|path| path == RULES_PATH) => {
-                vec![RULES_PATH.to_string()]
+        let classification = self
+            .classify_version(repository, &version.commit_sha, &paths)
+            .await?
+            .ok_or(CatalogError::VersionNotFound)?;
+        let mut artifacts = Vec::with_capacity(classification.artifacts.len());
+        let mut included = Vec::new();
+        for artifact in classification.artifacts {
+            let mut files = Vec::with_capacity(artifact.paths.len());
+            for path in artifact.paths {
+                let content = self.file(repository, &version.commit_sha, &path).await?;
+                if requires_utf8_content(artifact.kind, &path)
+                    && std::str::from_utf8(&content).is_err()
+                {
+                    return Err(CatalogError::ContentInvalid);
+                }
+                if artifact.kind == ExtensionKind::Hook
+                    && serde_json::from_slice::<serde_json::Value>(&content).is_err()
+                {
+                    return Err(CatalogError::ContentInvalid);
+                }
+                included.push(path.clone());
+                files.push(ExtensionFile {
+                    content_base64: BASE64.encode(content),
+                    path,
+                });
             }
-            ExtensionKind::Skill => paths
-                .into_iter()
-                .filter(|path| path.starts_with(SKILLS_PREFIX) && valid_extension_file_path(path))
-                .collect(),
-            ExtensionKind::Mcp if paths.iter().any(|path| path == MCP_MANIFEST_PATH) => {
-                vec![MCP_MANIFEST_PATH.to_string()]
+            if artifact.kind == ExtensionKind::Mcp {
+                let content = BASE64
+                    .decode(
+                        files
+                            .first()
+                            .ok_or(CatalogError::ContentInvalid)?
+                            .content_base64
+                            .as_str(),
+                    )
+                    .map_err(|_| CatalogError::ContentInvalid)?;
+                let manifest = serde_json::from_slice::<ExtensionMcpManifest>(&content)
+                    .map_err(|_| CatalogError::ContentInvalid)?;
+                validate_mcp_manifest(&manifest)?;
             }
-            ExtensionKind::Rule => return Err(CatalogError::VersionNotFound),
-            ExtensionKind::Mcp => return Err(CatalogError::VersionNotFound),
-        };
-        if install_paths.is_empty() {
-            return Err(CatalogError::VersionNotFound);
-        }
-
-        let mut files = Vec::with_capacity(install_paths.len());
-        for path in install_paths {
-            let content = self.file(repository, &version.commit_sha, &path).await?;
-            if requires_utf8_content(entry.kind, &path) && std::str::from_utf8(&content).is_err() {
-                return Err(CatalogError::ContentInvalid);
-            }
-            files.push(ExtensionFile {
-                content_base64: BASE64.encode(content),
-                path,
+            artifacts.push(ExtensionArtifact {
+                kind: artifact.kind,
+                files,
             });
         }
-        if entry.kind == ExtensionKind::Mcp {
-            let content = BASE64
-                .decode(&files[0].content_base64)
-                .map_err(|_| CatalogError::ContentInvalid)?;
-            let manifest = serde_json::from_slice::<ExtensionMcpManifest>(&content)
-                .map_err(|_| CatalogError::ContentInvalid)?;
-            validate_mcp_manifest(&manifest)?;
-        }
+        let skipped = paths
+            .into_iter()
+            .filter(|path| !included.contains(path))
+            .collect();
         Ok(ExtensionInstallBundle {
             name: repository.to_string(),
-            kind: entry.kind,
             version,
-            files,
+            artifacts,
+            skipped,
         })
     }
 
@@ -255,9 +287,20 @@ impl ExtensionCatalog {
                 .gitea
                 .tree_paths(&repository, &latest.commit_sha)
                 .await?;
-            let path_refs = paths.iter().map(String::as_str).collect::<Vec<_>>();
-            let Some(kind) = classify_paths(&path_refs) else {
-                continue;
+            let classification = match self
+                .classify_version(&repository, &latest.commit_sha, &paths)
+                .await
+            {
+                Ok(Some(classification)) => classification,
+                Ok(None) => continue,
+                Err(error) => {
+                    tracing::warn!(
+                        repository = %repository,
+                        ?error,
+                        "skipping extension package with invalid content"
+                    );
+                    continue;
+                }
             };
             entries.push(CatalogEntry {
                 summary: ExtensionSummary {
@@ -269,12 +312,34 @@ impl ExtensionCatalog {
                         repository
                     ),
                     latest,
+                    catalog_kind: Some(classification.catalog_kind),
+                    artifacts: classification.artifact_summaries(),
                 },
-                kind,
+                classification,
             });
         }
         entries.sort_by(|left, right| left.summary.repository.cmp(&right.summary.repository));
         Ok(entries)
+    }
+
+    async fn classify_version(
+        &self,
+        repository: &str,
+        commit_sha: &str,
+        paths: &[String],
+    ) -> Result<Option<ClassifiedPackage>, CatalogError> {
+        let path_refs = paths.iter().map(String::as_str).collect::<Vec<_>>();
+        if paths.iter().any(|path| path == PRELAY_MANIFEST_PATH) {
+            let content = self
+                .file(repository, commit_sha, PRELAY_MANIFEST_PATH)
+                .await?;
+            let manifest =
+                parse_prelay_manifest(&content).map_err(|_| CatalogError::ContentInvalid)?;
+            return classify_manifest(&manifest, &path_refs)
+                .map(Some)
+                .map_err(|_| CatalogError::ContentInvalid);
+        }
+        Ok(classify_paths(&path_refs))
     }
 
     async fn file(
@@ -305,6 +370,9 @@ impl ExtensionCatalog {
 }
 
 fn requires_utf8_content(kind: ExtensionKind, path: &str) -> bool {
-    matches!(kind, ExtensionKind::Rule | ExtensionKind::Mcp)
-        || (kind == ExtensionKind::Skill && path.ends_with("/SKILL.md"))
+    match kind {
+        ExtensionKind::Rule | ExtensionKind::Mcp | ExtensionKind::Hook => true,
+        ExtensionKind::Skill => path.ends_with("/SKILL.md"),
+        ExtensionKind::Unknown => false,
+    }
 }

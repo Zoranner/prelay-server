@@ -6,4 +6,7 @@ mod package;
 
 pub use catalog::{CatalogError, ExtensionCatalog};
 pub use config::ExtensionCatalogConfig;
-pub use package::{classify_paths, versions_from_tags, GiteaTag};
+pub use package::{
+    classify_manifest, classify_paths, parse_prelay_manifest, versions_from_tags,
+    ClassifiedArtifact, ClassifiedPackage, GiteaTag, ManifestError, PrelayManifest,
+};

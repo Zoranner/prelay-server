@@ -56,11 +56,23 @@ async fn extension_catalog_routes_require_a_device_credential() {
                 .uri("/api/extensions/plugins")
                 .header("authorization", format!("Bearer {credential}"))
                 .body(Body::empty())
-                .expect("build removed plugin route request"),
+                .expect("build plugin route request"),
         )
         .await
         .expect("route request");
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read plugin error response");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+        serde_json::json!({
+            "error": {
+                "code": "extension_catalog_unavailable",
+                "message": "扩展目录暂不可用"
+            }
+        })
+    );
 }
 
 async fn register(app: &axum::Router, credential: &str) {

@@ -1,21 +1,139 @@
-use prelay_protocol::ExtensionKind;
+use prelay_protocol::{CatalogKind, ExtensionKind};
 use prelay_server::extensions::{
-    classify_paths, versions_from_tags, ExtensionCatalog, ExtensionCatalogConfig, GiteaTag,
+    classify_manifest, classify_paths, parse_prelay_manifest, versions_from_tags, ExtensionCatalog,
+    ExtensionCatalogConfig, GiteaTag, ManifestError,
 };
 
 #[test]
-fn classifies_extensions_by_their_single_installation_boundary() {
+fn classifies_rule_and_plugin_packages_by_their_artifacts() {
     assert_eq!(classify_paths(&[".codex-plugin/plugin.json"]), None);
-    assert_eq!(
-        classify_paths(&["server.json", "skills/server/SKILL.md"]),
-        Some(ExtensionKind::Mcp)
-    );
-    assert_eq!(
-        classify_paths(&["skills/engineering/SKILL.md", "AGENTS.md"]),
-        Some(ExtensionKind::Skill)
-    );
-    assert_eq!(classify_paths(&["AGENTS.md"]), Some(ExtensionKind::Rule));
+
+    let multi = classify_paths(&["server.json", "skills/server/SKILL.md"]).unwrap();
+    assert_eq!(multi.catalog_kind, CatalogKind::Plugin);
+    assert_eq!(multi.artifacts.len(), 2);
+    assert_eq!(multi.artifacts[0].kind, ExtensionKind::Mcp);
+    assert_eq!(multi.artifacts[1].kind, ExtensionKind::Skill);
+
+    let skill = classify_paths(&["skills/engineering/SKILL.md", "AGENTS.md"]).unwrap();
+    assert_eq!(skill.catalog_kind, CatalogKind::Plugin);
+    assert_eq!(skill.artifacts.len(), 1);
+    assert_eq!(skill.artifacts[0].kind, ExtensionKind::Skill);
+
+    let rule = classify_paths(&["AGENTS.md"]).unwrap();
+    assert_eq!(rule.catalog_kind, CatalogKind::Rule);
+    assert_eq!(rule.artifacts.len(), 1);
+    assert_eq!(rule.artifacts[0].kind, ExtensionKind::Rule);
+
+    let hooks = classify_paths(&[
+        "hooks/hooks.json",
+        "hooks/session.json",
+        "skills/a/SKILL.md",
+    ])
+    .unwrap();
+    assert_eq!(hooks.artifacts.len(), 2);
+    assert_eq!(hooks.artifacts[0].kind, ExtensionKind::Skill);
+    assert_eq!(hooks.artifacts[1].kind, ExtensionKind::Hook);
+    assert_eq!(hooks.artifacts[1].paths.len(), 2);
+
     assert_eq!(classify_paths(&["README.md"]), None);
+}
+
+#[test]
+fn manifest_selects_artifacts_and_rejects_invalid_declarations() {
+    let paths = [
+        ".prelay.json",
+        "AGENTS.md",
+        "README.md",
+        "server.json",
+        "skills/a/SKILL.md",
+        "skills/a/notes.txt",
+        "hooks/hooks.json",
+    ];
+    let manifest = parse_prelay_manifest(
+        br#"{
+          "schema": 2,
+          "artifacts": [
+            { "kind": "skill", "include": ["skills/"] },
+            { "kind": "hook", "path": "hooks/hooks.json" }
+          ]
+        }"#,
+    )
+    .expect("parse valid manifest");
+    let package = classify_manifest(&manifest, &paths).expect("classify valid manifest");
+    assert_eq!(package.catalog_kind, CatalogKind::Plugin);
+    assert_eq!(package.artifacts.len(), 2);
+    assert_eq!(package.artifacts[0].kind, ExtensionKind::Skill);
+    assert_eq!(
+        package.artifacts[0].paths,
+        vec!["skills/a/SKILL.md", "skills/a/notes.txt"]
+    );
+    assert_eq!(package.artifacts[1].kind, ExtensionKind::Hook);
+    assert_eq!(package.artifacts[1].paths, vec!["hooks/hooks.json"]);
+
+    let rule = parse_prelay_manifest(
+        br#"{"schema": 2, "artifacts": [{"kind": "rule", "path": "AGENTS.md"}]}"#,
+    )
+    .expect("parse rule manifest");
+    assert_eq!(
+        classify_manifest(&rule, &paths),
+        Err(ManifestError::UnsupportedArtifact)
+    );
+
+    let unknown = parse_prelay_manifest(
+        br#"{"schema": 2, "artifacts": [{"kind": "future", "path": "future.txt"}]}"#,
+    )
+    .expect("parse unknown manifest");
+    assert_eq!(
+        classify_manifest(&unknown, &paths),
+        Err(ManifestError::UnsupportedArtifact)
+    );
+
+    let missing = parse_prelay_manifest(
+        br#"{"schema": 2, "artifacts": [{"kind": "hook", "path": "hooks/missing.json"}]}"#,
+    )
+    .expect("parse missing manifest");
+    assert_eq!(
+        classify_manifest(&missing, &paths),
+        Err(ManifestError::MissingPath)
+    );
+
+    let traversal = parse_prelay_manifest(
+        br#"{"schema": 2, "artifacts": [{"kind": "mcp", "path": "../server.json"}]}"#,
+    )
+    .expect("parse traversal manifest");
+    assert_eq!(
+        classify_manifest(&traversal, &paths),
+        Err(ManifestError::InvalidPath)
+    );
+
+    let empty = parse_prelay_manifest(
+        br#"{"schema": 2, "artifacts": [{"kind": "skill", "include": ["skills/a/notes.txt"]}]}"#,
+    )
+    .expect("parse empty manifest");
+    assert_eq!(
+        classify_manifest(&empty, &paths),
+        Err(ManifestError::EmptyArtifact)
+    );
+
+    let duplicate = parse_prelay_manifest(
+        br#"{
+          "schema": 2,
+          "artifacts": [
+            { "kind": "skill", "include": ["skills/"] },
+            { "kind": "skill", "path": "skills/a/SKILL.md" }
+          ]
+        }"#,
+    )
+    .expect("parse duplicate manifest");
+    assert_eq!(
+        classify_manifest(&duplicate, &paths),
+        Err(ManifestError::DuplicateArtifact)
+    );
+
+    assert_eq!(
+        parse_prelay_manifest(br#"{"schema": 1, "artifacts": []}"#).unwrap_err(),
+        ManifestError::InvalidSchema
+    );
 }
 
 #[test]
@@ -137,14 +255,16 @@ async fn builds_a_rule_install_bundle_from_the_published_commit() {
         .await
         .expect("build rule install bundle");
 
-    assert_eq!(bundle.kind, ExtensionKind::Rule);
+    assert_eq!(bundle.artifacts.len(), 1);
+    assert_eq!(bundle.artifacts[0].kind, ExtensionKind::Rule);
     assert_eq!(bundle.version.commit_sha, commit_sha);
-    assert_eq!(bundle.files.len(), 1);
-    assert_eq!(bundle.files[0].path, "AGENTS.md");
+    assert_eq!(bundle.artifacts[0].files.len(), 1);
+    assert_eq!(bundle.artifacts[0].files[0].path, "AGENTS.md");
     assert_eq!(
-        bundle.files[0].content_base64,
+        bundle.artifacts[0].files[0].content_base64,
         BASE64.encode("# Managed rules")
     );
+    assert!(bundle.skipped.is_empty());
 }
 
 #[tokio::test]
@@ -224,7 +344,8 @@ async fn builds_an_mcp_install_bundle_from_a_valid_manifest() {
         .await
         .expect("build MCP install bundle");
 
-    assert_eq!(bundle.kind, ExtensionKind::Mcp);
-    assert_eq!(bundle.files.len(), 1);
-    assert_eq!(bundle.files[0].path, "server.json");
+    assert_eq!(bundle.artifacts.len(), 1);
+    assert_eq!(bundle.artifacts[0].kind, ExtensionKind::Mcp);
+    assert_eq!(bundle.artifacts[0].files.len(), 1);
+    assert_eq!(bundle.artifacts[0].files[0].path, "server.json");
 }
