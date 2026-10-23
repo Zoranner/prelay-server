@@ -44,21 +44,7 @@ async fn create_existing_base_tables(db: &DatabaseConnection) {
             .await
             .expect("create existing companion table");
     }
-    db.execute_unprepared(
-        "CREATE TABLE identity_response_sessions (
-            response_id TEXT NOT NULL,
-            identity_id TEXT NOT NULL,
-            previous_response_id TEXT,
-            provider_id TEXT NOT NULL,
-            model TEXT NOT NULL,
-            input_messages_json TEXT NOT NULL,
-            output_items_json TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            PRIMARY KEY (response_id, identity_id)
-        )",
-    )
-    .await
-    .expect("create legacy response session table");
+    create_legacy_response_session_table(db).await;
     db.execute_unprepared(
         "CREATE TABLE identity_provider_configs (
             id TEXT PRIMARY KEY,
@@ -82,6 +68,24 @@ async fn create_existing_base_tables(db: &DatabaseConnection) {
     )
     .await
     .expect("create existing provider shares index");
+}
+
+async fn create_legacy_response_session_table(db: &DatabaseConnection) {
+    db.execute_unprepared(
+        "CREATE TABLE identity_response_sessions (
+            response_id TEXT NOT NULL,
+            identity_id TEXT NOT NULL,
+            previous_response_id TEXT,
+            provider_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            input_messages_json TEXT NOT NULL,
+            output_items_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (response_id, identity_id)
+        )",
+    )
+    .await
+    .expect("create legacy response session table");
 }
 
 #[tokio::test]
@@ -143,12 +147,12 @@ async fn rejects_complete_table_names_without_provider_visibility_column() {
         "identity_endpoint_configs",
         "identity_endpoint_models",
         "identity_endpoint_model_routes",
-        "identity_response_sessions",
     ] {
         db.execute_unprepared(&format!("CREATE TABLE {table} (id TEXT PRIMARY KEY)"))
             .await
             .expect("create complete table-name set");
     }
+    create_legacy_response_session_table(&db).await;
     db.execute_unprepared(
         "CREATE TABLE identity_activities (
             id TEXT PRIMARY KEY,
@@ -173,12 +177,12 @@ async fn rejects_provider_shares_without_required_unique_index() {
         "identity_endpoint_configs",
         "identity_endpoint_models",
         "identity_endpoint_model_routes",
-        "identity_response_sessions",
     ] {
         db.execute_unprepared(&format!("CREATE TABLE {table} (id TEXT PRIMARY KEY)"))
             .await
             .expect("create complete table-name set");
     }
+    create_legacy_response_session_table(&db).await;
     db.execute_unprepared(
         "CREATE TABLE identity_provider_configs (
             id TEXT PRIMARY KEY,
