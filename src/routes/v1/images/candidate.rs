@@ -1,13 +1,20 @@
-use axum::{body::Body, http::header, response::Response};
+use axum::{
+    body::Body,
+    http::{header, StatusCode},
+    response::Response,
+};
 use futures::TryStreamExt;
 use serde_json::Value;
 
 use crate::{
-    activity::{media_metadata_from_bytes, RawStreamContentCapture, RawStreamProtocol},
+    activity::{
+        events::{events_from_image_request, media_event},
+        media_metadata_from_bytes, EventPhase, RawStreamContentCapture, RawStreamProtocol,
+    },
     bridge::stream::{upstream_bytes_stream, verify_upstream_sse_head, with_sse_keepalive},
     error::AppError,
     observability::{
-        stream_stats::record_first_chunk_with_activity_content_best_effort,
+        stream_stats::{record_first_chunk_with_rollout_best_effort, StreamRollout},
         upstream_observability::upstream_observability,
     },
     providers::spec::provider_upstream_base_url,
@@ -15,10 +22,7 @@ use crate::{
     AppState,
 };
 
-use super::activity::{
-    image_activity, insert_image_activity_best_effort,
-    record_image_activity_with_content_best_effort, ImageActivityParams,
-};
+use super::activity::{image_activity, record_image_activity_best_effort, ImageActivityParams};
 
 pub(super) async fn create_image_generation_with_candidate(
     state: &AppState,
@@ -40,48 +44,60 @@ pub(super) async fn create_image_generation_with_candidate(
     );
     let upstream_started_at = std::time::Instant::now();
     let client = state.provider_client(&provider.provider_type)?;
-    let mut upstream_response = match client
+    let upstream_request = client
         .post(upstream_url)
         .bearer_auth(&provider.api_key)
-        .json(&payload)
-        .send()
-        .await
-    {
-        Ok(response) => response,
-        Err(_) => {
-            let safe_error_message = "上游连接失败".to_string();
-            insert_image_activity_best_effort(
-                state,
-                access,
-                image_activity(ImageActivityParams {
+        .json(&payload);
+    let mut upstream_response =
+        match crate::upstream::send_with_timeout(crate::upstream::policy(), upstream_request).await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                let (status, error_code, safe_error_message) = match &error {
+                    AppError::Upstream {
+                        status: Some(StatusCode::GATEWAY_TIMEOUT),
+                        ..
+                    } => (
+                        Some(StatusCode::GATEWAY_TIMEOUT),
+                        "upstream_response_head_timeout",
+                        "上游响应超时",
+                    ),
+                    _ => (None, "upstream_connection", "上游连接失败"),
+                };
+                record_image_activity_best_effort(
+                    state,
                     access,
-                    provider: &provider,
-                    model_requested: model,
-                    model_upstream,
-                    status: "failed",
-                    http_status: 0,
-                    error_code: Some("upstream_connection"),
-                    is_streaming,
-                    latency_ms: started_at.elapsed().as_millis() as i64,
-                    upstream_latency_ms: None,
-                    upstream_request_id: None,
-                    error_message: Some(safe_error_message.clone()),
-                }),
-            )
-            .await;
-            return Err(AppError::Upstream {
-                status: None,
-                message: safe_error_message,
-            });
-        }
-    };
+                    image_activity(ImageActivityParams {
+                        access,
+                        provider: &provider,
+                        model_requested: model,
+                        model_upstream,
+                        status: "failed",
+                        http_status: status.map_or(0, |status| status.as_u16() as i64),
+                        error_code: Some(error_code),
+                        is_streaming,
+                        latency_ms: started_at.elapsed().as_millis() as i64,
+                        upstream_latency_ms: None,
+                        upstream_request_id: None,
+                        error_message: Some(safe_error_message.to_string()),
+                    }),
+                    events_from_image_request(&payload),
+                    Vec::new(),
+                )
+                .await;
+                return Err(AppError::Upstream {
+                    status,
+                    message: safe_error_message.to_string(),
+                });
+            }
+        };
     let upstream_latency_ms = upstream_started_at.elapsed().as_millis() as i64;
     let upstream_status = upstream_response.status();
 
     if !upstream_status.is_success() {
         let observability = upstream_observability(upstream_response.headers(), None);
         let safe_error_message = format!("上游请求失败: {upstream_status}");
-        insert_image_activity_best_effort(
+        record_image_activity_best_effort(
             state,
             access,
             image_activity(ImageActivityParams {
@@ -98,6 +114,8 @@ pub(super) async fn create_image_generation_with_candidate(
                 upstream_request_id: observability.request_id,
                 error_message: Some(safe_error_message.clone()),
             }),
+            events_from_image_request(&payload),
+            Vec::new(),
         )
         .await;
         return Err(AppError::Upstream {
@@ -113,11 +131,6 @@ pub(super) async fn create_image_generation_with_candidate(
     let upstream_request_id = upstream_observability(upstream_response.headers(), None).request_id;
 
     if is_streaming {
-        let input_text = payload
-            .get("prompt")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
         let log = image_activity(ImageActivityParams {
             access,
             provider: &provider,
@@ -135,14 +148,17 @@ pub(super) async fn create_image_generation_with_candidate(
         let head = verify_upstream_sse_head(&mut upstream_response).await?;
         let stream = upstream_bytes_stream(upstream_response, head).map_err(std::io::Error::other);
         let body = Body::from_stream(with_sse_keepalive(
-            record_first_chunk_with_activity_content_best_effort(
-                state.storage.clone(),
+            record_first_chunk_with_rollout_best_effort(
+                state.activity_store.clone(),
                 access.identity_id.clone(),
                 stream,
                 log,
                 started_at,
-                input_text,
                 RawStreamContentCapture::new(RawStreamProtocol::ImageGeneration),
+                StreamRollout {
+                    request_events: events_from_image_request(&payload),
+                    session_id: None,
+                },
             )
             .await,
         ));
@@ -157,7 +173,7 @@ pub(super) async fn create_image_generation_with_candidate(
         Ok(response_bytes) => response_bytes,
         Err(_) => {
             let safe_error_message = "读取上游响应失败".to_string();
-            insert_image_activity_best_effort(
+            record_image_activity_best_effort(
                 state,
                 access,
                 image_activity(ImageActivityParams {
@@ -174,6 +190,8 @@ pub(super) async fn create_image_generation_with_candidate(
                     upstream_request_id,
                     error_message: Some(safe_error_message.clone()),
                 }),
+                events_from_image_request(&payload),
+                Vec::new(),
             )
             .await;
             return Err(AppError::Upstream {
@@ -182,16 +200,12 @@ pub(super) async fn create_image_generation_with_candidate(
             });
         }
     };
-    let input_text = payload
-        .get("prompt")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
     let media_type = content_type
         .as_ref()
         .and_then(|value| value.to_str().ok())
         .unwrap_or("application/octet-stream");
-    record_image_activity_with_content_best_effort(
+    let media = media_metadata_from_bytes(media_type, &response_bytes);
+    record_image_activity_best_effort(
         state,
         access,
         image_activity(ImageActivityParams {
@@ -208,8 +222,8 @@ pub(super) async fn create_image_generation_with_candidate(
             upstream_request_id,
             error_message: None,
         }),
-        &input_text,
-        media_metadata_from_bytes(media_type, &response_bytes),
+        events_from_image_request(&payload),
+        vec![media_event(EventPhase::Response, &media)],
     )
     .await;
 

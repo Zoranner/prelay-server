@@ -26,7 +26,7 @@ Windows PowerShell：
 [Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
 ```
 
-本地 `.env` 会在启动时自动加载；已有进程环境变量优先。`DATABASE_URL` 是数据库位置的唯一选择，没有默认值，且只接受 PostgreSQL（`postgres://` 或 `postgresql://`）；其它 scheme 直接拒绝启动。服务首次连接全新空数据库时会初始化当前 schema；不保留迁移历史、不升级既有结构。
+本地 `.env` 会在启动时自动加载；已有进程环境变量优先。`DATABASE_URL` 是数据库位置的唯一选择，没有默认值，且只接受 PostgreSQL（`postgres://` 或 `postgresql://`）；其它 scheme 直接拒绝启动。服务首次连接全新空数据库时会初始化当前 schema。已有当前结构会补齐 `activity_rollouts` 并删除旧的 `activity_contents`；其它不完整或结构不兼容的数据库仍会被拒绝。
 
 本地调试时，服务从项目根目录的 `config/catalog/` 读取供应商和模型目录。
 
@@ -76,7 +76,9 @@ Copy-Item deploy/.env.example deploy/.env
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --pull always
 ```
 
-编排内的 PostgreSQL 数据保存在宿主机 `deploy/data/postgres`。服务首次连接空数据库时初始化当前 schema；已有不完整或不兼容数据库不进行修复或升级。
+编排内的 PostgreSQL 数据保存在宿主机 `deploy/data/postgres`，活动 JSONL 保存在 `deploy/data/sessions`。容器内服务以 UID 1000 的 `relay` 用户运行；首次部署前需确保 `deploy/data/sessions` 可由该用户写入，否则服务会在启动阶段明确失败。服务首次连接空数据库时初始化当前 schema；已有当前结构会执行活动正文表的替换，不完整或结构不兼容的数据库不进行其它修复或升级。
+
+升级已有部署前必须同时备份 PostgreSQL 数据和 `ACTIVITY_ROLLOUT_DIR`。初始化会删除旧 `activity_contents` 表，并在 `anthropic_removal_v1` 中删除 Anthropic 活动及其 `activity_rollouts` 索引；数据库迁移不会删除对应的 JSONL 文件，遗留文件需要按数据保留策略单独处理。
 
 使用该 Compose 文件时，客户端安装包的容器内目录是 `/app/updates`，对应宿主机的 `deploy/updates`。GitHub 不可用时，可将发布产物原文件直接放入对应目标和版本目录，例如 `deploy/updates/windows/x64/0.2.0/Prelay_0.2.0_x64-setup.exe`。
 
@@ -86,7 +88,7 @@ Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.3.7`，并以只读方式
 
 ## 服务边界
 
-- 正式调用入口固定为 `/v1/models`、`/v1/responses`、`/v1/chat/completions` 和 `/v1/messages`，由 Endpoint Token 授权。
+- 正式调用入口固定为 `/v1/models`、`/v1/responses` 和 `/v1/chat/completions`，由 Endpoint Token 授权。
 - 管理 API 位于 `/api/*`，由设备凭据授权；`POST /api/identities` 是唯一匿名入口。
 - 目录查询位于 `/api/catalog/*`，包括供应商目录和语言模型、图像生成模型目录的列表与详情。
 - Provider API Key 只以 `ENCRYPTION_KEY` 加密后保存。数据库、`.env`、加密密钥、设备凭据、Endpoint Token 和真实 Provider API Key 不得提交或记录到日志。
@@ -103,9 +105,11 @@ Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.3.7`，并以只读方式
 - `UPSTREAM_RETRY_BACKOFF_MS`：重试前等待的毫秒数，默认 `250`，允许为 `0`。
 - `UPSTREAM_MAX_CANDIDATES`：单次请求最多尝试的候选上游数，默认不限制，必须大于 `0`。
 
-活动正文的最大存储大小也在启动时读取，修改后需要重启服务：
+活动正文保存在服务端文件中，数据库只保存索引、状态、大小和 hash。文件按活动拆分，路径为 `sessions/YYYY/MM/DD/rollout-<UTC 时间>-<activity_id>.jsonl`，写入期间使用 `.part`，正常结束后原子重命名为 `.jsonl`。正文不设应用层大小上限，也不做自动归档；磁盘容量和文件系统限制仍是物理边界。目录由启动时读取的环境变量控制，修改后需要重启服务：
 
-- `ACTIVITY_CONTENT_MAX_BYTES`：每条活动正文（输入与输出合计）的最大字节数，默认 `65536`，必须大于 `0`。正文超出此限制或流式采集被截断时，会标记为已截断。
+- `ACTIVITY_ROLLOUT_DIR`：活动 JSONL 的根目录，默认 `data/sessions`，必须非空。
+
+入口请求体仍受 `PROTOCOL_MAX_REQUEST_BODY_BYTES` 限制，默认 `256 MiB`；该限制只决定单次请求能否被服务接收，不截断已经接收的正文。
 
 只有连接失败、超时、HTTP `408`、`429` 和 `5xx` 会触发重试或按接入点候选顺序切换。认证、权限、模型或请求参数错误会直接返回。流式请求仅在上游尚未返回成功响应前切换候选；数据开始向客户端输出后不会重新请求上游。
 

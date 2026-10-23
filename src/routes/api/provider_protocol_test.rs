@@ -7,7 +7,6 @@ use crate::{
 
 pub(crate) async fn run_protocol_test(
     client: &reqwest::Client,
-    provider_type: &str,
     protocol_value: Option<&str>,
     base_url: &str,
     api_key: &str,
@@ -25,7 +24,7 @@ pub(crate) async fn run_protocol_test(
         .map(str::trim)
         .filter(|model| !model.is_empty())
         .ok_or_else(|| AppError::BadRequest("测试模型不能为空".to_string()))?;
-    let base_url = normalize_upstream_base_url(provider_type, upstream_protocol, base_url);
+    let base_url = normalize_upstream_base_url(base_url);
     let started_at = std::time::Instant::now();
     let response = match send_protocol_test_request(
         client,
@@ -122,19 +121,6 @@ async fn send_protocol_test_request(
             .send()
             .await
             .map(Some),
-        UpstreamProtocol::AnthropicMessages => client
-            .post(format!("{}/messages", base_url.trim_end_matches('/')))
-            .header("x-api-key", api_key)
-            .header("anthropic-version", "2023-06-01")
-            .json(&serde_json::json!({
-                "model": model,
-                "stream": true,
-                "messages": [{ "role": "user", "content": "ping" }],
-                "max_tokens": 8
-            }))
-            .send()
-            .await
-            .map(Some),
         UpstreamProtocol::ImageGenerations => Ok(None),
     }
 }
@@ -172,7 +158,6 @@ mod tests {
     async fn rejects_images_generations_protocol_tests_without_contacting_upstream() {
         let error = run_protocol_test(
             &reqwest::Client::new(),
-            "openai_compatible",
             Some("images_generations"),
             "http://127.0.0.1:1",
             "test-key",
@@ -191,7 +176,6 @@ mod tests {
     async fn rejects_images_generations_protocol_tests_without_a_model() {
         let error = run_protocol_test(
             &reqwest::Client::new(),
-            "openai_compatible",
             Some("images_generations"),
             "http://127.0.0.1:1",
             "test-key",

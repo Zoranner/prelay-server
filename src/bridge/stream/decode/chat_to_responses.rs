@@ -15,18 +15,37 @@ use crate::bridge::stream::{
     InternalStreamEvent, StreamUsage,
 };
 
-#[derive(Default)]
 pub(crate) struct ChatToResponsesSseDecoder {
     line_buffer: Vec<u8>,
     data_lines: Vec<String>,
     tool_calls: BTreeMap<usize, ChatToolCallState>,
+    response_id: String,
     completed: bool,
     usage: Option<StreamUsage>,
     finish_reason: Option<InternalFinishReason>,
     stats: Option<SharedStreamStats>,
 }
 
+impl Default for ChatToResponsesSseDecoder {
+    fn default() -> Self {
+        Self::new("resp_unknown".to_string())
+    }
+}
+
 impl ChatToResponsesSseDecoder {
+    pub(crate) fn new(response_id: String) -> Self {
+        Self {
+            line_buffer: Vec::new(),
+            data_lines: Vec::new(),
+            tool_calls: BTreeMap::new(),
+            response_id,
+            completed: false,
+            usage: None,
+            finish_reason: None,
+            stats: None,
+        }
+    }
+
     fn process_line(&mut self, line: &[u8]) -> Vec<Bytes> {
         if line.is_empty() {
             return self.flush_event();
@@ -90,7 +109,9 @@ impl ChatToResponsesSseDecoder {
                 self.finish_reason = Some(reason);
                 Vec::new()
             }
-            InternalStreamEvent::ToolCallDone { .. } | InternalStreamEvent::Usage(_) => Vec::new(),
+            InternalStreamEvent::ToolCallDone { .. }
+            | InternalStreamEvent::Usage(_)
+            | InternalStreamEvent::ReasoningDelta(_) => Vec::new(),
         }
     }
 
@@ -156,8 +177,21 @@ impl ChatToResponsesSseDecoder {
         let finished_event =
             InternalStreamEvent::Finished(self.finish_reason.unwrap_or(InternalFinishReason::Stop));
         self.record_internal_event(&finished_event);
-        output.push(responses_completed_sse_with_usage(self.usage.as_ref()));
+        self.record_response_id();
+        output.push(responses_completed_sse_with_usage(
+            self.usage.as_ref(),
+            &self.response_id,
+        ));
         output
+    }
+
+    fn record_response_id(&self) {
+        let Some(stats) = &self.stats else {
+            return;
+        };
+        if let Ok(mut stats) = stats.lock() {
+            stats.response_id = Some(self.response_id.clone());
+        }
     }
 }
 
@@ -239,6 +273,20 @@ mod tests {
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0], responses_text_delta_sse("hel"));
         assert_eq!(chunks[1], responses_completed_sse());
+    }
+
+    #[test]
+    fn completed_event_uses_the_generated_response_id() {
+        let mut decoder = ChatToResponsesSseDecoder::new("resp_local".to_string());
+
+        let chunks = decoder.push_chunk(b"data: [DONE]\n\n");
+        let output = chunks
+            .iter()
+            .map(|chunk| std::str::from_utf8(chunk).expect("utf8 chunk"))
+            .collect::<String>();
+
+        assert!(output.contains(r#""id":"resp_local""#));
+        assert!(!output.contains("resp_unknown"));
     }
 
     #[test]

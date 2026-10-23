@@ -9,18 +9,14 @@ use crate::{
 pub enum UpstreamProtocol {
     Responses,
     ChatCompletions,
-    AnthropicMessages,
     ImageGenerations,
 }
 
 impl UpstreamProtocol {
     pub fn downstream_protocols(self) -> &'static [&'static str] {
         match self {
-            UpstreamProtocol::Responses => &["responses", "anthropic_messages"],
-            UpstreamProtocol::ChatCompletions => {
-                &["responses", "chat_completions", "anthropic_messages"]
-            }
-            UpstreamProtocol::AnthropicMessages => &["responses", "anthropic_messages"],
+            UpstreamProtocol::Responses => &["responses"],
+            UpstreamProtocol::ChatCompletions => &["responses", "chat_completions"],
             UpstreamProtocol::ImageGenerations => &["images_generations"],
         }
     }
@@ -33,7 +29,6 @@ impl UpstreamProtocol {
         match value {
             "responses" => Some(UpstreamProtocol::Responses),
             "openai" => Some(UpstreamProtocol::ChatCompletions),
-            "anthropic" => Some(UpstreamProtocol::AnthropicMessages),
             "images_generations" => Some(UpstreamProtocol::ImageGenerations),
             _ => None,
         }
@@ -43,7 +38,6 @@ impl UpstreamProtocol {
         match self {
             UpstreamProtocol::Responses => "responses",
             UpstreamProtocol::ChatCompletions => "openai",
-            UpstreamProtocol::AnthropicMessages => "anthropic",
             UpstreamProtocol::ImageGenerations => "images_generations",
         }
     }
@@ -52,16 +46,9 @@ impl UpstreamProtocol {
         match protocol {
             ProviderProtocol::Responses => UpstreamProtocol::Responses,
             ProviderProtocol::ChatCompletions => UpstreamProtocol::ChatCompletions,
-            ProviderProtocol::AnthropicMessages => UpstreamProtocol::AnthropicMessages,
             ProviderProtocol::ImagesGenerations => UpstreamProtocol::ImageGenerations,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AuthScheme {
-    Bearer,
-    Anthropic,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,9 +100,7 @@ impl ProviderCapabilities {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderSpec {
-    pub protocol: UpstreamProtocol,
     pub supported_protocols: Vec<UpstreamProtocol>,
-    pub auth_scheme: AuthScheme,
     pub capabilities: ProviderCapabilities,
 }
 
@@ -142,12 +127,10 @@ impl ProviderSpec {
             | "qwen_responses"
             | "minimax_responses"
             | "gotoken" => Self {
-                protocol: UpstreamProtocol::Responses,
                 supported_protocols: provider_supported_protocols(
                     provider_type,
                     UpstreamProtocol::Responses,
                 ),
-                auth_scheme: AuthScheme::Bearer,
                 capabilities: ProviderCapabilities {
                     tool_calls: true,
                     reasoning: true,
@@ -170,12 +153,10 @@ impl ProviderSpec {
             | "minimax_token_openai"
             | "bailian_coding_openai"
             | "bailian_token_openai" => Self {
-                protocol: UpstreamProtocol::ChatCompletions,
                 supported_protocols: provider_supported_protocols(
                     provider_type,
                     UpstreamProtocol::ChatCompletions,
                 ),
-                auth_scheme: AuthScheme::Bearer,
                 capabilities: ProviderCapabilities {
                     tool_calls: true,
                     reasoning: false,
@@ -188,40 +169,8 @@ impl ProviderSpec {
                     max_output_tokens: None,
                 },
             },
-            "anthropic"
-            | "anthropic_compatible"
-            | "deepseek_anthropic"
-            | "qwen_anthropic"
-            | "zhipu_anthropic"
-            | "minimax_anthropic"
-            | "kimi_coding_anthropic"
-            | "zai_coding_anthropic"
-            | "zhipu_coding"
-            | "minimax_token"
-            | "bailian_coding_anthropic"
-            | "bailian_token_anthropic" => Self {
-                protocol: UpstreamProtocol::AnthropicMessages,
-                supported_protocols: provider_supported_protocols(
-                    provider_type,
-                    UpstreamProtocol::AnthropicMessages,
-                ),
-                auth_scheme: AuthScheme::Anthropic,
-                capabilities: ProviderCapabilities {
-                    tool_calls: true,
-                    reasoning: false,
-                    tool_choice: true,
-                    parallel_tool_calls: false,
-                    system_messages: true,
-                    structured_outputs: false,
-                    streaming_usage: true,
-                    max_context_tokens: None,
-                    max_output_tokens: None,
-                },
-            },
             _ => Self {
-                protocol: UpstreamProtocol::ChatCompletions,
                 supported_protocols: vec![UpstreamProtocol::ChatCompletions],
-                auth_scheme: AuthScheme::Bearer,
                 capabilities: ProviderCapabilities::limited(),
             },
         };
@@ -238,7 +187,6 @@ impl ProviderSpec {
             })
             .filter(|protocols| !protocols.is_empty())
         {
-            spec.protocol = protocols[0];
             spec.supported_protocols = protocols;
         }
         spec
@@ -255,14 +203,8 @@ impl ProviderSpec {
             "responses" => &[
                 UpstreamProtocol::Responses,
                 UpstreamProtocol::ChatCompletions,
-                UpstreamProtocol::AnthropicMessages,
             ][..],
             "chat_completions" => &[UpstreamProtocol::ChatCompletions][..],
-            "anthropic_messages" => &[
-                UpstreamProtocol::AnthropicMessages,
-                UpstreamProtocol::ChatCompletions,
-                UpstreamProtocol::Responses,
-            ][..],
             "images_generations" => &[UpstreamProtocol::ImageGenerations][..],
             _ => &[][..],
         };
@@ -295,26 +237,12 @@ fn provider_supported_protocols(
     default_protocol: UpstreamProtocol,
 ) -> Vec<UpstreamProtocol> {
     match provider_type {
-        "kimi_coding"
-        | "kimi_coding_anthropic"
-        | "zhipu_coding_openai"
-        | "zhipu_coding"
-        | "minimax_token_openai"
-        | "minimax_token"
-        | "deepseek"
-        | "deepseek_anthropic"
-        | "zhipu"
-        | "zhipu_anthropic" => {
-            vec![
-                UpstreamProtocol::ChatCompletions,
-                UpstreamProtocol::AnthropicMessages,
-            ]
+        "kimi_coding" | "zhipu_coding_openai" | "minimax_token_openai" | "deepseek" | "zhipu" => {
+            vec![UpstreamProtocol::ChatCompletions]
         }
-        "qwen" | "qwen_responses" | "qwen_anthropic" | "minimax" | "minimax_responses"
-        | "minimax_anthropic" | "gotoken" => vec![
+        "qwen" | "qwen_responses" | "minimax" | "minimax_responses" | "gotoken" => vec![
             UpstreamProtocol::Responses,
             UpstreamProtocol::ChatCompletions,
-            UpstreamProtocol::AnthropicMessages,
         ],
         _ => vec![default_protocol],
     }

@@ -1,24 +1,27 @@
-use serde_json::Value;
+use std::collections::BTreeMap;
 
-const MAX_CAPTURED_STREAM_TEXT_BYTES: usize = 128 * 1024;
-const MAX_CAPTURED_SSE_EVENT_BYTES: usize = MAX_CAPTURED_STREAM_TEXT_BYTES + 16 * 1024;
+use serde_json::Value;
 
 pub enum RawStreamProtocol {
     ChatCompletions,
-    AnthropicMessages,
     ImageGeneration,
 }
 
 pub struct RawStreamContentCapture {
     protocol: RawStreamProtocol,
     line_buffer: Vec<u8>,
-    event_name: Option<String>,
     data_lines: Vec<String>,
-    event_bytes: usize,
-    discarding_event: bool,
     output_text: String,
+    reasoning_text: String,
+    tool_calls: BTreeMap<usize, CapturedToolCall>,
     completed: bool,
-    is_truncated: bool,
+}
+
+#[derive(Debug, Default)]
+struct CapturedToolCall {
+    id: String,
+    name: String,
+    arguments: String,
 }
 
 impl RawStreamContentCapture {
@@ -26,68 +29,33 @@ impl RawStreamContentCapture {
         Self {
             protocol,
             line_buffer: Vec::new(),
-            event_name: None,
             data_lines: Vec::new(),
-            event_bytes: 0,
-            discarding_event: false,
             output_text: String::new(),
+            reasoning_text: String::new(),
+            tool_calls: BTreeMap::new(),
             completed: false,
-            is_truncated: false,
         }
     }
 
     pub fn observe_chunk(&mut self, mut chunk: &[u8]) {
         while !chunk.is_empty() {
-            if self.discarding_event {
-                let Some(newline) = chunk.iter().position(|byte| *byte == b'\n') else {
-                    return;
-                };
-                let line = &chunk[..newline];
-                chunk = &chunk[newline + 1..];
-                if line.is_empty() || line == b"\r" {
-                    self.discarding_event = false;
-                }
-                continue;
-            }
-
             let Some(newline) = chunk.iter().position(|byte| *byte == b'\n') else {
-                if self
-                    .event_bytes
-                    .saturating_add(self.line_buffer.len() + chunk.len())
-                    > MAX_CAPTURED_SSE_EVENT_BYTES
-                {
-                    self.discard_current_event();
-                } else {
-                    self.line_buffer.extend_from_slice(chunk);
-                }
+                self.line_buffer.extend_from_slice(chunk);
                 return;
             };
             let line = &chunk[..newline];
             chunk = &chunk[newline + 1..];
-            if self
-                .event_bytes
-                .saturating_add(self.line_buffer.len() + line.len() + 1)
-                > MAX_CAPTURED_SSE_EVENT_BYTES
-            {
-                self.discard_current_event();
-                continue;
-            }
 
-            let line_bytes = self.line_buffer.len() + line.len() + 1;
             self.line_buffer.extend_from_slice(line);
             if self.line_buffer.last() == Some(&b'\r') {
                 self.line_buffer.pop();
             }
             let line = std::mem::take(&mut self.line_buffer);
-            self.event_bytes += line_bytes;
             self.observe_line(&line);
         }
     }
 
     pub fn finish(&mut self) {
-        if self.discarding_event {
-            return;
-        }
         if !self.line_buffer.is_empty() {
             let line = std::mem::take(&mut self.line_buffer);
             self.observe_line(&line);
@@ -103,8 +71,21 @@ impl RawStreamContentCapture {
         &self.output_text
     }
 
-    pub fn is_truncated(&self) -> bool {
-        self.is_truncated
+    pub fn reasoning_text(&self) -> &str {
+        &self.reasoning_text
+    }
+
+    pub fn captured_tool_calls(&self) -> Vec<(String, String, String)> {
+        self.tool_calls
+            .values()
+            .map(|tool_call| {
+                (
+                    tool_call.id.clone(),
+                    tool_call.name.clone(),
+                    tool_call.arguments.clone(),
+                )
+            })
+            .collect()
     }
 
     fn observe_line(&mut self, line: &[u8]) {
@@ -115,28 +96,24 @@ impl RawStreamContentCapture {
         let Ok(line) = std::str::from_utf8(line) else {
             return;
         };
-        if let Some(event_name) = line.strip_prefix("event:") {
-            self.event_name = Some(event_name.trim().to_string());
-        } else if let Some(data) = line.strip_prefix("data:") {
+        if let Some(data) = line.strip_prefix("data:") {
             self.data_lines.push(data.trim_start().to_string());
         }
     }
 
     fn flush_event(&mut self) {
-        self.event_bytes = 0;
         if self.data_lines.is_empty() {
-            self.event_name = None;
             return;
         }
         let data = std::mem::take(&mut self.data_lines).join("\n");
-        let event_name = self.event_name.take();
+        let value = serde_json::from_str::<Value>(&data).ok();
         match self.protocol {
             RawStreamProtocol::ChatCompletions => {
                 if data.trim() == "[DONE]" {
                     self.completed = true;
                     return;
                 }
-                if let Some(text) = serde_json::from_str::<Value>(&data).ok().and_then(|value| {
+                if let Some(text) = value.as_ref().and_then(|value| {
                     value
                         .pointer("/choices/0/delta/content")?
                         .as_str()
@@ -144,32 +121,27 @@ impl RawStreamContentCapture {
                 }) {
                     self.append_text(&text);
                 }
-            }
-            RawStreamProtocol::AnthropicMessages => {
-                if event_name.as_deref() == Some("message_stop") {
-                    self.completed = true;
-                    return;
+                if let Some(reasoning) = value.as_ref().and_then(|value| {
+                    value
+                        .pointer("/choices/0/delta/reasoning_content")?
+                        .as_str()
+                }) {
+                    self.reasoning_text.push_str(reasoning);
                 }
-                if event_name.as_deref() == Some("content_block_delta") {
-                    if let Some(text) =
-                        serde_json::from_str::<Value>(&data).ok().and_then(|value| {
-                            value.pointer("/delta/text")?.as_str().map(str::to_string)
-                        })
-                    {
-                        self.append_text(&text);
+                if let Some(tool_calls) = value.as_ref().and_then(|value| {
+                    value
+                        .pointer("/choices/0/delta/tool_calls")
+                        .and_then(Value::as_array)
+                }) {
+                    for tool_call in tool_calls {
+                        self.observe_chat_tool_call(tool_call);
                     }
                 }
             }
             RawStreamProtocol::ImageGeneration => {
-                if serde_json::from_str::<Value>(&data)
-                    .ok()
-                    .and_then(|value| {
-                        value
-                            .get("type")
-                            .and_then(Value::as_str)
-                            .map(str::to_string)
-                    })
-                    .as_deref()
+                if value
+                    .as_ref()
+                    .and_then(|value| value.get("type").and_then(Value::as_str))
                     == Some("image_generation.completed")
                 {
                     self.completed = true;
@@ -178,27 +150,25 @@ impl RawStreamContentCapture {
         }
     }
 
-    fn append_text(&mut self, text: &str) {
-        let remaining = MAX_CAPTURED_STREAM_TEXT_BYTES.saturating_sub(self.output_text.len());
-        if remaining == 0 {
-            self.is_truncated = true;
-            return;
+    fn observe_chat_tool_call(&mut self, value: &Value) {
+        let index = value
+            .get("index")
+            .and_then(Value::as_u64)
+            .unwrap_or_default() as usize;
+        let tool_call = self.tool_calls.entry(index).or_default();
+        if let Some(id) = value.get("id").and_then(Value::as_str) {
+            tool_call.id = id.to_string();
         }
-        let mut end = remaining.min(text.len());
-        while end > 0 && !text.is_char_boundary(end) {
-            end -= 1;
+        if let Some(name) = value.pointer("/function/name").and_then(Value::as_str) {
+            tool_call.name = name.to_string();
         }
-        self.output_text.push_str(&text[..end]);
-        self.is_truncated |= end < text.len();
+        if let Some(arguments) = value.pointer("/function/arguments").and_then(Value::as_str) {
+            tool_call.arguments.push_str(arguments);
+        }
     }
 
-    fn discard_current_event(&mut self) {
-        self.line_buffer.clear();
-        self.event_name = None;
-        self.data_lines.clear();
-        self.event_bytes = 0;
-        self.discarding_event = true;
-        self.is_truncated = true;
+    fn append_text(&mut self, text: &str) {
+        self.output_text.push_str(text);
     }
 }
 
@@ -207,11 +177,43 @@ mod tests {
     use super::{RawStreamContentCapture, RawStreamProtocol};
 
     #[test]
-    fn drops_an_oversized_unterminated_sse_event() {
+    fn accepts_an_unterminated_sse_event_larger_than_the_old_capture_limit() {
         let mut capture = RawStreamContentCapture::new(RawStreamProtocol::ImageGeneration);
         capture.observe_chunk(&vec![b'x'; 256 * 1024]);
 
-        assert!(capture.line_buffer.is_empty());
+        assert_eq!(capture.line_buffer.len(), 256 * 1024);
         assert!(capture.data_lines.is_empty());
+    }
+
+    #[test]
+    fn chat_capture_keeps_tool_call_arguments() {
+        let mut capture = RawStreamContentCapture::new(RawStreamProtocol::ChatCompletions);
+        capture.observe_chunk(
+            br#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read_file","arguments":"{\"path\":\"Cargo.toml\"}"}}]}}]}
+
+data: [DONE]
+
+"#,
+        );
+        capture.finish();
+
+        assert_eq!(
+            capture.captured_tool_calls(),
+            vec![(
+                "call_1".to_string(),
+                "read_file".to_string(),
+                "{\"path\":\"Cargo.toml\"}".to_string(),
+            )]
+        );
+    }
+
+    #[test]
+    fn captures_streaming_reasoning_text() {
+        let mut chat = RawStreamContentCapture::new(RawStreamProtocol::ChatCompletions);
+        chat.observe_chunk(
+            b"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"think\"}}]}\n\ndata: [DONE]\n\n",
+        );
+        chat.finish();
+        assert_eq!(chat.reasoning_text(), "think");
     }
 }

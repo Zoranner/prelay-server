@@ -1,7 +1,13 @@
 use serde_json::json;
 
-use super::{decode_responses_request, validate_responses_bridge_payload};
-use crate::bridge::internal::{InternalContentPart, InternalRole};
+use super::{
+    decode_responses_request, validate_internal_request_for_bridge,
+    validate_responses_bridge_payload,
+};
+use crate::bridge::internal::{
+    InternalContentPart, InternalImagePart, InternalMessage, InternalRequest, InternalRole,
+    InternalToolCall,
+};
 
 #[test]
 fn decodes_string_input_into_user_message() {
@@ -94,6 +100,165 @@ fn decodes_message_array_input_into_internal_messages() {
 }
 
 #[test]
+fn decodes_input_images_from_user_and_tool_output() {
+    let request = decode_responses_request(&json!({
+        "model": "deepseek-flash",
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "look" },
+                    {
+                        "type": "input_image",
+                        "image_url": "data:image/png;base64,AAA",
+                        "detail": "high"
+                    }
+                ]
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": [
+                    { "type": "input_text", "text": "rendered" },
+                    {
+                        "type": "input_image",
+                        "image_url": { "url": "data:image/png;base64,BBB" }
+                    }
+                ]
+            }
+        ]
+    }))
+    .expect("decode responses request");
+
+    assert_eq!(
+        request.messages[0].content,
+        vec![
+            InternalContentPart::Text("look".to_string()),
+            InternalContentPart::Image(InternalImagePart {
+                image_url: Some(json!("data:image/png;base64,AAA")),
+                file_id: None,
+                detail: Some("high".to_string()),
+            }),
+        ]
+    );
+    assert_eq!(request.messages[1].role, InternalRole::Tool);
+    assert_eq!(
+        request.messages[1].content,
+        vec![
+            InternalContentPart::Text("rendered".to_string()),
+            InternalContentPart::Image(InternalImagePart {
+                image_url: Some(json!({ "url": "data:image/png;base64,BBB" })),
+                file_id: None,
+                detail: None,
+            }),
+        ]
+    );
+}
+
+#[test]
+fn bridge_validation_rejects_images_in_messages_and_tool_outputs() {
+    let content_error = validate_responses_bridge_payload(&json!({
+        "input": [{
+            "role": "user",
+            "content": [
+                { "type": "input_text", "text": "look" },
+                { "type": "input_image", "image_url": "data:image/png;base64,AAA" }
+            ]
+        }]
+    }))
+    .expect_err("user images are not bridgeable");
+    assert!(format!("{content_error:?}").contains("input_image"));
+
+    let output_error = validate_responses_bridge_payload(&json!({
+        "input": [{
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": [
+                { "type": "input_text", "text": "rendered" },
+                { "type": "input_image", "image_url": "data:image/png;base64,AAA" }
+            ]
+        }]
+    }))
+    .expect_err("tool output images are not bridgeable");
+    assert!(format!("{output_error:?}").contains("input_image"));
+}
+
+#[test]
+fn bridge_validation_rejects_images_loaded_from_history() {
+    let request = InternalRequest {
+        model: "deepseek-flash".to_string(),
+        stream: false,
+        max_tokens: None,
+        max_completion_tokens: None,
+        previous_response_id: Some("resp_previous".to_string()),
+        instructions: None,
+        store: true,
+        reasoning: None,
+        tool_choice: None,
+        parallel_tool_calls: None,
+        text: None,
+        reasoning_requested: false,
+        tool_choice_requested: false,
+        structured_output_requested: false,
+        parallel_tool_calls_requested: false,
+        streaming_usage_requested: false,
+        tools: Vec::new(),
+        messages: vec![InternalMessage {
+            role: InternalRole::User,
+            content: vec![InternalContentPart::Image(InternalImagePart {
+                image_url: Some(json!("data:image/png;base64,AAA")),
+                file_id: None,
+                detail: None,
+            })],
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+            reasoning_content: None,
+        }],
+    };
+
+    let error = validate_internal_request_for_bridge(&request)
+        .expect_err("history images are not bridgeable");
+    assert!(format!("{error:?}").contains("input images"));
+}
+
+#[test]
+fn session_json_round_trip_preserves_images_and_tool_calls() {
+    let messages = vec![
+        InternalMessage {
+            role: InternalRole::User,
+            content: vec![
+                InternalContentPart::Text("look".to_string()),
+                InternalContentPart::Image(InternalImagePart {
+                    image_url: Some(json!("data:image/png;base64,AAA")),
+                    file_id: None,
+                    detail: Some("high".to_string()),
+                }),
+            ],
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+            reasoning_content: None,
+        },
+        InternalMessage {
+            role: InternalRole::Assistant,
+            content: Vec::new(),
+            tool_call_id: None,
+            tool_calls: vec![InternalToolCall {
+                id: "call_1".to_string(),
+                name: "read_file".to_string(),
+                arguments: "{\"path\":\"a.txt\"}".to_string(),
+            }],
+            reasoning_content: None,
+        },
+    ];
+
+    let encoded = serde_json::to_string(&messages).expect("serialize session messages");
+    let decoded: Vec<InternalMessage> =
+        serde_json::from_str(&encoded).expect("deserialize session messages");
+
+    assert_eq!(decoded, messages);
+}
+
+#[test]
 fn decodes_function_tools_to_internal_tools() {
     let request = decode_responses_request(&json!({
         "model": "deepseek-chat",
@@ -163,9 +328,11 @@ fn decodes_responses_extensions_without_rejecting_request() {
     assert_eq!(request.messages[0].role, InternalRole::User);
     assert_eq!(
         request.messages[0].content,
-        vec![InternalContentPart::Text(
-            r#"{"image_url":"https://example.com/image.png","type":"input_image"}"#.to_string()
-        )]
+        vec![InternalContentPart::Image(InternalImagePart {
+            image_url: Some(json!("https://example.com/image.png")),
+            file_id: None,
+            detail: None,
+        })]
     );
     assert_eq!(request.messages[1].role, InternalRole::Assistant);
     assert_eq!(request.messages[1].tool_calls.len(), 1);

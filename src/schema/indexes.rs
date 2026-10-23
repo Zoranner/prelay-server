@@ -2,7 +2,7 @@ use sea_query::{Index, IndexCreateStatement};
 
 use super::tables::{
     activities::Activities,
-    activity_contents::ActivityContents,
+    activity_rollouts::ActivityRollouts,
     endpoints::{EndpointModels, EndpointRoutes},
     identity::Identities,
     memories::Memories,
@@ -54,22 +54,32 @@ pub(super) fn activities_identity_created_at() -> IndexCreateStatement {
         .to_owned()
 }
 
-pub(super) fn activity_contents_activity_id() -> IndexCreateStatement {
+pub(super) fn activity_rollouts_path() -> IndexCreateStatement {
     Index::create()
-        .name("uq_activity_contents_activity_id")
-        .table(ActivityContents::Table)
-        .col(ActivityContents::ActivityId)
+        .name("uq_activity_rollouts_path")
+        .table(ActivityRollouts::Table)
+        .col(ActivityRollouts::RolloutPath)
         .unique()
+        .if_not_exists()
         .to_owned()
 }
 
-pub(super) fn activity_contents_due() -> IndexCreateStatement {
+pub(super) fn activity_rollouts_identity_created_at() -> IndexCreateStatement {
     Index::create()
-        .name("idx_activity_contents_due")
-        .table(ActivityContents::Table)
-        .col(ActivityContents::Status)
-        .col(ActivityContents::NextAttemptAt)
-        .col(ActivityContents::LeaseExpiresAt)
+        .name("idx_activity_rollouts_identity_created_at")
+        .table(ActivityRollouts::Table)
+        .col(ActivityRollouts::IdentityId)
+        .col(ActivityRollouts::CreatedAt)
+        .if_not_exists()
+        .to_owned()
+}
+
+pub(super) fn activity_rollouts_session() -> IndexCreateStatement {
+    Index::create()
+        .name("idx_activity_rollouts_session")
+        .table(ActivityRollouts::Table)
+        .col(ActivityRollouts::SessionId)
+        .if_not_exists()
         .to_owned()
 }
 

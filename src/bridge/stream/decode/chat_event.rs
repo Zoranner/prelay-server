@@ -35,6 +35,7 @@ pub(crate) fn decode_chat_sse_event(data: &str) -> Option<ChatSseEvent> {
     if choice.is_none() {
         return usage.map(|usage| ChatSseEvent {
             text_delta: None,
+            reasoning_delta: None,
             tool_call_deltas: Vec::new(),
             finish_reason: None,
             usage: Some(usage),
@@ -50,6 +51,11 @@ pub(crate) fn decode_chat_sse_event(data: &str) -> Option<ChatSseEvent> {
                 .and_then(|delta| delta.get("refusal"))
                 .and_then(Value::as_str)
         })
+        .map(str::to_string);
+    let reasoning_delta = delta
+        .and_then(|delta| delta.get("reasoning_content"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
         .map(str::to_string);
     let tool_call_deltas = delta
         .and_then(|delta| delta.get("tool_calls"))
@@ -75,6 +81,7 @@ pub(crate) fn decode_chat_sse_event(data: &str) -> Option<ChatSseEvent> {
 
     Some(ChatSseEvent {
         text_delta,
+        reasoning_delta,
         tool_call_deltas,
         finish_reason,
         usage,
@@ -119,6 +126,21 @@ mod tests {
                 crate::bridge::stream::InternalStreamEvent::Finished(
                     crate::bridge::stream::InternalFinishReason::ToolUse
                 )
+            )
+        }));
+    }
+
+    #[test]
+    fn maps_chat_reasoning_content_to_internal_event() {
+        let event =
+            decode_chat_sse_event(r#"{"choices":[{"delta":{"reasoning_content":"think"}}]}"#)
+                .expect("chat sse event");
+
+        assert!(event.to_internal_events().iter().any(|event| {
+            matches!(
+                event,
+                crate::bridge::stream::InternalStreamEvent::ReasoningDelta(delta)
+                    if delta == "think"
             )
         }));
     }

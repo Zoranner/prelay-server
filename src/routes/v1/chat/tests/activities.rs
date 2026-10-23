@@ -40,6 +40,22 @@ async fn records_successful_chat_completion_activity() {
     assert_eq!(logs[0].input_tokens, Some(3));
     assert_eq!(logs[0].output_tokens, Some(4));
     assert_eq!(logs[0].endpoint_name.as_deref(), Some("Test Endpoint"));
+    let rollout = state
+        .storage
+        .find_activity_rollout(&logs[0].id)
+        .await
+        .expect("load chat rollout")
+        .expect("chat rollout exists");
+    let events = state
+        .activity_store
+        .rollouts()
+        .read_events(&rollout.rollout_path)
+        .expect("read chat rollout");
+    assert!(events.iter().any(|event| {
+        event.event_type == "message"
+            && event.payload["phase"] == json!("request")
+            && event.payload["content"] == json!("hello")
+    }));
 }
 
 #[tokio::test]

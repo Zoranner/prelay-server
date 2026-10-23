@@ -16,6 +16,7 @@ pub struct ResponseSessionInsert<'a> {
     pub identity_id: &'a str,
     pub response_id: &'a str,
     pub previous_response_id: Option<&'a str>,
+    pub conversation_id: &'a str,
     pub provider_id: &'a str,
     pub model: &'a str,
     pub input_messages: &'a [InternalMessage],
@@ -37,6 +38,19 @@ impl Storage {
     ) -> Result<Option<Vec<InternalMessage>>, StorageError> {
         load_response_session_messages(&self.db, identity_id, response_id).await
     }
+
+    pub async fn load_response_session_conversation_id(
+        &self,
+        identity_id: &str,
+        response_id: &str,
+    ) -> Result<Option<String>, StorageError> {
+        let row = identity_response_sessions::Entity::find()
+            .filter(identity_response_sessions::Column::ResponseId.eq(response_id))
+            .filter(identity_response_sessions::Column::IdentityId.eq(identity_id))
+            .one(&self.db)
+            .await?;
+        Ok(row.map(|row| row.conversation_id.unwrap_or(row.response_id)))
+    }
 }
 
 pub(super) async fn save_response_session(
@@ -47,6 +61,7 @@ pub(super) async fn save_response_session(
         response_id: Set(insert.response_id.to_string()),
         identity_id: Set(insert.identity_id.to_string()),
         previous_response_id: Set(insert.previous_response_id.map(str::to_string)),
+        conversation_id: Set(Some(insert.conversation_id.to_string())),
         provider_id: Set(insert.provider_id.to_string()),
         model: Set(insert.model.to_string()),
         input_messages_json: Set(serde_json::to_string(insert.input_messages)?),
@@ -61,6 +76,7 @@ pub(super) async fn save_response_session(
             ])
             .update_columns([
                 identity_response_sessions::Column::PreviousResponseId,
+                identity_response_sessions::Column::ConversationId,
                 identity_response_sessions::Column::ProviderId,
                 identity_response_sessions::Column::Model,
                 identity_response_sessions::Column::InputMessagesJson,
@@ -151,6 +167,7 @@ mod tests {
                 identity_id: &identity_a,
                 response_id: "shared-response",
                 previous_response_id: None,
+                conversation_id: "conversation-a",
                 provider_id: &provider_a,
                 model: "model-a",
                 input_messages: &input_a,
@@ -163,6 +180,7 @@ mod tests {
                 identity_id: &identity_b,
                 response_id: "shared-response",
                 previous_response_id: None,
+                conversation_id: "conversation-b",
                 provider_id: &provider_b,
                 model: "model-b",
                 input_messages: &input_b,
@@ -178,6 +196,7 @@ mod tests {
                 identity_id: &identity_a,
                 response_id: "shared-response",
                 previous_response_id: Some("previous-a"),
+                conversation_id: "conversation-a",
                 provider_id: &provider_a,
                 model: "model-a-updated",
                 input_messages: &updated_input_a,
@@ -206,6 +225,20 @@ mod tests {
                 assistant_message("identity-b output"),
             ])
         );
+        assert_eq!(
+            storage
+                .load_response_session_conversation_id(&identity_a, "shared-response")
+                .await
+                .expect("load identity A conversation"),
+            Some("conversation-a".to_string())
+        );
+        assert_eq!(
+            storage
+                .load_response_session_conversation_id(&identity_b, "shared-response")
+                .await
+                .expect("load identity B conversation"),
+            Some("conversation-b".to_string())
+        );
     }
 
     #[tokio::test]
@@ -217,6 +250,7 @@ mod tests {
             response_id: Set("resp_old".to_string()),
             identity_id: Set(identity_id.clone()),
             previous_response_id: Set(None),
+            conversation_id: Set(None),
             provider_id: Set(provider_id),
             model: Set("deepseek-chat".to_string()),
             input_messages_json: Set(
@@ -243,6 +277,13 @@ mod tests {
         assert_eq!(messages[0].reasoning_content, None);
         assert_eq!(messages[1].reasoning_content, None);
         assert_eq!(messages[1].tool_calls[0].id, "call_1");
+        assert_eq!(
+            storage
+                .load_response_session_conversation_id(&identity_id, "resp_old")
+                .await
+                .expect("load legacy conversation id"),
+            Some("resp_old".to_string())
+        );
     }
 
     async fn test_storage() -> Storage {

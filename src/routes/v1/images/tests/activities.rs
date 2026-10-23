@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn records_rate_limit_observability_without_image_or_prompt_content() {
+async fn records_rate_limit_observability_without_image_content_but_keeps_rollout_prompt() {
     let upstream = spawn_image_upstream(
         StatusCode::TOO_MANY_REQUESTS,
         Bytes::from_static(
@@ -63,6 +63,24 @@ async fn records_rate_limit_observability_without_image_or_prompt_content() {
     assert!(!summary.contains("sk-secret-image-key"));
     assert!(!summary.contains("endpoint-secret-token"));
     assert!(!summary.contains("b64_json"));
+
+    let rollout = state
+        .storage
+        .find_activity_rollout(&logs[0].id)
+        .await
+        .expect("load image rollout index")
+        .expect("image rollout index exists");
+    let events = state
+        .activity_store
+        .rollouts()
+        .read_events(&rollout.rollout_path)
+        .expect("read image rollout");
+    assert!(events.iter().any(|event| {
+        event.event_type == "message" && event.payload["content"] == json!("private prompt")
+    }));
+    let serialized_rollout = serde_json::to_string(&events).expect("serialize image rollout");
+    assert!(!serialized_rollout.contains("c2VjcmV0LWltYWdl"));
+    assert!(!serialized_rollout.contains("https://images.example/private-result"));
 }
 
 #[tokio::test]

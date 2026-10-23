@@ -17,7 +17,7 @@ use crate::{
     AppState,
 };
 
-use super::candidate::create_response_with_candidate;
+use super::{candidate::create_response_with_candidate, sessions::conversation_id_for_request};
 
 pub(super) struct ResponseCandidateRequest {
     pub(super) payload: Arc<Value>,
@@ -25,6 +25,7 @@ pub(super) struct ResponseCandidateRequest {
     pub(super) model_requested: String,
     pub(super) is_streaming: bool,
     pub(super) previous_response_id: Option<String>,
+    pub(super) conversation_id: String,
     pub(super) started_at: std::time::Instant,
 }
 
@@ -39,6 +40,12 @@ pub(super) async fn create_response(
     let model_requested = request.model.clone();
     let is_streaming = request.stream;
     let previous_response_id = request.previous_response_id.clone();
+    let conversation_id = conversation_id_for_request(
+        &state.storage,
+        &access.identity_id,
+        previous_response_id.as_deref(),
+    )
+    .await?;
     let candidates =
         resolve_language_model_candidates(&state, &access, &request.model, "responses").await?;
     let (response, provider_id) = run_endpoint_model_candidates(
@@ -55,6 +62,7 @@ pub(super) async fn create_response(
                     model_requested: model_requested.clone(),
                     is_streaming,
                     previous_response_id: previous_response_id.clone(),
+                    conversation_id: conversation_id.clone(),
                     started_at,
                 },
                 resolved.clone(),
@@ -75,7 +83,10 @@ pub(super) async fn create_response(
         )
         .await
     {
-        tracing::warn!(error = %error, "failed to remember active endpoint model provider");
+        tracing::warn!(
+            error_code = error.code().as_str(),
+            "failed to remember active endpoint model provider"
+        );
     }
     Ok(response)
 }

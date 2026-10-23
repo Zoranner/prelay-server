@@ -1,5 +1,5 @@
 pub(super) mod activities;
-pub(super) mod activity_contents;
+pub(super) mod activity_rollouts;
 pub(super) mod endpoints;
 pub(super) mod identity;
 pub(super) mod memories;

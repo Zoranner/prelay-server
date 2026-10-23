@@ -35,7 +35,6 @@ pub(crate) async fn reconcile_protocol_base_urls(
             let slot = match protocol {
                 ProviderProtocol::ChatCompletions => &mut base_urls.openai,
                 ProviderProtocol::Responses => &mut base_urls.responses,
-                ProviderProtocol::AnthropicMessages => &mut base_urls.anthropic,
                 ProviderProtocol::ImagesGenerations => &mut base_urls.images_generations,
             };
             if slot.as_deref() != Some(url.as_str()) {

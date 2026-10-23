@@ -2,151 +2,158 @@ use std::time::Instant;
 
 use bytes::Bytes;
 use futures::Stream;
-use uuid::Uuid;
 
 use crate::{
-    activity::RawStreamContentCapture,
+    activity::{ActivityStore, RawStreamContentCapture, RolloutEventBody},
     bridge::stream::SharedStreamStats,
     stats::ActivityInsert,
-    storage::{Storage, StorageError},
+    storage::StorageError,
 };
 
-use super::state::{prepare_stream_with_log_id, RecordedStream, StreamRecordOptions};
+use super::{
+    options::{RecordingMode, StreamRecordOptions, StreamSession},
+    state::{prepare_stream_with_log_id, RecordedStream},
+};
 
-pub async fn record_first_chunk<S>(
-    storage: Storage,
-    identity_id: String,
-    stream: S,
-    log: ActivityInsert,
-    started_at: Instant,
-) -> Result<RecordedStream, StorageError>
-where
-    S: Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
-{
-    prepare_stream(
-        storage,
-        identity_id,
-        stream,
-        log,
-        started_at,
-        StreamRecordOptions::required(None, String::new(), None),
-    )
-    .await
+pub struct StreamRollout<'a> {
+    pub request_events: Vec<RolloutEventBody>,
+    pub session_id: Option<&'a str>,
 }
 
-pub async fn record_first_chunk_with_activity_content<S>(
-    storage: Storage,
+pub(crate) struct StreamRecording<'a> {
+    pub(crate) stats: SharedStreamStats,
+    pub(crate) rollout: StreamRollout<'a>,
+    pub(crate) session: Option<StreamSession>,
+}
+
+pub async fn record_first_chunk_with_rollout<S>(
+    activity_store: ActivityStore,
     identity_id: String,
     stream: S,
     log: ActivityInsert,
     started_at: Instant,
-    input_text: String,
     content_capture: RawStreamContentCapture,
+    rollout: StreamRollout<'_>,
 ) -> Result<RecordedStream, StorageError>
 where
     S: Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
 {
-    prepare_stream(
-        storage,
-        identity_id,
-        stream,
-        log,
-        started_at,
-        StreamRecordOptions::required(None, input_text, Some(content_capture)),
-    )
-    .await
-}
-
-pub async fn record_first_chunk_with_activity_content_best_effort<S>(
-    storage: Storage,
-    identity_id: String,
-    stream: S,
-    log: ActivityInsert,
-    started_at: Instant,
-    input_text: String,
-    content_capture: RawStreamContentCapture,
-) -> RecordedStream
-where
-    S: Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
-{
-    prepare_stream(
-        storage,
-        identity_id,
-        stream,
-        log,
-        started_at,
-        StreamRecordOptions::best_effort(None, input_text, Some(content_capture)),
-    )
-    .await
-    .expect("best-effort recording never returns a storage error")
-}
-
-pub async fn record_stream<S>(
-    storage: Storage,
-    identity_id: String,
-    stream: S,
-    log: ActivityInsert,
-    started_at: Instant,
-    stats: SharedStreamStats,
-) -> Result<RecordedStream, StorageError>
-where
-    S: Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
-{
-    record_stream_with_activity_content(
-        storage,
-        identity_id,
-        stream,
-        log,
-        started_at,
-        stats,
-        String::new(),
-    )
-    .await
-}
-
-pub async fn record_stream_with_activity_content<S>(
-    storage: Storage,
-    identity_id: String,
-    stream: S,
-    log: ActivityInsert,
-    started_at: Instant,
-    stats: SharedStreamStats,
-    input_text: String,
-) -> Result<RecordedStream, StorageError>
-where
-    S: Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
-{
-    prepare_stream(
-        storage,
-        identity_id,
-        stream,
-        log,
-        started_at,
-        StreamRecordOptions::required(Some(stats), input_text, None),
-    )
-    .await
-}
-
-async fn prepare_stream<S>(
-    storage: Storage,
-    identity_id: String,
-    stream: S,
-    log: ActivityInsert,
-    started_at: Instant,
-    options: StreamRecordOptions,
-) -> Result<RecordedStream, StorageError>
-where
-    S: Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
-{
+    let StreamRollout {
+        request_events,
+        session_id,
+    } = rollout;
+    let (activity_id, writer) =
+        activity_store.begin_stream(&identity_id, &log, session_id, request_events)?;
     prepare_stream_with_log_id(
-        storage,
+        activity_store,
         identity_id,
         stream,
         log,
         started_at,
         StreamRecordOptions {
-            log_id: Uuid::new_v4().to_string(),
-            ..options
+            stats: None,
+            content_capture: Some(content_capture),
+            rollout: Some(writer),
+            session: None,
+            log_id: activity_id,
+            mode: RecordingMode::Required,
+        },
+    )
+    .await
+}
+
+pub async fn record_first_chunk_with_rollout_best_effort<S>(
+    activity_store: ActivityStore,
+    identity_id: String,
+    stream: S,
+    log: ActivityInsert,
+    started_at: Instant,
+    content_capture: RawStreamContentCapture,
+    rollout: StreamRollout<'_>,
+) -> RecordedStream
+where
+    S: Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
+{
+    let StreamRollout {
+        request_events,
+        session_id,
+    } = rollout;
+    let (activity_id, writer) =
+        match activity_store.begin_stream(&identity_id, &log, session_id, request_events) {
+            Ok(started) => started,
+            Err(error) => {
+                tracing::warn!(
+                    failure_kind = "rollout_begin",
+                    error_code = error.code().as_str(),
+                    "failed to start best-effort rollout recording"
+                );
+                return Box::pin(stream);
+            }
+        };
+    match prepare_stream_with_log_id(
+        activity_store,
+        identity_id,
+        stream,
+        log,
+        started_at,
+        StreamRecordOptions {
+            stats: None,
+            content_capture: Some(content_capture),
+            rollout: Some(writer),
+            session: None,
+            log_id: activity_id,
+            mode: RecordingMode::BestEffort,
+        },
+    )
+    .await
+    {
+        Ok(stream) => stream,
+        Err(error) => {
+            tracing::warn!(
+                failure_kind = "rollout_stream",
+                error_code = error.code().as_str(),
+                "failed to start best-effort stream recording"
+            );
+            Box::pin(futures::stream::empty())
+        }
+    }
+}
+
+pub(crate) async fn record_stream_with_rollout<S>(
+    activity_store: ActivityStore,
+    identity_id: String,
+    stream: S,
+    log: ActivityInsert,
+    started_at: Instant,
+    recording: StreamRecording<'_>,
+) -> Result<RecordedStream, StorageError>
+where
+    S: Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
+{
+    let StreamRecording {
+        stats,
+        rollout,
+        session,
+    } = recording;
+    let StreamRollout {
+        request_events,
+        session_id,
+    } = rollout;
+    let (activity_id, writer) =
+        activity_store.begin_stream(&identity_id, &log, session_id, request_events)?;
+    prepare_stream_with_log_id(
+        activity_store,
+        identity_id,
+        stream,
+        log,
+        started_at,
+        StreamRecordOptions {
+            stats: Some(stats),
+            content_capture: None,
+            rollout: Some(writer),
+            session,
+            log_id: activity_id,
+            mode: RecordingMode::Required,
         },
     )
     .await

@@ -1,65 +1,6 @@
 use super::*;
 
 #[tokio::test]
-async fn streams_anthropic_messages_chunks_as_responses_sse() {
-    let upstream = spawn_streaming_native_anthropic_messages_upstream().await;
-    let state = crate::test_support::test_state().await;
-    let provider = test_provider(
-        "claude-sonnet",
-        "anthropic_compatible",
-        &upstream,
-        "sk-upstream",
-    )
-    .await
-    .expect("create provider");
-    let auth =
-        create_test_endpoint_auth(&state.storage, &provider, "claude-sonnet", "claude-sonnet")
-            .await;
-
-    let response = create_response(
-        State(state.clone()),
-        auth.access.clone(),
-        axum::Json(json!({
-            "model": "claude-sonnet",
-            "input": "hello",
-            "stream": true
-        })),
-    )
-    .await
-    .expect("create response");
-    let content_type = response
-        .headers()
-        .get(axum::http::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_string();
-    assert!(content_type.starts_with("text/event-stream"));
-
-    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
-        .await
-        .expect("read stream body");
-    let body = String::from_utf8(body.to_vec()).expect("utf8 body");
-    assert!(body.contains("event: response.output_text.delta"));
-    assert!(body.contains("\"delta\":\"hel\""));
-    assert!(body.contains("\"delta\":\"lo\""));
-    assert!(body.contains("event: response.completed"));
-
-    let log = state
-        .storage
-        .list_activities(&auth.access.0.identity_id, 1)
-        .await
-        .expect("load activity")
-        .pop()
-        .expect("activity");
-
-    assert_eq!(log.protocol_upstream.as_deref(), Some("anthropic_messages"));
-    assert_eq!(log.status, "success");
-    assert_eq!(log.http_status, Some(200));
-    assert_eq!(log.error_code, None);
-    assert_eq!(log.error_message, None);
-}
-
-#[tokio::test]
 async fn returns_responses_sse_when_stream_is_true() {
     let upstream = spawn_streaming_chat_upstream().await;
     let state = crate::test_support::test_state().await;

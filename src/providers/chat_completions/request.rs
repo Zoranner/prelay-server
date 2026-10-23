@@ -308,8 +308,9 @@ fn value_to_text(value: &Value) -> String {
 fn join_text_content(content: &[InternalContentPart]) -> String {
     content
         .iter()
-        .map(|part| match part {
-            InternalContentPart::Text(text) => text.as_str(),
+        .filter_map(|part| match part {
+            InternalContentPart::Text(text) => Some(text.as_str()),
+            InternalContentPart::Image(_) => None,
         })
         .collect::<Vec<_>>()
         .join("\n")

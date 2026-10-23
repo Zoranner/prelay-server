@@ -1,3 +1,5 @@
+use uuid::Uuid;
+
 use crate::{bridge::internal::InternalRequest, error::AppError, storage::Storage};
 
 pub(super) async fn request_with_session_history(
@@ -27,4 +29,22 @@ pub(super) fn count_tool_calls(response: &crate::bridge::internal::InternalRespo
         .iter()
         .filter(|item| item.is_tool_call())
         .count() as i64
+}
+
+pub(super) async fn conversation_id_for_request(
+    storage: &Storage,
+    identity_id: &str,
+    previous_response_id: Option<&str>,
+) -> Result<String, AppError> {
+    let Some(previous_response_id) = previous_response_id else {
+        return Ok(format!("conv_{}", Uuid::new_v4().simple()));
+    };
+    storage
+        .load_response_session_conversation_id(identity_id, previous_response_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "previous_response_id {previous_response_id} 不存在"
+            ))
+        })
 }

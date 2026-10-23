@@ -1,5 +1,7 @@
 use std::{future::Future, sync::OnceLock, time::Duration};
 
+use axum::http::StatusCode;
+
 use crate::error::AppError;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
@@ -13,7 +15,8 @@ pub struct UpstreamPolicy {
     /// Timeout for establishing an upstream connection, including the TLS handshake.
     pub connect_timeout: Duration,
     /// Idle read timeout for upstream responses; every received chunk restarts it.
-    /// It also bounds the wait for the response head.
+    /// It also bounds the request upload and the wait for the response head through
+    /// [`send_with_timeout`].
     pub read_timeout: Duration,
     pub max_retries: usize,
     pub retry_backoff: Duration,
@@ -83,6 +86,34 @@ pub fn initialize_from_environment() -> Result<&'static UpstreamPolicy, String> 
 
 pub fn policy() -> &'static UpstreamPolicy {
     UPSTREAM_POLICY.get_or_init(UpstreamPolicy::default)
+}
+
+/// Send an upstream request with a bounded upload and response-head wait.
+///
+/// `reqwest`'s read timeout only starts after the request body has been written. A
+/// provider that accepts the connection but stops reading, or never returns response
+/// headers, would otherwise hold the request until the downstream gateway times out.
+/// Wrapping `send()` makes the existing read timeout cover that whole phase as well.
+pub async fn send_with_timeout(
+    policy: &UpstreamPolicy,
+    request: reqwest::RequestBuilder,
+) -> Result<reqwest::Response, AppError> {
+    let timeout = policy.read_timeout;
+    match tokio::time::timeout(timeout, request.send()).await {
+        Ok(Ok(response)) => Ok(response),
+        Ok(Err(error)) if error.is_timeout() => Err(AppError::Upstream {
+            status: Some(StatusCode::GATEWAY_TIMEOUT),
+            message: format!("上游在 {} 秒内未返回响应头", timeout.as_secs()),
+        }),
+        Ok(Err(error)) => Err(AppError::Upstream {
+            status: None,
+            message: format!("上游连接失败: {error}"),
+        }),
+        Err(_) => Err(AppError::Upstream {
+            status: Some(StatusCode::GATEWAY_TIMEOUT),
+            message: format!("上游在 {} 秒内未返回响应头", timeout.as_secs()),
+        }),
+    }
 }
 
 pub fn build_client(policy: &UpstreamPolicy) -> Result<reqwest::Client, reqwest::Error> {
@@ -187,12 +218,15 @@ fn parse_usize(name: &str, value: Option<&str>) -> Result<Option<usize>, String>
 mod tests {
     use std::time::{Duration, Instant};
 
+    use axum::http::StatusCode;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::{TcpListener, TcpStream},
     };
 
-    use super::{build_client, UpstreamPolicy};
+    use crate::error::AppError;
+
+    use super::{build_client, send_with_timeout, UpstreamPolicy};
 
     const TEST_READ_TIMEOUT: Duration = Duration::from_millis(1000);
     const CHUNK_INTERVAL: Duration = Duration::from_millis(250);
@@ -290,6 +324,43 @@ mod tests {
             "stall must outlast the read timeout: {elapsed:?}"
         );
         assert!(error.is_timeout(), "expected a timeout error: {error:?}");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn response_head_timeout_fails_when_upstream_never_responds() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test listener");
+        let address = listener.local_addr().expect("test listener address");
+
+        let server = tokio::spawn(async move {
+            let _socket = accept_request(&listener).await;
+            std::future::pending::<()>().await;
+        });
+
+        let policy = UpstreamPolicy {
+            connect_timeout: Duration::from_secs(1),
+            read_timeout: Duration::from_millis(150),
+            max_retries: 0,
+            retry_backoff: Duration::ZERO,
+            max_candidates: None,
+        };
+        let client = build_client(&policy).expect("build test upstream client");
+        let error = send_with_timeout(
+            &policy,
+            client.post(format!("http://{address}/")).body("{}"),
+        )
+        .await
+        .expect_err("silent upstream must time out before returning headers");
+
+        match error {
+            AppError::Upstream {
+                status: Some(StatusCode::GATEWAY_TIMEOUT),
+                message,
+            } => assert!(message.contains("未返回响应头")),
+            other => panic!("expected a gateway timeout, got {other:?}"),
+        }
         server.abort();
     }
 }

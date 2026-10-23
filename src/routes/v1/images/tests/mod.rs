@@ -53,12 +53,20 @@ async fn test_state() -> AppState {
 
 async fn test_state_with_connection() -> (AppState, DatabaseConnection) {
     let connection = crate::test_support::test_database_connection().await;
+    let storage = crate::storage::Storage::from_connection(
+        connection.clone(),
+        crate::storage::MasterKey::from_bytes([0; 32]),
+    );
+    let activity_store = crate::activity::ActivityStore::new(
+        storage.clone(),
+        crate::activity::rollout::RolloutStore::new(
+            std::env::temp_dir().join(format!("prelay-rollout-test-{}", uuid::Uuid::new_v4())),
+        ),
+    );
     let state = AppState {
         provider_catalog: std::sync::Arc::new(crate::test_support::fixture_catalog()),
-        storage: crate::storage::Storage::from_connection(
-            connection.clone(),
-            crate::storage::MasterKey::from_bytes([0; 32]),
-        ),
+        storage,
+        activity_store,
         client: reqwest::Client::new(),
         provider_clients: Default::default(),
         client_update: crate::client_update::ClientUpdateCache::unavailable(reqwest::Client::new()),

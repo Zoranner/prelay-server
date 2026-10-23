@@ -1,9 +1,18 @@
 use std::sync::LazyLock;
 
 use regex::Regex;
+use serde_json::Value;
 
 static BEARER_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)\bbearer\s+[^\s,;"']+"#).expect("valid bearer token redaction pattern")
+});
+static BASIC_AUTHORIZATION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)\bauthorization\s*:\s*(?:basic|digest)\s+[^\s,;]+"#)
+        .expect("valid basic authorization redaction pattern")
+});
+static COOKIE_HEADER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(?:cookie|set-cookie)\s*:\s*[^\r\n]+")
+        .expect("valid cookie redaction pattern")
 });
 static SECRET_ASSIGNMENT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
@@ -13,7 +22,7 @@ static SECRET_ASSIGNMENT: LazyLock<Regex> = LazyLock::new(|| {
             client[_-]?secret|private[_-]?key|access[_-]?token|refresh[_-]?token|
             id[_-]?token|password|passphrase|secret|endpoint\s+token|device\s+credential|
             client\s+secret|private\s+key|access\s+token|refresh\s+token|id\s+token|
-            credential|token)\b
+            cookie|set\s+cookie|credential|token)\b['"]?
             \s*(?::|=)\s*
         )
         (?:"[^"]*"|'[^']*'|[^\s,;]+)"#,
@@ -49,12 +58,28 @@ pub(crate) fn redact_sensitive_text(value: &str) -> String {
     let value = PRIVATE_KEY_BLOCK.replace_all(value, "[REDACTED]");
     let value = PGP_PRIVATE_KEY_BLOCK.replace_all(&value, "[REDACTED]");
     let value = BEARER_TOKEN.replace_all(&value, "Bearer [REDACTED]");
+    let value = BASIC_AUTHORIZATION.replace_all(&value, "Authorization: [REDACTED]");
+    let value = COOKIE_HEADER.replace_all(&value, "Cookie: [REDACTED]");
     let value = SECRET_ASSIGNMENT
         .replace_all(&value, "${prefix}[REDACTED]")
         .into_owned();
     let value = KNOWN_API_KEY.replace_all(&value, "[REDACTED]");
     let value = JSON_WEB_TOKEN.replace_all(&value, "[REDACTED]");
     redact_url_safe_credentials(&value)
+}
+
+pub(crate) fn redact_json_value(value: &Value) -> Value {
+    match value {
+        Value::String(text) => Value::String(redact_sensitive_text(text)),
+        Value::Array(items) => Value::Array(items.iter().map(redact_json_value).collect()),
+        Value::Object(object) => Value::Object(
+            object
+                .iter()
+                .map(|(key, value)| (key.clone(), redact_json_value(value)))
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
 }
 
 fn redact_url_safe_credentials(value: &str) -> String {
@@ -84,4 +109,28 @@ fn redact_url_safe_credentials(value: &str) -> String {
         cursor = end;
     }
     redacted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact_sensitive_text;
+
+    #[test]
+    fn redacts_cookie_headers_and_basic_authorization() {
+        let redacted = redact_sensitive_text(
+            "Cookie: session=top-secret\nAuthorization: Basic dXNlcjpwYXNz\nplain text",
+        );
+
+        assert!(!redacted.contains("session=top-secret"));
+        assert!(!redacted.contains("dXNlcjpwYXNz"));
+        assert!(redacted.contains("plain text"));
+    }
+
+    #[test]
+    fn redacts_cookie_json_values() {
+        let redacted = redact_sensitive_text(r#"{"cookie":"session=top-secret","text":"plain"}"#);
+
+        assert!(!redacted.contains("session=top-secret"));
+        assert!(redacted.contains("plain"));
+    }
 }

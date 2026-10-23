@@ -268,7 +268,7 @@ async fn reconciles_protocol_base_urls_with_the_catalog() {
         "provider-relay",
         "relay",
         Some(
-            r#"{"protocol_base_urls":{"openai":"https://custom.example/v1","anthropic":"https://stale.example/v1"}}"#
+            r#"{"protocol_base_urls":{"openai":"https://custom.example/v1","images_generations":"https://stale.example/v1"}}"#
                 .to_string(),
         ),
         Some(r#"["k3"]"#.to_string()),
@@ -278,7 +278,10 @@ async fn reconciles_protocol_base_urls_with_the_catalog() {
         &db,
         "provider-outside-catalog",
         "supergpt",
-        Some(r#"{"protocol_base_urls":{"anthropic":"https://keep.example/v1"}}"#.to_string()),
+        Some(
+            r#"{"protocol_base_urls":{"images_generations":"https://keep.example/v1"}}"#
+                .to_string(),
+        ),
         None,
     )
     .await;
@@ -300,8 +303,8 @@ async fn reconciles_protocol_base_urls_with_the_catalog() {
     )
     .expect("parse relay capabilities");
     assert_eq!(
-        capabilities["protocol_base_urls"]["anthropic"],
-        serde_json::json!("https://relay.example/anthropic/v1"),
+        capabilities["protocol_base_urls"]["responses"],
+        serde_json::json!("https://relay.example/responses/v1"),
         "catalog declared protocol urls must be applied"
     );
     assert_eq!(
@@ -323,7 +326,7 @@ async fn reconciles_protocol_base_urls_with_the_catalog() {
     )
     .expect("parse outside capabilities");
     assert_eq!(
-        capabilities["protocol_base_urls"]["anthropic"],
+        capabilities["protocol_base_urls"]["images_generations"],
         serde_json::json!("https://keep.example/v1"),
         "providers missing from the catalog must keep their stored values"
     );

@@ -65,8 +65,9 @@ impl InternalOutputItem {
             InternalOutputItem::Message { content, .. } => {
                 let text = content
                     .iter()
-                    .map(|part| match part {
-                        InternalContentPart::Text(text) => text.as_str(),
+                    .filter_map(|part| match part {
+                        InternalContentPart::Text(text) => Some(text.as_str()),
+                        InternalContentPart::Image(_) => None,
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
@@ -144,4 +145,21 @@ pub enum InternalRole {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InternalContentPart {
     Text(String),
+    Image(InternalImagePart),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InternalImagePart {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+impl InternalContentPart {
+    pub fn is_image(&self) -> bool {
+        matches!(self, Self::Image(_))
+    }
 }

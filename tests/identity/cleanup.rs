@@ -1,7 +1,7 @@
 use chrono::{Duration, Utc};
 use prelay_protocol::{CreateEndpointRequest, CreateProviderRequest, EndpointModelInput};
 use prelay_server::{
-    activity::ActivityContentDraft,
+    activity::{ActivityStore, RolloutStore},
     bridge::internal::{
         InternalContentPart, InternalMessage, InternalOutputItem, InternalResponse, InternalRole,
     },
@@ -15,6 +15,9 @@ use crate::support;
 #[tokio::test]
 async fn cleanup_removes_an_inactive_identity_and_all_accessible_owned_resources() {
     let storage = support::test_storage().await;
+    let rollout_root = tempfile::tempdir().expect("temporary rollout root");
+    let rollout_store = RolloutStore::new(rollout_root.path().to_path_buf());
+    let activity_store = ActivityStore::new(storage.clone(), rollout_store.clone());
     let credential = generate_credential();
     let identity = storage
         .register_identity("machine-inactive", "S-1-5-21-100", &credential)
@@ -22,6 +25,35 @@ async fn cleanup_removes_an_inactive_identity_and_all_accessible_owned_resources
         .expect("register identity");
     let (provider_id, endpoint_id) =
         seed_owned_resources(&storage, &identity.identity_id, "inactive").await;
+    activity_store
+        .record_completed(
+            &identity.identity_id,
+            ActivityInsert {
+                protocol_in: "responses".to_string(),
+                protocol_out: "responses".to_string(),
+                protocol_upstream: "responses".to_string(),
+                endpoint_name: "Test endpoint".to_string(),
+                provider_id: provider_id.clone(),
+                provider_name: "Test provider".to_string(),
+                model_requested: "upstream-model".to_string(),
+                model_upstream: "upstream-model".to_string(),
+                status: "success".to_string(),
+                http_status: 200,
+                latency_ms: 1,
+                ..Default::default()
+            },
+            None,
+            vec![prelay_server::activity::RolloutEventBody::Message(
+                prelay_server::activity::MessageEvent {
+                    phase: prelay_server::activity::EventPhase::Request,
+                    role: "user".to_string(),
+                    content: serde_json::json!("short-lived body"),
+                },
+            )],
+            Vec::new(),
+        )
+        .await
+        .expect("record inactive activity rollout");
     let activity_id = storage
         .list_activities(&identity.identity_id, 1)
         .await
@@ -29,25 +61,19 @@ async fn cleanup_removes_an_inactive_identity_and_all_accessible_owned_resources
         .pop()
         .expect("inactive activity")
         .id;
-    storage
-        .enqueue_activity_content(ActivityContentDraft {
-            activity_id: activity_id.clone(),
-            input_text: "short-lived body".to_string(),
-            output_text: String::new(),
-            media_metadata_json: None,
-            is_truncated: false,
-            content_hash: "inactive-content".to_string(),
-        })
+    let rollout_path = storage
+        .find_activity_rollout(&activity_id)
         .await
-        .expect("store inactive activity content");
+        .expect("load inactive rollout")
+        .expect("inactive rollout")
+        .rollout_path;
 
-    assert_eq!(
-        storage
-            .delete_inactive_identities(Utc::now() + Duration::days(91), Duration::days(90))
-            .await
-            .expect("clean inactive identities"),
-        1
-    );
+    let deleted = activity_store
+        .delete_inactive_identities(Utc::now() + Duration::days(91), Duration::days(90))
+        .await
+        .expect("clean inactive identities");
+    assert_eq!(deleted, 1);
+    assert!(!rollout_store.absolute_path(&rollout_path).exists());
     assert!(storage
         .authenticate_identity(&credential)
         .await
@@ -69,9 +95,9 @@ async fn cleanup_removes_an_inactive_identity_and_all_accessible_owned_resources
         .expect("list deleted identity activities")
         .is_empty());
     assert!(storage
-        .find_activity_content(&activity_id)
+        .find_activity_rollout(&activity_id)
         .await
-        .expect("load deleted activity content")
+        .expect("load deleted activity rollout")
         .is_none());
     assert_eq!(
         storage
@@ -108,7 +134,8 @@ async fn cleanup_keeps_an_identity_that_is_newer_than_its_cutoff() {
         storage
             .delete_inactive_identities(Utc::now() - Duration::days(1), Duration::zero())
             .await
-            .expect("clean identities before their activity"),
+            .expect("clean identities before their activity")
+            .deleted,
         0
     );
     assert_eq!(
@@ -226,6 +253,7 @@ async fn seed_owned_resources(
             identity_id,
             response_id: &response.id,
             previous_response_id: None,
+            conversation_id: "conversation-inactive",
             provider_id: &provider_id,
             model: "upstream-model",
             input_messages: &input,

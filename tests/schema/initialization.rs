@@ -39,12 +39,26 @@ async fn create_existing_base_tables(db: &DatabaseConnection) {
         "identity_endpoint_configs",
         "identity_endpoint_models",
         "identity_endpoint_model_routes",
-        "identity_response_sessions",
     ] {
         db.execute_unprepared(&format!("CREATE TABLE {table} (id TEXT PRIMARY KEY)"))
             .await
             .expect("create existing companion table");
     }
+    db.execute_unprepared(
+        "CREATE TABLE identity_response_sessions (
+            response_id TEXT NOT NULL,
+            identity_id TEXT NOT NULL,
+            previous_response_id TEXT,
+            provider_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            input_messages_json TEXT NOT NULL,
+            output_items_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (response_id, identity_id)
+        )",
+    )
+    .await
+    .expect("create legacy response session table");
     db.execute_unprepared(
         "CREATE TABLE identity_provider_configs (
             id TEXT PRIMARY KEY,
@@ -262,68 +276,30 @@ async fn removes_legacy_cost_columns_from_an_existing_activity_table() {
 }
 
 #[tokio::test]
-async fn migrates_stale_activity_content_once_during_schema_initialization() {
+async fn drops_legacy_activity_contents_and_records_rollout_migration() {
     let db = test_empty_database_connection().await;
 
     initialize(&db).await.expect("initialize current schema");
     db.execute_unprepared(
-        "CREATE TABLE IF NOT EXISTS prelay_schema_migrations (
-            version VARCHAR(128) PRIMARY KEY,
-            applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        "CREATE TABLE activity_contents (
+            id TEXT PRIMARY KEY,
+            activity_id TEXT NOT NULL,
+            input_text TEXT NOT NULL,
+            output_text TEXT NOT NULL
         )",
     )
     .await
-    .expect("create migration history");
+    .expect("create legacy activity content table");
     db.execute_unprepared(
-        "DELETE FROM prelay_schema_migrations
-         WHERE version = 'activity_content_lifecycle_v1'",
+        "INSERT INTO prelay_schema_migrations (version)
+         VALUES ('activity_content_lifecycle_v1')",
     )
     .await
-    .expect("reset activity content migration");
-    db.execute_unprepared(
-        "INSERT INTO identities
-            (id, machine_id, account_sid, credential_hash, display_name, created_at, last_active_at)
-         VALUES
-            ('identity-migration', 'machine-migration', 'sid-migration', 'hash', '',
-             '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')",
-    )
-    .await
-    .expect("insert migration identity");
-    db.execute_unprepared(
-        "INSERT INTO identity_activities (id, identity_id, created_at, status)
-         VALUES ('activity-migration', 'identity-migration', '2026-09-01T00:00:00Z', 'success')",
-    )
-    .await
-    .expect("insert migration activity");
-    db.execute_unprepared(
-        "INSERT INTO activity_contents
-            (id, activity_id, input_text, output_text, content_hash, status, is_truncated,
-             attempts, created_at, updated_at)
-         VALUES
-            ('content-migration', 'activity-migration', 'input', 'output', 'hash', 'capturing',
-             false, 0, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')",
-    )
-    .await
-    .expect("insert stale activity content");
+    .expect("record the legacy migration");
 
-    initialize(&db)
-        .await
-        .expect("apply activity content migration");
-
-    let row = db
-        .query_one_raw(Statement::from_string(
-            DbBackend::Postgres,
-            "SELECT status, input_text, output_text
-             FROM activity_contents
-             WHERE id = 'content-migration'"
-                .to_owned(),
-        ))
-        .await
-        .expect("query migrated activity content")
-        .expect("migrated activity content exists");
-    assert_eq!(row.try_get::<String>("", "status").unwrap(), "pending");
-    assert_eq!(row.try_get::<String>("", "input_text").unwrap(), "input");
-    assert_eq!(row.try_get::<String>("", "output_text").unwrap(), "output");
+    initialize(&db).await.expect("drop legacy activity content");
+    assert!(!table_exists(&db, "activity_contents").await);
+    assert!(table_exists(&db, "activity_rollouts").await);
 
     initialize(&db)
         .await
@@ -333,7 +309,7 @@ async fn migrates_stale_activity_content_once_during_schema_initialization() {
             DbBackend::Postgres,
             "SELECT COUNT(*) AS migration_count
              FROM prelay_schema_migrations
-             WHERE version = 'activity_content_lifecycle_v1'"
+             WHERE version IN ('activity_content_lifecycle_v1', 'activity_rollout_v1')"
                 .to_owned(),
         ))
         .await
@@ -343,7 +319,7 @@ async fn migrates_stale_activity_content_once_during_schema_initialization() {
         migration_count
             .try_get::<i64>("", "migration_count")
             .unwrap(),
-        1
+        2
     );
 }
 
@@ -360,4 +336,63 @@ async fn adds_models_column_when_migrating_an_existing_provider_table() {
     initialize(&db).await.expect("migrate the existing schema");
 
     assert!(column_exists(&db, "identity_provider_configs", "models_json").await);
+}
+
+#[tokio::test]
+async fn backfills_conversation_id_for_existing_response_sessions() {
+    let db = test_empty_database_connection().await;
+    initialize(&db)
+        .await
+        .expect("initialize the current schema");
+    db.execute_unprepared("ALTER TABLE identity_response_sessions DROP COLUMN conversation_id")
+        .await
+        .expect("remove the conversation id column");
+    db.execute_unprepared(
+        "INSERT INTO identities
+         (id, machine_id, account_sid, credential_hash, display_name, created_at, last_active_at)
+         VALUES ('legacy-identity', 'legacy-machine', 'S-1-5-21-legacy', 'hash', '',
+         '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z')",
+    )
+    .await
+    .expect("seed legacy identity");
+    db.execute_unprepared(
+        "INSERT INTO identity_provider_configs
+         (id, identity_id, name, provider_type, visibility, base_url,
+          api_key_ciphertext, capabilities_json, models_json, created_at)
+         VALUES ('legacy-provider', 'legacy-identity', 'Legacy Provider',
+         'openai_compatible', 'private', 'https://provider.example',
+         'ciphertext', NULL, NULL, '2026-10-01T00:00:00Z')",
+    )
+    .await
+    .expect("seed legacy provider");
+    db.execute_unprepared(
+        "INSERT INTO identity_response_sessions
+         (response_id, identity_id, previous_response_id, provider_id, model,
+          input_messages_json, output_items_json, created_at)
+         VALUES ('resp_legacy', 'legacy-identity', NULL, 'legacy-provider',
+         'legacy-model', '[]', '[]', '2026-10-01T00:00:00Z')",
+    )
+    .await
+    .expect("seed legacy response session");
+
+    initialize(&db)
+        .await
+        .expect("backfill response session conversation ids");
+
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT conversation_id FROM identity_response_sessions
+             WHERE response_id = 'resp_legacy' AND identity_id = 'legacy-identity'"
+                .to_owned(),
+        ))
+        .await
+        .expect("query backfilled response session")
+        .expect("response session remains available");
+    assert_eq!(
+        row.try_get::<Option<String>>("", "conversation_id")
+            .expect("conversation id column")
+            .as_deref(),
+        Some("resp_legacy")
+    );
 }

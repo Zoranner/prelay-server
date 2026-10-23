@@ -79,31 +79,48 @@ pub fn policy() -> &'static ImageBudgetPolicy {
     IMAGE_BUDGET.get_or_init(ImageBudgetPolicy::default)
 }
 
-/// 按预算丢弃最老的历史图片；没有需要改写的内容时返回 `None`，调用方继续用原请求体。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImageBudgetReport {
+    pub total_bytes: usize,
+    pub remaining_bytes: usize,
+    pub dropped_images: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ImageBudgetOutcome {
+    Disabled,
+    WithinBudget(ImageBudgetReport),
+    Trimmed {
+        payload: Value,
+        report: ImageBudgetReport,
+    },
+    CannotMeetBudget(ImageBudgetReport),
+}
+
+/// 按预算丢弃最老的历史图片。
 ///
 /// 丢弃顺序是从最老的图片开始，直到总量落到预算内；如果丢到只剩最近 `keep_last` 张仍然
-/// 超预算，就停在保留窗口上，不动用户刚贴的图片。
-pub fn apply(payload: &Value, policy: &ImageBudgetPolicy) -> Option<Value> {
+/// 超预算，返回 `CannotMeetBudget`，调用方必须拒绝请求，不能把超预算的请求体继续发给上游。
+/// `keep_last` 是硬保留窗口；预算与保留窗口冲突时，宁可失败也不静默改动用户刚贴的图片。
+pub fn apply(payload: &Value, policy: &ImageBudgetPolicy) -> ImageBudgetOutcome {
     if !policy.enabled {
-        return None;
+        return ImageBudgetOutcome::Disabled;
     }
 
-    let mut images = Vec::new();
-    collect_images(payload, &mut images);
+    let images = collect_images(payload);
     let total_bytes: usize = images.iter().map(|image| image.bytes).sum();
+    let report = |remaining_bytes, dropped_images| ImageBudgetReport {
+        total_bytes,
+        remaining_bytes,
+        dropped_images,
+    };
     if total_bytes <= policy.max_bytes {
-        return None;
+        return ImageBudgetOutcome::WithinBudget(report(total_bytes, 0));
     }
 
     let droppable = images.len().saturating_sub(policy.keep_last);
     if droppable == 0 {
-        tracing::warn!(
-            total_bytes,
-            max_bytes = policy.max_bytes,
-            keep_last = policy.keep_last,
-            "image budget exceeded but every image is inside the retention window"
-        );
-        return None;
+        return ImageBudgetOutcome::CannotMeetBudget(report(total_bytes, 0));
     }
 
     let mut pruned = payload.clone();
@@ -121,70 +138,95 @@ pub fn apply(payload: &Value, policy: &ImageBudgetPolicy) -> Option<Value> {
         dropped += 1;
     }
 
-    if dropped == 0 {
-        return None;
+    if dropped == 0 || remaining_bytes > policy.max_bytes {
+        return ImageBudgetOutcome::CannotMeetBudget(report(remaining_bytes, dropped));
     }
 
-    tracing::info!(
-        dropped,
-        remaining_bytes,
-        max_bytes = policy.max_bytes,
-        "trimmed historical images for the upstream image budget"
-    );
-    Some(pruned)
+    ImageBudgetOutcome::Trimmed {
+        payload: pruned,
+        report: report(remaining_bytes, dropped),
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PathSegment {
+    Key(String),
+    Index(usize),
 }
 
 struct ImageSlot {
-    item: usize,
-    field: &'static str,
-    part: usize,
+    path: Vec<PathSegment>,
     bytes: usize,
 }
 
-fn collect_images(payload: &Value, images: &mut Vec<ImageSlot>) {
-    let Some(items) = payload.get("input").and_then(Value::as_array) else {
-        return;
-    };
-    for (item_index, item) in items.iter().enumerate() {
-        let field = if item.get("type").and_then(Value::as_str) == Some("function_call_output") {
-            "output"
-        } else {
-            "content"
-        };
-        let Some(parts) = item.get(field).and_then(Value::as_array) else {
-            continue;
-        };
-        for (part_index, part) in parts.iter().enumerate() {
-            if part.get("type").and_then(Value::as_str) != Some("input_image") {
-                continue;
+fn collect_images(payload: &Value) -> Vec<ImageSlot> {
+    let mut images = Vec::new();
+    if let Some(input) = payload.get("input") {
+        collect_images_in_value(input, &mut Vec::new(), &mut images);
+    }
+    images
+}
+
+fn collect_images_in_value(
+    value: &Value,
+    path: &mut Vec<PathSegment>,
+    images: &mut Vec<ImageSlot>,
+) {
+    match value {
+        Value::Object(object) => {
+            if object.get("type").and_then(Value::as_str) == Some("input_image") {
+                images.push(ImageSlot {
+                    path: path.clone(),
+                    bytes: image_body_bytes(value),
+                });
+                return;
             }
-            images.push(ImageSlot {
-                item: item_index,
-                field,
-                part: part_index,
-                bytes: image_body_bytes(part),
-            });
+            for (key, child) in object {
+                path.push(PathSegment::Key(key.clone()));
+                collect_images_in_value(child, path, images);
+                path.pop();
+            }
         }
+        Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                path.push(PathSegment::Index(index));
+                collect_images_in_value(child, path, images);
+                path.pop();
+            }
+        }
+        _ => {}
     }
 }
 
 /// 图片在请求体里占的字节数：内联图片取 `image_url` 的长度，文件引用不占请求体，
 /// 但仍参与保留窗口计数。
 fn image_body_bytes(part: &Value) -> usize {
-    part.get("image_url")
-        .and_then(Value::as_str)
-        .map_or(0, str::len)
+    match part.get("image_url") {
+        Some(Value::String(url)) => url.len(),
+        Some(Value::Object(object)) => object
+            .get("url")
+            .and_then(Value::as_str)
+            .map_or(0, str::len),
+        _ => 0,
+    }
 }
 
 fn replace_with_placeholder(payload: &mut Value, slot: &ImageSlot, keep_last: usize) -> bool {
-    let Some(part) = payload
-        .get_mut("input")
-        .and_then(|input| input.get_mut(slot.item))
-        .and_then(|item| item.get_mut(slot.field))
-        .and_then(|parts| parts.get_mut(slot.part))
-    else {
+    let Some(mut part) = payload.get_mut("input") else {
         return false;
     };
+    for segment in &slot.path {
+        part = match segment {
+            PathSegment::Key(key) => match part.get_mut(key) {
+                Some(value) => value,
+                None => return false,
+            },
+            PathSegment::Index(index) => match part.get_mut(*index) {
+                Some(value) => value,
+                None => return false,
+            },
+        };
+    }
     *part = json!({
         "type": "input_text",
         "text": placeholder_text(keep_last),
@@ -217,174 +259,5 @@ fn parse_flag(name: &str, value: Option<&str>) -> Result<Option<bool>, String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use serde_json::{json, Value};
-
-    use super::{apply, default_max_bytes, ImageBudgetPolicy};
-
-    fn enabled_policy(keep_last: usize, max_bytes: usize) -> ImageBudgetPolicy {
-        ImageBudgetPolicy {
-            enabled: true,
-            keep_last,
-            max_bytes,
-        }
-    }
-
-    /// 图片地址长度固定为 `bytes`，便于按字节推算预算。
-    fn image_url(bytes: usize, marker: &str) -> String {
-        let mut url = format!("data:image/png;base64,{marker}");
-        url.push_str(&"a".repeat(bytes.saturating_sub(url.len())));
-        url
-    }
-
-    fn payload_with_four_images(bytes: usize) -> Value {
-        json!({
-            "model": "gpt-4.1",
-            "input": [
-                {
-                    "role": "user",
-                    "content": [
-                        { "type": "input_text", "text": "第一张" },
-                        { "type": "input_image", "image_url": image_url(bytes, "one") }
-                    ]
-                },
-                {
-                    "type": "function_call_output",
-                    "call_id": "call_1",
-                    "output": [
-                        { "type": "input_text", "text": "工具截图" },
-                        { "type": "input_image", "image_url": image_url(bytes, "two") }
-                    ]
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        { "type": "input_image", "image_url": image_url(bytes, "three") }
-                    ]
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        { "type": "input_image", "image_url": image_url(bytes, "four") }
-                    ]
-                }
-            ]
-        })
-    }
-
-    fn part<'a>(payload: &'a Value, item: usize, field: &str, index: usize) -> &'a Value {
-        &payload["input"][item][field][index]
-    }
-
-    #[test]
-    fn disabled_policy_never_rewrites() {
-        let payload = payload_with_four_images(4096);
-
-        assert!(apply(&payload, &ImageBudgetPolicy::default()).is_none());
-    }
-
-    #[test]
-    fn payload_within_budget_is_untouched() {
-        let payload = payload_with_four_images(512);
-        let policy = enabled_policy(10, 4 * 512);
-
-        assert!(apply(&payload, &policy).is_none());
-    }
-
-    #[test]
-    fn drops_the_oldest_images_until_the_budget_fits() {
-        let payload = payload_with_four_images(512);
-        let policy = enabled_policy(2, 3 * 512 - 1);
-
-        let pruned = apply(&payload, &policy).expect("payload is pruned");
-
-        assert_eq!(pruned["input"].as_array().map(Vec::len), Some(4));
-        assert_eq!(part(&pruned, 0, "content", 1)["type"], "input_text");
-        assert_eq!(part(&pruned, 1, "output", 1)["type"], "input_text");
-        assert_eq!(part(&pruned, 2, "content", 0)["type"], "input_image");
-        assert_eq!(part(&pruned, 3, "content", 0)["type"], "input_image");
-        assert_eq!(part(&pruned, 1, "output", 0)["text"], "工具截图");
-        assert_eq!(part(&pruned, 0, "content", 0)["text"], "第一张");
-        assert_eq!(
-            part(&pruned, 0, "content", 1)["text"],
-            "历史图片已被服务端图片预算省略（仅保留最近 2 张图片）"
-        );
-    }
-
-    #[test]
-    fn retention_window_wins_when_the_budget_cannot_be_met() {
-        let payload = payload_with_four_images(512);
-        let policy = enabled_policy(3, 1024);
-
-        let pruned = apply(&payload, &policy).expect("payload is pruned");
-
-        assert_eq!(part(&pruned, 0, "content", 1)["type"], "input_text");
-        assert_eq!(part(&pruned, 1, "output", 1)["type"], "input_image");
-        assert_eq!(part(&pruned, 2, "content", 0)["type"], "input_image");
-        assert_eq!(part(&pruned, 3, "content", 0)["type"], "input_image");
-    }
-
-    #[test]
-    fn images_inside_the_retention_window_are_not_dropped() {
-        let payload = payload_with_four_images(4096);
-        let policy = enabled_policy(4, 1024);
-
-        assert!(apply(&payload, &policy).is_none());
-    }
-
-    #[test]
-    fn placeholder_text_is_stable_for_the_same_payload() {
-        let payload = payload_with_four_images(512);
-        let policy = enabled_policy(1, 1024);
-
-        let first = apply(&payload, &policy).expect("payload is pruned");
-        let second = apply(&payload, &policy).expect("payload is pruned");
-
-        assert_eq!(
-            serde_json::to_vec(&first).expect("first body"),
-            serde_json::to_vec(&second).expect("second body")
-        );
-    }
-
-    #[test]
-    fn file_reference_images_count_toward_the_window() {
-        let payload = json!({
-            "model": "gpt-4.1",
-            "input": [
-                {
-                    "role": "user",
-                    "content": [
-                        { "type": "input_image", "file_id": "file_old" },
-                        { "type": "input_image", "image_url": image_url(4096, "fresh") }
-                    ]
-                }
-            ]
-        });
-        let policy = enabled_policy(1, 1024);
-
-        let pruned = apply(&payload, &policy).expect("payload is pruned");
-
-        assert_eq!(part(&pruned, 0, "content", 0)["type"], "input_text");
-        assert_eq!(part(&pruned, 0, "content", 1)["type"], "input_image");
-    }
-
-    #[test]
-    fn policy_reads_configured_values() {
-        let policy =
-            ImageBudgetPolicy::from_values(Some("true"), Some("3"), Some("1024")).expect("policy");
-
-        assert_eq!(policy, enabled_policy(3, 1024));
-        assert!(ImageBudgetPolicy::from_values(Some("yes"), None, None).is_err());
-        assert!(ImageBudgetPolicy::from_values(None, Some("0"), None).is_err());
-    }
-
-    #[test]
-    fn policy_defaults_to_disabled() {
-        let policy = ImageBudgetPolicy::from_values(None, None, None).expect("policy");
-
-        assert_eq!(policy, ImageBudgetPolicy::default());
-        assert!(!policy.enabled);
-        assert_eq!(policy.keep_last, 10);
-        assert_eq!(policy.max_bytes, default_max_bytes());
-    }
-}
+#[path = "image_budget/tests.rs"]
+mod tests;

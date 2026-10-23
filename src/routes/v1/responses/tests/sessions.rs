@@ -65,6 +65,25 @@ async fn prepends_previous_response_messages_to_upstream_chat_request() {
         third["output"][0]["content"][0]["text"],
         "full history accepted"
     );
+
+    let logs = state
+        .storage
+        .list_activities(&auth.access.0.identity_id, 10)
+        .await
+        .expect("load response activities");
+    assert_eq!(logs.len(), 3);
+    let mut conversation_ids = Vec::new();
+    for log in &logs {
+        let rollout = state
+            .storage
+            .find_activity_rollout(&log.id)
+            .await
+            .expect("load response rollout")
+            .expect("response rollout exists");
+        conversation_ids.push(rollout.session_id);
+    }
+    assert!(conversation_ids.iter().all(|id| id.starts_with("conv_")));
+    assert!(conversation_ids.windows(2).all(|pair| pair[0] == pair[1]));
 }
 
 #[tokio::test]

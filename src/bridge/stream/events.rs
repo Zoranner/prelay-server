@@ -1,8 +1,9 @@
-const MAX_CAPTURED_STREAM_TEXT_BYTES: usize = 128 * 1024;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InternalStreamEvent {
     TextDelta(String),
+    ReasoningDelta(String),
     ToolCallDelta {
         index: usize,
         id: Option<String>,
@@ -35,17 +36,46 @@ pub struct StreamStatsSnapshot {
     pub total_tokens: Option<i64>,
     pub cache_read_tokens: Option<i64>,
     pub cache_write_tokens: Option<i64>,
+    pub response_id: Option<String>,
     pub tool_call_count: i64,
     pub output_text: String,
+    pub reasoning_text: String,
     pub completed: bool,
     pub final_usage_seen: bool,
+    pub(crate) tool_calls: BTreeMap<usize, CapturedToolCall>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct CapturedToolCall {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) arguments: String,
+    pub(crate) done: bool,
 }
 
 impl StreamStatsSnapshot {
     pub(crate) fn record_event(&mut self, event: &InternalStreamEvent) {
         match event {
-            InternalStreamEvent::ToolCallDone { .. } => {
-                self.tool_call_count += 1;
+            InternalStreamEvent::ToolCallDone {
+                index,
+                id,
+                name,
+                arguments,
+            } => {
+                let tool_call = self.tool_calls.entry(*index).or_default();
+                if !tool_call.done {
+                    self.tool_call_count += 1;
+                    tool_call.done = true;
+                }
+                if !id.is_empty() {
+                    tool_call.id = id.clone();
+                }
+                if !name.is_empty() {
+                    tool_call.name = name.clone();
+                }
+                if !arguments.is_empty() || tool_call.arguments.is_empty() {
+                    tool_call.arguments = arguments.clone();
+                }
             }
             InternalStreamEvent::Usage(usage) => {
                 self.input_tokens = usage.input_tokens.and_then(u64_to_i64);
@@ -62,23 +92,65 @@ impl StreamStatsSnapshot {
             InternalStreamEvent::TextDelta(delta) => {
                 self.append_output_text(delta);
             }
+            InternalStreamEvent::ReasoningDelta(delta) => {
+                self.reasoning_text.push_str(delta);
+            }
             InternalStreamEvent::Finished(_) => {
                 self.completed = true;
             }
-            InternalStreamEvent::ToolCallDelta { .. } => {}
+            InternalStreamEvent::ToolCallDelta {
+                index,
+                id,
+                name,
+                arguments,
+            } => {
+                let tool_call = self.tool_calls.entry(*index).or_default();
+                if let Some(id) = id {
+                    if !id.is_empty() {
+                        tool_call.id = id.clone();
+                    }
+                }
+                if let Some(name) = name {
+                    if !name.is_empty() {
+                        tool_call.name = name.clone();
+                    }
+                }
+                if let Some(arguments) = arguments {
+                    tool_call.arguments.push_str(arguments);
+                }
+            }
         }
     }
 
+    pub(crate) fn captured_tool_calls(&self) -> Vec<(String, String, String)> {
+        self.tool_calls
+            .values()
+            .map(|tool_call| {
+                (
+                    tool_call.id.clone(),
+                    tool_call.name.clone(),
+                    tool_call.arguments.clone(),
+                )
+            })
+            .collect()
+    }
+
+    pub(crate) fn completed_tool_calls(&self) -> Vec<(String, String, String)> {
+        self.tool_calls
+            .values()
+            .filter(|tool_call| tool_call.done)
+            .map(|tool_call| {
+                (
+                    tool_call.id.clone(),
+                    tool_call.name.clone(),
+                    tool_call.arguments.clone(),
+                )
+            })
+            .collect()
+    }
+
     fn append_output_text(&mut self, delta: &str) {
-        let remaining = MAX_CAPTURED_STREAM_TEXT_BYTES.saturating_sub(self.output_text.len());
-        if remaining == 0 {
-            return;
-        }
-        let mut end = remaining.min(delta.len());
-        while end > 0 && !delta.is_char_boundary(end) {
-            end -= 1;
-        }
-        self.output_text.push_str(&delta[..end]);
+        self.output_text.push_str(delta);
     }
 }
 
@@ -118,6 +190,7 @@ pub(crate) struct ChatToolCallState {
 
 pub(crate) struct ChatSseEvent {
     pub(crate) text_delta: Option<String>,
+    pub(crate) reasoning_delta: Option<String>,
     pub(crate) tool_call_deltas: Vec<ChatToolCallDelta>,
     pub(crate) finish_reason: Option<InternalFinishReason>,
     pub(crate) usage: Option<StreamUsage>,
@@ -133,6 +206,9 @@ impl ChatSseEvent {
         let mut events = Vec::new();
         if let Some(delta) = &self.text_delta {
             events.push(InternalStreamEvent::TextDelta(delta.clone()));
+        }
+        if let Some(delta) = &self.reasoning_delta {
+            events.push(InternalStreamEvent::ReasoningDelta(delta.clone()));
         }
         for delta in &self.tool_call_deltas {
             events.push(InternalStreamEvent::ToolCallDelta {
@@ -157,10 +233,6 @@ pub(crate) struct ChatToolCallDelta {
     pub(crate) id: Option<String>,
     pub(crate) name: Option<String>,
     pub(crate) arguments: Option<String>,
-}
-
-pub(crate) struct AnthropicMessagesSseEvent {
-    pub(crate) finish_reason: Option<InternalFinishReason>,
 }
 
 #[cfg(test)]
@@ -248,16 +320,69 @@ mod tests {
         assert_eq!(stats.cache_write_tokens, Some(1));
         assert!(stats.output_text.is_empty());
         assert_eq!(stats.tool_call_count, 1);
+        assert_eq!(
+            stats.captured_tool_calls(),
+            vec![(
+                "call_1".to_string(),
+                "get_weather".to_string(),
+                "{}".to_string(),
+            )]
+        );
         assert!(stats.completed);
         assert!(stats.final_usage_seen);
     }
 
     #[test]
-    fn retains_decoded_text_deltas_for_activity_content() {
+    fn captures_streamed_tool_arguments_once() {
+        let mut stats = StreamStatsSnapshot::default();
+
+        stats.record_event(&InternalStreamEvent::ToolCallDelta {
+            index: 0,
+            id: Some("call_1".to_string()),
+            name: Some("get_weather".to_string()),
+            arguments: Some("{\"city\":\"Par".to_string()),
+        });
+        stats.record_event(&InternalStreamEvent::ToolCallDelta {
+            index: 0,
+            id: None,
+            name: None,
+            arguments: Some("is\"}".to_string()),
+        });
+        stats.record_event(&InternalStreamEvent::ToolCallDone {
+            index: 0,
+            id: "call_1".to_string(),
+            name: "get_weather".to_string(),
+            arguments: "{\"city\":\"Paris\"}".to_string(),
+        });
+
+        let tool_calls = stats.captured_tool_calls();
+        assert_eq!(stats.tool_call_count, 1);
+        assert_eq!(
+            tool_calls,
+            vec![(
+                "call_1".to_string(),
+                "get_weather".to_string(),
+                "{\"city\":\"Paris\"}".to_string(),
+            )]
+        );
+    }
+
+    #[test]
+    fn retains_decoded_text_deltas_for_rollout_events() {
         let mut stats = StreamStatsSnapshot::default();
 
         stats.record_event(&InternalStreamEvent::TextDelta("stream output".to_string()));
 
         assert_eq!(stats.output_text, "stream output");
+    }
+
+    #[test]
+    fn retains_streamed_reasoning_for_rollout_events() {
+        let mut stats = StreamStatsSnapshot::default();
+
+        stats.record_event(&InternalStreamEvent::ReasoningDelta("think ".to_string()));
+        stats.record_event(&InternalStreamEvent::ReasoningDelta("first".to_string()));
+
+        assert_eq!(stats.reasoning_text, "think first");
     }
 }

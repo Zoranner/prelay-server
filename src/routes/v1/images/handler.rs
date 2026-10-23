@@ -64,7 +64,10 @@ pub(super) async fn create_image_generation(
         )
         .await
     {
-        tracing::warn!(error = %error, "failed to remember active endpoint model provider");
+        tracing::warn!(
+            error_code = error.code().as_str(),
+            "failed to remember active endpoint model provider"
+        );
     }
     Ok(response)
 }

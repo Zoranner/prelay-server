@@ -104,36 +104,6 @@ async fn rejects_chat_when_provider_only_supports_responses_upstream_protocol() 
 }
 
 #[tokio::test]
-async fn rejects_chat_when_provider_only_supports_anthropic_messages_upstream_protocol() {
-    let state = test_state().await;
-    let provider = test_provider(
-        "Claude",
-        "anthropic_compatible",
-        "http://127.0.0.1:1",
-        "sk-upstream",
-    )
-    .await
-    .expect("create provider");
-    let auth =
-        create_test_endpoint_auth(&state.storage, &provider, "Claude", "claude-sonnet-4").await;
-
-    let error = create_chat_completion(
-        State(state),
-        auth.access,
-        axum::Json(json!({
-            "model": "Claude",
-            "messages": [
-                { "role": "user", "content": "hello" }
-            ]
-        })),
-    )
-    .await
-    .expect_err("anthropic provider should not be exposed as chat completions");
-
-    assert!(format!("{error:?}").contains("接入点未配置支持 chat_completions 的模型 Claude"));
-}
-
-#[tokio::test]
 async fn forwards_chat_completion_to_protocol_specific_base_url() {
     let default_upstream = spawn_unexpected_chat_upstream().await;
     let chat_upstream = spawn_chat_upstream().await;
@@ -147,7 +117,6 @@ async fn forwards_chat_completion_to_protocol_specific_base_url() {
             protocol_base_urls: Some(crate::models::ProviderProtocolBaseUrls {
                 responses: None,
                 openai: Some(chat_upstream),
-                anthropic: None,
                 ..Default::default()
             }),
             ..ProviderCapabilityOverrides::default()

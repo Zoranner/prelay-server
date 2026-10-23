@@ -9,8 +9,7 @@ use crate::{
 };
 
 use super::{
-    anthropic::create_anthropic_messages_response, chat::create_chat_response,
-    handler::ResponseCandidateRequest, native::create_native_response,
+    chat::create_chat_response, handler::ResponseCandidateRequest, native::create_native_response,
     sessions::request_with_session_history,
 };
 
@@ -19,6 +18,7 @@ pub(super) struct ResponseBridgeContext {
     pub(super) endpoint_name: String,
     pub(super) model_requested: String,
     pub(super) is_streaming: bool,
+    pub(super) conversation_id: String,
     pub(super) started_at: std::time::Instant,
 }
 
@@ -34,6 +34,7 @@ pub(super) async fn create_response_with_candidate(
         model_requested,
         is_streaming,
         previous_response_id,
+        conversation_id,
         started_at,
     } = candidate_request;
     let provider = resolved.provider;
@@ -44,6 +45,7 @@ pub(super) async fn create_response_with_candidate(
         endpoint_name: access.endpoint_name.clone(),
         model_requested,
         is_streaming,
+        conversation_id,
         started_at,
     };
 
@@ -81,17 +83,6 @@ pub(super) async fn create_response_with_candidate(
 
     validate_responses_bridge_payload(payload.as_ref())?;
     let request = request_for_upstream(request.as_ref(), &model_upstream);
-    if upstream_protocol == UpstreamProtocol::AnthropicMessages {
-        return create_anthropic_messages_response(
-            state,
-            request,
-            provider,
-            previous_response_id,
-            context,
-        )
-        .await;
-    }
-
     create_chat_response(
         state,
         request,

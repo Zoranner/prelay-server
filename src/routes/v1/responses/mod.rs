@@ -2,7 +2,7 @@ use axum::{routing::post, Router};
 
 use crate::AppState;
 
-mod anthropic;
+mod activity;
 mod candidate;
 mod chat;
 mod handler;

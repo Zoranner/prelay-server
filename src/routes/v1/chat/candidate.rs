@@ -7,11 +7,11 @@ use axum::{
 use serde_json::Value;
 
 use crate::{
-    activity::{chat_message_text, chat_response_text, insert_activity_with_content},
+    activity::events::{events_from_chat_request, events_from_chat_response},
     bridge::stream::{native_chat_sse_with_stats, with_sse_keepalive},
     error::AppError,
     observability::{
-        stream_stats::record_stream_with_activity_content,
+        stream_stats::{record_stream_with_rollout, StreamRecording, StreamRollout},
         upstream_observability::{upstream_failure_message, upstream_observability},
     },
     providers::spec::provider_upstream_base_url,
@@ -40,16 +40,12 @@ pub(super) async fn create_chat_completion_with_candidate(
     );
     let upstream_started_at = std::time::Instant::now();
     let client = state.provider_client(&provider.provider_type)?;
-    let upstream_response = client
+    let upstream_request = client
         .post(upstream_url)
         .bearer_auth(&provider.api_key)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|error| AppError::Upstream {
-            status: None,
-            message: format!("上游连接失败: {error}"),
-        })?;
+        .json(&payload);
+    let upstream_response =
+        crate::upstream::send_with_timeout(crate::upstream::policy(), upstream_request).await?;
     let upstream_latency_ms = upstream_started_at.elapsed().as_millis() as i64;
 
     if !upstream_response.status().is_success() {
@@ -58,18 +54,18 @@ pub(super) async fn create_chat_completion_with_candidate(
         let error_body = upstream_response.text().await.ok();
         let observability = upstream_observability(&observability_headers, error_body.as_deref());
         state
-            .storage
-            .insert_activity(
+            .activity_store
+            .record_completed(
                 &access.identity_id,
                 ActivityInsert {
                     protocol_in: "chat_completions".to_string(),
                     protocol_out: "chat_completions".to_string(),
                     protocol_upstream: "chat_completions".to_string(),
-                    provider_id: provider.id,
-                    provider_name: provider.name,
+                    provider_id: provider.id.clone(),
+                    provider_name: provider.name.clone(),
                     endpoint_name: access.endpoint_name.clone(),
                     model_requested: model.clone(),
-                    model_upstream,
+                    model_upstream: model_upstream.clone(),
                     status: "failed".to_string(),
                     http_status: status.as_u16() as i64,
                     error_code: None,
@@ -86,6 +82,9 @@ pub(super) async fn create_chat_completion_with_candidate(
                     tool_call_count: None,
                     upstream_request_id: observability.request_id,
                 },
+                None,
+                events_from_chat_request(&payload),
+                Vec::new(),
             )
             .await?;
         return Err(AppError::Upstream {
@@ -95,7 +94,6 @@ pub(super) async fn create_chat_completion_with_candidate(
     }
 
     if is_streaming {
-        let input_text = chat_message_text(&payload);
         let upstream_request_id =
             upstream_observability(upstream_response.headers(), None).request_id;
         let log = ActivityInsert {
@@ -125,14 +123,20 @@ pub(super) async fn create_chat_completion_with_candidate(
         };
         let (stream, stream_stats) = native_chat_sse_with_stats(upstream_response).await?;
         let body = Body::from_stream(with_sse_keepalive(
-            record_stream_with_activity_content(
-                state.storage.clone(),
+            record_stream_with_rollout(
+                state.activity_store.clone(),
                 access.identity_id.clone(),
                 stream,
                 log,
                 started_at,
-                stream_stats,
-                input_text,
+                StreamRecording {
+                    stats: stream_stats,
+                    rollout: StreamRollout {
+                        request_events: events_from_chat_request(&payload),
+                        session_id: None,
+                    },
+                    session: None,
+                },
             )
             .await?,
         ));
@@ -160,43 +164,44 @@ pub(super) async fn create_chat_completion_with_candidate(
                 .sum::<usize>() as i64
         })
         .unwrap_or_default();
-    insert_activity_with_content(
-        &state.storage,
-        &access.identity_id,
-        ActivityInsert {
-            protocol_in: "chat_completions".to_string(),
-            protocol_out: "chat_completions".to_string(),
-            protocol_upstream: "chat_completions".to_string(),
-            provider_id: provider.id,
-            provider_name: provider.name,
-            endpoint_name: access.endpoint_name.clone(),
-            model_requested: model,
-            model_upstream: response
-                .get("model")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown")
-                .to_string(),
-            status: "success".to_string(),
-            http_status: 200,
-            error_code: None,
-            error_message: None,
-            is_streaming,
-            input_tokens: usage.as_ref().and_then(|usage| usage.input_tokens),
-            output_tokens: usage.as_ref().and_then(|usage| usage.output_tokens),
-            reasoning_tokens: usage.as_ref().and_then(|usage| usage.reasoning_tokens),
-            cache_read_tokens: usage.as_ref().and_then(|usage| usage.cache_read_tokens),
-            cache_write_tokens: usage.as_ref().and_then(|usage| usage.cache_write_tokens),
-            latency_ms: started_at.elapsed().as_millis() as i64,
-            upstream_latency_ms: Some(upstream_latency_ms),
-            first_token_ms: None,
-            tool_call_count: Some(tool_call_count),
-            upstream_request_id,
-        },
-        &chat_message_text(&payload),
-        &chat_response_text(&response),
-        None,
-    )
-    .await?;
+    state
+        .activity_store
+        .record_completed(
+            &access.identity_id,
+            ActivityInsert {
+                protocol_in: "chat_completions".to_string(),
+                protocol_out: "chat_completions".to_string(),
+                protocol_upstream: "chat_completions".to_string(),
+                provider_id: provider.id,
+                provider_name: provider.name,
+                endpoint_name: access.endpoint_name.clone(),
+                model_requested: model,
+                model_upstream: response
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_string(),
+                status: "success".to_string(),
+                http_status: 200,
+                error_code: None,
+                error_message: None,
+                is_streaming,
+                input_tokens: usage.as_ref().and_then(|usage| usage.input_tokens),
+                output_tokens: usage.as_ref().and_then(|usage| usage.output_tokens),
+                reasoning_tokens: usage.as_ref().and_then(|usage| usage.reasoning_tokens),
+                cache_read_tokens: usage.as_ref().and_then(|usage| usage.cache_read_tokens),
+                cache_write_tokens: usage.as_ref().and_then(|usage| usage.cache_write_tokens),
+                latency_ms: started_at.elapsed().as_millis() as i64,
+                upstream_latency_ms: Some(upstream_latency_ms),
+                first_token_ms: None,
+                tool_call_count: Some(tool_call_count),
+                upstream_request_id,
+            },
+            None,
+            events_from_chat_request(&payload),
+            events_from_chat_response(&response),
+        )
+        .await?;
 
     Ok(Json(response).into_response())
 }

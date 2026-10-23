@@ -7,7 +7,6 @@ mod candidates;
 mod chat;
 mod endpoint_resolver;
 mod images;
-mod messages;
 mod models;
 mod responses;
 
@@ -15,7 +14,6 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .merge(chat::router())
         .merge(images::router())
-        .merge(messages::router())
         .merge(models::router())
         .merge(responses::router())
         .with_state(state.clone())

@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::{
     entity::{
-        activity_contents, identities,
+        activity_rollouts, identities,
         identity::{
             activities as identity_activities, endpoint_configs as identity_endpoint_configs,
             endpoint_model_routes as identity_endpoint_model_routes,
@@ -26,6 +26,12 @@ use super::{Storage, StorageError};
 pub struct AuthenticatedIdentity {
     pub id: String,
     pub credential_hash: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DeleteInactiveResult {
+    pub deleted: u64,
+    pub rollout_paths: Vec<String>,
 }
 
 impl Storage {
@@ -107,7 +113,7 @@ impl Storage {
         &self,
         now: DateTime<Utc>,
         retention: Duration,
-    ) -> Result<u64, StorageError> {
+    ) -> Result<DeleteInactiveResult, StorageError> {
         delete_inactive(&self.db, now, retention).await
     }
 }
@@ -266,7 +272,7 @@ pub(crate) async fn delete_inactive(
     db: &DatabaseConnection,
     now: DateTime<Utc>,
     retention: Duration,
-) -> Result<u64, StorageError> {
+) -> Result<DeleteInactiveResult, StorageError> {
     let cutoff = (now - retention).to_rfc3339();
     let transaction = db.begin().await?;
     let identity_ids = identities::Entity::find()
@@ -278,7 +284,7 @@ pub(crate) async fn delete_inactive(
         .collect::<Vec<_>>();
     if identity_ids.is_empty() {
         transaction.commit().await?;
-        return Ok(0);
+        return Ok(DeleteInactiveResult::default());
     }
 
     let endpoint_ids = identity_endpoint_configs::Entity::find()
@@ -296,12 +302,17 @@ pub(crate) async fn delete_inactive(
         .map(|activity| activity.id)
         .collect::<Vec<_>>();
 
-    if !activity_ids.is_empty() {
-        activity_contents::Entity::delete_many()
-            .filter(activity_contents::Column::ActivityId.is_in(activity_ids))
-            .exec(&transaction)
-            .await?;
-    }
+    let rollout_paths = if activity_ids.is_empty() {
+        Vec::new()
+    } else {
+        activity_rollouts::Entity::find()
+            .filter(activity_rollouts::Column::ActivityId.is_in(activity_ids))
+            .all(&transaction)
+            .await?
+            .into_iter()
+            .map(|rollout| rollout.rollout_path)
+            .collect()
+    };
     identity_activities::Entity::delete_many()
         .filter(identity_activities::Column::IdentityId.is_in(identity_ids.clone()))
         .exec(&transaction)
@@ -334,5 +345,8 @@ pub(crate) async fn delete_inactive(
         .await?
         .rows_affected;
     transaction.commit().await?;
-    Ok(deleted)
+    Ok(DeleteInactiveResult {
+        deleted,
+        rollout_paths,
+    })
 }

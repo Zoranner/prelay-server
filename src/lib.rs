@@ -27,6 +27,7 @@ use error::AppError;
 pub struct AppState {
     pub provider_catalog: std::sync::Arc<provider_catalog::ProviderCatalog>,
     pub storage: storage::Storage,
+    pub activity_store: activity::ActivityStore,
     pub client: reqwest::Client,
     pub provider_clients: upstream::ProviderClientCache,
     pub client_update: client_update::ClientUpdateCache,
@@ -144,9 +145,17 @@ pub mod test_support {
     }
 
     pub async fn test_state() -> AppState {
+        let storage = test_storage().await;
+        let activity_store = crate::activity::ActivityStore::new(
+            storage.clone(),
+            crate::activity::rollout::RolloutStore::new(
+                std::env::temp_dir().join(format!("prelay-rollout-test-{}", uuid::Uuid::new_v4())),
+            ),
+        );
         AppState {
             provider_catalog: std::sync::Arc::new(fixture_catalog()),
-            storage: test_storage().await,
+            storage,
+            activity_store,
             client: reqwest::Client::new(),
             provider_clients: Default::default(),
             client_update: ClientUpdateCache::unavailable(reqwest::Client::new()),

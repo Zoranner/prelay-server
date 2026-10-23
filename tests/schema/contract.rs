@@ -11,7 +11,7 @@ const TABLES: [&str; 11] = [
     "identity_endpoint_model_routes",
     "identity_response_sessions",
     "identity_activities",
-    "activity_contents",
+    "activity_rollouts",
     "memories",
     "memory_sources",
 ];
@@ -214,31 +214,31 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
             .eq_ignore_ascii_case("BIGINT"),
         "candidate_order must map to an i64-compatible BIGINT"
     );
+    assert_string_column(db, "identity_response_sessions", "conversation_id").await;
     for column in [
         "activity_id",
-        "input_text",
-        "output_text",
-        "content_hash",
+        "identity_id",
+        "session_id",
+        "rollout_path",
         "status",
-        "next_attempt_at",
-        "lease_owner",
-        "lease_expires_at",
-        "last_error",
+        "sha256",
+        "created_at",
         "completed_at",
+        "last_error",
     ] {
-        assert_string_column(db, "activity_contents", column).await;
+        assert_string_column(db, "activity_rollouts", column).await;
     }
-    assert_eq!(
-        column_type(db, "activity_contents", "is_truncated")
-            .await
-            .to_ascii_uppercase(),
-        "BOOLEAN"
-    );
-    assert_eq!(
-        column_type(db, "activity_contents", "attempts")
-            .await
-            .to_ascii_uppercase(),
-        "BIGINT"
+    for column in ["event_count", "byte_size"] {
+        assert_eq!(
+            column_type(db, "activity_rollouts", column)
+                .await
+                .to_ascii_uppercase(),
+            "BIGINT"
+        );
+    }
+    assert!(
+        !table_exists(db, "activity_contents").await,
+        "the replaced activity_contents table must not exist"
     );
     for column in [
         "normalized_key",
@@ -268,13 +268,17 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
         assert_string_column(db, "memory_sources", column).await;
     }
 
-    let activity_content_without_activity = db
+    let rollout_without_activity = db
         .execute_unprepared(
-            "INSERT INTO activity_contents (id, activity_id, input_text, output_text, content_hash, status, is_truncated, attempts, created_at, updated_at) \
-             VALUES ('content-1', 'missing', '', '', 'hash', 'pending', false, 0, '2026-08-31T00:00:00Z', '2026-08-31T00:00:00Z')",
+            "INSERT INTO activity_rollouts
+                (activity_id, identity_id, session_id, rollout_path, status,
+                 event_count, byte_size, created_at)
+             VALUES
+                ('missing', 'identity-1', 'session-1', 'missing.jsonl', 'completed',
+                 0, 0, '2026-10-22T00:00:00Z')",
         )
         .await;
-    assert!(activity_content_without_activity.is_err());
+    assert!(rollout_without_activity.is_err());
 
     db.execute_unprepared(
         "INSERT INTO memories (id, normalized_key, kind, status, content, confidence, created_at, updated_at) \
@@ -312,6 +316,16 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
         )
         .await
     );
+    for index in [
+        "uq_activity_rollouts_path",
+        "idx_activity_rollouts_identity_created_at",
+        "idx_activity_rollouts_session",
+    ] {
+        assert!(
+            index_exists(db, "activity_rollouts", index).await,
+            "missing activity_rollouts index: {index}"
+        );
+    }
 }
 
 #[tokio::test]

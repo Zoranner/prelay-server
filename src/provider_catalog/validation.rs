@@ -293,7 +293,6 @@ fn protocol_key(protocol: ProviderProtocol) -> &'static str {
     match protocol {
         ProviderProtocol::ChatCompletions => "chat_completions",
         ProviderProtocol::Responses => "responses",
-        ProviderProtocol::AnthropicMessages => "anthropic_messages",
         ProviderProtocol::ImagesGenerations => "images_generations",
     }
 }

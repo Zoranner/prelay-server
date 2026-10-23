@@ -55,6 +55,7 @@ async fn cache_rate_uses_normalized_total_input_tokens() {
 
     for (id, protocol_in, protocol_upstream, input_tokens, cache_read_tokens, cache_write_tokens) in [
         ("openai-cache", "responses", "responses", 3, 2, 0),
+        // 历史活动仍可能保留已下线协议的原始记录，统计口径必须继续兼容。
         (
             "anthropic-cache",
             "anthropic_messages",

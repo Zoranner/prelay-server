@@ -1,4 +1,4 @@
-pub mod activity_contents;
+pub mod activity_rollouts;
 pub mod identities;
 pub mod identity;
 pub mod memories;

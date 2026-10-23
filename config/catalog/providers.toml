@@ -6,7 +6,6 @@ base_url = "https://gotoken.cc"
 protocols = [
   "chat_completions",
   "responses",
-  "anthropic_messages",
   "images_generations",
 ]
 language_models = [
@@ -23,7 +22,6 @@ image_generation_models = [
 
 [providers.protocol_base_urls]
 chat_completions = "https://gotoken.cc/v1"
-anthropic_messages = "https://gotoken.cc/v1"
 images_generations = "https://gotoken.cc/v1"
 
 [[providers]]
@@ -31,70 +29,55 @@ id = "deepseek"
 name = "DeepSeek 开放平台"
 auth_scheme = "bearer"
 base_url = "https://api.deepseek.com/v1"
-protocols = ["chat_completions", "responses", "anthropic_messages"]
+protocols = ["chat_completions", "responses"]
 language_models = [
   "deepseek-v4-pro",
   "deepseek-flash",
 ]
-
-[providers.protocol_base_urls]
-anthropic_messages = "https://api.deepseek.com/anthropic/v1"
 
 [[providers]]
 id = "bigmodel_coding_plan"
 name = "GLM Coding Plan"
 auth_scheme = "bearer"
 base_url = "https://open.bigmodel.cn/api/v1"
-protocols = ["chat_completions", "responses", "anthropic_messages"]
+protocols = ["chat_completions", "responses"]
 language_models = ["glm-5.3", "glm-5.3-flash"]
-
-[providers.protocol_base_urls]
-anthropic_messages = "https://open.bigmodel.cn/api/anthropic/v1"
 
 [[providers]]
 id = "qwen_token_plan"
 name = "千问 Token Plan"
 auth_scheme = "bearer"
 base_url = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
-protocols = ["chat_completions", "responses", "anthropic_messages"]
+protocols = ["chat_completions", "responses"]
 language_models = [
   "qwen3.8-max",
   "qwen3.8-flash",
 ]
-
-[providers.protocol_base_urls]
-anthropic_messages = "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1"
 
 [[providers]]
 id = "kimi"
 name = "Kimi Code"
 auth_scheme = "bearer"
 base_url = "https://api.kimi.com/coding/v1"
-protocols = ["chat_completions", "responses", "anthropic_messages"]
+protocols = ["chat_completions", "responses"]
 language_models = [
   "k3",
 ]
-
-[providers.protocol_base_urls]
-anthropic_messages = "https://api.kimi.com/coding/v1"
 
 [[providers]]
 id = "minimax"
 name = "MiniMax Token Plan"
 auth_scheme = "bearer"
 base_url = "https://api.minimax.cn/v1"
-protocols = ["chat_completions", "responses", "anthropic_messages"]
+protocols = ["chat_completions", "responses"]
 language_models = ["MiniMax-M3"]
-
-[providers.protocol_base_urls]
-anthropic_messages = "https://api.minimax.cn/anthropic/v1"
 
 [[providers]]
 id = "supergpt"
 name = "SuperGPT"
 auth_scheme = "bearer"
 base_url = "https://api.supergpt.dev/v1"
-protocols = ["chat_completions", "responses", "anthropic_messages"]
+protocols = ["chat_completions", "responses"]
 language_models = [
   "gpt-6-astra",
   "gpt-6-sol",
@@ -112,7 +95,7 @@ id = "commandcode"
 name = "Command Code"
 auth_scheme = "bearer"
 base_url = "https://api.commandcode.ai/provider/v1"
-protocols = ["chat_completions", "responses", "anthropic_messages"]
+protocols = ["chat_completions", "responses"]
 language_models = [
   "gpt-6-astra",
   "gpt-6-luna",

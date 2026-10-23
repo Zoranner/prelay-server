@@ -56,7 +56,7 @@ id = "provider"
 name = "Provider"
 auth_scheme = "bearer"
 base_url = "https://api.example.com/v1"
-protocols = ["chat_completions", "responses", "anthropic_messages", "images_generations"]
+protocols = ["chat_completions", "responses", "images_generations"]
 image_generation_models = ["image-model"]
 "#,
     );
@@ -75,7 +75,6 @@ image_generation_models = ["image-model"]
         vec![
             ProviderProtocol::ChatCompletions,
             ProviderProtocol::Responses,
-            ProviderProtocol::AnthropicMessages,
             ProviderProtocol::ImagesGenerations,
         ]
     );

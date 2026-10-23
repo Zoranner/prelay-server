@@ -7,13 +7,27 @@ async fn create_legacy_provider_sharing_tables(db: &DatabaseConnection) {
         "identity_endpoint_configs",
         "identity_endpoint_models",
         "identity_endpoint_model_routes",
-        "identity_response_sessions",
         "identity_model_aliases",
     ] {
         db.execute_unprepared(&format!("CREATE TABLE {table} (id TEXT PRIMARY KEY)"))
             .await
             .expect("create existing companion table");
     }
+    db.execute_unprepared(
+        "CREATE TABLE identity_response_sessions (
+            response_id TEXT NOT NULL,
+            identity_id TEXT NOT NULL,
+            previous_response_id TEXT,
+            provider_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            input_messages_json TEXT NOT NULL,
+            output_items_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (response_id, identity_id)
+        )",
+    )
+    .await
+    .expect("create legacy response session table");
     db.execute_unprepared(
         "CREATE TABLE identity_provider_configs (
             id TEXT PRIMARY KEY,

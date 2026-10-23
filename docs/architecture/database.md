@@ -26,7 +26,7 @@ PostgreSQL
 
 `Storage` 是服务端唯一的持久化入口。它以业务操作表达职责，例如注册身份、原子保存供应商及模型、保存接入点映射、解析候选供应商、写入会话和查询统计。
 
-`AppState` 只持有 `Storage`，不暴露 `DatabaseConnection`、连接池或实体。路由、协议桥接和观测模块不得绕过 `Storage` 直接访问数据库。
+`AppState` 持有 `Storage` 和负责 activity rollout 文件、索引与状态转换的 `ActivityStore`，不暴露 `DatabaseConnection`、连接池或实体。路由、协议桥接和观测模块不得绕过这两个边界直接访问数据库或 rollout 文件。
 
 不引入通用 `CrudRepository<T>`。Provider、接入点、身份和统计的约束不同，泛型 CRUD 会掩盖事务边界、身份范围和引用校验。SeaORM 实体只用于存储映射，不直接作为 API DTO 或领域对象返回。
 
@@ -59,6 +59,8 @@ postgres://<user>:<password>@<host>:5432/<database>
 
 服务启动时为全新空库创建当前完整 schema，并在基础 schema 初始化后执行版本化的 `provider_catalog_v1` 数据迁移。迁移在单个事务中校验旧供应商类型和供应商引用，清理目录外模型及旧接入点别名后归一化供应商目录 ID 并记录版本。
 
+同一启动流程还执行一次 `anthropic_removal_v1`：删除 `identity_activities` 中协议为 `anthropic` 或 `anthropic_messages` 的历史记录及其 `activity_rollouts` 索引；从供应商 `capabilities_json` 删除 Anthropic 协议地址和协议集合；把仍有目录对应项的旧供应商类型归一化，并删除只支持 Anthropic 的供应商及其接入点模型、路由和分享记录。迁移按版本只执行一次，失败时由所在事务回滚。JSONL rollout 文件不由数据库迁移删除。
+
 迁移遇到未知供应商或无法定位供应商的数据时启动失败并回滚；供应商模型、接入点模型和模型别名中不在目录内的记录会在同一事务内删除，无法无损迁移的旧接入点别名也会删除。
 
 基础 schema 不接受部分初始化数据库；schema 结构变化和超出 `provider_catalog_v1` 范围的升级需要另行设计。
@@ -84,4 +86,4 @@ postgres://<user>:<password>@<host>:5432/<database>
 
 ## 排除项
 
-本架构不包含通用版本化 schema 升级框架、双写同步、读写分离、分库分表、数据库租户隔离、ORM 自动同步 schema、运行时切换数据库或第二数据库后端的兼容层。允许的迁移只有两类：启动时执行的幂等迁移（补列、删遗留表、清理死字段、按目录对账接入点模型），以及按版本记录执行一次的目录数据归一化（`provider_catalog_v1`、`provider_model_catalog_v2`）。后续若出现其他独立迁移需求，应在不破坏 `Storage` 领域边界的前提下另行设计。
+本架构不包含通用版本化 schema 升级框架、双写同步、读写分离、分库分表、数据库租户隔离、ORM 自动同步 schema、运行时切换数据库或第二数据库后端的兼容层。允许的迁移只有两类：启动时执行的幂等迁移（补列、删遗留表、清理死字段、按目录对账接入点模型），以及按版本记录执行一次的数据迁移（`provider_catalog_v1`、`provider_model_catalog_v2`、`anthropic_removal_v1`）。后续若出现其他独立迁移需求，应在不破坏 `Storage` 领域边界的前提下另行设计。

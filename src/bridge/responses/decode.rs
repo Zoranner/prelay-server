@@ -1,7 +1,8 @@
 use serde_json::Value;
 
 use crate::bridge::internal::{
-    InternalContentPart, InternalMessage, InternalRequest, InternalRole, InternalTool,
+    InternalContentPart, InternalImagePart, InternalMessage, InternalRequest, InternalRole,
+    InternalTool,
 };
 use crate::error::AppError;
 
@@ -65,7 +66,7 @@ pub fn decode_responses_request(value: &Value) -> Result<InternalRequest, AppErr
 }
 
 /// Validate the subset of Responses requests that can be represented by the
-/// internal chat/Anthropic bridge without silently changing their meaning.
+/// internal chat bridge without silently changing their meaning.
 pub fn validate_responses_bridge_payload(value: &Value) -> Result<(), AppError> {
     if value.get("reasoning").is_some() {
         return Err(unsupported_bridge_feature("reasoning"));
@@ -112,11 +113,34 @@ pub fn validate_responses_bridge_payload(value: &Value) -> Result<(), AppError> 
                     }
                 }
             }
+            if let Some(parts) = item.get("output").and_then(Value::as_array) {
+                for part in parts {
+                    let part_type = part.get("type").and_then(Value::as_str).unwrap_or("text");
+                    if !matches!(part_type, "input_text" | "text") {
+                        return Err(unsupported_bridge_feature(format!(
+                            "function output part type `{part_type}`"
+                        )));
+                    }
+                }
+            }
         }
     } else if !input.is_null() && !input.is_string() {
         return Err(unsupported_bridge_feature("non-text input value"));
     }
 
+    Ok(())
+}
+
+/// Bridge 路径只能承载文本历史；`previous_response_id` 加载的图片必须在
+/// 进入 Chat 编码前被明确拒绝，不能静默丢弃或伪造成文本。
+pub fn validate_internal_request_for_bridge(request: &InternalRequest) -> Result<(), AppError> {
+    if request
+        .messages
+        .iter()
+        .any(|message| message.content.iter().any(InternalContentPart::is_image))
+    {
+        return Err(unsupported_bridge_feature("input images"));
+    }
     Ok(())
 }
 
@@ -201,15 +225,15 @@ fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
         .and_then(Value::as_str)
         .is_some_and(|kind| kind == "function_call_output")
     {
+        let output = value.get("output").cloned().unwrap_or(Value::Null);
+        let content = if output.is_null() {
+            Vec::new()
+        } else {
+            decode_content(&output)?
+        };
         return Ok(InternalMessage {
             role: InternalRole::Tool,
-            content: vec![InternalContentPart::Text(
-                value
-                    .get("output")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-            )],
+            content,
             tool_call_id: value
                 .get("call_id")
                 .and_then(Value::as_str)
@@ -291,26 +315,30 @@ fn decode_content(value: &Value) -> Result<Vec<InternalContentPart>, AppError> {
     let Some(parts) = value.as_array() else {
         return Ok(vec![InternalContentPart::Text(value_to_text(value))]);
     };
-    let text_parts = parts
-        .iter()
-        .filter_map(|part| decode_content_part_text(part).map(InternalContentPart::Text))
-        .collect::<Vec<_>>();
-
-    if text_parts.is_empty() {
-        return Ok(parts
-            .iter()
-            .map(|part| InternalContentPart::Text(value_to_text(part)))
-            .collect());
-    }
-
-    Ok(text_parts)
+    Ok(parts.iter().map(decode_content_part).collect())
 }
 
-fn decode_content_part_text(part: &Value) -> Option<String> {
-    part.get("text")
-        .or_else(|| part.get("content"))
-        .and_then(Value::as_str)
-        .map(str::to_string)
+fn decode_content_part(part: &Value) -> InternalContentPart {
+    match part.get("type").and_then(Value::as_str) {
+        Some("input_image") => InternalContentPart::Image(InternalImagePart {
+            image_url: part.get("image_url").cloned(),
+            file_id: part
+                .get("file_id")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            detail: part
+                .get("detail")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        }),
+        Some("input_text" | "text" | "output_text") => part
+            .get("text")
+            .or_else(|| part.get("content"))
+            .and_then(Value::as_str)
+            .map(|text| InternalContentPart::Text(text.to_string()))
+            .unwrap_or_else(|| InternalContentPart::Text(value_to_text(part))),
+        _ => InternalContentPart::Text(value_to_text(part)),
+    }
 }
 
 fn value_to_text(value: &Value) -> String {

@@ -19,14 +19,14 @@ pub fn responses_text_delta_sse(delta: &str) -> Bytes {
 }
 
 pub fn responses_completed_sse() -> Bytes {
-    responses_completed_sse_with_usage(None)
+    responses_completed_sse_with_usage(None, "resp_unknown")
 }
 
-pub fn responses_completed_sse_with_usage(usage: Option<&StreamUsage>) -> Bytes {
+pub fn responses_completed_sse_with_usage(usage: Option<&StreamUsage>, response_id: &str) -> Bytes {
     let event = json!({
         "type": "response.completed",
         "response": {
-            "id": "resp_unknown",
+            "id": response_id,
             "object": "response",
             "status": "completed",
             "output": [],

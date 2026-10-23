@@ -1,6 +1,5 @@
 mod access;
 mod activities;
-mod activity_contents;
 mod crypto;
 mod endpoint_validation;
 mod identities;
@@ -10,7 +9,8 @@ mod provider_usage;
 mod provider_validation;
 mod provider_views;
 mod provider_visibility;
-mod recordings;
+mod rollout_recovery;
+mod rollouts;
 mod sessions;
 mod stats;
 
@@ -23,8 +23,9 @@ use prelay_protocol::ProtocolErrorCode;
 use sea_orm::{DatabaseConnection, DbErr};
 
 pub use crypto::MasterKey;
-pub use identities::AuthenticatedIdentity;
+pub use identities::{AuthenticatedIdentity, DeleteInactiveResult};
 pub(crate) use provider_validation::parse_models;
+pub use rollout_recovery::{InterruptedRollout, RecoveredRollout};
 pub use sessions::ResponseSessionInsert;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,6 +65,7 @@ pub enum StorageError {
     InvalidTimestamp(String),
     InvalidMasterKey(String),
     Crypto(String),
+    Rollout(String),
     Serialization(serde_json::Error),
     Database(DbErr),
 }
@@ -88,6 +90,7 @@ impl StorageError {
             }
             Self::InvalidTimestamp(_)
             | Self::Crypto(_)
+            | Self::Rollout(_)
             | Self::Serialization(_)
             | Self::Database(_) => ProtocolErrorCode::Internal,
         }
@@ -123,6 +126,7 @@ impl fmt::Display for StorageError {
                 formatter.write_str("provider route is no longer available")
             }
             Self::Crypto(message) => write!(formatter, "key encryption failed: {message}"),
+            Self::Rollout(message) => write!(formatter, "rollout storage failed: {message}"),
             Self::Serialization(error) => error.fmt(formatter),
             Self::Database(error) => error.fmt(formatter),
         }

@@ -2,18 +2,10 @@ use axum::body::Bytes;
 use serde_json::Value;
 
 use super::super::{
-    encode::anthropic::AnthropicMessagesSseDecoder,
     events::{InternalFinishReason, InternalStreamEvent, StreamUsage},
     pipeline::{ByteStreamDecoder, SharedStreamStats},
     sse::drain_lines,
 };
-
-pub(crate) struct ResponsesSseAnthropicMessagesSseDecoder {
-    line_buffer: Vec<u8>,
-    event_name: Option<String>,
-    data_lines: Vec<String>,
-    anthropic: AnthropicMessagesSseDecoder,
-}
 
 #[derive(Default)]
 pub(crate) struct NativeResponsesSseStatsDecoder {
@@ -54,89 +46,12 @@ impl NativeResponsesSseStatsDecoder {
         let Ok(mut stats) = stats.lock() else {
             return;
         };
+        if let Some(response_id) = decode_responses_response_id(&data) {
+            stats.response_id = Some(response_id);
+        }
         for event in decode_responses_sse_event(event_name.as_deref(), &data) {
             stats.record_event(&event);
         }
-    }
-}
-
-impl ResponsesSseAnthropicMessagesSseDecoder {
-    pub(crate) fn new(model: String) -> Self {
-        Self {
-            line_buffer: Vec::new(),
-            event_name: None,
-            data_lines: Vec::new(),
-            anthropic: AnthropicMessagesSseDecoder::new(model),
-        }
-    }
-
-    fn process_line(&mut self, line: &[u8]) -> Vec<Bytes> {
-        if line.is_empty() {
-            return self.flush_event();
-        }
-
-        let Ok(line) = std::str::from_utf8(line) else {
-            return Vec::new();
-        };
-        if let Some(event) = line.strip_prefix("event:") {
-            let event = event.strip_prefix(' ').unwrap_or(event);
-            self.event_name = Some(event.to_string());
-            return Vec::new();
-        }
-        let Some(data) = line.strip_prefix("data:") else {
-            return Vec::new();
-        };
-        let data = data.strip_prefix(' ').unwrap_or(data);
-        self.data_lines.push(data.to_string());
-        Vec::new()
-    }
-
-    fn flush_event(&mut self) -> Vec<Bytes> {
-        let event_name = self.event_name.take();
-        let data = std::mem::take(&mut self.data_lines).join("\n");
-        if self.anthropic.completed {
-            return Vec::new();
-        }
-        if data.trim() == "[DONE]" {
-            return Vec::new();
-        }
-
-        let events = decode_responses_sse_event(event_name.as_deref(), &data);
-        let mut output = Vec::new();
-        for event in events {
-            output.extend(self.anthropic.internal_event_to_anthropic_sse(event));
-        }
-        output
-    }
-}
-
-impl ByteStreamDecoder for ResponsesSseAnthropicMessagesSseDecoder {
-    fn push_chunk(&mut self, chunk: &[u8]) -> Vec<Bytes> {
-        self.line_buffer.extend_from_slice(chunk);
-        let mut output = Vec::new();
-
-        for line in drain_lines(&mut self.line_buffer) {
-            output.extend(self.process_line(&line));
-        }
-
-        output
-    }
-
-    fn finish(&mut self) -> Vec<Bytes> {
-        let mut output = Vec::new();
-        if !self.line_buffer.is_empty() {
-            let line = std::mem::take(&mut self.line_buffer);
-            output.extend(self.process_line(&line));
-            output.extend(self.flush_event());
-        }
-        if !self.anthropic.completed {
-            output.push(self.anthropic.finish_message());
-        }
-        output
-    }
-
-    fn set_stats(&mut self, stats: SharedStreamStats) {
-        self.anthropic.set_stats(stats);
     }
 }
 
@@ -174,12 +89,28 @@ fn decode_responses_text_delta(data: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+fn decode_responses_response_id(data: &str) -> Option<String> {
+    let value = serde_json::from_str::<Value>(data).ok()?;
+    value
+        .pointer("/response/id")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("response_id").and_then(Value::as_str))
+        .filter(|id| !id.trim().is_empty())
+        .map(str::to_string)
+}
+
 fn decode_responses_sse_event(event_name: Option<&str>, data: &str) -> Vec<InternalStreamEvent> {
     match event_name {
         Some("response.output_text.delta") => decode_responses_text_delta(data)
             .map(InternalStreamEvent::TextDelta)
             .into_iter()
             .collect(),
+        Some("response.reasoning_summary_text.delta") | Some("response.reasoning_text.delta") => {
+            decode_responses_text_delta(data)
+                .map(InternalStreamEvent::ReasoningDelta)
+                .into_iter()
+                .collect()
+        }
         Some("response.output_item.added") => decode_responses_function_call_added(data)
             .into_iter()
             .collect(),

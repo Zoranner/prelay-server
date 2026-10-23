@@ -4,7 +4,7 @@
 
 语言模型和图像生成模型是不同的领域对象，不使用 `model_type` 在同一个模型结构内区分。
 
-- 语言模型用于 `/v1/responses`、`/v1/chat/completions`、`/v1/messages` 和 Codex 模型目录生成，拥有上下文窗口、思考档位与工具元数据。
+- 语言模型用于 `/v1/responses`、`/v1/chat/completions` 和 Codex 模型目录生成，拥有上下文窗口、思考档位与工具元数据。
 - 图像生成模型只用于 `/v1/images/generations`，拥有输入输出模态、尺寸、质量、背景、输出格式与编辑能力。
 
 服务启动时从当前工作目录下的 `config/catalog` 读取目录。容器工作目录为 `/app`，因此使用 `/app/config/catalog`；本地调试时使用项目根目录的 `config/catalog`。目录无效时服务拒绝启动。
@@ -94,7 +94,7 @@ id = "gotoken"
 name = "GoToken 套餐"
 auth_scheme = "bearer"
 base_url = "https://gotoken.cc"
-protocols = ["chat_completions", "responses", "anthropic_messages", "images_generations"]
+protocols = ["chat_completions", "responses", "images_generations"]
 language_models = ["gpt-5.6-sol"]
 image_generation_models = ["gpt-image-1"]
 
@@ -103,7 +103,7 @@ chat_completions = "https://gotoken.cc/v1"
 images_generations = "https://gotoken.cc/v1"
 ```
 
-`protocols` 必须按 `chat_completions`、`responses`、`anthropic_messages`、`images_generations` 的相对顺序排列。图像生成模型引用存在时，供应商必须声明 `images_generations`。两类引用分别只能指向对应目录中的模型，不能重复或交叉引用。
+`protocols` 必须按 `chat_completions`、`responses`、`images_generations` 的相对顺序排列。图像生成模型引用存在时，供应商必须声明 `images_generations`。两类引用分别只能指向对应目录中的模型，不能重复或交叉引用。
 
 同一模型在不同平台的上游名称不同时，供应商条目补充该供应商使用的上游模型名，其余情况不需要声明：
 
@@ -164,7 +164,7 @@ GET /api/catalog/models/image-generation/{model_id}
 | `GET /v1/models` | 当前接入点已配置的语言模型，返回 OpenAI 标准模型对象字段，`id` 为目录模型 id |
 | `POST /v1/images/generations` | 仅解析图像生成模型候选 |
 
-`/v1/responses`、`/v1/chat/completions` 与 `/v1/messages` 仅解析语言模型候选。服务端按候选的目录模型 id 在启动时加载的目录中判定类别，发往上游时再替换为该供应商的上游模型名，因此同一接入点的模型不会同时进入语言与图像生成链路。
+`/v1/responses` 与 `/v1/chat/completions` 仅解析语言模型候选。服务端按候选的目录模型 id 在启动时加载的目录中判定类别，发往上游时再替换为该供应商的上游模型名，因此同一接入点的模型不会同时进入语言与图像生成链路。
 
 ## 目录生成
 

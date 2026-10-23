@@ -81,7 +81,7 @@ async fn management_credential_cannot_read_or_mutate_another_identity_provider()
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(
         provider["upstream_protocols"],
-        serde_json::json!(["openai", "anthropic"])
+        serde_json::json!(["openai"])
     );
     let provider_a = provider["id"].as_str().expect("provider id");
 

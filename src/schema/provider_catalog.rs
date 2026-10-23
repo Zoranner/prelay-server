@@ -13,6 +13,7 @@ const MIGRATION_VERSION: &str = "provider_catalog_v1";
 const MODEL_SOURCE_MIGRATION_VERSION: &str = "provider_model_catalog_v2";
 
 pub(crate) fn target_provider_id(provider_type: &str) -> Option<&'static str> {
+    // 历史 provider_type 只用于把旧记录映射到当前目录条目，不代表仍启用对应上游协议。
     match provider_type.trim() {
         "gotoken" => Some("gotoken"),
         "deepseek" | "deepseek_anthropic" => Some("deepseek"),
@@ -352,6 +353,7 @@ mod tests {
     #[test]
     fn maps_legacy_provider_types_to_current_catalog_ids() {
         assert_eq!(target_provider_id("gotoken"), Some("gotoken"));
+        assert_eq!(target_provider_id("deepseek_anthropic"), Some("deepseek"));
         assert_eq!(target_provider_id("kimi_coding_anthropic"), Some("kimi"));
         assert_eq!(
             target_provider_id("zhipu_coding"),

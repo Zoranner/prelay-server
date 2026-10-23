@@ -8,6 +8,7 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub identity_id: String,
     pub previous_response_id: Option<String>,
+    pub conversation_id: Option<String>,
     pub provider_id: String,
     pub model: String,
     pub input_messages_json: String,

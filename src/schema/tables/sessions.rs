@@ -17,6 +17,7 @@ pub(in crate::schema) fn statement() -> TableCreateStatement {
                 .not_null(),
         )
         .col(ColumnDef::new(ResponseSessions::PreviousResponseId).string())
+        .col(ColumnDef::new(ResponseSessions::ConversationId).string())
         .col(
             ColumnDef::new(ResponseSessions::ProviderId)
                 .string()
@@ -59,6 +60,7 @@ pub(in crate::schema) enum ResponseSessions {
     ResponseId,
     IdentityId,
     PreviousResponseId,
+    ConversationId,
     ProviderId,
     Model,
     InputMessagesJson,

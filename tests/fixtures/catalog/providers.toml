@@ -5,7 +5,7 @@ id = "deepseek"
 name = "DeepSeek"
 auth_scheme = "bearer"
 base_url = "https://api.deepseek.example/v1"
-protocols = ["chat_completions", "anthropic_messages"]
+protocols = ["chat_completions"]
 language_models = [
   "deepseek-v4-flash",
   "deepseek-v4-pro",
@@ -19,7 +19,6 @@ base_url = "https://gotoken.example"
 protocols = [
   "chat_completions",
   "responses",
-  "anthropic_messages",
   "images_generations",
 ]
 language_models = [
@@ -44,14 +43,14 @@ id = "relay"
 name = "Relay"
 auth_scheme = "bearer"
 base_url = "https://relay.example/v1"
-protocols = ["chat_completions", "responses", "anthropic_messages"]
+protocols = ["chat_completions", "responses"]
 language_models = [
   "k3",
   "deepseek-v4-pro",
 ]
 
 [providers.protocol_base_urls]
-anthropic_messages = "https://relay.example/anthropic/v1"
+responses = "https://relay.example/responses/v1"
 
 [providers.upstream_model_names]
 k3 = "kimi-k3"

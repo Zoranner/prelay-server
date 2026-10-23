@@ -44,6 +44,10 @@ async fn v1_models_route_is_registered_without_static_or_proxy_fallback() {
         post_status(&app, "/v1/images/generations").await,
         StatusCode::UNAUTHORIZED
     );
+    assert_eq!(
+        post_status(&app, "/v1/messages").await,
+        StatusCode::NOT_FOUND
+    );
     assert_eq!(status(&app, "/proxy").await, StatusCode::NOT_FOUND);
     assert_eq!(status(&app, "/").await, StatusCode::NOT_FOUND);
 }

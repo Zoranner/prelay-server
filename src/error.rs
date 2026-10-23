@@ -12,6 +12,7 @@ pub enum AppError {
     NotFound(String),
     Unauthorized,
     BadRequest(String),
+    PayloadTooLarge(String),
     Upstream {
         status: Option<StatusCode>,
         message: String,
@@ -32,6 +33,7 @@ impl IntoResponse for AppError {
             AppError::NotFound(message) => (StatusCode::NOT_FOUND, json!(message)),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, json!("Invalid or missing token")),
             AppError::BadRequest(message) => (StatusCode::BAD_REQUEST, json!(message)),
+            AppError::PayloadTooLarge(message) => (StatusCode::PAYLOAD_TOO_LARGE, json!(message)),
             AppError::Upstream { status, message } => {
                 (status.unwrap_or(StatusCode::BAD_GATEWAY), json!(message))
             }
@@ -295,6 +297,21 @@ mod tests {
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&body).expect("error response is JSON"),
             json!({ "error": "上游请求失败: 403 Forbidden" })
+        );
+    }
+
+    #[tokio::test]
+    async fn payload_too_large_is_a_413() {
+        let response = AppError::PayloadTooLarge("图片请求体超过上游预算，请减少图片".to_string())
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let body = to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("read error response");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).expect("error response is JSON"),
+            json!({ "error": "图片请求体超过上游预算，请减少图片" })
         );
     }
 

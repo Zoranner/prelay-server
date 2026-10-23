@@ -5,6 +5,7 @@ use std::{
 };
 
 use prelay_server::{
+    activity::{rollout::RolloutStore, ActivityStore},
     app,
     client_update::ClientUpdateCache,
     database::{connect, DatabaseConfig},
@@ -19,9 +20,6 @@ use prelay_server::{
 const STARTUP_CLEANUP_FAILURE: &str = "startup identity cleanup failed";
 const DEFAULT_LISTEN_ADDRESS: &str = "0.0.0.0:18080";
 const DEFAULT_CATALOG_DIRECTORY: &str = "config/catalog";
-const STALE_ACTIVITY_CONTENT_AGE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
-const ACTIVITY_CONTENT_RECOVERY_INTERVAL: std::time::Duration =
-    std::time::Duration::from_secs(5 * 60);
 
 fn catalog_directory() -> PathBuf {
     PathBuf::from(DEFAULT_CATALOG_DIRECTORY)
@@ -41,26 +39,6 @@ fn handle_startup_cleanup_failure(error: StorageError) -> anyhow::Error {
         "failed to delete inactive identities at startup"
     );
     anyhow::anyhow!(STARTUP_CLEANUP_FAILURE)
-}
-
-fn log_activity_content_recovery_failure(_error: &StorageError) {
-    tracing::warn!(
-        failure_kind = "activity_content_recovery",
-        "failed to recover stale activity content"
-    );
-}
-
-async fn recover_stale_activity_content(storage: &Storage) {
-    match storage
-        .recover_stale_activity_content(STALE_ACTIVITY_CONTENT_AGE)
-        .await
-    {
-        Ok(recovered) if recovered > 0 => {
-            tracing::info!(recovered, "recovered stale activity content");
-        }
-        Ok(_) => {}
-        Err(error) => log_activity_content_recovery_failure(&error),
-    }
 }
 
 fn load_environment_file(path: &Path) -> anyhow::Result<()> {
@@ -89,7 +67,6 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    prelay_server::activity::initialize_from_environment().map_err(anyhow::Error::msg)?;
     prelay_server::protocol_body_limit::initialize_from_environment()
         .map_err(anyhow::Error::msg)?;
     let provider_catalog = Arc::new(ProviderCatalog::load(&catalog_directory())?);
@@ -97,20 +74,41 @@ async fn main() -> anyhow::Result<()> {
     let db = connect(&database_config).await?;
     initialize_with_catalog(&db, &provider_catalog).await?;
     let storage = Storage::from_connection(db, MasterKey::from_environment()?);
-    let deleted = delete_expired_identities(&storage)
+    let rollout_store = RolloutStore::from_environment().map_err(anyhow::Error::msg)?;
+    let activity_store = ActivityStore::new(storage.clone(), rollout_store);
+    activity_store
+        .validate()
+        .map_err(|error| anyhow::anyhow!("activity rollout directory is not writable: {error}"))?;
+    match activity_store.recover_interrupted().await {
+        Ok(recovered) if recovered > 0 => {
+            tracing::warn!(
+                recovered,
+                "marked interrupted activity rollouts as partial at startup"
+            );
+        }
+        Ok(_) => {}
+        Err(error) => {
+            tracing::error!(
+                error_code = error.code().as_str(),
+                "failed to mark interrupted activity rollouts as partial"
+            );
+        }
+    }
+    warn_incomplete_rollout_files(activity_store.rollouts()).await;
+    warn_orphan_rollout_files(&activity_store).await;
+    let deleted = delete_expired_identities(&activity_store)
         .await
         .map_err(handle_startup_cleanup_failure)?;
     if deleted > 0 {
         tracing::info!(deleted, "deleted inactive identities at startup");
     }
-    recover_stale_activity_content(&storage).await;
-    let cleanup_storage = storage.clone();
+    let cleanup_activity_store = activity_store.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(24 * 60 * 60));
         interval.tick().await;
         loop {
             interval.tick().await;
-            match delete_expired_identities(&cleanup_storage).await {
+            match delete_expired_identities(&cleanup_activity_store).await {
                 Ok(deleted) if deleted > 0 => {
                     tracing::info!(deleted, "deleted inactive identities");
                 }
@@ -119,16 +117,6 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     });
-    let recovery_storage = storage.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(ACTIVITY_CONTENT_RECOVERY_INTERVAL);
-        interval.tick().await;
-        loop {
-            interval.tick().await;
-            recover_stale_activity_content(&recovery_storage).await;
-        }
-    });
-
     let upstream_policy =
         prelay_server::upstream::initialize_from_environment().map_err(anyhow::Error::msg)?;
     // 图片预算的默认值按协议入口上限推导，入口上限已在启动时先初始化。
@@ -155,6 +143,7 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState {
         provider_catalog,
         storage,
+        activity_store,
         client,
         provider_clients: Default::default(),
         client_update,
@@ -171,6 +160,51 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+async fn warn_incomplete_rollout_files(rollout_store: &RolloutStore) {
+    let store = rollout_store.clone();
+    match tokio::task::spawn_blocking(move || store.part_files()).await {
+        Ok(Ok(paths)) if paths.is_empty() => {}
+        Ok(Ok(paths)) => {
+            tracing::warn!(
+                incomplete = paths.len(),
+                sample = ?paths.iter().take(10).collect::<Vec<_>>(),
+                "incomplete activity rollout files remain on disk"
+            );
+        }
+        Ok(Err(error)) => {
+            tracing::warn!(
+                error = %error,
+                "failed to scan incomplete activity rollout files"
+            );
+        }
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "incomplete activity rollout scan task failed"
+            );
+        }
+    }
+}
+
+async fn warn_orphan_rollout_files(activity_store: &ActivityStore) {
+    match activity_store.orphan_rollout_files().await {
+        Ok(paths) if paths.is_empty() => {}
+        Ok(paths) => {
+            tracing::warn!(
+                orphans = paths.len(),
+                sample = ?paths.iter().take(10).collect::<Vec<_>>(),
+                "completed activity rollout files without an index were found"
+            );
+        }
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "failed to scan orphan activity rollout files"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

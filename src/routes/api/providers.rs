@@ -209,7 +209,6 @@ async fn discover_models(
 ) -> Result<Json<ProviderOperationResponse>, ApiError> {
     let models = match model_discovery::discover_models(
         &state.provider_client(&input.provider_type)?,
-        &input.provider_type,
         &input.base_url,
         &input.api_key,
     )
@@ -244,7 +243,6 @@ async fn test_protocol(
     Ok(Json(
         run_protocol_test(
             &state.provider_client(&input.provider_type)?,
-            &input.provider_type,
             input.protocol.as_deref(),
             &input.base_url,
             &input.api_key,
@@ -274,7 +272,6 @@ async fn test_protocol_for_provider(
     Ok(Json(
         run_protocol_test(
             &state.provider_client(&provider.provider.provider_type)?,
-            &provider.provider.provider_type,
             Some(&input.protocol),
             &provider.provider.base_url,
             &api_key,

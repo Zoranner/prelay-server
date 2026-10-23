@@ -5,10 +5,10 @@
 ## 主链路与职责
 
 - 管理侧：`POST /api/identities` 是唯一匿名入口；其余 `/api/*` 由 device credential 认证，并且只能访问当前身份的 Provider、Endpoint、统计和凭据轮换。
-- 调用侧：`/v1/models`、`/v1/responses`、`/v1/chat/completions`、`/v1/messages` 由 Endpoint Token 认证。模型必须先在该 Endpoint 的映射中解析，再按 `candidate_order` 选择兼容的 Provider。
+- 调用侧：`/v1/models`、`/v1/responses`、`/v1/chat/completions` 由 Endpoint Token 认证。模型必须先在该 Endpoint 的映射中解析，再按 `candidate_order` 选择兼容的 Provider。
 - Provider 保存模型和 Endpoint 映射均采用完整目标状态与事务。不要用局部补丁绕过引用校验，或让跨身份配置相互可见。
 - 失败重试、候选切换、超时和最多候选数是服务端部署策略，通过 `UPSTREAM_*` 环境变量配置；不要将它们变成桌面端的终端用户设置。
-- 请求统计只保存观测所需元数据、状态和用量，不默认保存完整 prompt 或响应正文。不要把统计扩展为配额、计费或限流，除非任务明确要求。
+- 请求统计只保存观测所需元数据、状态和用量，不默认保存完整 prompt 或响应正文。活动正文由 activity rollout 文件按独立生命周期保存，不能把统计表当成正文来源。不要把统计扩展为配额、计费或限流，除非任务明确要求。
 
 ## 数据与安全边界
 

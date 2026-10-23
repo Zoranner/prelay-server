@@ -207,7 +207,7 @@ async fn spawn_identity_image_upstream(provider_name: &'static str) -> (String, 
 #[tokio::test]
 async fn endpoint_token_resolves_only_its_identity_model_mapping() {
     let context = test_context::test_context().await;
-    let app = context.app;
+    let app = context.app.clone();
     let endpoint_a = create_endpoint_for(&app, "machine-a", "S-1-5-21-100", "provider-a").await;
     create_endpoint_for(&app, "machine-b", "S-1-5-21-200", "provider-b").await;
 
@@ -230,7 +230,7 @@ async fn endpoint_token_resolves_only_its_identity_model_mapping() {
 #[tokio::test]
 async fn image_generation_endpoint_token_uses_only_its_identity_mapping() {
     let context = test_context::test_context().await;
-    let app = context.app;
+    let app = context.app.clone();
     let (upstream_a, hits_a) = spawn_identity_image_upstream("provider-a").await;
     let (upstream_b, hits_b) = spawn_identity_image_upstream("provider-b").await;
     let endpoint_a =
@@ -274,35 +274,39 @@ async fn image_generation_endpoint_token_uses_only_its_identity_mapping() {
         .list_activities(&access.identity_id, 10)
         .await
         .expect("load image activities");
-    let activity_content = context
+    let rollout = context
         .storage
-        .find_activity_content(&activities[0].id)
+        .find_activity_rollout(&activities[0].id)
         .await
-        .expect("load image activity content")
-        .expect("image activity content is persisted");
-    assert_eq!(activity_content.input_text, "private prompt");
-    assert_eq!(activity_content.output_text, "");
-    let media = serde_json::from_str::<Value>(
-        activity_content
-            .media_metadata_json
-            .as_deref()
-            .expect("image media metadata"),
-    )
-    .expect("decode image media metadata");
+        .expect("load image activity rollout")
+        .expect("image activity rollout is persisted");
+    assert_eq!(rollout.status, "completed");
+    let events = context
+        .activity_store
+        .rollouts()
+        .read_events(&rollout.rollout_path)
+        .expect("read image rollout");
+    assert!(events.iter().any(|event| {
+        event.event_type == "message"
+            && event.payload["content"] == serde_json::json!("private prompt")
+    }));
+    let media = events
+        .iter()
+        .find(|event| event.event_type == "media")
+        .map(|event| &event.payload)
+        .expect("image media event");
     assert_eq!(media["media_type"], "application/json");
     assert!(media["size_bytes"].as_u64().is_some());
     assert_eq!(media["sha256"].as_str().expect("media hash").len(), 64);
-    assert!(!activity_content
-        .media_metadata_json
-        .as_deref()
-        .expect("image media metadata")
+    assert!(!serde_json::to_string(&events)
+        .expect("serialize image rollout")
         .contains("result"));
 }
 
 #[tokio::test]
 async fn protocol_request_writes_identity_scoped_log_and_response_session() {
     let context = test_context::test_context().await;
-    let app = context.app;
+    let app = context.app.clone();
     let upstream = spawn_chat_upstream().await;
     let endpoint_a =
         create_endpoint_for_url(&app, "machine-a", "S-1-5-21-100", "provider-a", &upstream).await;
@@ -352,15 +356,28 @@ async fn protocol_request_writes_identity_scoped_log_and_response_session() {
         logs[0].endpoint_name.as_deref(),
         Some(access.endpoint_name.as_str())
     );
-    let activity_content = context
+    let rollout = context
         .storage
-        .find_activity_content(&logs[0].id)
+        .find_activity_rollout(&logs[0].id)
         .await
-        .expect("load activity content")
-        .expect("activity content is persisted");
-    assert_eq!(activity_content.input_text, "hello");
-    assert_eq!(activity_content.output_text, "hello");
-    assert_eq!(activity_content.status, "pending");
+        .expect("load activity rollout")
+        .expect("activity rollout is persisted");
+    assert_eq!(rollout.status, "completed");
+    let events = context
+        .activity_store
+        .rollouts()
+        .read_events(&rollout.rollout_path)
+        .expect("read activity rollout");
+    assert!(events.iter().any(|event| {
+        event.event_type == "message"
+            && event.payload["phase"] == serde_json::json!("request")
+            && event.payload["content"] == serde_json::json!("hello")
+    }));
+    assert!(events.iter().any(|event| {
+        event.event_type == "message"
+            && event.payload["phase"] == serde_json::json!("response")
+            && event.payload["content"] == serde_json::json!("hello")
+    }));
     let response_id = response["id"].as_str().expect("response id");
     assert!(context
         .storage

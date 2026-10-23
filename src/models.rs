@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct ProviderConfig {
     pub id: String,
     pub name: String,
-    /// Stable provider catalog id, such as "openai", "kimi_coding", or "anthropic_compatible".
+    /// Stable provider catalog id, such as "openai" or "kimi_coding".
     pub provider_type: String,
     /// API base URL, e.g. https://api.openai.com
     pub base_url: String,
@@ -46,30 +46,7 @@ pub struct ProviderCapabilityOverrides {
 pub struct ProviderProtocolBaseUrls {
     pub responses: Option<String>,
     pub openai: Option<String>,
-    pub anthropic: Option<String>,
     pub images_generations: Option<String>,
-}
-
-impl ProviderConfig {
-    /// Returns true if this provider uses Anthropic-style auth
-    /// (x-api-key + anthropic-version header) instead of Bearer.
-    pub fn uses_anthropic_auth(&self) -> bool {
-        matches!(
-            self.provider_type.as_str(),
-            "anthropic"
-                | "anthropic_compatible"
-                | "deepseek_anthropic"
-                | "qwen_anthropic"
-                | "zhipu_anthropic"
-                | "minimax_anthropic"
-                | "kimi_coding_anthropic"
-                | "zai_coding_anthropic"
-                | "zhipu_coding"
-                | "minimax_token"
-                | "bailian_coding_anthropic"
-                | "bailian_token_anthropic"
-        )
-    }
 }
 
 impl ProviderConfig {
@@ -82,64 +59,5 @@ impl ProviderConfig {
             .as_deref()
             .and_then(|value| serde_json::from_str(value).ok())
             .unwrap_or_default()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::ProviderConfig;
-
-    #[test]
-    fn subscription_anthropic_variants_use_anthropic_auth_headers() {
-        for provider_type in [
-            "kimi_coding_anthropic",
-            "zai_coding_anthropic",
-            "zhipu_coding",
-            "minimax_token",
-            "bailian_coding_anthropic",
-            "bailian_token_anthropic",
-        ] {
-            assert!(provider(provider_type).uses_anthropic_auth());
-        }
-    }
-
-    #[test]
-    fn api_anthropic_variants_use_anthropic_auth_headers() {
-        for provider_type in [
-            "deepseek_anthropic",
-            "qwen_anthropic",
-            "zhipu_anthropic",
-            "minimax_anthropic",
-        ] {
-            assert!(provider(provider_type).uses_anthropic_auth());
-        }
-    }
-
-    #[test]
-    fn subscription_openai_variants_keep_bearer_auth() {
-        for provider_type in [
-            "kimi_coding",
-            "zai_coding_openai",
-            "zhipu_coding_openai",
-            "minimax_token_openai",
-            "bailian_coding_openai",
-            "bailian_token_openai",
-        ] {
-            assert!(!provider(provider_type).uses_anthropic_auth());
-        }
-    }
-
-    fn provider(provider_type: &str) -> ProviderConfig {
-        ProviderConfig {
-            id: "provider-1".to_string(),
-            name: "Provider".to_string(),
-            provider_type: provider_type.to_string(),
-            base_url: "https://example.test".to_string(),
-            api_key: "sk-test".to_string(),
-            token: "token".to_string(),
-            capabilities_json: None,
-            models: Vec::new(),
-            created_at: "2026-06-05T00:00:00Z".to_string(),
-        }
     }
 }

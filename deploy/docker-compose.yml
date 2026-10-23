@@ -10,6 +10,7 @@ services:
     volumes:
       - ./app/config:/app/config:ro
       - ./app/updates:/app/updates
+      - ./data/sessions:/app/data/sessions
   postgres:
     image: postgres:16
     container_name: prelay-postgres

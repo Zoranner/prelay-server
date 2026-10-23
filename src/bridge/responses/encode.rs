@@ -23,7 +23,10 @@ fn encode_output_item(item: InternalOutputItem) -> Value {
             "id": id,
             "status": "completed",
             "role": encode_role(role),
-            "content": content.into_iter().map(encode_content_part).collect::<Vec<_>>(),
+            "content": content
+                .into_iter()
+                .filter_map(encode_content_part)
+                .collect::<Vec<_>>(),
         }),
         InternalOutputItem::FunctionToolCall {
             id,
@@ -50,13 +53,16 @@ fn encode_role(role: InternalRole) -> &'static str {
     }
 }
 
-fn encode_content_part(part: InternalContentPart) -> Value {
+/// Responses 的 assistant 输出没有 input image content part；输入图片不会在
+/// 响应正文中回显，因此输出编码只保留文本。
+fn encode_content_part(part: InternalContentPart) -> Option<Value> {
     match part {
-        InternalContentPart::Text(text) => json!({
+        InternalContentPart::Text(text) => Some(json!({
             "type": "output_text",
             "text": text,
             "annotations": [],
-        }),
+        })),
+        InternalContentPart::Image(_) => None,
     }
 }
 
