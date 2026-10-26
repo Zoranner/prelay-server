@@ -73,24 +73,6 @@ protocols = ["chat_completions", "responses"]
 language_models = ["MiniMax-M3"]
 
 [[providers]]
-id = "supergpt"
-name = "SuperGPT"
-auth_scheme = "bearer"
-base_url = "https://api.supergpt.dev/v1"
-protocols = ["chat_completions", "responses"]
-language_models = [
-  "gpt-6-astra",
-  "gpt-6-sol",
-  "gpt-6.1-sol",
-  "claude-fable-5-1",
-  "claude-fable-5",
-  "claude-opus-5-5",
-  "claude-opus-5",
-  "claude-sonnet-5-5",
-  "claude-sonnet-5",
-]
-
-[[providers]]
 id = "commandcode"
 name = "Command Code"
 auth_scheme = "bearer"

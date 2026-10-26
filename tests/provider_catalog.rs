@@ -53,6 +53,14 @@ fn deployment_catalog_excludes_retired_gpt_5_6_models() {
 }
 
 #[test]
+fn deployment_catalog_excludes_retired_supergpt_provider() {
+    let catalog =
+        ProviderCatalog::load(Path::new("config/catalog")).expect("load deployment catalog");
+
+    assert!(catalog.provider("supergpt").is_none());
+}
+
+#[test]
 fn loads_typed_models_and_ordered_provider_protocols() {
     let directory = write_catalog(
         "",
