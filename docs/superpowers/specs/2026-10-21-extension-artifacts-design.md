@@ -122,7 +122,7 @@ pub struct ExtensionSummary {
 
 单制品 Rule、Skill、MCP 安装包在 `artifacts` 之外继续输出旧客户端的 `kind/files` 字段；多制品和 Hook 包不输出旧字段。新客户端只以 `artifacts` 为准，旧服务端的 `kind/files` 响应由协议反序列化兼容为单制品 `artifacts`。
 
-Hook 制品只允许 `hooks/*.json`。命令和脚本内容由 Codex 在信任审核时展示，服务端不做执行，也不校验命令是否可运行。
+Hook 制品只允许 `hooks/*.json`（2026-10-24 修订为 `hooks/**`，见文末）。命令和脚本内容由 Codex 在信任审核时展示，服务端不做执行，也不校验命令是否可运行。
 
 ### 目录接口
 
@@ -216,7 +216,7 @@ Codex 对非托管 Hook 要求用户审核并信任，未信任的 Hook 不会�
 2. `prelay-server`：分类改为规则/插件，按制品打包，增加 `skipped` 和过渡接口。
 3. `prelay-client` 原生层：遍历制品安装，新增 Hook 合并与统一安装记录。
 4. `prelay-client` 前端：两个分类、插件标签、安装抽屉、已安装聚合。
-5. `superpowers`：增加 `hooks/hooks.json` 和 `.prelay.json`，新增版本 tag，不移动已发布 tag。
+5. `superpowers`：增加 `hooks/hooks.json` 与 `hooks/scripts/`，不使用 `.prelay.json`（见文末修订），新增版本 tag，不移动已发布 tag。
 
 协议和服务端可以独立验证，不依赖客户端 UI。客户端原生层完成后才能验证真实 Hook 写入，前端可以并行开发。
 
@@ -262,3 +262,12 @@ git diff --check
 - OpenCode 没有等价的 Hook 机制，插件在 OpenCode 下安装 Skill 和 MCP，跳过 Hook，界面明确标注。
 - `/extensions/skills` 和 `/extensions/mcp` 至少保留到新客户端版本发布后，移除需要单独确认。
 - `superpowers` 新增版本 tag，不移动已发布 tag；发布动作单独确认。
+
+## 实现修订（2026-10-24）
+
+以下内容替代前文的 Hook 单文件与 `.prelay.json` 约定：
+
+- Hook 制品收录 `hooks/**`。`hooks/hooks.json` 是唯一定义文件，可包含多个事件、matcher 组和 handler；`hooks/` 下的其他文件是支持文件，不参与定义解析。
+- 服务端只对 `hooks/hooks.json` 做 UTF-8 与 JSON 校验，支持文件按原始字节打包。
+- 客户端把整个 `hooks/` 复制到 `~/.prelay/packages/<package>/<commit-sha>/hooks/`，命令中的 `${PRELAY_HOOK_ROOT}` 在写入 `~/.codex/hooks.json` 前展开；升级到新 commit 时旧目录被清理，Hook 信任记录随命令变化重新审核。
+- 包不再使用 `.prelay.json`。`superpowers` 的 Skill 与 Hook 由标准目录推断；组织级规则以 `agents/README.md` 为准。
