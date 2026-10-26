@@ -13,16 +13,9 @@ use super::{
     team_aggregate_query,
 };
 
-impl Storage {
-    pub async fn model_stats(
-        &self,
-        identity_id: &str,
-        scope: ModelStatsScope,
-        range: StatsRange,
-    ) -> Result<Vec<ModelStatsSummary>, StorageError> {
-        list_model_stats(&self.db, identity_id, scope, range, None).await
-    }
+const DELETED_MODEL_NAME: &str = "已删除模型";
 
+impl Storage {
     pub async fn model_stats_with_catalog(
         &self,
         identity_id: &str,
@@ -30,7 +23,7 @@ impl Storage {
         range: StatsRange,
         catalog: &ProviderCatalog,
     ) -> Result<Vec<ModelStatsSummary>, StorageError> {
-        list_model_stats(&self.db, identity_id, scope, range, Some(catalog)).await
+        list_model_stats(&self.db, identity_id, scope, range, catalog).await
     }
 }
 
@@ -39,7 +32,7 @@ async fn list_model_stats(
     identity_id: &str,
     scope: ModelStatsScope,
     range: StatsRange,
-    catalog: Option<&ProviderCatalog>,
+    catalog: &ProviderCatalog,
 ) -> Result<Vec<ModelStatsSummary>, StorageError> {
     let bounds = range.bounds(Utc::now());
     let rows = match scope {
@@ -87,32 +80,31 @@ where
         .await?)
 }
 
-/// 聚合结果 → 对外结构：解析目录显示名，并按请求数排序。
-fn model_summaries(
-    rows: Vec<ModelAggregate>,
-    catalog: Option<&ProviderCatalog>,
-) -> Vec<ModelStatsSummary> {
-    let mut summaries =
-        rows.into_iter()
-            .map(|row| ModelStatsSummary {
-                model_requested_display_name: row.model_requested.as_deref().and_then(|model_id| {
-                    catalog.map(|catalog| catalog.model_display_name(model_id))
-                }),
-                model_requested: row.model_requested,
-                total_requests: row.total_requests,
-                successful_requests: row.successful_requests.unwrap_or_default(),
-                failed_requests: row.failed_requests.unwrap_or_default(),
-                input_tokens: row.input_tokens.unwrap_or_default(),
-                output_tokens: row.output_tokens.unwrap_or_default(),
-                average_latency_ms: floating_average(row.latency_total, row.latency_count),
-            })
-            .collect::<Vec<_>>();
+/// 聚合结果 → 对外结构：当前目录内的模型按 ID 展示当前名称；
+/// 已从目录删除的模型合并成一行，保留请求数和用量，并放在最后。
+fn model_summaries(rows: Vec<ModelAggregate>, catalog: &ProviderCatalog) -> Vec<ModelStatsSummary> {
+    let mut summaries = Vec::with_capacity(rows.len());
+    let mut deleted = ModelTotals::default();
+    for row in rows {
+        if row
+            .model_requested
+            .as_deref()
+            .is_some_and(|model_id| catalog.model_exists(model_id))
+        {
+            summaries.push(row.into_summary(catalog));
+        } else {
+            deleted.add(row);
+        }
+    }
     summaries.sort_by(|left, right| {
         right
             .total_requests
             .cmp(&left.total_requests)
             .then_with(|| left.model_requested.cmp(&right.model_requested))
     });
+    if deleted.total_requests > 0 {
+        summaries.push(deleted.into_summary());
+    }
     summaries
 }
 
@@ -126,4 +118,59 @@ struct ModelAggregate {
     output_tokens: Option<i64>,
     latency_total: Option<i64>,
     latency_count: i64,
+}
+
+impl ModelAggregate {
+    fn into_summary(self, catalog: &ProviderCatalog) -> ModelStatsSummary {
+        let display_name = self
+            .model_requested
+            .as_deref()
+            .map(|model_id| catalog.model_display_name(model_id));
+        ModelStatsSummary {
+            model_requested: self.model_requested,
+            model_requested_display_name: display_name,
+            total_requests: self.total_requests,
+            successful_requests: self.successful_requests.unwrap_or_default(),
+            failed_requests: self.failed_requests.unwrap_or_default(),
+            input_tokens: self.input_tokens.unwrap_or_default(),
+            output_tokens: self.output_tokens.unwrap_or_default(),
+            average_latency_ms: floating_average(self.latency_total, self.latency_count),
+        }
+    }
+}
+
+#[derive(Default)]
+struct ModelTotals {
+    total_requests: i64,
+    successful_requests: i64,
+    failed_requests: i64,
+    input_tokens: i64,
+    output_tokens: i64,
+    latency_total: i64,
+    latency_count: i64,
+}
+
+impl ModelTotals {
+    fn add(&mut self, row: ModelAggregate) {
+        self.total_requests += row.total_requests;
+        self.successful_requests += row.successful_requests.unwrap_or_default();
+        self.failed_requests += row.failed_requests.unwrap_or_default();
+        self.input_tokens += row.input_tokens.unwrap_or_default();
+        self.output_tokens += row.output_tokens.unwrap_or_default();
+        self.latency_total += row.latency_total.unwrap_or_default();
+        self.latency_count += row.latency_count;
+    }
+
+    fn into_summary(self) -> ModelStatsSummary {
+        ModelStatsSummary {
+            model_requested: None,
+            model_requested_display_name: Some(DELETED_MODEL_NAME.to_string()),
+            total_requests: self.total_requests,
+            successful_requests: self.successful_requests,
+            failed_requests: self.failed_requests,
+            input_tokens: self.input_tokens,
+            output_tokens: self.output_tokens,
+            average_latency_ms: floating_average(Some(self.latency_total), self.latency_count),
+        }
+    }
 }

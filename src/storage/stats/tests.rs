@@ -4,7 +4,7 @@ use crate::{
 };
 
 #[tokio::test]
-async fn model_stats_resolve_display_names_without_splitting_model_ids() {
+async fn model_stats_merge_models_missing_from_the_catalog_into_one_deleted_bucket() {
     let storage = test_storage().await;
     let identity = register_identity(&storage, "model-display-names").await;
     for id in ["model-known-1", "model-known-2"] {
@@ -15,12 +15,17 @@ async fn model_stats_resolve_display_names_without_splitting_model_ids() {
             .await
             .expect("insert known model log");
     }
-    let mut unknown = test_log(Some(5), Some(6));
-    unknown.model_requested = "unknown-model".to_string();
-    storage
-        .insert_activity_with_id(&identity, "model-unknown".to_string(), unknown)
-        .await
-        .expect("insert unknown model log");
+    for (id, model, input_tokens, output_tokens) in [
+        ("model-unknown-1", "unknown-model-1", 5, 6),
+        ("model-unknown-2", "unknown-model-2", 7, 8),
+    ] {
+        let mut unknown = test_log(Some(input_tokens), Some(output_tokens));
+        unknown.model_requested = model.to_string();
+        storage
+            .insert_activity_with_id(&identity, id.to_string(), unknown)
+            .await
+            .expect("insert unknown model log");
+    }
 
     let catalog = crate::test_support::fixture_catalog();
     let rows = storage
@@ -42,14 +47,15 @@ async fn model_stats_resolve_display_names_without_splitting_model_ids() {
         Some("GPT-5.6 Luna")
     );
     assert_eq!(known.total_requests, 2);
-    let unknown = rows
-        .iter()
-        .find(|row| row.model_requested.as_deref() == Some("unknown-model"))
-        .expect("unknown model stats");
+    let deleted = rows.last().expect("deleted model bucket");
+    assert_eq!(deleted.model_requested, None);
     assert_eq!(
-        unknown.model_requested_display_name.as_deref(),
-        Some("unknown-model")
+        deleted.model_requested_display_name.as_deref(),
+        Some("已删除模型")
     );
+    assert_eq!(deleted.total_requests, 2);
+    assert_eq!(deleted.input_tokens, 12);
+    assert_eq!(deleted.output_tokens, 14);
     assert_eq!(rows.len(), 2);
 }
 
@@ -59,9 +65,9 @@ async fn model_stats_scope_selects_personal_or_team_aggregation() {
     let identity_a = register_identity(&storage, "scope-a").await;
     let identity_b = register_identity(&storage, "scope-b").await;
     for (identity, id, model, input_tokens, output_tokens) in [
-        (&identity_a, "scope-a-shared", "shared-model", 3, 4),
-        (&identity_b, "scope-b-shared", "shared-model", 5, 6),
-        (&identity_b, "scope-b-other", "other-model", 7, 8),
+        (&identity_a, "scope-a-flash", "deepseek-v4-flash", 3, 4),
+        (&identity_b, "scope-b-flash", "deepseek-v4-flash", 5, 6),
+        (&identity_b, "scope-b-pro", "deepseek-v4-pro", 7, 8),
     ] {
         let mut log = test_log(Some(input_tokens), Some(output_tokens));
         log.model_requested = model.to_string();
@@ -82,7 +88,10 @@ async fn model_stats_scope_selects_personal_or_team_aggregation() {
         .await
         .expect("load personal model stats");
     assert_eq!(personal.len(), 1);
-    assert_eq!(personal[0].model_requested.as_deref(), Some("shared-model"));
+    assert_eq!(
+        personal[0].model_requested.as_deref(),
+        Some("deepseek-v4-flash")
+    );
     assert_eq!(personal[0].total_requests, 1);
     assert_eq!(personal[0].input_tokens, 3);
     assert_eq!(personal[0].output_tokens, 4);

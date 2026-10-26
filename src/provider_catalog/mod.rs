@@ -212,6 +212,11 @@ impl ProviderCatalog {
             .unwrap_or_else(|| model_id.to_string())
     }
 
+    pub fn model_exists(&self, model_id: &str) -> bool {
+        self.language_models.contains_key(model_id)
+            || self.image_generation_models.contains_key(model_id)
+    }
+
     pub fn provider(&self, provider_id: &str) -> Option<&CatalogProvider> {
         self.providers.get(provider_id)
     }
