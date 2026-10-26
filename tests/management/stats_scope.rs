@@ -36,6 +36,7 @@ async fn management_stats_scope_switches_between_personal_and_team() {
                     endpoint_name: "Scope endpoint".to_string(),
                     provider_id: provider_name.to_string(),
                     provider_name: provider_name.to_string(),
+                    provider_type: "deepseek".to_string(),
                     model_requested: "scope-model".to_string(),
                     model_upstream: "scope-model".to_string(),
                     status: "success".to_string(),
@@ -130,7 +131,8 @@ async fn management_stats_scope_switches_between_personal_and_team() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(providers_default.len(), 1);
-    assert_eq!(providers_default[0]["provider_name"], "Provider Scope A");
+    assert_eq!(providers_default[0]["provider_type"], "deepseek");
+    assert_eq!(providers_default[0]["provider_name"], "DeepSeek");
 
     let (status, providers_team): (StatusCode, Vec<serde_json::Value>) = request_json(
         &app,
@@ -141,11 +143,9 @@ async fn management_stats_scope_switches_between_personal_and_team() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(providers_team.len(), 2);
-    assert!(providers_team
-        .iter()
-        .any(|row| row["provider_name"] == "Provider Scope A" && row["input_tokens"] == 3));
-    assert!(providers_team
-        .iter()
-        .any(|row| row["provider_name"] == "Provider Scope B" && row["input_tokens"] == 5));
+    assert_eq!(providers_team.len(), 1);
+    assert_eq!(providers_team[0]["provider_type"], "deepseek");
+    assert_eq!(providers_team[0]["provider_name"], "DeepSeek");
+    assert_eq!(providers_team[0]["total_requests"], 2);
+    assert_eq!(providers_team[0]["input_tokens"], 8);
 }

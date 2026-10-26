@@ -336,8 +336,8 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(providers_a.len(), 1);
-    assert_eq!(providers_a[0].provider_id.as_deref(), Some(provider_a_id));
-    assert_eq!(providers_a[0].provider_name.as_deref(), Some("Provider A"));
+    assert_eq!(providers_a[0].provider_type.as_deref(), Some("deepseek"));
+    assert_eq!(providers_a[0].provider_name.as_deref(), Some("DeepSeek"));
     assert_eq!(providers_a[0].total_requests, 1);
 
     let (status, overview_a_all): (StatusCode, StatsOverview) = request_json(
@@ -426,7 +426,63 @@ async fn management_stats_only_return_the_current_identity_request_data() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(providers_b.len(), 1);
-    assert_eq!(providers_b[0].provider_id.as_deref(), Some(provider_b_id));
-    assert_eq!(providers_b[0].provider_name.as_deref(), Some("Provider B"));
+    assert_eq!(providers_b[0].provider_type.as_deref(), Some("deepseek"));
+    assert_eq!(providers_b[0].provider_name.as_deref(), Some("DeepSeek"));
     assert_eq!(providers_b[0].total_requests, 1);
+}
+
+#[tokio::test]
+async fn provider_stats_merge_same_catalog_type_and_report_deleted_bucket() {
+    let context = test_context::test_context().await;
+    let app = context.app;
+    let identity = register(&app, "merge-machine", "S-1-5-21-merge").await;
+    let credential = identity["credential"].as_str().expect("credential");
+    let identity_id = identity["identity_id"].as_str().expect("identity id");
+
+    for (id, provider_id, provider_name, provider_type, input_tokens) in [
+        ("merge-a", "provider-a", "我的 DeepSeek", "deepseek", 3),
+        ("merge-b", "provider-b", "备用 DeepSeek", "deepseek", 5),
+        (
+            "merge-gone",
+            "provider-gone",
+            "已删除实例",
+            "removed_provider",
+            7,
+        ),
+    ] {
+        seed_activity(
+            &context.storage,
+            ActivitySeed {
+                id,
+                identity_id,
+                provider_id,
+                provider_name,
+                provider_type,
+                model_requested: "deepseek-v4-flash",
+                status: "success",
+                input_tokens,
+                output_tokens: 1,
+            },
+        )
+        .await;
+    }
+
+    let (status, providers): (StatusCode, Vec<ProviderStatsSummary>) = request_json(
+        &app,
+        "GET",
+        "/api/stats/providers?range=today",
+        Some(credential),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(providers.len(), 2);
+    assert_eq!(providers[0].provider_type.as_deref(), Some("deepseek"));
+    assert_eq!(providers[0].provider_name.as_deref(), Some("DeepSeek"));
+    assert_eq!(providers[0].total_requests, 2);
+    assert_eq!(providers[0].input_tokens, 8);
+    assert_eq!(providers[1].provider_type, None);
+    assert_eq!(providers[1].provider_name.as_deref(), Some("已删除供应商"));
+    assert_eq!(providers[1].total_requests, 1);
+    assert_eq!(providers[1].input_tokens, 7);
 }

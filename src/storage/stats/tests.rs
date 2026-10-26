@@ -97,11 +97,14 @@ async fn model_stats_scope_selects_personal_or_team_aggregation() {
         .await
         .expect("load team model stats");
     assert_eq!(team.len(), 2);
-    assert_eq!(team[0].model_requested.as_deref(), Some("shared-model"));
+    assert_eq!(
+        team[0].model_requested.as_deref(),
+        Some("deepseek-v4-flash")
+    );
     assert_eq!(team[0].total_requests, 2);
     assert_eq!(team[0].input_tokens, 8);
     assert_eq!(team[0].output_tokens, 10);
-    assert_eq!(team[1].model_requested.as_deref(), Some("other-model"));
+    assert_eq!(team[1].model_requested.as_deref(), Some("deepseek-v4-pro"));
     assert_eq!(team[1].total_requests, 1);
 }
 
@@ -212,30 +215,99 @@ async fn provider_stats_scope_selects_personal_or_team_aggregation() {
         .expect("insert identity B log");
 
     let personal = storage
-        .provider_stats(&identity_a, ModelStatsScope::Personal, StatsRange::Today)
+        .provider_stats(
+            &identity_a,
+            ModelStatsScope::Personal,
+            StatsRange::Today,
+            &crate::test_support::fixture_catalog(),
+        )
         .await
         .expect("load personal provider stats");
     assert_eq!(personal.len(), 1);
-    assert_eq!(personal[0].provider_id.as_deref(), Some("provider-shared"));
-    assert_eq!(
-        personal[0].provider_name.as_deref(),
-        Some("Provider Shared")
-    );
+    assert_eq!(personal[0].provider_type.as_deref(), Some("deepseek"));
+    assert_eq!(personal[0].provider_name.as_deref(), Some("DeepSeek"));
     assert_eq!(personal[0].total_requests, 1);
     assert_eq!(personal[0].input_tokens, 3);
     assert_eq!(personal[0].output_tokens, 4);
     assert_eq!(personal[0].average_first_token_ms, Some(100.0));
 
     let team = storage
-        .provider_stats(&identity_a, ModelStatsScope::Team, StatsRange::Today)
+        .provider_stats(
+            &identity_a,
+            ModelStatsScope::Team,
+            StatsRange::Today,
+            &crate::test_support::fixture_catalog(),
+        )
         .await
         .expect("load team provider stats");
     assert_eq!(team.len(), 1);
-    assert_eq!(team[0].provider_id.as_deref(), Some("provider-shared"));
+    assert_eq!(team[0].provider_type.as_deref(), Some("deepseek"));
     assert_eq!(team[0].total_requests, 2);
     assert_eq!(team[0].input_tokens, 8);
     assert_eq!(team[0].output_tokens, 10);
     assert_eq!(team[0].average_first_token_ms, Some(200.0));
+}
+
+#[tokio::test]
+async fn provider_stats_merge_catalog_types_and_put_deleted_providers_last() {
+    let storage = test_storage().await;
+    let identity = register_identity(&storage, "provider-merge").await;
+    for (id, provider_id, provider_name, provider_type, input_tokens) in [
+        (
+            "provider-merge-a",
+            "provider-a",
+            "我的 DeepSeek",
+            "deepseek",
+            3,
+        ),
+        (
+            "provider-merge-b",
+            "provider-b",
+            "备用 DeepSeek",
+            "deepseek",
+            5,
+        ),
+        (
+            "provider-merge-gone",
+            "provider-gone",
+            "已删除实例",
+            "removed_provider",
+            7,
+        ),
+    ] {
+        let mut log = test_log(Some(input_tokens), Some(1));
+        log.provider_id = provider_id.to_string();
+        log.provider_name = provider_name.to_string();
+        log.provider_type = provider_type.to_string();
+        log.first_token_ms = Some(input_tokens * 10);
+        storage
+            .insert_activity_with_id(&identity, id.to_string(), log)
+            .await
+            .expect("insert provider merge log");
+    }
+
+    let rows = storage
+        .provider_stats(
+            &identity,
+            ModelStatsScope::Personal,
+            StatsRange::All,
+            &crate::test_support::fixture_catalog(),
+        )
+        .await
+        .expect("load merged provider stats");
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].provider_type.as_deref(), Some("deepseek"));
+    assert_eq!(rows[0].provider_name.as_deref(), Some("DeepSeek"));
+    assert_eq!(rows[0].total_requests, 2);
+    assert_eq!(rows[0].input_tokens, 8);
+    assert_eq!(rows[0].average_first_token_ms, Some(40.0));
+
+    assert_eq!(rows[1].provider_type, None);
+    assert_eq!(rows[1].provider_name.as_deref(), Some("已删除供应商"));
+    assert_eq!(rows[1].total_requests, 1);
+    assert_eq!(rows[1].input_tokens, 7);
+    assert_eq!(rows[1].average_first_token_ms, Some(70.0));
 }
 
 pub(super) async fn test_storage() -> Storage {

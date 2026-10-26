@@ -7,12 +7,15 @@ use sea_orm::{
 
 use crate::{
     entity::{identities, identity::activities as identity_activities},
+    provider_catalog::ProviderCatalog,
     stats::{ModelStatsScope, ProviderStatsSummary, StatsOverview, StatsRange, TimeBounds},
     storage::{Storage, StorageError},
 };
 
 mod models;
 mod timeline;
+
+const DELETED_PROVIDER_NAME: &str = "已删除供应商";
 
 impl Storage {
     pub async fn stats_overview(
@@ -29,8 +32,9 @@ impl Storage {
         identity_id: &str,
         scope: ModelStatsScope,
         range: StatsRange,
+        catalog: &ProviderCatalog,
     ) -> Result<Vec<ProviderStatsSummary>, StorageError> {
-        list_provider_stats(&self.db, identity_id, scope, range).await
+        list_provider_stats(&self.db, identity_id, scope, range, catalog).await
     }
 }
 
@@ -122,6 +126,7 @@ async fn list_provider_stats(
     identity_id: &str,
     scope: ModelStatsScope,
     range: StatsRange,
+    catalog: &ProviderCatalog,
 ) -> Result<Vec<ProviderStatsSummary>, StorageError> {
     let bounds = range.bounds(Utc::now());
     let rows = match scope {
@@ -130,26 +135,31 @@ async fn list_provider_stats(
         }
         ModelStatsScope::Team => provider_aggregate_rows(db, team_aggregate_query(bounds)).await?,
     };
-    let mut summaries = rows
-        .into_iter()
-        .map(|row| ProviderStatsSummary {
-            provider_id: row.provider_id,
-            provider_name: row.provider_name,
-            total_requests: row.total_requests,
-            successful_requests: row.successful_requests.unwrap_or_default(),
-            failed_requests: row.failed_requests.unwrap_or_default(),
-            input_tokens: row.input_tokens.unwrap_or_default(),
-            output_tokens: row.output_tokens.unwrap_or_default(),
-            average_latency_ms: floating_average(row.latency_total, row.latency_count),
-            average_first_token_ms: floating_average(row.first_token_total, row.first_token_count),
-        })
-        .collect::<Vec<_>>();
+    let mut summaries = Vec::with_capacity(rows.len());
+    let mut deleted = ProviderTotals::default();
+    for row in rows {
+        let provider = row
+            .provider_type
+            .as_deref()
+            .and_then(|provider_type| catalog.provider(provider_type));
+        match provider {
+            Some(provider) => {
+                let provider_type = row.provider_type.clone();
+                let provider_name = provider.name.clone();
+                summaries.push(row.into_summary(provider_type, provider_name));
+            }
+            None => deleted.add(row),
+        }
+    }
     summaries.sort_by(|left, right| {
         right
             .total_requests
             .cmp(&left.total_requests)
             .then_with(|| left.provider_name.cmp(&right.provider_name))
     });
+    if deleted.total_requests > 0 {
+        summaries.push(deleted.into_summary(None, Some(DELETED_PROVIDER_NAME.to_string())));
+    }
     Ok(summaries)
 }
 
@@ -163,8 +173,7 @@ where
 {
     Ok(query
         .select_only()
-        .column(identity_activities::Column::ProviderId)
-        .column(identity_activities::Column::ProviderName)
+        .column(identity_activities::Column::ProviderType)
         .column_as(identity_activities::Column::Id.count(), "total_requests")
         .column_as(success_count_expr(), "successful_requests")
         .column_as(failed_count_expr(), "failed_requests")
@@ -192,8 +201,7 @@ where
             identity_activities::Column::FirstTokenMs.count(),
             "first_token_count",
         )
-        .group_by(identity_activities::Column::ProviderId)
-        .group_by(identity_activities::Column::ProviderName)
+        .group_by(identity_activities::Column::ProviderType)
         .into_model::<ProviderAggregate>()
         .all(db)
         .await?)
@@ -274,8 +282,7 @@ struct OverviewAggregate {
 
 #[derive(FromQueryResult)]
 struct ProviderAggregate {
-    provider_id: Option<String>,
-    provider_name: Option<String>,
+    provider_type: Option<String>,
     total_requests: i64,
     successful_requests: Option<i64>,
     failed_requests: Option<i64>,
@@ -285,6 +292,81 @@ struct ProviderAggregate {
     latency_count: i64,
     first_token_total: Option<i64>,
     first_token_count: i64,
+}
+
+impl ProviderAggregate {
+    fn into_summary(
+        self,
+        provider_type: Option<String>,
+        provider_name: String,
+    ) -> ProviderStatsSummary {
+        ProviderTotals::from(self).into_summary(provider_type, Some(provider_name))
+    }
+}
+
+#[derive(Default)]
+struct ProviderTotals {
+    total_requests: i64,
+    successful_requests: i64,
+    failed_requests: i64,
+    input_tokens: i64,
+    output_tokens: i64,
+    latency_total: i64,
+    latency_count: i64,
+    first_token_total: i64,
+    first_token_count: i64,
+}
+
+impl From<ProviderAggregate> for ProviderTotals {
+    fn from(row: ProviderAggregate) -> Self {
+        Self {
+            total_requests: row.total_requests,
+            successful_requests: row.successful_requests.unwrap_or_default(),
+            failed_requests: row.failed_requests.unwrap_or_default(),
+            input_tokens: row.input_tokens.unwrap_or_default(),
+            output_tokens: row.output_tokens.unwrap_or_default(),
+            latency_total: row.latency_total.unwrap_or_default(),
+            latency_count: row.latency_count,
+            first_token_total: row.first_token_total.unwrap_or_default(),
+            first_token_count: row.first_token_count,
+        }
+    }
+}
+
+impl ProviderTotals {
+    fn add(&mut self, row: ProviderAggregate) {
+        let totals = Self::from(row);
+        self.total_requests += totals.total_requests;
+        self.successful_requests += totals.successful_requests;
+        self.failed_requests += totals.failed_requests;
+        self.input_tokens += totals.input_tokens;
+        self.output_tokens += totals.output_tokens;
+        self.latency_total += totals.latency_total;
+        self.latency_count += totals.latency_count;
+        self.first_token_total += totals.first_token_total;
+        self.first_token_count += totals.first_token_count;
+    }
+
+    fn into_summary(
+        self,
+        provider_type: Option<String>,
+        provider_name: Option<String>,
+    ) -> ProviderStatsSummary {
+        ProviderStatsSummary {
+            provider_type,
+            provider_name,
+            total_requests: self.total_requests,
+            successful_requests: self.successful_requests,
+            failed_requests: self.failed_requests,
+            input_tokens: self.input_tokens,
+            output_tokens: self.output_tokens,
+            average_latency_ms: floating_average(Some(self.latency_total), self.latency_count),
+            average_first_token_ms: floating_average(
+                Some(self.first_token_total),
+                self.first_token_count,
+            ),
+        }
+    }
 }
 
 #[cfg(test)]

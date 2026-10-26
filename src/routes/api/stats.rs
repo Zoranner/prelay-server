@@ -191,7 +191,12 @@ async fn providers(
     Ok(Json(
         state
             .storage
-            .provider_stats(&identity.id, query.scope(), query.range())
+            .provider_stats(
+                &identity.id,
+                query.scope(),
+                query.range(),
+                &state.provider_catalog,
+            )
             .await?,
     ))
 }
