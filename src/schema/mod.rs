@@ -217,11 +217,11 @@ impl<C: ConnectionTrait> SchemaInitializer<'_, C> {
     }
 
     async fn migrate_activity_schema(&self) -> Result<(), DbErr> {
-        if !column_exists(self.db, "identity_activities", "provider_type").await? {
-            self.db
-                .execute_unprepared("ALTER TABLE identity_activities ADD COLUMN provider_type TEXT")
-                .await?;
-        }
+        self.db
+            .execute_unprepared(
+                "ALTER TABLE identity_activities ADD COLUMN IF NOT EXISTS provider_type TEXT",
+            )
+            .await?;
         Ok(())
     }
 
