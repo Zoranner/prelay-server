@@ -11,4 +11,4 @@
 
 `language.toml` 的模型条目默认不配置 `base_instructions`；需要覆盖时再在条目内显式填写。
 
-现有文件包括 `_default.md`、GPT 系列专用模板和 `deepseek-flash.md`、`deepseek-v4-pro.md` 两份 DeepSeek 专用模板；DeepSeek 两份模板当前内容一致，均包含完整 Codex 基础规范和本地用户偏好。没有专用文件的模型继续使用 `_default.md`。
+现有文件包括 `_default.md`、GPT-6 系列专用模板和 `deepseek-flash.md`、`deepseek-v4-pro.md` 两份 DeepSeek 专用模板；DeepSeek 两份模板当前内容一致，均包含完整 Codex 基础规范和本地用户偏好。没有专用文件的模型继续使用 `_default.md`。

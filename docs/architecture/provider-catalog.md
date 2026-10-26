@@ -95,7 +95,7 @@ name = "GoToken 套餐"
 auth_scheme = "bearer"
 base_url = "https://gotoken.cc"
 protocols = ["chat_completions", "responses", "images_generations"]
-language_models = ["gpt-5.6-sol"]
+language_models = ["gpt-6.1-sol"]
 image_generation_models = ["gpt-image-1"]
 
 [providers.protocol_base_urls]

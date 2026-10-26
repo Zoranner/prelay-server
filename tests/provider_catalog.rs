@@ -40,6 +40,19 @@ fn loads_the_deployment_catalog() {
 }
 
 #[test]
+fn deployment_catalog_excludes_retired_gpt_5_6_models() {
+    let catalog =
+        ProviderCatalog::load(Path::new("config/catalog")).expect("load deployment catalog");
+
+    for model_id in ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"] {
+        assert!(
+            catalog.language_model(model_id).is_none(),
+            "{model_id} should be retired"
+        );
+    }
+}
+
+#[test]
 fn loads_typed_models_and_ordered_provider_protocols() {
     let directory = write_catalog(
         "",
