@@ -61,6 +61,27 @@ fn deployment_catalog_excludes_retired_supergpt_provider() {
 }
 
 #[test]
+fn deployment_catalog_excludes_retired_claude_models() {
+    let catalog =
+        ProviderCatalog::load(Path::new("config/catalog")).expect("load deployment catalog");
+
+    for model_id in [
+        "claude-fable-5-1",
+        "claude-fable-5",
+        "claude-opus-5-5",
+        "claude-opus-5",
+        "claude-sonnet-5-5",
+        "claude-sonnet-5",
+        "claude-haiku-5-5",
+    ] {
+        assert!(
+            catalog.language_model(model_id).is_none(),
+            "{model_id} should be retired"
+        );
+    }
+}
+
+#[test]
 fn loads_typed_models_and_ordered_provider_protocols() {
     let directory = write_catalog(
         "",
