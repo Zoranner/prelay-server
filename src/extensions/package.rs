@@ -1,12 +1,12 @@
-use prelay_protocol::{CatalogKind, ExtensionArtifactSummary, ExtensionKind, ExtensionVersion};
+use prelay_protocol::{
+    CatalogKind, ExtensionArtifactSummary, ExtensionKind, ExtensionVersion, HOOKS_MANIFEST_PATH,
+};
 use semver::Version;
-use serde::Deserialize;
 
-pub const PRELAY_MANIFEST_PATH: &str = ".prelay.json";
 pub const RULES_PATH: &str = "AGENTS.md";
 pub const MCP_MANIFEST_PATH: &str = "server.json";
 pub const SKILLS_PREFIX: &str = "skills/";
-pub const HOOKS_MANIFEST_PATH: &str = "hooks/hooks.json";
+pub const HOOKS_PREFIX: &str = "hooks/";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClassifiedArtifact {
@@ -33,36 +33,6 @@ impl ClassifiedPackage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ManifestError {
-    InvalidJson,
-    InvalidSchema,
-    NoArtifacts,
-    DuplicateArtifact,
-    UnsupportedArtifact,
-    InvalidPath,
-    MissingPath,
-    EmptyArtifact,
-    ConflictingSelectors,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PrelayManifest {
-    schema: u32,
-    artifacts: Vec<PrelayManifestArtifact>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PrelayManifestArtifact {
-    kind: ExtensionKind,
-    #[serde(default)]
-    path: Option<String>,
-    #[serde(default)]
-    include: Vec<String>,
-}
-
 #[derive(Debug, Clone)]
 pub struct GiteaTag {
     pub name: String,
@@ -85,18 +55,6 @@ impl GiteaTag {
             updated_at,
         }
     }
-}
-
-pub fn parse_prelay_manifest(bytes: &[u8]) -> Result<PrelayManifest, ManifestError> {
-    let manifest: PrelayManifest =
-        serde_json::from_slice(bytes).map_err(|_| ManifestError::InvalidJson)?;
-    if manifest.schema != 2 {
-        return Err(ManifestError::InvalidSchema);
-    }
-    if manifest.artifacts.is_empty() {
-        return Err(ManifestError::NoArtifacts);
-    }
-    Ok(manifest)
 }
 
 pub fn classify_paths(paths: &[&str]) -> Option<ClassifiedPackage> {
@@ -150,36 +108,6 @@ pub fn classify_paths(paths: &[&str]) -> Option<ClassifiedPackage> {
     })
 }
 
-pub fn classify_manifest(
-    manifest: &PrelayManifest,
-    paths: &[&str],
-) -> Result<ClassifiedPackage, ManifestError> {
-    let mut artifacts = Vec::<ClassifiedArtifact>::with_capacity(manifest.artifacts.len());
-    for artifact in &manifest.artifacts {
-        if artifacts
-            .iter()
-            .any(|existing| existing.kind == artifact.kind)
-        {
-            return Err(ManifestError::DuplicateArtifact);
-        }
-        let paths = artifact_paths(artifact, paths)?;
-        if paths.is_empty() {
-            return Err(ManifestError::EmptyArtifact);
-        }
-        artifacts.push(ClassifiedArtifact {
-            kind: artifact.kind,
-            paths,
-        });
-    }
-    if artifacts.is_empty() {
-        return Err(ManifestError::NoArtifacts);
-    }
-    Ok(ClassifiedPackage {
-        catalog_kind: CatalogKind::Plugin,
-        artifacts,
-    })
-}
-
 pub fn versions_from_tags(tags: Vec<GiteaTag>) -> Vec<ExtensionVersion> {
     let mut versions = tags
         .into_iter()
@@ -222,113 +150,10 @@ pub fn valid_extension_file_path(value: &str) -> bool {
         })
 }
 
-fn artifact_paths(
-    artifact: &PrelayManifestArtifact,
-    paths: &[&str],
-) -> Result<Vec<String>, ManifestError> {
-    if artifact.path.is_some() && !artifact.include.is_empty() {
-        return Err(ManifestError::ConflictingSelectors);
-    }
-    match artifact.kind {
-        ExtensionKind::Skill => skill_paths(artifact, paths),
-        ExtensionKind::Mcp => {
-            if !artifact.include.is_empty() {
-                return Err(ManifestError::ConflictingSelectors);
-            }
-            let path = artifact.path.as_deref().unwrap_or(MCP_MANIFEST_PATH);
-            require_file(paths, path)?;
-            Ok(vec![path.to_string()])
-        }
-        ExtensionKind::Hook => {
-            if !artifact.include.is_empty() {
-                return Err(ManifestError::ConflictingSelectors);
-            }
-            let path = artifact.path.as_deref().unwrap_or(HOOKS_MANIFEST_PATH);
-            if !is_hook_file_path(path) {
-                return Err(ManifestError::InvalidPath);
-            }
-            require_file(paths, path)?;
-            Ok(vec![path.to_string()])
-        }
-        ExtensionKind::Rule | ExtensionKind::Unknown => Err(ManifestError::UnsupportedArtifact),
-    }
-}
-
-fn skill_paths(
-    artifact: &PrelayManifestArtifact,
-    paths: &[&str],
-) -> Result<Vec<String>, ManifestError> {
-    let selectors = match artifact.path.as_deref() {
-        Some(path) => vec![path],
-        None => artifact
-            .include
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
-    };
-    if selectors.is_empty() {
-        return Err(ManifestError::ConflictingSelectors);
-    }
-
-    let mut selected = Vec::new();
-    for selector in selectors {
-        if !valid_extension_directory_path(selector) {
-            return Err(ManifestError::InvalidPath);
-        }
-        let mut matched = false;
-        for path in paths {
-            if valid_extension_file_path(path) && path_matches_selector(path, selector) {
-                matched = true;
-                if !selected.iter().any(|existing| existing == path) {
-                    selected.push((*path).to_string());
-                }
-            }
-        }
-        if !matched {
-            return Err(ManifestError::MissingPath);
-        }
-    }
-    if !selected.iter().any(|path| path.ends_with("/SKILL.md")) {
-        return Err(ManifestError::EmptyArtifact);
-    }
-    Ok(selected)
-}
-
-fn require_file(paths: &[&str], path: &str) -> Result<(), ManifestError> {
-    if !valid_extension_file_path(path) {
-        return Err(ManifestError::InvalidPath);
-    }
-    paths
-        .contains(&path)
-        .then_some(())
-        .ok_or(ManifestError::MissingPath)
-}
-
-fn path_matches_selector(path: &str, selector: &str) -> bool {
-    if selector.ends_with('/') {
-        return path.starts_with(selector);
-    }
-    path == selector
-        || path
-            .strip_prefix(selector)
-            .is_some_and(|remainder| remainder.starts_with('/'))
-}
-
-fn valid_extension_directory_path(value: &str) -> bool {
-    let trimmed = value.strip_suffix('/').unwrap_or(value);
-    !trimmed.is_empty() && valid_extension_file_path(trimmed)
-}
-
 fn is_skill_manifest_path(path: &str) -> bool {
     path.starts_with(SKILLS_PREFIX) && path.ends_with("/SKILL.md")
 }
 
 fn is_hook_file_path(path: &str) -> bool {
-    if !valid_extension_file_path(path) {
-        return false;
-    }
-    let Some(file_name) = path.strip_prefix("hooks/") else {
-        return false;
-    };
-    !file_name.is_empty() && !file_name.contains('/') && file_name.ends_with(".json")
+    path.starts_with(HOOKS_PREFIX) && valid_extension_file_path(path)
 }

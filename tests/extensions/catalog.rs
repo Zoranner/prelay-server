@@ -1,12 +1,14 @@
 use prelay_protocol::{CatalogKind, ExtensionKind};
 use prelay_server::extensions::{
-    classify_manifest, classify_paths, parse_prelay_manifest, versions_from_tags, ExtensionCatalog,
-    ExtensionCatalogConfig, GiteaTag, ManifestError,
+    classify_paths, versions_from_tags, ExtensionCatalog, ExtensionCatalogConfig, GiteaTag,
 };
 
 #[test]
-fn classifies_rule_and_plugin_packages_by_their_artifacts() {
+fn classifies_rule_plugin_and_hook_packages_by_standard_directories() {
     assert_eq!(classify_paths(&[".codex-plugin/plugin.json"]), None);
+    assert_eq!(classify_paths(&[".prelay.json"]), None);
+    assert_eq!(classify_paths(&["hooks/OTHER.json"]), None);
+    assert_eq!(classify_paths(&["hooks/scripts/session-start.sh"]), None);
 
     let multi = classify_paths(&["server.json", "skills/server/SKILL.md"]).unwrap();
     assert_eq!(multi.catalog_kind, CatalogKind::Plugin);
@@ -24,116 +26,75 @@ fn classifies_rule_and_plugin_packages_by_their_artifacts() {
     assert_eq!(rule.artifacts.len(), 1);
     assert_eq!(rule.artifacts[0].kind, ExtensionKind::Rule);
 
+    let hook = classify_paths(&["hooks/hooks.json"]).unwrap();
+    assert_eq!(hook.catalog_kind, CatalogKind::Plugin);
+    assert_eq!(hook.artifacts.len(), 1);
+    assert_eq!(hook.artifacts[0].kind, ExtensionKind::Hook);
+    assert_eq!(hook.artifacts[0].paths, vec!["hooks/hooks.json"]);
+
     let hooks = classify_paths(&[
+        ".prelay.json",
+        "AGENTS.md",
         "hooks/hooks.json",
-        "hooks/session.json",
-        "skills/a/SKILL.md",
+        "hooks/other.json",
+        "hooks/scripts/session-start.sh",
     ])
     .unwrap();
-    assert_eq!(hooks.artifacts.len(), 2);
-    assert_eq!(hooks.artifacts[0].kind, ExtensionKind::Skill);
-    assert_eq!(hooks.artifacts[1].kind, ExtensionKind::Hook);
-    assert_eq!(hooks.artifacts[1].paths.len(), 2);
+    assert_eq!(hooks.catalog_kind, CatalogKind::Plugin);
+    assert_eq!(hooks.artifacts.len(), 1);
+    assert_eq!(hooks.artifacts[0].kind, ExtensionKind::Hook);
+    assert_eq!(
+        hooks.artifacts[0].paths,
+        vec![
+            "hooks/hooks.json",
+            "hooks/other.json",
+            "hooks/scripts/session-start.sh"
+        ]
+    );
+    assert_eq!(hooks.artifact_summaries()[0].file_count, 3);
+
+    let unsafe_hook =
+        classify_paths(&["hooks/hooks.json", "hooks/../escape.sh", "hooks//empty"]).unwrap();
+    assert_eq!(unsafe_hook.artifacts.len(), 1);
+    assert_eq!(unsafe_hook.artifacts[0].paths, vec!["hooks/hooks.json"]);
 
     assert_eq!(classify_paths(&["README.md"]), None);
 }
 
 #[test]
-fn manifest_selects_artifacts_and_rejects_invalid_declarations() {
-    let paths = [
-        ".prelay.json",
-        "AGENTS.md",
-        "README.md",
+fn classifies_hook_artifacts_together_with_skill_and_mcp() {
+    let all = classify_paths(&[
         "server.json",
         "skills/a/SKILL.md",
-        "skills/a/notes.txt",
         "hooks/hooks.json",
-    ];
-    let manifest = parse_prelay_manifest(
-        br#"{
-          "schema": 2,
-          "artifacts": [
-            { "kind": "skill", "include": ["skills/"] },
-            { "kind": "hook", "path": "hooks/hooks.json" }
-          ]
-        }"#,
-    )
-    .expect("parse valid manifest");
-    let package = classify_manifest(&manifest, &paths).expect("classify valid manifest");
-    assert_eq!(package.catalog_kind, CatalogKind::Plugin);
-    assert_eq!(package.artifacts.len(), 2);
-    assert_eq!(package.artifacts[0].kind, ExtensionKind::Skill);
+        "hooks/scripts/run.sh",
+    ])
+    .unwrap();
+    assert_eq!(all.catalog_kind, CatalogKind::Plugin);
+    assert_eq!(all.artifacts.len(), 3);
+    assert_eq!(all.artifacts[0].kind, ExtensionKind::Mcp);
+    assert_eq!(all.artifacts[0].paths, vec!["server.json"]);
+    assert_eq!(all.artifacts[1].kind, ExtensionKind::Skill);
+    assert_eq!(all.artifacts[2].kind, ExtensionKind::Hook);
     assert_eq!(
-        package.artifacts[0].paths,
-        vec!["skills/a/SKILL.md", "skills/a/notes.txt"]
+        all.artifacts[2].paths,
+        vec!["hooks/hooks.json", "hooks/scripts/run.sh"]
     );
-    assert_eq!(package.artifacts[1].kind, ExtensionKind::Hook);
-    assert_eq!(package.artifacts[1].paths, vec!["hooks/hooks.json"]);
+}
 
-    let rule = parse_prelay_manifest(
-        br#"{"schema": 2, "artifacts": [{"kind": "rule", "path": "AGENTS.md"}]}"#,
-    )
-    .expect("parse rule manifest");
-    assert_eq!(
-        classify_manifest(&rule, &paths),
-        Err(ManifestError::UnsupportedArtifact)
-    );
+#[test]
+fn classifies_hook_with_mcp_and_with_skill() {
+    let with_mcp = classify_paths(&["server.json", "hooks/hooks.json"]).unwrap();
+    assert_eq!(with_mcp.artifacts.len(), 2);
+    assert_eq!(with_mcp.artifacts[0].kind, ExtensionKind::Mcp);
+    assert_eq!(with_mcp.artifacts[1].kind, ExtensionKind::Hook);
+    assert_eq!(with_mcp.artifacts[1].paths, vec!["hooks/hooks.json"]);
 
-    let unknown = parse_prelay_manifest(
-        br#"{"schema": 2, "artifacts": [{"kind": "future", "path": "future.txt"}]}"#,
-    )
-    .expect("parse unknown manifest");
-    assert_eq!(
-        classify_manifest(&unknown, &paths),
-        Err(ManifestError::UnsupportedArtifact)
-    );
-
-    let missing = parse_prelay_manifest(
-        br#"{"schema": 2, "artifacts": [{"kind": "hook", "path": "hooks/missing.json"}]}"#,
-    )
-    .expect("parse missing manifest");
-    assert_eq!(
-        classify_manifest(&missing, &paths),
-        Err(ManifestError::MissingPath)
-    );
-
-    let traversal = parse_prelay_manifest(
-        br#"{"schema": 2, "artifacts": [{"kind": "mcp", "path": "../server.json"}]}"#,
-    )
-    .expect("parse traversal manifest");
-    assert_eq!(
-        classify_manifest(&traversal, &paths),
-        Err(ManifestError::InvalidPath)
-    );
-
-    let empty = parse_prelay_manifest(
-        br#"{"schema": 2, "artifacts": [{"kind": "skill", "include": ["skills/a/notes.txt"]}]}"#,
-    )
-    .expect("parse empty manifest");
-    assert_eq!(
-        classify_manifest(&empty, &paths),
-        Err(ManifestError::EmptyArtifact)
-    );
-
-    let duplicate = parse_prelay_manifest(
-        br#"{
-          "schema": 2,
-          "artifacts": [
-            { "kind": "skill", "include": ["skills/"] },
-            { "kind": "skill", "path": "skills/a/SKILL.md" }
-          ]
-        }"#,
-    )
-    .expect("parse duplicate manifest");
-    assert_eq!(
-        classify_manifest(&duplicate, &paths),
-        Err(ManifestError::DuplicateArtifact)
-    );
-
-    assert_eq!(
-        parse_prelay_manifest(br#"{"schema": 1, "artifacts": []}"#).unwrap_err(),
-        ManifestError::InvalidSchema
-    );
+    let with_skill = classify_paths(&["skills/a/SKILL.md", "hooks/hooks.json"]).unwrap();
+    assert_eq!(with_skill.artifacts.len(), 2);
+    assert_eq!(with_skill.artifacts[0].kind, ExtensionKind::Skill);
+    assert_eq!(with_skill.artifacts[1].kind, ExtensionKind::Hook);
+    assert_eq!(with_skill.artifacts[1].paths, vec!["hooks/hooks.json"]);
 }
 
 #[test]

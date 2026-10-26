@@ -75,12 +75,14 @@ impl GiteaClient {
                 &[("recursive", "true")],
             )
             .await?;
-        Ok(tree
+        let mut paths = tree
             .tree
             .into_iter()
             .filter(|entry| entry.kind == "blob")
             .map(|entry| entry.path)
-            .collect())
+            .collect::<Vec<_>>();
+        paths.sort();
+        Ok(paths)
     }
 
     pub(super) async fn read_file(

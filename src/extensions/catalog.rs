@@ -11,7 +11,7 @@ use anyhow::Result;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use prelay_protocol::{
     CatalogKind, ExtensionArtifact, ExtensionFile, ExtensionInstallBundle, ExtensionKind,
-    ExtensionMcpManifest, ExtensionSummary, ExtensionVersion,
+    ExtensionMcpManifest, ExtensionSummary, ExtensionVersion, HOOKS_MANIFEST_PATH,
 };
 use tokio::sync::{Mutex, RwLock};
 
@@ -20,8 +20,8 @@ use super::{
     gitea::{GiteaClient, GiteaFileError},
     mcp::validate_mcp_manifest,
     package::{
-        classify_manifest, classify_paths, parse_prelay_manifest, valid_extension_file_path,
-        valid_repository_name, versions_from_tags, ClassifiedPackage, PRELAY_MANIFEST_PATH,
+        classify_paths, valid_extension_file_path, valid_repository_name, versions_from_tags,
+        ClassifiedPackage,
     },
 };
 
@@ -161,7 +161,7 @@ impl ExtensionCatalog {
             .await
             .map_err(|_| CatalogError::Unavailable)?;
         let classification = self
-            .classify_version(repository, &version.commit_sha, &paths)
+            .classify_version(&paths)
             .await?
             .ok_or(CatalogError::VersionNotFound)?;
         let mut artifacts = Vec::with_capacity(classification.artifacts.len());
@@ -176,6 +176,7 @@ impl ExtensionCatalog {
                     return Err(CatalogError::ContentInvalid);
                 }
                 if artifact.kind == ExtensionKind::Hook
+                    && path == HOOKS_MANIFEST_PATH
                     && serde_json::from_slice::<serde_json::Value>(&content).is_err()
                 {
                     return Err(CatalogError::ContentInvalid);
@@ -287,10 +288,7 @@ impl ExtensionCatalog {
                 .gitea
                 .tree_paths(&repository, &latest.commit_sha)
                 .await?;
-            let classification = match self
-                .classify_version(&repository, &latest.commit_sha, &paths)
-                .await
-            {
+            let classification = match self.classify_version(&paths).await {
                 Ok(Some(classification)) => classification,
                 Ok(None) => continue,
                 Err(error) => {
@@ -324,21 +322,9 @@ impl ExtensionCatalog {
 
     async fn classify_version(
         &self,
-        repository: &str,
-        commit_sha: &str,
         paths: &[String],
     ) -> Result<Option<ClassifiedPackage>, CatalogError> {
         let path_refs = paths.iter().map(String::as_str).collect::<Vec<_>>();
-        if paths.iter().any(|path| path == PRELAY_MANIFEST_PATH) {
-            let content = self
-                .file(repository, commit_sha, PRELAY_MANIFEST_PATH)
-                .await?;
-            let manifest =
-                parse_prelay_manifest(&content).map_err(|_| CatalogError::ContentInvalid)?;
-            return classify_manifest(&manifest, &path_refs)
-                .map(Some)
-                .map_err(|_| CatalogError::ContentInvalid);
-        }
         Ok(classify_paths(&path_refs))
     }
 
@@ -371,7 +357,8 @@ impl ExtensionCatalog {
 
 fn requires_utf8_content(kind: ExtensionKind, path: &str) -> bool {
     match kind {
-        ExtensionKind::Rule | ExtensionKind::Mcp | ExtensionKind::Hook => true,
+        ExtensionKind::Rule | ExtensionKind::Mcp => true,
+        ExtensionKind::Hook => path == HOOKS_MANIFEST_PATH,
         ExtensionKind::Skill => path.ends_with("/SKILL.md"),
         ExtensionKind::Unknown => false,
     }
