@@ -72,6 +72,7 @@ pub(super) async fn record_upstream_failure(
         protocol_upstream: protocol_upstream.to_string(),
         provider_id: provider.id.clone(),
         provider_name: provider.name.clone(),
+        provider_type: provider.provider_type.clone(),
         endpoint_name: context.endpoint_name.clone(),
         model_requested: context.model_requested.clone(),
         model_upstream: model_upstream.to_string(),

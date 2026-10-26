@@ -15,6 +15,7 @@ pub struct ActivityInsert {
     pub endpoint_name: String,
     pub provider_id: String,
     pub provider_name: String,
+    pub provider_type: String,
     pub model_requested: String,
     pub model_upstream: String,
     pub status: String,

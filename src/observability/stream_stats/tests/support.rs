@@ -48,6 +48,7 @@ pub(super) fn test_log() -> ActivityInsert {
         endpoint_name: String::new(),
         provider_id: "provider-1".to_string(),
         provider_name: "DeepSeek".to_string(),
+        provider_type: "deepseek".to_string(),
         model_requested: "coder".to_string(),
         model_upstream: "deepseek-chat".to_string(),
         status: "success".to_string(),

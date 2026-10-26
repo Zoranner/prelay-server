@@ -22,6 +22,7 @@ async fn management_timeline_supports_daily_granularity() {
                 endpoint_name: "Daily endpoint".to_string(),
                 provider_id: "provider-daily".to_string(),
                 provider_name: "Provider Daily".to_string(),
+                provider_type: "deepseek".to_string(),
                 model_requested: "deepseek-v4-flash".to_string(),
                 model_upstream: "deepseek-v4-flash".to_string(),
                 status: "success".to_string(),

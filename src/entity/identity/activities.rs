@@ -13,6 +13,7 @@ pub struct Model {
     pub endpoint_name: Option<String>,
     pub provider_id: Option<String>,
     pub provider_name: Option<String>,
+    pub provider_type: Option<String>,
     pub model_requested: Option<String>,
     pub model_upstream: Option<String>,
     pub proxy_token_id: Option<String>,

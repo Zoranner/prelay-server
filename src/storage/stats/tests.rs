@@ -262,6 +262,7 @@ pub(super) fn test_log(input_tokens: Option<i64>, output_tokens: Option<i64>) ->
         endpoint_name: String::new(),
         provider_id: "provider-1".to_string(),
         provider_name: "Provider One".to_string(),
+        provider_type: "deepseek".to_string(),
         model_requested: "model-1".to_string(),
         model_upstream: "model-1".to_string(),
         status: "success".to_string(),

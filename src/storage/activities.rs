@@ -87,6 +87,7 @@ where
         endpoint_name: Set(Some(log.endpoint_name)),
         provider_id: Set(Some(log.provider_id)),
         provider_name: Set(Some(log.provider_name)),
+        provider_type: Set(Some(log.provider_type)),
         model_requested: Set(Some(log.model_requested)),
         model_upstream: Set(Some(log.model_upstream)),
         proxy_token_id: Set(None),
@@ -307,6 +308,7 @@ mod tests {
             .expect("load stream log");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].identity_id, identity);
+        assert_eq!(rows[0].provider_type.as_deref(), Some("deepseek"));
         assert_eq!(rows[0].input_tokens, Some(11));
         assert_eq!(rows[0].output_tokens, Some(7));
         assert_eq!(rows[0].latency_ms, Some(80));
@@ -344,6 +346,7 @@ mod tests {
             endpoint_name: String::new(),
             provider_id: "provider-1".to_string(),
             provider_name: "Provider One".to_string(),
+            provider_type: "deepseek".to_string(),
             model_requested: "model-1".to_string(),
             model_upstream: "model-1".to_string(),
             status: "success".to_string(),

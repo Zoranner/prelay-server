@@ -75,6 +75,7 @@ pub async fn initialize(db: &DatabaseConnection) -> Result<(), DbErr> {
     if !has_current_activities && has_legacy_activities {
         manager.rename_legacy_activities().await?;
     }
+    manager.migrate_activity_schema().await?;
     manager.drop_legacy_cost_columns().await?;
     if !has_memories {
         initialize_memory_schema(&manager).await?;
@@ -92,6 +93,7 @@ pub async fn initialize_with_catalog(
 ) -> Result<(), DbErr> {
     initialize(db).await?;
     provider_catalog::apply(db, catalog).await?;
+    backfill_activity_provider_types(db).await?;
     provider_catalog::migrate_provider_models(db, catalog).await?;
     reconciliation::reconcile_protocol_base_urls(db, catalog).await?;
     reconciliation::reconcile_endpoint_models(db, catalog).await
@@ -214,6 +216,15 @@ impl<C: ConnectionTrait> SchemaInitializer<'_, C> {
         Ok(())
     }
 
+    async fn migrate_activity_schema(&self) -> Result<(), DbErr> {
+        if !column_exists(self.db, "identity_activities", "provider_type").await? {
+            self.db
+                .execute_unprepared("ALTER TABLE identity_activities ADD COLUMN provider_type TEXT")
+                .await?;
+        }
+        Ok(())
+    }
+
     async fn provider_table_is_current(&self) -> Result<bool, DbErr> {
         for column in [
             "identity_id",
@@ -294,4 +305,18 @@ impl<C: ConnectionTrait> SchemaInitializer<'_, C> {
         }
         Ok(())
     }
+}
+
+/// 旧活动没有供应商类型：从仍存在的供应商记录按实例 ID 回填。
+/// 供应商记录已删除的活动保持 NULL，统一归入“已删除供应商”。
+pub(crate) async fn backfill_activity_provider_types(db: &DatabaseConnection) -> Result<(), DbErr> {
+    db.execute_unprepared(
+        "UPDATE identity_activities AS activity
+         SET provider_type = provider.provider_type
+         FROM identity_provider_configs AS provider
+         WHERE activity.provider_id = provider.id
+           AND activity.provider_type IS NULL",
+    )
+    .await?;
+    Ok(())
 }

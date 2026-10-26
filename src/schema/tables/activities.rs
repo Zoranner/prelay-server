@@ -20,6 +20,7 @@ pub(in crate::schema) fn statement() -> TableCreateStatement {
         .col(ColumnDef::new(Activities::EndpointName).string())
         .col(ColumnDef::new(Activities::ProviderId).string())
         .col(ColumnDef::new(Activities::ProviderName).string())
+        .col(ColumnDef::new(Activities::ProviderType).string())
         .col(ColumnDef::new(Activities::ModelRequested).string())
         .col(ColumnDef::new(Activities::ModelUpstream).string())
         .col(ColumnDef::new(Activities::ProxyTokenId).string())
@@ -60,6 +61,7 @@ pub(in crate::schema) enum Activities {
     EndpointName,
     ProviderId,
     ProviderName,
+    ProviderType,
     ModelRequested,
     ModelUpstream,
     ProxyTokenId,

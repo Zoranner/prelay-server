@@ -27,6 +27,7 @@ pub(super) fn image_activity(params: ImageActivityParams<'_>) -> ActivityInsert 
         protocol_upstream: IMAGE_GENERATIONS_PROTOCOL.to_string(),
         provider_id: params.provider.id.clone(),
         provider_name: params.provider.name.clone(),
+        provider_type: params.provider.provider_type.clone(),
         endpoint_name: params.access.endpoint_name.clone(),
         model_requested: params.model_requested,
         model_upstream: params.model_upstream,

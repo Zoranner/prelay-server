@@ -127,6 +127,7 @@ pub(super) async fn create_native_response(
                     protocol_upstream: "responses".to_string(),
                     provider_id: provider.id.clone(),
                     provider_name: provider.name.clone(),
+                    provider_type: provider.provider_type.clone(),
                     endpoint_name: context.endpoint_name.clone(),
                     model_requested: context.model_requested.clone(),
                     model_upstream: model_upstream.to_string(),
@@ -197,6 +198,7 @@ pub(super) async fn create_native_response(
             protocol_upstream: "responses".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
+            provider_type: provider.provider_type,
             endpoint_name: context.endpoint_name.clone(),
             model_requested: context.model_requested,
             model_upstream: model_upstream.to_string(),
@@ -316,6 +318,7 @@ pub(super) async fn create_native_response(
                 protocol_upstream: "responses".to_string(),
                 provider_id: provider.id,
                 provider_name: provider.name,
+                provider_type: provider.provider_type,
                 endpoint_name: context.endpoint_name.clone(),
                 model_requested: context.model_requested,
                 model_upstream: response

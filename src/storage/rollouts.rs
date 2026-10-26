@@ -410,6 +410,7 @@ mod tests {
             endpoint_name: "Codex".to_string(),
             provider_id: "provider-1".to_string(),
             provider_name: "DeepSeek".to_string(),
+            provider_type: "deepseek".to_string(),
             model_requested: "deepseek-flash".to_string(),
             model_upstream: "deepseek-chat".to_string(),
             status: "success".to_string(),

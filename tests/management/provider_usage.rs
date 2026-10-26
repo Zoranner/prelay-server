@@ -28,6 +28,7 @@ async fn seed_provider_activity(
                 endpoint_name: "Shared endpoint".to_string(),
                 provider_id: provider_id.to_string(),
                 provider_name: "Shared Provider".to_string(),
+                provider_type: "deepseek".to_string(),
                 model_requested: "shared-model".to_string(),
                 model_upstream: "shared-model".to_string(),
                 status: status.to_string(),

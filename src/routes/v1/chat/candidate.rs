@@ -63,6 +63,7 @@ pub(super) async fn create_chat_completion_with_candidate(
                     protocol_upstream: "chat_completions".to_string(),
                     provider_id: provider.id.clone(),
                     provider_name: provider.name.clone(),
+                    provider_type: provider.provider_type.clone(),
                     endpoint_name: access.endpoint_name.clone(),
                     model_requested: model.clone(),
                     model_upstream: model_upstream.clone(),
@@ -102,6 +103,7 @@ pub(super) async fn create_chat_completion_with_candidate(
             protocol_upstream: "chat_completions".to_string(),
             provider_id: provider.id,
             provider_name: provider.name,
+            provider_type: provider.provider_type,
             endpoint_name: access.endpoint_name.clone(),
             model_requested: model,
             model_upstream,
@@ -174,6 +176,7 @@ pub(super) async fn create_chat_completion_with_candidate(
                 protocol_upstream: "chat_completions".to_string(),
                 provider_id: provider.id,
                 provider_name: provider.name,
+                provider_type: provider.provider_type,
                 endpoint_name: access.endpoint_name.clone(),
                 model_requested: model,
                 model_upstream: response
