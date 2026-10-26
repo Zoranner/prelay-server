@@ -1,3 +1,5 @@
+#[path = "schema/activity_provider_type.rs"]
+mod activity_provider_type;
 #[path = "schema/anthropic_removal.rs"]
 mod anthropic_removal;
 #[path = "schema/contract.rs"]
