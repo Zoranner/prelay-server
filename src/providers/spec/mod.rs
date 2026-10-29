@@ -1,9 +1,11 @@
 mod capabilities;
+mod request_headers;
 mod urls;
 
 pub use capabilities::{
     resolved_upstream_protocols, ProviderCapabilities, ProviderSpec, UpstreamProtocol,
 };
+pub use request_headers::{with_provider_headers, RequestHeaderContext};
 pub use urls::{normalize_upstream_base_url, provider_upstream_base_url};
 
 #[cfg(test)]

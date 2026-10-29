@@ -2,11 +2,15 @@ use prelay_protocol::ProviderOperationResponse;
 
 use crate::{
     error::AppError,
-    providers::spec::{normalize_upstream_base_url, UpstreamProtocol},
+    provider_catalog::CatalogRequestHeader,
+    providers::spec::{
+        normalize_upstream_base_url, with_provider_headers, RequestHeaderContext, UpstreamProtocol,
+    },
 };
 
 pub(crate) async fn run_protocol_test(
     client: &reqwest::Client,
+    request_headers: &[CatalogRequestHeader],
     protocol_value: Option<&str>,
     base_url: &str,
     api_key: &str,
@@ -28,6 +32,7 @@ pub(crate) async fn run_protocol_test(
     let started_at = std::time::Instant::now();
     let response = match send_protocol_test_request(
         client,
+        request_headers,
         upstream_protocol,
         &base_url,
         api_key,
@@ -88,39 +93,50 @@ pub(crate) async fn run_protocol_test(
 
 async fn send_protocol_test_request(
     client: &reqwest::Client,
+    request_headers: &[CatalogRequestHeader],
     protocol: UpstreamProtocol,
     base_url: &str,
     api_key: &str,
     model: &str,
 ) -> Result<Option<reqwest::Response>, reqwest::Error> {
+    let session_id = format!("conv_{}", uuid::Uuid::new_v4().simple());
+    let context = RequestHeaderContext {
+        session_id: Some(&session_id),
+    };
+    let request = |url: String| {
+        with_provider_headers(
+            client.post(url).bearer_auth(api_key),
+            request_headers,
+            &context,
+        )
+    };
+
     match protocol {
-        UpstreamProtocol::Responses => client
-            .post(format!("{}/responses", base_url.trim_end_matches('/')))
-            .bearer_auth(api_key)
-            .json(&serde_json::json!({
-                "model": model,
-                "stream": true,
-                "input": [{ "role": "user", "content": "ping" }],
-                "max_output_tokens": 8
-            }))
-            .send()
-            .await
-            .map(Some),
-        UpstreamProtocol::ChatCompletions => client
-            .post(format!(
-                "{}/chat/completions",
-                base_url.trim_end_matches('/')
-            ))
-            .bearer_auth(api_key)
-            .json(&serde_json::json!({
-                "model": model,
-                "stream": true,
-                "messages": [{ "role": "user", "content": "ping" }],
-                "max_tokens": 8
-            }))
-            .send()
-            .await
-            .map(Some),
+        UpstreamProtocol::Responses => {
+            request(format!("{}/responses", base_url.trim_end_matches('/')))
+                .json(&serde_json::json!({
+                    "model": model,
+                    "stream": true,
+                    "input": [{ "role": "user", "content": "ping" }],
+                    "max_output_tokens": 8
+                }))
+                .send()
+                .await
+                .map(Some)
+        }
+        UpstreamProtocol::ChatCompletions => request(format!(
+            "{}/chat/completions",
+            base_url.trim_end_matches('/')
+        ))
+        .json(&serde_json::json!({
+            "model": model,
+            "stream": true,
+            "messages": [{ "role": "user", "content": "ping" }],
+            "max_tokens": 8
+        }))
+        .send()
+        .await
+        .map(Some),
         UpstreamProtocol::ImageGenerations => Ok(None),
     }
 }
@@ -158,6 +174,7 @@ mod tests {
     async fn rejects_images_generations_protocol_tests_without_contacting_upstream() {
         let error = run_protocol_test(
             &reqwest::Client::new(),
+            &[],
             Some("images_generations"),
             "http://127.0.0.1:1",
             "test-key",
@@ -176,6 +193,7 @@ mod tests {
     async fn rejects_images_generations_protocol_tests_without_a_model() {
         let error = run_protocol_test(
             &reqwest::Client::new(),
+            &[],
             Some("images_generations"),
             "http://127.0.0.1:1",
             "test-key",
@@ -188,5 +206,60 @@ mod tests {
             error,
             AppError::BadRequest(message) if message == "Images Generations 协议不支持连通性测试"
         ));
+    }
+
+    #[tokio::test]
+    async fn applies_provider_request_headers_for_protocol_tests() {
+        use axum::{
+            http::{header::HeaderName, HeaderMap},
+            response::IntoResponse,
+            routing::post,
+            Router,
+        };
+
+        use crate::provider_catalog::{CatalogRequestHeader, CatalogRequestHeaderValue};
+
+        async fn handler(headers: HeaderMap) -> impl IntoResponse {
+            let session_id = headers
+                .get("x-opencode-session")
+                .and_then(|value| value.to_str().ok())
+                .expect("opencode session header");
+            assert!(session_id.starts_with("conv_"), "{session_id}");
+            (
+                [("content-type", "text/event-stream")],
+                "data: {\"type\":\"response.completed\"}\n\n",
+            )
+        }
+
+        let app = Router::new()
+            .route("/responses", post(handler))
+            .route("/chat/completions", post(handler));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream server");
+        let address = listener.local_addr().expect("read upstream address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve upstream");
+        });
+        let request_headers = [CatalogRequestHeader {
+            name: HeaderName::from_static("x-opencode-session"),
+            value: CatalogRequestHeaderValue::SessionId,
+        }];
+
+        for protocol in ["responses", "openai"] {
+            let response = run_protocol_test(
+                &reqwest::Client::new(),
+                &request_headers,
+                Some(protocol),
+                &format!("http://{address}"),
+                "test-key",
+                Some("gpt-6-luna"),
+            )
+            .await
+            .expect("run protocol test");
+
+            assert!(response.ok, "{protocol}: {:?}", response.error);
+        }
+        server.abort();
     }
 }

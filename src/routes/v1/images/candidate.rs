@@ -17,7 +17,7 @@ use crate::{
         stream_stats::{record_first_chunk_with_rollout_best_effort, StreamRollout},
         upstream_observability::upstream_observability,
     },
-    providers::spec::provider_upstream_base_url,
+    providers::spec::{provider_upstream_base_url, with_provider_headers, RequestHeaderContext},
     routes::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
     AppState,
 };
@@ -44,10 +44,20 @@ pub(super) async fn create_image_generation_with_candidate(
     );
     let upstream_started_at = std::time::Instant::now();
     let client = state.provider_client(&provider.provider_type)?;
-    let upstream_request = client
-        .post(upstream_url)
-        .bearer_auth(&provider.api_key)
-        .json(&payload);
+    let session_id = access
+        .session_id
+        .clone()
+        .unwrap_or_else(|| format!("conv_{}", uuid::Uuid::new_v4().simple()));
+    let upstream_request = with_provider_headers(
+        client.post(upstream_url).bearer_auth(&provider.api_key),
+        state
+            .provider_catalog
+            .provider_request_headers(&provider.provider_type),
+        &RequestHeaderContext {
+            session_id: Some(&session_id),
+        },
+    )
+    .json(&payload);
     let mut upstream_response =
         match crate::upstream::send_with_timeout(crate::upstream::policy(), upstream_request).await
         {

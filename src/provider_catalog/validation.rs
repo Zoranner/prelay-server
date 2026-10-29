@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, HashSet};
 
+use axum::http::header::{HeaderName, HeaderValue, AUTHORIZATION, PROXY_AUTHORIZATION};
+
 use super::{
-    ProviderCatalogError, ProviderProtocol, RawImageGenerationModel, RawLanguageModel, RawProvider,
+    CatalogRequestHeader, CatalogRequestHeaderValue, ProviderCatalogError, ProviderProtocol,
+    RawImageGenerationModel, RawLanguageModel, RawProvider, RawRequestHeaderValue,
     INPUT_MODALITIES, OUTPUT_MODALITIES, REASONING_EFFORTS,
 };
 
@@ -238,6 +241,48 @@ pub(super) fn validate_provider_model_references<T>(
         }
     }
     Ok(())
+}
+
+pub(super) fn validate_request_headers(
+    provider_id: &str,
+    provider: &RawProvider,
+) -> Result<Vec<CatalogRequestHeader>, ProviderCatalogError> {
+    let mut headers = Vec::with_capacity(provider.request_headers.len());
+    let mut names = HashSet::new();
+    for (raw_name, raw_value) in &provider.request_headers {
+        let name = HeaderName::from_bytes(raw_name.trim().as_bytes()).map_err(|_| {
+            ProviderCatalogError(format!("供应商 {provider_id} 的请求头名称无效: {raw_name}"))
+        })?;
+        if name == AUTHORIZATION || name == PROXY_AUTHORIZATION {
+            return Err(ProviderCatalogError(format!(
+                "供应商 {provider_id} 的认证头 {name} 必须由 auth_scheme 管理"
+            )));
+        }
+        if !names.insert(name.clone()) {
+            return Err(ProviderCatalogError(format!(
+                "供应商 {provider_id} 重复声明请求头 {name}"
+            )));
+        }
+        let value = match raw_value {
+            RawRequestHeaderValue::Literal(value) => {
+                let value = required_value("请求头值", value)?;
+                HeaderValue::from_bytes(value.as_bytes()).map_err(|_| {
+                    ProviderCatalogError(format!("供应商 {provider_id} 的请求头 {name} 值无效"))
+                })?;
+                CatalogRequestHeaderValue::Literal(value)
+            }
+            RawRequestHeaderValue::Source(source) => match source.source.trim() {
+                "session_id" => CatalogRequestHeaderValue::SessionId,
+                other => {
+                    return Err(ProviderCatalogError(format!(
+                        "供应商 {provider_id} 的请求头 {name} 来源无效: {other}"
+                    )));
+                }
+            },
+        };
+        headers.push(CatalogRequestHeader { name, value });
+    }
+    Ok(headers)
 }
 
 pub(super) fn validate_upstream_model_names(

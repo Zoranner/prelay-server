@@ -243,6 +243,9 @@ async fn test_protocol(
     Ok(Json(
         run_protocol_test(
             &state.provider_client(&input.provider_type)?,
+            state
+                .provider_catalog
+                .provider_request_headers(&input.provider_type),
             input.protocol.as_deref(),
             &input.base_url,
             &input.api_key,
@@ -272,6 +275,9 @@ async fn test_protocol_for_provider(
     Ok(Json(
         run_protocol_test(
             &state.provider_client(&provider.provider.provider_type)?,
+            state
+                .provider_catalog
+                .provider_request_headers(&provider.provider.provider_type),
             Some(&input.protocol),
             &provider.provider.base_url,
             &api_key,

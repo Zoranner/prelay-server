@@ -23,7 +23,10 @@ use crate::{
     },
     providers::{
         chat_completions::{decode_chat_response, encode_chat_request},
-        spec::{provider_upstream_base_url, UpstreamProtocol},
+        spec::{
+            provider_upstream_base_url, with_provider_headers, RequestHeaderContext,
+            UpstreamProtocol,
+        },
     },
     stats::ActivityInsert,
     storage::ResponseSessionInsert,
@@ -50,6 +53,7 @@ pub(super) async fn create_chat_response(
         model_requested,
         is_streaming,
         conversation_id,
+        session_id,
         started_at,
     } = context;
     let failure_context = ResponseBridgeContext {
@@ -58,6 +62,7 @@ pub(super) async fn create_chat_response(
         model_requested: model_requested.clone(),
         is_streaming,
         conversation_id: conversation_id.clone(),
+        session_id: session_id.clone(),
         started_at,
     };
     let request = request_with_session_history(&state.storage, &identity_id, request).await?;
@@ -69,10 +74,16 @@ pub(super) async fn create_chat_response(
     );
     let upstream_started_at = std::time::Instant::now();
     let client = state.provider_client(&provider.provider_type)?;
-    let request_builder = client
-        .post(upstream_url)
-        .bearer_auth(&provider.api_key)
-        .json(&encode_chat_request(&request));
+    let request_builder = with_provider_headers(
+        client.post(upstream_url).bearer_auth(&provider.api_key),
+        state
+            .provider_catalog
+            .provider_request_headers(&provider.provider_type),
+        &RequestHeaderContext {
+            session_id: Some(&session_id),
+        },
+    )
+    .json(&encode_chat_request(&request));
     let upstream_response = match crate::upstream::send_with_timeout(
         crate::upstream::policy(),
         request_builder,

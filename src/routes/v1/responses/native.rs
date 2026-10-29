@@ -18,7 +18,9 @@ use crate::{
         stream_stats::{record_stream_with_rollout, StreamRecording, StreamRollout, StreamSession},
         upstream_observability::upstream_failure_message,
     },
-    providers::spec::{provider_upstream_base_url, UpstreamProtocol},
+    providers::spec::{
+        provider_upstream_base_url, with_provider_headers, RequestHeaderContext, UpstreamProtocol,
+    },
     stats::ActivityInsert,
     storage::ResponseSessionInsert,
     AppState,
@@ -81,11 +83,19 @@ pub(super) async fn create_native_response(
     };
     let upstream_request_body =
         crate::providers::responses::encode_native_responses_request_body(payload, model_upstream);
-    let upstream_request = client
-        .post(upstream_url)
-        .bearer_auth(&provider.api_key)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(upstream_request_body);
+    let upstream_request = with_provider_headers(
+        client
+            .post(upstream_url)
+            .bearer_auth(&provider.api_key)
+            .header(header::CONTENT_TYPE, "application/json"),
+        state
+            .provider_catalog
+            .provider_request_headers(&provider.provider_type),
+        &RequestHeaderContext {
+            session_id: Some(&context.session_id),
+        },
+    )
+    .body(upstream_request_body);
     let upstream_response =
         match crate::upstream::send_with_timeout(crate::upstream::policy(), upstream_request).await
         {

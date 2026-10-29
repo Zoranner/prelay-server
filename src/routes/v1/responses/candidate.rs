@@ -19,6 +19,7 @@ pub(super) struct ResponseBridgeContext {
     pub(super) model_requested: String,
     pub(super) is_streaming: bool,
     pub(super) conversation_id: String,
+    pub(super) session_id: String,
     pub(super) started_at: std::time::Instant,
 }
 
@@ -40,12 +41,17 @@ pub(super) async fn create_response_with_candidate(
     let provider = resolved.provider;
     let upstream_protocol = resolved.upstream_protocol;
     let model_upstream = resolved.model_upstream;
+    let session_id = access
+        .session_id
+        .clone()
+        .unwrap_or_else(|| conversation_id.clone());
     let context = ResponseBridgeContext {
         identity_id: access.identity_id.clone(),
         endpoint_name: access.endpoint_name.clone(),
         model_requested,
         is_streaming,
         conversation_id,
+        session_id,
         started_at,
     };
 

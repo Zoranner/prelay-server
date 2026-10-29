@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use axum::http::header::HeaderName;
 use prelay_protocol::{
     CatalogImageGenerationModelResponse, CatalogLanguageModelResponse, CatalogProviderResponse,
     ProviderAuthScheme, ProviderCatalogResponse, ProviderProtocol,
@@ -87,11 +88,26 @@ pub struct CatalogProvider {
     pub base_url: String,
     pub protocols: Vec<ProviderProtocol>,
     pub protocol_base_urls: Vec<(ProviderProtocol, String)>,
+    /// 追加到上游推理请求的静态或会话头；值来源由目录声明。
+    pub request_headers: Vec<CatalogRequestHeader>,
     pub language_models: Vec<String>,
     pub image_generation_models: Vec<String>,
     pub upstream_model_names: BTreeMap<String, String>,
     /// 访问该供应商上游时使用的代理地址；缺省表示直连。
     pub proxy_url: Option<String>,
+}
+
+/// 目录声明的上游请求头；值只允许非敏感静态值或当前请求的会话 ID。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogRequestHeader {
+    pub name: HeaderName,
+    pub value: CatalogRequestHeaderValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CatalogRequestHeaderValue {
+    Literal(String),
+    SessionId,
 }
 
 #[derive(Debug)]
@@ -164,6 +180,8 @@ pub(super) struct RawProvider {
     #[serde(default)]
     pub(super) protocol_base_urls: BTreeMap<String, String>,
     #[serde(default)]
+    pub(super) request_headers: BTreeMap<String, RawRequestHeaderValue>,
+    #[serde(default)]
     pub(super) language_models: Vec<String>,
     #[serde(default)]
     pub(super) image_generation_models: Vec<String>,
@@ -171,6 +189,19 @@ pub(super) struct RawProvider {
     pub(super) upstream_model_names: BTreeMap<String, String>,
     #[serde(default)]
     pub(super) proxy_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub(super) enum RawRequestHeaderValue {
+    Literal(String),
+    Source(RawRequestHeaderSource),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawRequestHeaderSource {
+    pub(super) source: String,
 }
 
 impl ProviderCatalog {
@@ -225,6 +256,13 @@ impl ProviderCatalog {
     pub fn provider_proxy_url(&self, provider_id: &str) -> Option<&str> {
         self.provider(provider_id)
             .and_then(|provider| provider.proxy_url.as_deref())
+    }
+
+    /// 供应商目录声明的上游请求头；未声明时返回空切片。
+    pub fn provider_request_headers(&self, provider_id: &str) -> &[CatalogRequestHeader] {
+        self.provider(provider_id)
+            .map(|provider| provider.request_headers.as_slice())
+            .unwrap_or(&[])
     }
 
     pub fn provider_supports_language_model(&self, provider_id: &str, model_id: &str) -> bool {

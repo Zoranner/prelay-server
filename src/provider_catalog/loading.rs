@@ -164,6 +164,7 @@ pub(super) fn load_providers(
         validation::validate_protocols(&id, &provider.protocols)?;
         let protocol_base_urls =
             validation::validate_protocol_base_urls(&id, &provider, &base_url)?;
+        let request_headers = validation::validate_request_headers(&id, &provider)?;
         validation::validate_provider_model_references(
             &id,
             "语言模型",
@@ -199,6 +200,7 @@ pub(super) fn load_providers(
                 base_url,
                 protocols: provider.protocols,
                 protocol_base_urls,
+                request_headers,
                 language_models: provider.language_models,
                 image_generation_models: provider.image_generation_models,
                 upstream_model_names,
