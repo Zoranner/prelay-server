@@ -1,4 +1,7 @@
 use super::*;
+use std::{path::Path, sync::Arc};
+
+use crate::provider_catalog::ProviderCatalog;
 
 #[tokio::test]
 async fn forwards_chat_completion_request_to_configured_upstream() {
@@ -145,5 +148,41 @@ async fn forwards_chat_completion_to_protocol_specific_base_url() {
     assert_eq!(
         body["choices"][0]["message"]["content"],
         "chat upstream hello"
+    );
+}
+
+#[tokio::test]
+async fn forwards_configured_request_headers() {
+    let upstream = spawn_opencode_go_chat_upstream().await;
+    let mut state = test_state().await;
+    let catalog_directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/catalog");
+    state.provider_catalog = Arc::new(
+        ProviderCatalog::load(&catalog_directory).expect("load deployment provider catalog"),
+    );
+    let provider = test_provider("OpenCode Go", "opencode_go", &upstream, "sk-upstream")
+        .await
+        .expect("create provider");
+    let mut auth =
+        create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+            .await;
+    auth.access.0.session_id = Some("ses_test_123".to_string());
+
+    let response = create_chat_completion(
+        State(state),
+        auth.access,
+        axum::Json(json!({
+            "model": "deepseek-chat",
+            "messages": [
+                { "role": "user", "content": "hello" }
+            ]
+        })),
+    )
+    .await
+    .expect("create chat completion");
+    let body = response_json(response).await;
+
+    assert_eq!(
+        body["choices"][0]["message"]["content"],
+        "opencode go hello"
     );
 }

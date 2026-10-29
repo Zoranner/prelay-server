@@ -1,4 +1,5 @@
 use super::*;
+use axum::http::HeaderMap;
 
 pub(super) async fn spawn_chat_upstream() -> String {
     async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
@@ -213,6 +214,42 @@ pub(super) async fn spawn_alias_chat_upstream() -> String {
                     "message": {
                         "role": "assistant",
                         "content": "alias accepted"
+                    }
+                }
+            ]
+        }))
+    }
+
+    let app = Router::new().route("/chat/completions", post(handler));
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind upstream");
+    let addr = listener.local_addr().expect("upstream addr");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve upstream");
+    });
+    format!("http://{addr}")
+}
+
+pub(super) async fn spawn_opencode_go_chat_upstream() -> String {
+    async fn handler(
+        headers: HeaderMap,
+        Json(payload): Json<serde_json::Value>,
+    ) -> Json<serde_json::Value> {
+        assert_eq!(
+            headers
+                .get("x-opencode-session")
+                .and_then(|value| value.to_str().ok()),
+            Some("ses_test_123")
+        );
+        Json(json!({
+            "id": "chatcmpl_opencode",
+            "model": payload["model"],
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "opencode go hello"
                     }
                 }
             ]

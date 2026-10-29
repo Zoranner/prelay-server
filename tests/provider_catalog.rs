@@ -82,6 +82,65 @@ fn deployment_catalog_excludes_retired_claude_models() {
 }
 
 #[test]
+fn deployment_catalog_configures_opencode_go() {
+    let catalog =
+        ProviderCatalog::load(Path::new("config/catalog")).expect("load deployment catalog");
+    let provider = catalog
+        .provider("opencode_go")
+        .expect("OpenCode Go provider");
+
+    assert_eq!(provider.name, "OpenCode Go");
+    assert_eq!(
+        provider.base_url,
+        "https://opencode.ai/inference/go/openai/v1"
+    );
+    assert_eq!(
+        provider.protocols,
+        vec![
+            ProviderProtocol::ChatCompletions,
+            ProviderProtocol::Responses,
+        ]
+    );
+    assert_eq!(provider.request_headers.len(), 1);
+    assert_eq!(
+        provider.request_headers[0].name.as_str(),
+        "x-opencode-session"
+    );
+    assert_eq!(
+        provider.request_headers[0].value,
+        CatalogRequestHeaderValue::SessionId
+    );
+    assert_eq!(catalog.provider_request_headers("opencode_go").len(), 1);
+    assert!(catalog.provider_request_headers("deepseek").is_empty());
+    assert_eq!(
+        provider.language_models,
+        vec![
+            "gpt-6-luna",
+            "deepseek-flash",
+            "deepseek-v4-pro",
+            "qwen3.8-max",
+            "qwen3.8-flash",
+            "k3",
+            "glm-5.3",
+            "glm-5.3-flash",
+            "MiniMax-M3",
+        ]
+    );
+    assert_eq!(
+        catalog.provider_upstream_model("opencode_go", "deepseek-flash"),
+        "deepseek-v4.1-flash"
+    );
+    assert_eq!(
+        catalog.provider_upstream_model("opencode_go", "k3"),
+        "kimi-k3"
+    );
+    assert_eq!(
+        catalog.provider_upstream_model("opencode_go", "MiniMax-M3"),
+        "minimax-m3"
+    );
+}
+
+#[test]
 fn loads_typed_models_and_ordered_provider_protocols() {
     let directory = write_catalog(
         "",

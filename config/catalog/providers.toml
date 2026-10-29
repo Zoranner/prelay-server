@@ -102,3 +102,30 @@ k3 = "moonshotai/Kimi-K3"
 "glm-5.3" = "zai-org/GLM-5.3"
 "glm-5.3-flash" = "z-ai/glm-5.3-flash"
 MiniMax-M3 = "MiniMaxAI/MiniMax-M3"
+
+[[providers]]
+id = "opencode_go"
+name = "OpenCode Go"
+auth_scheme = "bearer"
+base_url = "https://opencode.ai/inference/go/openai/v1"
+protocols = ["chat_completions", "responses"]
+language_models = [
+  "gpt-6-luna",
+  "deepseek-flash",
+  "deepseek-v4-pro",
+  "qwen3.8-max",
+  "qwen3.8-flash",
+  "k3",
+  "glm-5.3",
+  "glm-5.3-flash",
+  "MiniMax-M3",
+]
+
+# 通用上游请求头：literal 为静态值，source = "session_id" 使用当前会话 ID。
+[providers.request_headers]
+x-opencode-session = { source = "session_id" }
+
+[providers.upstream_model_names]
+deepseek-flash = "deepseek-v4.1-flash"
+k3 = "kimi-k3"
+MiniMax-M3 = "minimax-m3"
