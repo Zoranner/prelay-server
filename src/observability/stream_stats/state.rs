@@ -8,9 +8,9 @@ use crate::{
     domain::activity::{
         events::{events_from_stream_capture, events_from_stream_snapshot},
         ActivityStore, ErrorEvent, RawStreamContentCapture, RolloutEventBody, RolloutStatus,
-        RolloutWriter,
     },
     domain::stats::{ActivityInsert, StreamActivityUpdate},
+    store::rollout::RolloutWriter,
     store::storage::StorageError,
 };
 

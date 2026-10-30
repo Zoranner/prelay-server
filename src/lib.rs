@@ -140,7 +140,7 @@ pub mod test_support {
         let storage = test_storage().await;
         let activity_store = crate::domain::activity::ActivityStore::new(
             storage.clone(),
-            crate::domain::activity::rollout::RolloutStore::new(
+            crate::store::rollout::RolloutStore::new(
                 std::env::temp_dir().join(format!("prelay-rollout-test-{}", uuid::Uuid::new_v4())),
             ),
         );

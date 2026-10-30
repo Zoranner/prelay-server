@@ -3,14 +3,12 @@ use std::{fmt, io};
 use serde::Serialize;
 
 mod event;
-mod store;
 
 pub use event::{
     ErrorEvent, EventPhase, MediaEvent, MessageEvent, ReasoningEvent, RolloutEvent,
     RolloutEventBody, SessionEndEvent, SessionMetaEvent, ToolCallEvent, ToolResultEvent,
     UsageEvent, WindowStartEvent,
 };
-pub use store::{RolloutFile, RolloutSlice, RolloutStore, RolloutWriter};
 
 pub const DEFAULT_ACTIVITY_ROLLOUT_DIR: &str = "data/sessions";
 
@@ -125,11 +123,3 @@ pub struct RolloutSummary {
     pub byte_size: u64,
     pub sha256: String,
 }
-
-#[cfg(test)]
-#[path = "rollout_tests.rs"]
-mod tests;
-
-#[cfg(test)]
-#[path = "rollout_thread_tests.rs"]
-mod thread_tests;

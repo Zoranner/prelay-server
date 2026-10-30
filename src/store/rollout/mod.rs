@@ -17,9 +17,9 @@ mod support;
 
 use self::read::{completed_contents, parse_events, valid_prefix};
 use self::support::{common_prefix_len, event_parts, is_safe_path_segment, last_window_generation};
-use super::{
-    event::{RolloutEvent, RolloutEventBody, SessionMetaEvent, WindowStartEvent},
-    RolloutError, RolloutStatus, RolloutSummary, SessionContext, DEFAULT_ACTIVITY_ROLLOUT_DIR,
+use crate::domain::activity::rollout::{
+    RolloutError, RolloutEvent, RolloutEventBody, RolloutStatus, RolloutSummary, SessionContext,
+    SessionMetaEvent, WindowStartEvent, DEFAULT_ACTIVITY_ROLLOUT_DIR,
 };
 
 #[derive(Debug, Clone)]
@@ -314,3 +314,9 @@ impl RolloutWriter {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+mod thread_tests;

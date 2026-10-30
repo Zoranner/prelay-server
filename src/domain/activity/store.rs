@@ -4,12 +4,15 @@ use uuid::Uuid;
 
 use crate::{
     domain::activity::{
-        rollout::{RolloutStatus, RolloutStore, RolloutWriter, SessionContext, SessionMetaEvent},
+        rollout::{RolloutStatus, SessionContext, SessionMetaEvent},
         ErrorEvent, RolloutEventBody,
     },
     domain::stats::ActivityInsert,
-    store::storage::{
-        InterruptedRollout, RecoveredRollout, ResponseSessionInsert, Storage, StorageError,
+    store::{
+        rollout::{RolloutStore, RolloutWriter},
+        storage::{
+            InterruptedRollout, RecoveredRollout, ResponseSessionInsert, Storage, StorageError,
+        },
     },
 };
 

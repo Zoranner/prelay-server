@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use super::RolloutEvent;
+use crate::domain::activity::rollout::RolloutEvent;
 use crate::domain::activity::{
     redaction::redact_json_value,
     rollout::{RolloutError, RolloutEventBody},

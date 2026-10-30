@@ -4,11 +4,10 @@ use prelay_server::{
     codec::internal::{
         InternalContentPart, InternalMessage, InternalOutputItem, InternalResponse, InternalRole,
     },
-    domain::activity::{
-        ActivityStore, EventPhase, MessageEvent, RolloutEventBody, RolloutStore, SessionContext,
-    },
+    domain::activity::{ActivityStore, EventPhase, MessageEvent, RolloutEventBody, SessionContext},
     domain::identity::credential::generate_credential,
     domain::stats::ActivityInsert,
+    store::rollout::RolloutStore,
     store::storage::{ResponseSessionInsert, Storage, StorageError},
 };
 

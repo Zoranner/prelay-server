@@ -19,7 +19,7 @@ pub async fn test_context() -> TestContext {
 
 pub async fn test_context_with_catalog(provider_catalog: ProviderCatalog) -> TestContext {
     let storage = crate::support::test_storage().await;
-    let rollout_store = prelay_server::domain::activity::rollout::RolloutStore::new(
+    let rollout_store = prelay_server::store::rollout::RolloutStore::new(
         std::env::temp_dir().join(format!("prelay-rollout-test-{}", uuid::Uuid::new_v4())),
     );
     let activity_store = prelay_server::domain::activity::ActivityStore::new(

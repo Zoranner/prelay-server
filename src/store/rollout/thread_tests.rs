@@ -1,8 +1,9 @@
 use serde_json::json;
 
-use super::{
-    EventPhase, MessageEvent, RolloutEventBody, RolloutStatus, RolloutStore, SessionContext,
-    SessionMetaEvent,
+use super::RolloutStore;
+use crate::domain::activity::rollout::RolloutStatus;
+use crate::domain::activity::{
+    EventPhase, MessageEvent, RolloutEventBody, SessionContext, SessionMetaEvent,
 };
 
 fn test_meta(activity_id: &str, session_id: &str) -> SessionMetaEvent {
