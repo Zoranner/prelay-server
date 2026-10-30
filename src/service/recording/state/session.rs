@@ -5,8 +5,8 @@ use crate::{
             InternalContentPart, InternalOutputItem, InternalResponse, InternalRole, InternalUsage,
         },
     },
-    domain::activity::ActivityStore,
-    observability::stream_stats::options::StreamSession,
+    service::activity::ActivityStore,
+    service::recording::options::StreamSession,
     store::storage::ResponseSessionInsert,
 };
 
@@ -93,7 +93,7 @@ mod tests {
             },
             internal::{InternalContentPart, InternalOutputItem, InternalRole},
         },
-        observability::stream_stats::options::StreamSession,
+        service::recording::options::StreamSession,
     };
 
     fn completed_snapshot() -> StreamStatsSnapshot {

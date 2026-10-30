@@ -11,7 +11,7 @@ use crate::{
         internal::{InternalContentPart, InternalMessage, InternalRole},
     },
     domain::activity::SessionContext,
-    observability::stream_stats::{
+    service::recording::{
         record_stream_with_rollout, StreamRecording, StreamRollout, StreamSession,
     },
 };

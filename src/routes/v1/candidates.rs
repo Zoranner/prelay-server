@@ -1,8 +1,8 @@
 use std::future::Future;
 
 use crate::{
-    error::AppError, failover::FailoverRegistry,
-    routes::v1::endpoint_resolver::ResolvedEndpointProvider, upstream::retry_with_policy,
+    error::AppError, routes::v1::endpoint_resolver::ResolvedEndpointProvider,
+    service::failover::FailoverRegistry, upstream::retry_with_policy,
 };
 
 pub(super) async fn run_endpoint_model_candidates<T, F, Fut>(
@@ -29,7 +29,7 @@ where
                 return Ok((response, provider_id));
             }
             Err(error) if error.is_failoverable_upstream() => {
-                if let Some(base) = crate::failover::rest_base(&error) {
+                if let Some(base) = crate::service::failover::rest_base(&error) {
                     failover.rest(&provider_id, base);
                 }
                 last_upstream_error = Some(error);
@@ -57,8 +57,8 @@ mod tests {
     use super::run_endpoint_model_candidates;
     use crate::{
         codec::providers::spec::UpstreamProtocol, domain::registry::ProviderConfig,
-        error::AppError, failover::FailoverRegistry,
-        routes::v1::endpoint_resolver::ResolvedEndpointProvider,
+        error::AppError, routes::v1::endpoint_resolver::ResolvedEndpointProvider,
+        service::failover::FailoverRegistry,
     };
     use axum::http::StatusCode;
     use std::sync::{Arc, Mutex};

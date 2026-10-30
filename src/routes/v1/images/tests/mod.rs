@@ -57,7 +57,7 @@ async fn test_state_with_connection() -> (AppState, DatabaseConnection) {
         connection.clone(),
         crate::store::storage::MasterKey::from_bytes([0; 32]),
     );
-    let activity_store = crate::domain::activity::ActivityStore::new(
+    let activity_store = crate::service::activity::ActivityStore::new(
         storage.clone(),
         crate::store::rollout::RolloutStore::new(
             std::env::temp_dir().join(format!("prelay-rollout-test-{}", uuid::Uuid::new_v4())),

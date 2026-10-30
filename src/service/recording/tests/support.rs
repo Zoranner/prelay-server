@@ -6,7 +6,7 @@ use crate::{
     store::storage::Storage,
 };
 
-pub(super) async fn test_storage() -> (Storage, String, crate::domain::activity::ActivityStore) {
+pub(super) async fn test_storage() -> (Storage, String, crate::service::activity::ActivityStore) {
     let state = crate::test_support::test_state().await;
     let storage = state.storage;
     let identity = storage

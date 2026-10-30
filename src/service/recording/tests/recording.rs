@@ -10,7 +10,7 @@ use crate::{
         InternalFinishReason, InternalStreamEvent, StreamStatsSnapshot, StreamUsage,
     },
     domain::activity::{RawStreamContentCapture, RawStreamProtocol, SessionContext},
-    observability::stream_stats::{
+    service::recording::{
         record_first_chunk_with_rollout, record_stream_with_rollout, StreamRecording, StreamRollout,
     },
 };

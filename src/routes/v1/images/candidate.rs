@@ -17,11 +17,11 @@ use crate::{
         SessionContext,
     },
     error::AppError,
-    observability::{
-        stream_stats::{record_first_chunk_with_rollout_best_effort, StreamRollout},
-        upstream_observability::upstream_observability,
-    },
     routes::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
+    service::{
+        recording::{record_first_chunk_with_rollout_best_effort, StreamRollout},
+        upstream_errors::upstream_observability,
+    },
     AppState,
 };
 

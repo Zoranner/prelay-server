@@ -4,12 +4,10 @@ pub mod codec;
 pub mod domain;
 pub mod error;
 pub mod extensions;
-pub mod failover;
-pub mod identity;
 pub mod image_budget;
-pub mod observability;
 pub mod protocol_body_limit;
 pub mod routes;
+pub mod service;
 pub mod store;
 pub mod upstream;
 
@@ -19,12 +17,12 @@ use error::AppError;
 pub struct AppState {
     pub provider_catalog: std::sync::Arc<domain::catalog::ProviderCatalog>,
     pub storage: store::storage::Storage,
-    pub activity_store: domain::activity::ActivityStore,
+    pub activity_store: service::activity::ActivityStore,
     pub client: reqwest::Client,
     pub provider_clients: upstream::ProviderClientCache,
     pub client_update: client_update::ClientUpdateCache,
     pub extensions: extensions::ExtensionCatalog,
-    pub failover: failover::FailoverRegistry,
+    pub failover: service::failover::FailoverRegistry,
 }
 
 impl AppState {
@@ -138,7 +136,7 @@ pub mod test_support {
 
     pub async fn test_state() -> AppState {
         let storage = test_storage().await;
-        let activity_store = crate::domain::activity::ActivityStore::new(
+        let activity_store = crate::service::activity::ActivityStore::new(
             storage.clone(),
             crate::store::rollout::RolloutStore::new(
                 std::env::temp_dir().join(format!("prelay-rollout-test-{}", uuid::Uuid::new_v4())),

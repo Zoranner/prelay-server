@@ -15,11 +15,11 @@ use crate::{
     domain::activity::rollout::SessionContext,
     domain::stats::ActivityInsert,
     error::AppError,
-    observability::{
-        stream_stats::{record_stream_with_rollout, StreamRecording, StreamRollout},
-        upstream_observability::{upstream_failure_message, upstream_observability},
-    },
     routes::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
+    service::{
+        recording::{record_stream_with_rollout, StreamRecording, StreamRollout},
+        upstream_errors::{upstream_failure_message, upstream_observability},
+    },
     AppState,
 };
 

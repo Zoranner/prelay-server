@@ -8,11 +8,11 @@ use futures::{Stream, StreamExt};
 use tokio::sync::mpsc;
 
 use crate::{
-    domain::activity::ActivityStore, domain::stats::ActivityInsert, store::storage::StorageError,
+    domain::stats::ActivityInsert, service::activity::ActivityStore, store::storage::StorageError,
 };
 
 use super::StreamRecordState;
-use crate::observability::stream_stats::options::StreamRecordOptions;
+use crate::service::recording::options::StreamRecordOptions;
 
 pub(crate) type RecordedStream = Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>;
 const DOWNSTREAM_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);

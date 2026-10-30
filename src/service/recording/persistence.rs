@@ -1,5 +1,5 @@
 use crate::{
-    domain::activity::ActivityStore, domain::stats::StreamActivityUpdate,
+    domain::stats::StreamActivityUpdate, service::activity::ActivityStore,
     store::storage::StorageError,
 };
 

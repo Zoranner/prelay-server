@@ -5,8 +5,9 @@ use futures::Stream;
 
 use crate::{
     codec::bridge::stream::SharedStreamStats,
-    domain::activity::{ActivityStore, RawStreamContentCapture, RolloutEventBody, SessionContext},
+    domain::activity::{RawStreamContentCapture, RolloutEventBody, SessionContext},
     domain::stats::ActivityInsert,
+    service::activity::ActivityStore,
     store::storage::StorageError,
 };
 

@@ -7,9 +7,10 @@ use crate::{
     codec::bridge::stream::{SharedStreamStats, StreamStatsSnapshot},
     domain::activity::{
         events::{events_from_stream_capture, events_from_stream_snapshot},
-        ActivityStore, ErrorEvent, RawStreamContentCapture, RolloutEventBody, RolloutStatus,
+        ErrorEvent, RawStreamContentCapture, RolloutEventBody, RolloutStatus,
     },
     domain::stats::{ActivityInsert, StreamActivityUpdate},
+    service::activity::ActivityStore,
     store::rollout::RolloutWriter,
     store::storage::StorageError,
 };

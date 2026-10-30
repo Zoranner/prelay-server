@@ -6,7 +6,6 @@ pub mod events;
 mod media;
 pub(crate) mod redaction;
 pub mod rollout;
-mod store;
 mod stream;
 
 pub use media::{media_metadata_from_bytes, ActivityMediaMetadata};
@@ -16,5 +15,4 @@ pub use rollout::{
     RolloutEventBody, RolloutStatus, RolloutSummary, SessionContext, SessionEndEvent,
     SessionMetaEvent, ToolCallEvent, ToolResultEvent, UsageEvent, WindowStartEvent,
 };
-pub use store::ActivityStore;
 pub use stream::{RawStreamContentCapture, RawStreamProtocol};

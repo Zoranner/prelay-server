@@ -25,9 +25,9 @@ use crate::{
     domain::registry::ProviderConfig,
     domain::stats::ActivityInsert,
     error::AppError,
-    observability::{
-        stream_stats::{record_stream_with_rollout, StreamRecording, StreamRollout, StreamSession},
-        upstream_observability::upstream_failure_message,
+    service::{
+        recording::{record_stream_with_rollout, StreamRecording, StreamRollout, StreamSession},
+        upstream_errors::upstream_failure_message,
     },
     store::storage::ResponseSessionInsert,
     AppState,

@@ -1,6 +1,3 @@
-#[path = "provider_protocol_test.rs"]
-mod provider_protocol_test;
-
 use axum::{
     extract::{Extension, Path, State},
     http::StatusCode,
@@ -18,7 +15,7 @@ use crate::{codec::providers::model_discovery, domain::stats::StatsRange, AppSta
 
 use super::auth::CurrentIdentity;
 use super::{ApiError, ApiJson, ApiQuery};
-use provider_protocol_test::run_protocol_test;
+use crate::service::provider_check::run_protocol_test;
 
 pub fn router() -> Router<AppState> {
     Router::new()

@@ -10,7 +10,7 @@ use crate::{
     domain::activity::{
         RawStreamContentCapture, RawStreamProtocol, SessionContext, SessionMetaEvent,
     },
-    observability::stream_stats::{
+    service::recording::{
         options::{RecordingMode, StreamRecordOptions},
         record_first_chunk_with_rollout, record_stream_with_rollout,
         state::prepare_stream_with_log_id,

@@ -7,10 +7,10 @@ use std::{
 use prelay_server::{
     app,
     client_update::ClientUpdateCache,
-    domain::activity::ActivityStore,
     domain::catalog::ProviderCatalog,
     extensions::ExtensionCatalog,
-    identity::cleanup::delete_expired_identities,
+    service::activity::ActivityStore,
+    service::cleanup::delete_expired_identities,
     store::connect::{connect, DatabaseConfig},
     store::rollout::RolloutStore,
     store::schema::initialize_with_catalog,

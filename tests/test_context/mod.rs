@@ -10,7 +10,7 @@ pub struct TestContext {
     pub app: Router,
     pub storage: TestStorage,
     #[allow(dead_code)]
-    pub activity_store: prelay_server::domain::activity::ActivityStore,
+    pub activity_store: prelay_server::service::activity::ActivityStore,
 }
 
 pub async fn test_context() -> TestContext {
@@ -22,7 +22,7 @@ pub async fn test_context_with_catalog(provider_catalog: ProviderCatalog) -> Tes
     let rollout_store = prelay_server::store::rollout::RolloutStore::new(
         std::env::temp_dir().join(format!("prelay-rollout-test-{}", uuid::Uuid::new_v4())),
     );
-    let activity_store = prelay_server::domain::activity::ActivityStore::new(
+    let activity_store = prelay_server::service::activity::ActivityStore::new(
         storage.storage().clone(),
         rollout_store,
     );
