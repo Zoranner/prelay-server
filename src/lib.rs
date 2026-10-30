@@ -1,4 +1,4 @@
-pub mod app;
+pub mod bootstrap;
 pub mod codec;
 pub mod domain;
 pub mod error;

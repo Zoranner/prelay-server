@@ -2,7 +2,7 @@ use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
 };
-use prelay_server::{app, test_support::test_state};
+use prelay_server::{bootstrap as app, test_support::test_state};
 use tower::ServiceExt;
 
 use crate::auth::register;

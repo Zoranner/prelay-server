@@ -4,7 +4,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use prelay_protocol::CreateIdentityRequest;
-use prelay_server::{app, test_support::test_state};
+use prelay_server::{bootstrap as app, test_support::test_state};
 use tower::ServiceExt;
 
 #[tokio::test]

@@ -1,6 +1,6 @@
 use axum::Router;
 use prelay_server::{
-    app, domain::catalog::ProviderCatalog,
+    bootstrap as app, domain::catalog::ProviderCatalog,
     outbound::integrations::client_update::ClientUpdateCache,
     outbound::integrations::extensions::ExtensionCatalog, AppState,
 };

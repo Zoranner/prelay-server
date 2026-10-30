@@ -3,7 +3,7 @@ use axum::{
     routing::{get, head, post},
     Json, Router,
 };
-use prelay_server::{app, test_support::test_state};
+use prelay_server::{bootstrap as app, test_support::test_state};
 
 use crate::{auth::register, http::request_json};
 
