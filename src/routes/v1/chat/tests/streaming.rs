@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn streams_chat_completion_without_waiting_for_upstream_done() {
-    let upstream = spawn_streaming_chat_upstream().await;
+    let (upstream, release_tail) = spawn_streaming_chat_upstream().await;
     let state = test_state().await;
     let provider = test_provider(
         "deepseek-chat",
@@ -33,7 +33,6 @@ async fn streams_chat_completion_without_waiting_for_upstream_done() {
         axum::serve(listener, app).await.expect("serve test app");
     });
 
-    let started = std::time::Instant::now();
     let response = reqwest::Client::new()
         .post(format!("http://{addr}/v1/chat/completions"))
         .bearer_auth(&auth.token)
@@ -59,19 +58,15 @@ async fn streams_chat_completion_without_waiting_for_upstream_done() {
     );
 
     let mut stream = response.bytes_stream();
-    let first = stream
-        .next()
+    let first = tokio::time::timeout(Duration::from_secs(5), stream.next())
         .await
+        .expect("first chunk must arrive before the upstream tail is released")
         .expect("first response chunk")
         .expect("first response chunk ok");
-    let elapsed = started.elapsed();
     let first = String::from_utf8(first.to_vec()).expect("first chunk utf8");
 
-    assert!(
-        elapsed < Duration::from_millis(200),
-        "first chat completion chunk arrived after {elapsed:?}: {first}"
-    );
     assert!(first.contains("data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}"));
+    release_tail.notify_one();
 
     let logs = state
         .storage

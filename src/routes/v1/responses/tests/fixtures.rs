@@ -1,4 +1,6 @@
 use super::*;
+use std::sync::Arc;
+use tokio::sync::Notify;
 
 mod candidates;
 
@@ -83,35 +85,37 @@ pub(super) async fn spawn_streaming_chat_upstream() -> String {
     format!("http://{addr}")
 }
 
-pub(super) async fn spawn_delayed_streaming_chat_upstream() -> String {
+pub(super) async fn spawn_delayed_streaming_chat_upstream() -> (String, Arc<Notify>) {
     pub(super) async fn handler(
+        State(release_tail): State<Arc<Notify>>,
         Json(payload): Json<serde_json::Value>,
     ) -> axum::response::Response {
         use axum::response::IntoResponse;
 
         assert_eq!(payload["model"], "deepseek-chat");
         assert_eq!(payload["stream"], true);
-        let stream = futures::stream::unfold(0, |step| async move {
-            match step {
-                0 => Some((
-                    Ok::<_, Infallible>(Bytes::from_static(
-                        b"data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n",
-                    )),
-                    1,
-                )),
-                1 => {
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                    Some((
+        let stream =
+            futures::stream::unfold((0, release_tail), |(step, release_tail)| async move {
+                match step {
+                    0 => Some((
                         Ok::<_, Infallible>(Bytes::from_static(
-                            b"data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n\
-                              data: [DONE]\n\n",
+                            b"data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n",
                         )),
-                        2,
-                    ))
+                        (1, release_tail),
+                    )),
+                    1 => {
+                        release_tail.notified().await;
+                        Some((
+                            Ok::<_, Infallible>(Bytes::from_static(
+                                b"data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n\
+                              data: [DONE]\n\n",
+                            )),
+                            (2, release_tail),
+                        ))
+                    }
+                    _ => None,
                 }
-                _ => None,
-            }
-        });
+            });
         (
             [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
             Body::from_stream(stream),
@@ -119,7 +123,10 @@ pub(super) async fn spawn_delayed_streaming_chat_upstream() -> String {
             .into_response()
     }
 
-    let app = Router::new().route("/chat/completions", post(handler));
+    let release_tail = Arc::new(Notify::new());
+    let app = Router::new()
+        .route("/chat/completions", post(handler))
+        .with_state(Arc::clone(&release_tail));
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind upstream");
@@ -127,7 +134,7 @@ pub(super) async fn spawn_delayed_streaming_chat_upstream() -> String {
     tokio::spawn(async move {
         axum::serve(listener, app).await.expect("serve upstream");
     });
-    format!("http://{addr}")
+    (format!("http://{addr}"), release_tail)
 }
 
 pub(super) async fn spawn_native_responses_upstream() -> String {
@@ -168,35 +175,39 @@ pub(super) async fn spawn_native_responses_upstream() -> String {
     format!("http://{addr}")
 }
 
-pub(super) async fn spawn_streaming_native_responses_upstream() -> String {
+pub(super) async fn spawn_streaming_native_responses_upstream() -> (String, Arc<Notify>) {
     pub(super) async fn handler(
+        State(release_tail): State<Arc<Notify>>,
         Json(payload): Json<serde_json::Value>,
     ) -> axum::response::Response {
         use axum::response::IntoResponse;
 
         assert_eq!(payload["model"], "gpt-4.1");
         assert_eq!(payload["stream"], true);
-        let stream = futures::stream::unfold(0, |step| async move {
-            match step {
-                0 => Some((
-                    Ok::<_, Infallible>(Bytes::from_static(
-                        b"event: response.output_text.delta\ndata: hel\n\n",
+        let stream = futures::stream::unfold(
+            (0, release_tail),
+            |(step, release_tail)| async move {
+                match step {
+                    0 => Some((
+                        Ok::<_, Infallible>(Bytes::from_static(
+                            b"event: response.output_text.delta\ndata: hel\n\n",
+                        )),
+                        (1, release_tail),
                     )),
-                    1,
-                )),
-                1 => {
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                    Some((
+                    1 => {
+                        release_tail.notified().await;
+                        Some((
                         Ok::<_, Infallible>(Bytes::from_static(
                             b"event: response.output_text.delta\ndata: lo\n\n\
                               event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7,\"total_tokens\":18}}}\n\n",
                         )),
-                        2,
+                        (2, release_tail),
                     ))
+                    }
+                    _ => None,
                 }
-                _ => None,
-            }
-        });
+            },
+        );
         (
             [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
             Body::from_stream(stream),
@@ -204,7 +215,10 @@ pub(super) async fn spawn_streaming_native_responses_upstream() -> String {
             .into_response()
     }
 
-    let app = Router::new().route("/responses", post(handler));
+    let release_tail = Arc::new(Notify::new());
+    let app = Router::new()
+        .route("/responses", post(handler))
+        .with_state(Arc::clone(&release_tail));
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind upstream");
@@ -212,7 +226,7 @@ pub(super) async fn spawn_streaming_native_responses_upstream() -> String {
     tokio::spawn(async move {
         axum::serve(listener, app).await.expect("serve upstream");
     });
-    format!("http://{addr}")
+    (format!("http://{addr}"), release_tail)
 }
 
 pub(super) async fn spawn_history_asserting_chat_upstream() -> String {

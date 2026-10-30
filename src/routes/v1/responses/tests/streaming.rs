@@ -48,7 +48,7 @@ async fn returns_responses_sse_when_stream_is_true() {
 
 #[tokio::test]
 async fn streams_responses_sse_delta_before_upstream_finishes() {
-    let upstream = spawn_delayed_streaming_chat_upstream().await;
+    let (upstream, release_tail) = spawn_delayed_streaming_chat_upstream().await;
     let state = crate::test_support::test_state().await;
     let provider = test_provider(
         "deepseek-chat",
@@ -78,7 +78,6 @@ async fn streams_responses_sse_delta_before_upstream_finishes() {
         axum::serve(listener, app).await.expect("serve test app");
     });
 
-    let started = std::time::Instant::now();
     let response = reqwest::Client::new()
         .post(format!("http://{addr}/v1/responses"))
         .bearer_auth(&auth.token)
@@ -91,27 +90,23 @@ async fn streams_responses_sse_delta_before_upstream_finishes() {
         .await
         .expect("send request");
     let mut stream = response.bytes_stream();
-    let first = stream
-        .next()
+    let first = tokio::time::timeout(Duration::from_secs(5), stream.next())
         .await
+        .expect("first chunk must arrive before the upstream tail is released")
         .expect("first response chunk")
         .expect("first response chunk ok");
-    let elapsed = started.elapsed();
     let first = String::from_utf8(first.to_vec()).expect("first chunk utf8");
 
-    assert!(
-        elapsed < Duration::from_millis(200),
-        "first relay chunk arrived after {elapsed:?}: {first}"
-    );
     assert!(first.contains("event: response.output_text.delta"));
     assert!(first.contains("\"delta\":\"hel\""));
+    release_tail.notify_one();
 
     server.abort();
 }
 
 #[tokio::test]
 async fn streams_native_responses_sse_without_waiting_for_upstream_done() {
-    let upstream = spawn_streaming_native_responses_upstream().await;
+    let (upstream, release_tail) = spawn_streaming_native_responses_upstream().await;
     let state = crate::test_support::test_state().await;
     let provider = test_provider("gpt-4.1", "openai", &upstream, "sk-upstream")
         .await
@@ -147,22 +142,17 @@ async fn streams_native_responses_sse_without_waiting_for_upstream_done() {
         .expect("send request");
     assert_eq!(response.status(), reqwest::StatusCode::OK);
 
-    let started = std::time::Instant::now();
     let mut stream = response.bytes_stream();
-    let first = stream
-        .next()
+    let first = tokio::time::timeout(Duration::from_secs(5), stream.next())
         .await
+        .expect("first chunk must arrive before the upstream tail is released")
         .expect("first response chunk")
         .expect("first response chunk ok");
-    let elapsed = started.elapsed();
     let first = String::from_utf8(first.to_vec()).expect("first chunk utf8");
 
-    assert!(
-        elapsed < Duration::from_millis(200),
-        "first native response chunk arrived after {elapsed:?}: {first}"
-    );
     assert!(first.contains("event: response.output_text.delta"));
     assert!(first.contains("data: hel"));
+    release_tail.notify_one();
 
     stream
         .try_collect::<Vec<_>>()
