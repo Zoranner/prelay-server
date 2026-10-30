@@ -1,5 +1,7 @@
 # 活动 Rollout 文件存储实现计划
 
+> 已由 `2026-10-29-activity-rollout-content-dedup-design.md` 取代。本文保留为历史记录；每活动一份文件的方案不再执行。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 用每活动一份 JSONL rollout 文件替代 `activity_contents`，把完整对话事件保存下来，数据库只保留索引和运行元数据。

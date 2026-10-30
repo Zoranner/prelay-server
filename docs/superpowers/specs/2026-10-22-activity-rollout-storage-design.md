@@ -1,5 +1,7 @@
 # 活动 Rollout 文件存储设计
 
+> 已由 `2026-10-29-activity-rollout-content-dedup-design.md` 取代。本文保留为历史记录；activity 不再拥有独立正文文件，正文按会话线程写入 `data/sessions/<identity_id>/<thread_id>.jsonl`。
+
 ## 背景
 
 当前 `activity_contents` 把一次活动的输入和输出拼成一条规范化文本，并受 `ACTIVITY_CONTENT_MAX_BYTES` 限制。实际数据库中约 11.8 万条正文被标记为截断，工具调用和工具返回也没有完整进入正文。这个模型不能支撑后续的对话审计和团队记忆。
