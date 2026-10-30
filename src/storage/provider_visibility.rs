@@ -10,13 +10,13 @@ use sea_orm::{
     EntityTrait, IntoActiveModel, QueryFilter, QueryOrder, TransactionTrait,
 };
 
+use crate::domain::catalog::ProviderCatalog;
 use crate::entity::{
     identities,
     identity::{
         provider_configs as identity_provider_configs, provider_shares as identity_provider_shares,
     },
 };
-use crate::provider_catalog::ProviderCatalog;
 
 use super::{provider_views::provider_list_item, Storage, StorageError};
 

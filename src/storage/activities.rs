@@ -6,9 +6,9 @@ use sea_orm::{
 use uuid::Uuid;
 
 use crate::{
+    domain::catalog::ProviderCatalog,
+    domain::stats::{ActivityInsert, ActivitySummary, StreamActivityUpdate},
     entity::identity::activities,
-    provider_catalog::ProviderCatalog,
-    stats::{ActivityInsert, ActivitySummary, StreamActivityUpdate},
 };
 
 use super::{Storage, StorageError};
@@ -203,8 +203,8 @@ mod tests {
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
     use crate::{
+        domain::stats::{ActivityInsert, StreamActivityUpdate},
         entity::identity::activities,
-        stats::{ActivityInsert, StreamActivityUpdate},
         storage::{MasterKey, Storage, StorageError},
     };
 
@@ -331,7 +331,7 @@ mod tests {
             .register_identity(
                 &format!("machine-{suffix}"),
                 &format!("sid-{suffix}"),
-                &crate::identity::credential::generate_credential(),
+                &crate::domain::identity::credential::generate_credential(),
             )
             .await
             .expect("register identity")

@@ -4,7 +4,7 @@ use sea_orm::{
 };
 
 use crate::{
-    activity::rollout::RolloutStatus,
+    domain::activity::rollout::RolloutStatus,
     entity::{activity_rollouts, identity::activities},
 };
 

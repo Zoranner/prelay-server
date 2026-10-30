@@ -8,7 +8,7 @@ use axum::{
 use serde_json::Value;
 
 use crate::{
-    bridge::{internal::InternalRequest, responses::decode::decode_responses_request},
+    codec::{bridge::responses::decode::decode_responses_request, internal::InternalRequest},
     error::AppError,
     routes::v1::{
         auth::CurrentProtocolAccess, candidates::run_endpoint_model_candidates,

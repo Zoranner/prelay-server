@@ -9,6 +9,8 @@ use sea_orm::{
 use uuid::Uuid;
 
 use crate::{
+    domain::catalog::ProviderCatalog,
+    domain::identity::credential::generate_credential,
     entity::{
         identities,
         identity::{
@@ -17,8 +19,6 @@ use crate::{
             endpoint_models as identity_endpoint_models,
         },
     },
-    identity::credential::generate_credential,
-    provider_catalog::ProviderCatalog,
 };
 
 use super::endpoint_validation::{normalize_models, resolve_models, NormalizedModel};

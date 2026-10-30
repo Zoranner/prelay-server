@@ -4,7 +4,7 @@ use sea_orm::{
     QueryFilter,
 };
 
-use crate::bridge::internal::{
+use crate::codec::internal::{
     InternalMessage, InternalOutputItem, InternalResponse, InternalToolCall,
 };
 use crate::{
@@ -124,7 +124,7 @@ fn output_item_to_message(item: InternalOutputItem) -> InternalMessage {
             arguments,
             reasoning_content,
         } => InternalMessage {
-            role: crate::bridge::internal::InternalRole::Assistant,
+            role: crate::codec::internal::InternalRole::Assistant,
             content: Vec::new(),
             tool_call_id: None,
             tool_calls: vec![InternalToolCall {
@@ -144,7 +144,7 @@ mod tests {
 
     use super::ResponseSessionInsert;
     use crate::{
-        bridge::internal::{
+        codec::internal::{
             InternalContentPart, InternalMessage, InternalOutputItem, InternalResponse,
             InternalRole,
         },
@@ -295,7 +295,7 @@ mod tests {
             .register_identity(
                 &format!("machine-{suffix}"),
                 &format!("sid-{suffix}"),
-                &crate::identity::credential::generate_credential(),
+                &crate::domain::identity::credential::generate_credential(),
             )
             .await
             .expect("register identity");

@@ -6,8 +6,10 @@ use serde_json::json;
 
 use super::support::{latest_activity, request_events, test_log, test_storage};
 use crate::{
-    activity::{RawStreamContentCapture, RawStreamProtocol, SessionContext},
-    bridge::stream::{InternalFinishReason, InternalStreamEvent, StreamStatsSnapshot, StreamUsage},
+    codec::bridge::stream::{
+        InternalFinishReason, InternalStreamEvent, StreamStatsSnapshot, StreamUsage,
+    },
+    domain::activity::{RawStreamContentCapture, RawStreamProtocol, SessionContext},
     observability::stream_stats::{
         record_first_chunk_with_rollout, record_stream_with_rollout, StreamRecording, StreamRollout,
     },

@@ -211,7 +211,7 @@ impl Storage {
                 continue;
             }
             resolved.push(ProtocolModel {
-                model: crate::models::EndpointModel {
+                model: crate::domain::registry::EndpointModel {
                     id: model.id,
                     endpoint_id: model.endpoint_id,
                     model_name: model.model_name,
@@ -219,7 +219,7 @@ impl Storage {
                     upstream_model: model.upstream_model,
                     created_at: model.created_at,
                 },
-                provider: crate::models::ProviderConfig {
+                provider: crate::domain::registry::ProviderConfig {
                     id: provider.id,
                     name: provider.name,
                     provider_type: provider.provider_type,

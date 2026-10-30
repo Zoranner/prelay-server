@@ -7,7 +7,8 @@ use serde::Serialize;
 use std::collections::HashSet;
 
 use crate::{
-    error::AppError, models::EndpointModel, routes::v1::auth::CurrentProtocolAccess, AppState,
+    domain::registry::EndpointModel, error::AppError, routes::v1::auth::CurrentProtocolAccess,
+    AppState,
 };
 
 pub fn router() -> Router<AppState> {

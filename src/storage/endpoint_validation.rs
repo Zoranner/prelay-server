@@ -4,8 +4,8 @@ use prelay_protocol::EndpointModelInput;
 use sea_orm::{DatabaseTransaction, EntityTrait};
 
 use crate::{
+    domain::catalog::ProviderCatalog,
     entity::identity::provider_configs as identity_provider_configs,
-    provider_catalog::ProviderCatalog,
 };
 
 use super::{provider_visibility::can_use_provider_on, StorageError};

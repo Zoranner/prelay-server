@@ -1,4 +1,4 @@
-use crate::provider_catalog::ProviderCatalog;
+use crate::domain::catalog::ProviderCatalog;
 
 use super::StorageError;
 

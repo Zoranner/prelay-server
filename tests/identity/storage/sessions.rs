@@ -1,5 +1,5 @@
 use prelay_server::{
-    bridge::internal::InternalRole,
+    codec::internal::InternalRole,
     storage::{ResponseSessionInsert, StorageError},
 };
 

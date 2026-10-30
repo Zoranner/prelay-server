@@ -9,6 +9,7 @@ use sea_orm::{
 use uuid::Uuid;
 
 use crate::{
+    domain::catalog::ProviderCatalog,
     entity::{
         identities,
         identity::{
@@ -18,7 +19,6 @@ use crate::{
             provider_shares as identity_provider_shares,
         },
     },
-    provider_catalog::ProviderCatalog,
 };
 
 use super::{
@@ -391,8 +391,8 @@ mod tests {
 
     use super::*;
     use crate::{
+        domain::identity::credential::generate_credential,
         entity::identity::provider_configs as identity_provider_configs,
-        identity::credential::generate_credential,
     };
 
     #[tokio::test]

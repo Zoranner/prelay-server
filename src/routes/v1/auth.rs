@@ -5,7 +5,7 @@ use axum::{
     response::Response,
 };
 
-use crate::{activity::rollout::SessionContext, error::AppError, AppState};
+use crate::{domain::activity::rollout::SessionContext, error::AppError, AppState};
 
 #[derive(Clone, Debug)]
 pub struct CurrentProtocolAccess {

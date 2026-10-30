@@ -1,6 +1,6 @@
 use std::fs;
 
-use prelay_server::provider_catalog::{CatalogRequestHeaderValue, ProviderCatalog};
+use prelay_server::domain::catalog::{CatalogRequestHeaderValue, ProviderCatalog};
 
 use super::write_catalog;
 

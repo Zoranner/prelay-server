@@ -6,9 +6,9 @@ use sea_orm::{
 };
 
 use crate::{
+    domain::catalog::ProviderCatalog,
+    domain::stats::{ModelStatsScope, ProviderStatsSummary, StatsOverview, StatsRange, TimeBounds},
     entity::{identities, identity::activities as identity_activities},
-    provider_catalog::ProviderCatalog,
-    stats::{ModelStatsScope, ProviderStatsSummary, StatsOverview, StatsRange, TimeBounds},
     storage::{Storage, StorageError},
 };
 

@@ -6,7 +6,7 @@ use std::{
 };
 
 use prelay_protocol::ProviderProtocol;
-use prelay_server::provider_catalog::{CatalogRequestHeaderValue, ProviderCatalog};
+use prelay_server::domain::catalog::{CatalogRequestHeaderValue, ProviderCatalog};
 
 #[path = "provider_catalog/headers.rs"]
 mod headers;

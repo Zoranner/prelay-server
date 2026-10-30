@@ -1,5 +1,5 @@
 use prelay_server::{
-    memory::{MemoryCandidate, MemorySearch},
+    domain::memory::{MemoryCandidate, MemorySearch},
     storage::Storage,
 };
 
@@ -120,7 +120,7 @@ async fn register_identity(storage: &Storage, suffix: &str) -> String {
         .register_identity(
             &format!("machine-{suffix}"),
             &format!("sid-{suffix}"),
-            &prelay_server::identity::credential::generate_credential(),
+            &prelay_server::domain::identity::credential::generate_credential(),
         )
         .await
         .expect("register identity")

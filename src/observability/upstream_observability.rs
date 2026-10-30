@@ -1,7 +1,7 @@
 use axum::http::HeaderMap;
 use serde_json::Value;
 
-use crate::activity::redact_sensitive_text;
+use crate::domain::activity::redact_sensitive_text;
 
 const ERROR_MESSAGE_LIMIT: usize = 512;
 const REQUEST_ID_HEADERS: &[&str] = &[

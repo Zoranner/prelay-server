@@ -7,6 +7,9 @@ use sea_orm::{
 use uuid::Uuid;
 
 use crate::{
+    domain::identity::credential::{
+        credential_hashes_match, hash_credential, is_valid_device_credential,
+    },
     entity::{
         activity_rollouts, identities,
         identity::{
@@ -17,7 +20,6 @@ use crate::{
             response_sessions as identity_response_sessions,
         },
     },
-    identity::credential::{credential_hashes_match, hash_credential, is_valid_device_credential},
 };
 
 use super::{Storage, StorageError};

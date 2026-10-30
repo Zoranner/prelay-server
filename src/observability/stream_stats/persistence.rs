@@ -1,4 +1,6 @@
-use crate::{activity::ActivityStore, stats::StreamActivityUpdate, storage::StorageError};
+use crate::{
+    domain::activity::ActivityStore, domain::stats::StreamActivityUpdate, storage::StorageError,
+};
 
 pub(super) async fn update_stream_log(
     activity_store: &ActivityStore,

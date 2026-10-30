@@ -37,8 +37,8 @@ pub struct ProtocolAccess {
 
 #[derive(Clone, Debug)]
 pub struct ProtocolModel {
-    pub model: crate::models::EndpointModel,
-    pub provider: crate::models::ProviderConfig,
+    pub model: crate::domain::registry::EndpointModel,
+    pub provider: crate::domain::registry::ProviderConfig,
 }
 
 #[derive(Clone)]

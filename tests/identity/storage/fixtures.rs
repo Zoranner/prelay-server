@@ -1,10 +1,10 @@
 use prelay_protocol::CreateProviderRequest;
 use prelay_server::{
-    bridge::internal::{
+    codec::internal::{
         InternalContentPart, InternalMessage, InternalOutputItem, InternalResponse, InternalRole,
     },
-    identity::credential::generate_credential,
-    stats::ActivityInsert,
+    domain::identity::credential::generate_credential,
+    domain::stats::ActivityInsert,
     storage::Storage,
 };
 

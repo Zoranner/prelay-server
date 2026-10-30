@@ -1,10 +1,12 @@
 use axum::response::Response;
 
 use crate::{
-    activity::rollout::SessionContext,
-    bridge::{internal::InternalRequest, responses::decode::validate_responses_bridge_payload},
+    codec::providers::{responses::encode_responses_request, spec::UpstreamProtocol},
+    codec::{
+        bridge::responses::decode::validate_responses_bridge_payload, internal::InternalRequest,
+    },
+    domain::activity::rollout::SessionContext,
     error::AppError,
-    providers::{responses::encode_responses_request, spec::UpstreamProtocol},
     routes::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
     AppState,
 };

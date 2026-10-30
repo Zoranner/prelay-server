@@ -7,17 +7,19 @@ use axum::{
 use serde_json::Value;
 
 use crate::{
-    activity::events::{events_from_chat_request, events_from_chat_response},
-    activity::rollout::SessionContext,
-    bridge::stream::{native_chat_sse_with_stats, with_sse_keepalive},
+    codec::bridge::stream::{native_chat_sse_with_stats, with_sse_keepalive},
+    codec::providers::spec::{
+        provider_upstream_base_url, with_provider_headers, RequestHeaderContext,
+    },
+    domain::activity::events::{events_from_chat_request, events_from_chat_response},
+    domain::activity::rollout::SessionContext,
+    domain::stats::ActivityInsert,
     error::AppError,
     observability::{
         stream_stats::{record_stream_with_rollout, StreamRecording, StreamRollout},
         upstream_observability::{upstream_failure_message, upstream_observability},
     },
-    providers::spec::{provider_upstream_base_url, with_provider_headers, RequestHeaderContext},
     routes::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
-    stats::ActivityInsert,
     AppState,
 };
 
@@ -173,7 +175,7 @@ pub(super) async fn create_chat_completion_with_candidate(
             .map_err(|_| AppError::UpstreamInvalidResponse {
                 message: "上游响应格式无效".to_string(),
             })?;
-    let usage = crate::bridge::usage::decode_usage(response.get("usage"));
+    let usage = crate::codec::usage::decode_usage(response.get("usage"));
     let tool_call_count = response
         .get("choices")
         .and_then(Value::as_array)

@@ -7,21 +7,21 @@ use axum::{
 use serde_json::Value;
 
 use crate::{
-    activity::events::{events_from_internal_request, events_from_internal_response},
-    bridge::{
-        internal::InternalRequest,
-        stream::{native_responses_sse_with_stats, with_sse_keepalive},
+    codec::providers::spec::{
+        provider_upstream_base_url, with_provider_headers, RequestHeaderContext, UpstreamProtocol,
     },
+    codec::{
+        bridge::stream::{native_responses_sse_with_stats, with_sse_keepalive},
+        internal::InternalRequest,
+    },
+    domain::activity::events::{events_from_internal_request, events_from_internal_response},
+    domain::stats::ActivityInsert,
     error::AppError,
     image_budget::{self, ImageBudgetOutcome},
     observability::{
         stream_stats::{record_stream_with_rollout, StreamRecording, StreamRollout, StreamSession},
         upstream_observability::upstream_failure_message,
     },
-    providers::spec::{
-        provider_upstream_base_url, with_provider_headers, RequestHeaderContext, UpstreamProtocol,
-    },
-    stats::ActivityInsert,
     storage::ResponseSessionInsert,
     AppState,
 };
@@ -36,7 +36,7 @@ pub(super) async fn create_native_response(
     payload: &Value,
     request: &InternalRequest,
     model_upstream: &str,
-    provider: crate::models::ProviderConfig,
+    provider: crate::domain::registry::ProviderConfig,
     previous_response_id: Option<String>,
     context: ResponseBridgeContext,
 ) -> Result<Response, AppError> {
@@ -82,7 +82,10 @@ pub(super) async fn create_native_response(
         }
     };
     let upstream_request_body =
-        crate::providers::responses::encode_native_responses_request_body(payload, model_upstream);
+        crate::codec::providers::responses::encode_native_responses_request_body(
+            payload,
+            model_upstream,
+        );
     let upstream_request = with_provider_headers(
         client
             .post(upstream_url)
@@ -277,7 +280,7 @@ pub(super) async fn create_native_response(
         }
     };
     let decoded_response =
-        match crate::providers::responses::decode_responses_response(response.clone()) {
+        match crate::codec::providers::responses::decode_responses_response(response.clone()) {
             Ok(response) => response,
             Err(error) => {
                 let (error_code, status, message) = upstream_error_details(&error);

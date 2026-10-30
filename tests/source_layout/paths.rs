@@ -76,15 +76,15 @@ fn source_modules_use_domain_directories() {
         "schema/tables/model_aliases.rs",
     ];
     let required_files = [
-        "bridge/responses/mod.rs",
-        "bridge/responses/decode.rs",
-        "bridge/responses/encode.rs",
-        "bridge/responses/tests.rs",
-        "bridge/stream/decode/mod.rs",
-        "bridge/stream/decode/chat.rs",
-        "bridge/stream/decode/responses.rs",
-        "bridge/stream/encode/mod.rs",
-        "bridge/stream/encode/responses.rs",
+        "codec/bridge/responses/mod.rs",
+        "codec/bridge/responses/decode.rs",
+        "codec/bridge/responses/encode.rs",
+        "codec/bridge/responses/tests.rs",
+        "codec/bridge/stream/decode/mod.rs",
+        "codec/bridge/stream/decode/chat.rs",
+        "codec/bridge/stream/decode/responses.rs",
+        "codec/bridge/stream/encode/mod.rs",
+        "codec/bridge/stream/encode/responses.rs",
         "entity/identity/mod.rs",
         "entity/identity/endpoint_configs.rs",
         "entity/identity/endpoint_model_routes.rs",
@@ -97,13 +97,13 @@ fn source_modules_use_domain_directories() {
         "observability/stream_stats/record.rs",
         "observability/stream_stats/state.rs",
         "observability/stream_stats/tests.rs",
-        "providers/chat_completions/mod.rs",
-        "providers/chat_completions/request.rs",
-        "providers/chat_completions/response.rs",
-        "providers/chat_completions/stream.rs",
-        "providers/spec/mod.rs",
-        "providers/spec/capabilities.rs",
-        "providers/spec/urls.rs",
+        "codec/providers/chat_completions/mod.rs",
+        "codec/providers/chat_completions/request.rs",
+        "codec/providers/chat_completions/response.rs",
+        "codec/providers/chat_completions/stream.rs",
+        "codec/providers/spec/mod.rs",
+        "codec/providers/spec/capabilities.rs",
+        "codec/providers/spec/urls.rs",
         "routes/v1/chat/mod.rs",
         "routes/v1/chat/handler.rs",
         "routes/v1/chat/candidate.rs",
@@ -151,7 +151,7 @@ fn source_modules_use_domain_directories() {
     assert_paths_absent(&source_root, &obsolete_files, "obsolete source module");
     assert_paths_present(&source_root, &required_files, "required source module");
     assert_legacy_module_identifiers_absent(
-        &source_root.join("bridge/mod.rs"),
+        &source_root.join("codec/bridge/mod.rs"),
         [
             "anthropic_decode",
             "anthropic_encode",
@@ -160,7 +160,7 @@ fn source_modules_use_domain_directories() {
         ],
     );
     assert_legacy_module_identifiers_absent(
-        &source_root.join("bridge/stream/mod.rs"),
+        &source_root.join("codec/bridge/stream/mod.rs"),
         [
             "decode_anthropic",
             "decode_chat",

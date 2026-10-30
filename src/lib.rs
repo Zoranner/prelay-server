@@ -1,23 +1,18 @@
-pub mod activity;
 pub mod app;
-pub mod bridge;
 pub mod client_update;
+pub mod codec;
 pub mod database;
+pub mod domain;
 pub mod entity;
 pub mod error;
 pub mod extensions;
 pub mod failover;
 pub mod identity;
 pub mod image_budget;
-pub mod memory;
-pub mod models;
 pub mod observability;
 pub mod protocol_body_limit;
-pub mod provider_catalog;
-pub mod providers;
 pub mod routes;
 pub mod schema;
-pub mod stats;
 pub mod storage;
 pub mod upstream;
 
@@ -25,9 +20,9 @@ use error::AppError;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub provider_catalog: std::sync::Arc<provider_catalog::ProviderCatalog>,
+    pub provider_catalog: std::sync::Arc<domain::catalog::ProviderCatalog>,
     pub storage: storage::Storage,
-    pub activity_store: activity::ActivityStore,
+    pub activity_store: domain::activity::ActivityStore,
     pub client: reqwest::Client,
     pub provider_clients: upstream::ProviderClientCache,
     pub client_update: client_update::ClientUpdateCache,
@@ -62,8 +57,8 @@ pub mod test_support {
     use crate::{
         client_update::ClientUpdateCache,
         database::DatabaseConfig,
+        domain::catalog::ProviderCatalog,
         extensions::ExtensionCatalog,
-        provider_catalog::ProviderCatalog,
         schema::initialize,
         storage::{MasterKey, Storage},
         AppState,
@@ -146,9 +141,9 @@ pub mod test_support {
 
     pub async fn test_state() -> AppState {
         let storage = test_storage().await;
-        let activity_store = crate::activity::ActivityStore::new(
+        let activity_store = crate::domain::activity::ActivityStore::new(
             storage.clone(),
-            crate::activity::rollout::RolloutStore::new(
+            crate::domain::activity::rollout::RolloutStore::new(
                 std::env::temp_dir().join(format!("prelay-rollout-test-{}", uuid::Uuid::new_v4())),
             ),
         );

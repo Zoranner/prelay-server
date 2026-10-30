@@ -14,7 +14,7 @@ use tower::ServiceExt;
 
 use std::path::Path;
 
-use prelay_server::provider_catalog::ProviderCatalog;
+use prelay_server::domain::catalog::ProviderCatalog;
 
 use crate::{
     auth::register,

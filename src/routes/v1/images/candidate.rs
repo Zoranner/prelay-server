@@ -7,18 +7,20 @@ use futures::TryStreamExt;
 use serde_json::Value;
 
 use crate::{
-    activity::{
+    codec::bridge::stream::{upstream_bytes_stream, verify_upstream_sse_head, with_sse_keepalive},
+    codec::providers::spec::{
+        provider_upstream_base_url, with_provider_headers, RequestHeaderContext,
+    },
+    domain::activity::{
         events::{events_from_image_request, media_event},
         media_metadata_from_bytes, EventPhase, RawStreamContentCapture, RawStreamProtocol,
         SessionContext,
     },
-    bridge::stream::{upstream_bytes_stream, verify_upstream_sse_head, with_sse_keepalive},
     error::AppError,
     observability::{
         stream_stats::{record_first_chunk_with_rollout_best_effort, StreamRollout},
         upstream_observability::upstream_observability,
     },
-    providers::spec::{provider_upstream_base_url, with_provider_headers, RequestHeaderContext},
     routes::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
     AppState,
 };

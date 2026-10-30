@@ -56,8 +56,9 @@ fn order_candidates(
 mod tests {
     use super::run_endpoint_model_candidates;
     use crate::{
-        error::AppError, failover::FailoverRegistry, models::ProviderConfig,
-        providers::spec::UpstreamProtocol, routes::v1::endpoint_resolver::ResolvedEndpointProvider,
+        codec::providers::spec::UpstreamProtocol, domain::registry::ProviderConfig,
+        error::AppError, failover::FailoverRegistry,
+        routes::v1::endpoint_resolver::ResolvedEndpointProvider,
     };
     use axum::http::StatusCode;
     use std::sync::{Arc, Mutex};

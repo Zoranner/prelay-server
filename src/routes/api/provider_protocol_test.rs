@@ -1,11 +1,11 @@
 use prelay_protocol::ProviderOperationResponse;
 
 use crate::{
-    error::AppError,
-    provider_catalog::CatalogRequestHeader,
-    providers::spec::{
+    codec::providers::spec::{
         normalize_upstream_base_url, with_provider_headers, RequestHeaderContext, UpstreamProtocol,
     },
+    domain::catalog::CatalogRequestHeader,
+    error::AppError,
 };
 
 pub(crate) async fn run_protocol_test(
@@ -217,7 +217,7 @@ mod tests {
             Router,
         };
 
-        use crate::provider_catalog::{CatalogRequestHeader, CatalogRequestHeaderValue};
+        use crate::domain::catalog::{CatalogRequestHeader, CatalogRequestHeaderValue};
 
         async fn handler(headers: HeaderMap) -> impl IntoResponse {
             let session_id = headers

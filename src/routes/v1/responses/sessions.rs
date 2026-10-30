@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use crate::{bridge::internal::InternalRequest, error::AppError, storage::Storage};
+use crate::{codec::internal::InternalRequest, error::AppError, storage::Storage};
 
 pub(super) async fn request_with_session_history(
     storage: &Storage,
@@ -23,7 +23,7 @@ pub(super) async fn request_with_session_history(
     Ok(request)
 }
 
-pub(super) fn count_tool_calls(response: &crate::bridge::internal::InternalResponse) -> i64 {
+pub(super) fn count_tool_calls(response: &crate::codec::internal::InternalResponse) -> i64 {
     response
         .output
         .iter()

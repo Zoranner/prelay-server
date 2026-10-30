@@ -7,8 +7,8 @@ use sea_orm::{
 };
 
 use crate::{
+    domain::stats::StatsRange,
     entity::{identities, identity::activities as identity_activities},
-    stats::StatsRange,
     storage::{Storage, StorageError},
 };
 

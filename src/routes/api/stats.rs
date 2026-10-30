@@ -11,7 +11,7 @@ use prelay_protocol::{
 use serde::Deserialize;
 
 use crate::{
-    stats::{ModelStatsScope, StatsRange},
+    domain::stats::{ModelStatsScope, StatsRange},
     AppState,
 };
 

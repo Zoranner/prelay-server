@@ -5,12 +5,12 @@ use sea_orm::{
 };
 
 use crate::{
-    entity::identity::activities as identity_activities,
-    stats::{
+    domain::stats::{
         all_daily_bounds, all_timeline_bounds, parse_beijing_timestamp, timeline_buckets,
         ModelStatsScope, StatsRange, TimeBounds, TimelineBucket, TimelineGranularity,
         TokenUsageTimelinePoint,
     },
+    entity::identity::activities as identity_activities,
     storage::{Storage, StorageError},
 };
 

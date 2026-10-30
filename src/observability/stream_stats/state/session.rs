@@ -1,11 +1,11 @@
 use crate::{
-    activity::ActivityStore,
-    bridge::{
+    codec::{
+        bridge::stream::StreamStatsSnapshot,
         internal::{
             InternalContentPart, InternalOutputItem, InternalResponse, InternalRole, InternalUsage,
         },
-        stream::StreamStatsSnapshot,
     },
+    domain::activity::ActivityStore,
     observability::stream_stats::options::StreamSession,
     storage::ResponseSessionInsert,
 };
@@ -87,9 +87,11 @@ pub(super) fn response_from_stream_session(
 mod tests {
     use super::response_from_stream_session;
     use crate::{
-        bridge::{
+        codec::{
+            bridge::stream::{
+                InternalFinishReason, InternalStreamEvent, StreamStatsSnapshot, StreamUsage,
+            },
             internal::{InternalContentPart, InternalOutputItem, InternalRole},
-            stream::{InternalFinishReason, InternalStreamEvent, StreamStatsSnapshot, StreamUsage},
         },
         observability::stream_stats::options::StreamSession,
     };

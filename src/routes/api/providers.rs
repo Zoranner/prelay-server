@@ -14,7 +14,7 @@ use prelay_protocol::{
 };
 use serde::Deserialize;
 
-use crate::{providers::model_discovery, stats::StatsRange, AppState};
+use crate::{codec::providers::model_discovery, domain::stats::StatsRange, AppState};
 
 use super::auth::CurrentIdentity;
 use super::{ApiError, ApiJson, ApiQuery};

@@ -1,5 +1,5 @@
 use axum::http::StatusCode;
-use prelay_server::stats::ActivityInsert;
+use prelay_server::domain::stats::ActivityInsert;
 
 use crate::{auth::register, http::request_json, test_context};
 

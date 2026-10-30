@@ -1,14 +1,14 @@
 use chrono::{Duration, Utc};
 use prelay_protocol::{CreateEndpointRequest, CreateProviderRequest, EndpointModelInput};
 use prelay_server::{
-    activity::{
-        ActivityStore, EventPhase, MessageEvent, RolloutEventBody, RolloutStore, SessionContext,
-    },
-    bridge::internal::{
+    codec::internal::{
         InternalContentPart, InternalMessage, InternalOutputItem, InternalResponse, InternalRole,
     },
-    identity::credential::generate_credential,
-    stats::ActivityInsert,
+    domain::activity::{
+        ActivityStore, EventPhase, MessageEvent, RolloutEventBody, RolloutStore, SessionContext,
+    },
+    domain::identity::credential::generate_credential,
+    domain::stats::ActivityInsert,
     storage::{ResponseSessionInsert, Storage, StorageError},
 };
 
@@ -46,9 +46,9 @@ async fn cleanup_removes_an_inactive_identity_and_all_accessible_owned_resources
                 ..Default::default()
             },
             &SessionContext::new("thread-inactive"),
-            vec![prelay_server::activity::RolloutEventBody::Message(
-                prelay_server::activity::MessageEvent {
-                    phase: prelay_server::activity::EventPhase::Request,
+            vec![prelay_server::domain::activity::RolloutEventBody::Message(
+                prelay_server::domain::activity::MessageEvent {
+                    phase: prelay_server::domain::activity::EventPhase::Request,
                     role: "user".to_string(),
                     content: serde_json::json!("short-lived body"),
                 },

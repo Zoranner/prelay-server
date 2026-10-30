@@ -2,9 +2,9 @@ use chrono::Utc;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, FromQueryResult, QuerySelect, Select};
 
 use crate::{
+    domain::catalog::ProviderCatalog,
+    domain::stats::{ModelStatsScope, ModelStatsSummary, StatsRange},
     entity::identity::activities as identity_activities,
-    provider_catalog::ProviderCatalog,
-    stats::{ModelStatsScope, ModelStatsSummary, StatsRange},
     storage::{Storage, StorageError},
 };
 

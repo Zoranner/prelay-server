@@ -4,7 +4,7 @@ use chrono::{Datelike, FixedOffset, NaiveDate, Utc};
 use sea_orm::{sea_query::Value, ConnectionTrait, DbBackend, MockDatabase};
 
 use crate::{
-    stats::{ModelStatsScope, StatsRange},
+    domain::stats::{ModelStatsScope, StatsRange},
     storage::{MasterKey, Storage, StorageError},
 };
 

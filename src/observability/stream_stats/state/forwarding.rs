@@ -7,7 +7,9 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use tokio::sync::mpsc;
 
-use crate::{activity::ActivityStore, stats::ActivityInsert, storage::StorageError};
+use crate::{
+    domain::activity::ActivityStore, domain::stats::ActivityInsert, storage::StorageError,
+};
 
 use super::StreamRecordState;
 use crate::observability::stream_stats::options::StreamRecordOptions;

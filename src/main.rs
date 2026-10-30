@@ -5,13 +5,13 @@ use std::{
 };
 
 use prelay_server::{
-    activity::{rollout::RolloutStore, ActivityStore},
     app,
     client_update::ClientUpdateCache,
     database::{connect, DatabaseConfig},
+    domain::activity::{rollout::RolloutStore, ActivityStore},
+    domain::catalog::ProviderCatalog,
     extensions::ExtensionCatalog,
     identity::cleanup::delete_expired_identities,
-    provider_catalog::ProviderCatalog,
     schema::initialize_with_catalog,
     storage::{MasterKey, Storage, StorageError},
     AppState,

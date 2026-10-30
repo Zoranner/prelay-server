@@ -1,6 +1,6 @@
 use crate::storage::ProtocolAccess;
 use crate::{
-    error::AppError, models::ProviderConfig, providers::spec::UpstreamProtocol,
+    codec::providers::spec::UpstreamProtocol, domain::registry::ProviderConfig, error::AppError,
     routes::v1::auth::CurrentProtocolAccess, AppState,
 };
 
@@ -34,7 +34,7 @@ pub async fn resolve_endpoint_model_candidates(
                 not_enabled = true;
                 return None;
             }
-            let provider_spec = crate::providers::spec::ProviderSpec::from_provider_config(
+            let provider_spec = crate::codec::providers::spec::ProviderSpec::from_provider_config(
                 Some(&state.provider_catalog),
                 &resolved.provider,
             );
@@ -78,7 +78,7 @@ pub(crate) struct TestEndpointAuth {
 #[cfg(test)]
 pub(crate) async fn create_test_endpoint_auth(
     storage: &crate::storage::Storage,
-    provider: &crate::models::ProviderConfig,
+    provider: &crate::domain::registry::ProviderConfig,
     model_name: &str,
     upstream_model: &str,
 ) -> TestEndpointAuth {
@@ -94,7 +94,7 @@ pub(crate) async fn create_test_endpoint_auth(
 #[cfg(test)]
 pub(crate) async fn create_test_endpoint_auth_with_candidates(
     storage: &crate::storage::Storage,
-    providers: &[crate::models::ProviderConfig],
+    providers: &[crate::domain::registry::ProviderConfig],
     _model_name: &str,
     upstream_model: &str,
 ) -> TestEndpointAuth {
@@ -102,7 +102,7 @@ pub(crate) async fn create_test_endpoint_auth_with_candidates(
         .register_identity(
             "test-machine",
             &uuid::Uuid::new_v4().to_string(),
-            &crate::identity::credential::generate_credential(),
+            &crate::domain::identity::credential::generate_credential(),
         )
         .await
         .expect("register identity");
@@ -152,7 +152,7 @@ pub(crate) async fn create_empty_test_endpoint_auth(
         .register_identity(
             "test-machine",
             &uuid::Uuid::new_v4().to_string(),
-            &crate::identity::credential::generate_credential(),
+            &crate::domain::identity::credential::generate_credential(),
         )
         .await
         .expect("register identity");
@@ -176,7 +176,7 @@ pub(crate) async fn test_provider(
     provider_type: &str,
     base_url: &str,
     api_key: &str,
-) -> anyhow::Result<crate::models::ProviderConfig> {
+) -> anyhow::Result<crate::domain::registry::ProviderConfig> {
     test_provider_with_capabilities(name, provider_type, base_url, api_key, None).await
 }
 
@@ -186,9 +186,9 @@ pub(crate) async fn test_provider_with_capabilities(
     provider_type: &str,
     base_url: &str,
     api_key: &str,
-    capabilities: Option<&crate::models::ProviderCapabilityOverrides>,
-) -> anyhow::Result<crate::models::ProviderConfig> {
-    Ok(crate::models::ProviderConfig {
+    capabilities: Option<&crate::domain::registry::ProviderCapabilityOverrides>,
+) -> anyhow::Result<crate::domain::registry::ProviderConfig> {
+    Ok(crate::domain::registry::ProviderConfig {
         id: uuid::Uuid::new_v4().to_string(),
         name: name.to_string(),
         provider_type: provider_type.to_string(),

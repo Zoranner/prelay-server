@@ -1,19 +1,19 @@
 use serde_json::json;
 
 use crate::{
-    activity::{EventPhase, MessageEvent, RolloutEventBody},
-    stats::ActivityInsert,
+    domain::activity::{EventPhase, MessageEvent, RolloutEventBody},
+    domain::stats::ActivityInsert,
     storage::Storage,
 };
 
-pub(super) async fn test_storage() -> (Storage, String, crate::activity::ActivityStore) {
+pub(super) async fn test_storage() -> (Storage, String, crate::domain::activity::ActivityStore) {
     let state = crate::test_support::test_state().await;
     let storage = state.storage;
     let identity = storage
         .register_identity(
             "machine-1",
             "S-1-5-21-1",
-            &crate::identity::credential::generate_credential(),
+            &crate::domain::identity::credential::generate_credential(),
         )
         .await
         .expect("register identity");
@@ -23,7 +23,7 @@ pub(super) async fn test_storage() -> (Storage, String, crate::activity::Activit
 pub(super) async fn latest_activity(
     storage: &Storage,
     identity_id: &str,
-) -> crate::stats::ActivitySummary {
+) -> crate::domain::stats::ActivitySummary {
     storage
         .list_activities(identity_id, 10)
         .await

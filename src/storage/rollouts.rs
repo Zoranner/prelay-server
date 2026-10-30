@@ -4,9 +4,9 @@ use sea_orm::{
 };
 
 use crate::{
-    activity::rollout::{RolloutStatus, RolloutSummary},
+    domain::activity::rollout::{RolloutStatus, RolloutSummary},
+    domain::stats::ActivityInsert,
     entity::{activity_rollouts, identity::activities},
-    stats::ActivityInsert,
 };
 
 use super::{activities::insert_with_id, Storage, StorageError};

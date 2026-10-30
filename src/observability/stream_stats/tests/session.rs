@@ -6,11 +6,11 @@ use prelay_protocol::CreateProviderRequest;
 
 use super::support::{test_log, test_storage};
 use crate::{
-    activity::SessionContext,
-    bridge::{
+    codec::{
+        bridge::stream::{InternalFinishReason, InternalStreamEvent, StreamStatsSnapshot},
         internal::{InternalContentPart, InternalMessage, InternalRole},
-        stream::{InternalFinishReason, InternalStreamEvent, StreamStatsSnapshot},
     },
+    domain::activity::SessionContext,
     observability::stream_stats::{
         record_stream_with_rollout, StreamRecording, StreamRollout, StreamSession,
     },

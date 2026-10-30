@@ -6,8 +6,10 @@ use sea_orm::{
 use uuid::Uuid;
 
 use crate::{
+    domain::memory::{
+        normalize_candidate, MemoryCandidate, MemoryRecord, MemorySearch, MemorySource,
+    },
     entity::{memories, memory_sources},
-    memory::{normalize_candidate, MemoryCandidate, MemoryRecord, MemorySearch, MemorySource},
 };
 
 use super::{Storage, StorageError};

@@ -8,27 +8,27 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
-    activity::events::{events_from_internal_request, events_from_internal_response},
-    bridge::{
-        internal::InternalRequest,
-        responses::decode::validate_internal_request_for_bridge,
-        responses::encode::encode_responses_response,
-        stream::{chat_sse_response_to_responses_sse_with_stats, with_sse_keepalive},
-    },
-    error::AppError,
-    models::ProviderConfig,
-    observability::{
-        stream_stats::{record_stream_with_rollout, StreamRecording, StreamRollout, StreamSession},
-        upstream_observability::upstream_failure_message,
-    },
-    providers::{
+    codec::providers::{
         chat_completions::{decode_chat_response, encode_chat_request},
         spec::{
             provider_upstream_base_url, with_provider_headers, RequestHeaderContext,
             UpstreamProtocol,
         },
     },
-    stats::ActivityInsert,
+    codec::{
+        bridge::responses::decode::validate_internal_request_for_bridge,
+        bridge::responses::encode::encode_responses_response,
+        bridge::stream::{chat_sse_response_to_responses_sse_with_stats, with_sse_keepalive},
+        internal::InternalRequest,
+    },
+    domain::activity::events::{events_from_internal_request, events_from_internal_response},
+    domain::registry::ProviderConfig,
+    domain::stats::ActivityInsert,
+    error::AppError,
+    observability::{
+        stream_stats::{record_stream_with_rollout, StreamRecording, StreamRollout, StreamSession},
+        upstream_observability::upstream_failure_message,
+    },
     storage::ResponseSessionInsert,
     AppState,
 };

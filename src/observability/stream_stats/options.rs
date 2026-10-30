@@ -1,7 +1,7 @@
 use crate::{
-    activity::{RawStreamContentCapture, RolloutWriter},
-    bridge::internal::InternalMessage,
-    bridge::stream::SharedStreamStats,
+    codec::bridge::stream::SharedStreamStats,
+    codec::internal::InternalMessage,
+    domain::activity::{RawStreamContentCapture, RolloutWriter},
 };
 
 #[derive(Clone, Copy)]

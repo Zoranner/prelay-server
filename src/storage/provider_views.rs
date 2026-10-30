@@ -3,8 +3,8 @@ use prelay_protocol::{
 };
 
 use crate::{
+    codec::providers::spec::resolved_upstream_protocols, domain::catalog::ProviderCatalog,
     entity::identity::provider_configs as identity_provider_configs,
-    provider_catalog::ProviderCatalog, providers::spec::resolved_upstream_protocols,
 };
 
 use super::{crypto::KeyCipher, StorageError};

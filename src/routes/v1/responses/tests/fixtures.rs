@@ -12,12 +12,14 @@ pub(super) fn responses_sse_from_text_chunks(chunks: &[&str]) -> String {
     let mut output = String::new();
     for chunk in chunks {
         output.push_str(
-            std::str::from_utf8(&crate::bridge::stream::responses_text_delta_sse(chunk))
-                .expect("sse chunk is utf8"),
+            std::str::from_utf8(&crate::codec::bridge::stream::responses_text_delta_sse(
+                chunk,
+            ))
+            .expect("sse chunk is utf8"),
         );
     }
     output.push_str(
-        std::str::from_utf8(&crate::bridge::stream::responses_completed_sse())
+        std::str::from_utf8(&crate::codec::bridge::stream::responses_completed_sse())
             .expect("sse chunk is utf8"),
     );
     output

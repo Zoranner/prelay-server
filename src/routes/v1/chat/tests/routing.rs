@@ -1,7 +1,7 @@
 use super::*;
 use std::{path::Path, sync::Arc};
 
-use crate::provider_catalog::ProviderCatalog;
+use crate::domain::catalog::ProviderCatalog;
 
 #[tokio::test]
 async fn forwards_chat_completion_request_to_configured_upstream() {
@@ -117,7 +117,7 @@ async fn forwards_chat_completion_to_protocol_specific_base_url() {
         &default_upstream,
         "sk-upstream",
         Some(&ProviderCapabilityOverrides {
-            protocol_base_urls: Some(crate::models::ProviderProtocolBaseUrls {
+            protocol_base_urls: Some(crate::domain::registry::ProviderProtocolBaseUrls {
                 responses: None,
                 openai: Some(chat_upstream),
                 ..Default::default()

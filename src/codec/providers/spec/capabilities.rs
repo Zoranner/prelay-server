@@ -1,0 +1,249 @@
+use prelay_protocol::ProviderProtocol;
+
+use crate::{
+    domain::catalog::ProviderCatalog,
+    domain::registry::{ProviderCapabilityOverrides, ProviderConfig},
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpstreamProtocol {
+    Responses,
+    ChatCompletions,
+    ImageGenerations,
+}
+
+impl UpstreamProtocol {
+    pub fn downstream_protocols(self) -> &'static [&'static str] {
+        match self {
+            UpstreamProtocol::Responses => &["responses"],
+            UpstreamProtocol::ChatCompletions => &["responses", "chat_completions"],
+            UpstreamProtocol::ImageGenerations => &["images_generations"],
+        }
+    }
+
+    pub fn supports_downstream(self, downstream_protocol: &str) -> bool {
+        self.downstream_protocols().contains(&downstream_protocol)
+    }
+
+    pub(crate) fn from_capability_value(value: &str) -> Option<Self> {
+        match value {
+            "responses" => Some(UpstreamProtocol::Responses),
+            "openai" => Some(UpstreamProtocol::ChatCompletions),
+            "images_generations" => Some(UpstreamProtocol::ImageGenerations),
+            _ => None,
+        }
+    }
+
+    fn capability_value(self) -> &'static str {
+        match self {
+            UpstreamProtocol::Responses => "responses",
+            UpstreamProtocol::ChatCompletions => "openai",
+            UpstreamProtocol::ImageGenerations => "images_generations",
+        }
+    }
+
+    pub(crate) fn from_catalog(protocol: ProviderProtocol) -> Self {
+        match protocol {
+            ProviderProtocol::Responses => UpstreamProtocol::Responses,
+            ProviderProtocol::ChatCompletions => UpstreamProtocol::ChatCompletions,
+            ProviderProtocol::ImagesGenerations => UpstreamProtocol::ImageGenerations,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderCapabilities {
+    pub tool_calls: bool,
+    pub reasoning: bool,
+    pub tool_choice: bool,
+    pub parallel_tool_calls: bool,
+    pub system_messages: bool,
+    pub structured_outputs: bool,
+    pub streaming_usage: bool,
+    pub max_context_tokens: Option<i64>,
+    pub max_output_tokens: Option<i64>,
+}
+
+impl ProviderCapabilities {
+    pub fn limited() -> Self {
+        Self {
+            tool_calls: false,
+            reasoning: false,
+            tool_choice: false,
+            parallel_tool_calls: false,
+            system_messages: true,
+            structured_outputs: false,
+            streaming_usage: false,
+            max_context_tokens: None,
+            max_output_tokens: None,
+        }
+    }
+
+    fn with_overrides(self, overrides: &ProviderCapabilityOverrides) -> Self {
+        Self {
+            tool_calls: overrides.tool_calls.unwrap_or(self.tool_calls),
+            reasoning: overrides.reasoning.unwrap_or(self.reasoning),
+            tool_choice: overrides.tool_choice.unwrap_or(self.tool_choice),
+            parallel_tool_calls: overrides
+                .parallel_tool_calls
+                .unwrap_or(self.parallel_tool_calls),
+            system_messages: overrides.system_messages.unwrap_or(self.system_messages),
+            structured_outputs: overrides
+                .structured_outputs
+                .unwrap_or(self.structured_outputs),
+            streaming_usage: overrides.streaming_usage.unwrap_or(self.streaming_usage),
+            max_context_tokens: overrides.max_context_tokens.or(self.max_context_tokens),
+            max_output_tokens: overrides.max_output_tokens.or(self.max_output_tokens),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderSpec {
+    pub supported_protocols: Vec<UpstreamProtocol>,
+    pub capabilities: ProviderCapabilities,
+}
+
+impl ProviderSpec {
+    pub fn from_provider_config(
+        catalog: Option<&ProviderCatalog>,
+        provider: &ProviderConfig,
+    ) -> Self {
+        Self::from_provider_type_and_overrides(
+            catalog,
+            &provider.provider_type,
+            &provider.capability_overrides(),
+        )
+    }
+
+    fn from_provider_type_and_overrides(
+        catalog: Option<&ProviderCatalog>,
+        provider_type: &str,
+        overrides: &ProviderCapabilityOverrides,
+    ) -> Self {
+        let mut spec = match provider_type {
+            "openai"
+            | "responses_compatible"
+            | "qwen_responses"
+            | "minimax_responses"
+            | "gotoken" => Self {
+                supported_protocols: provider_supported_protocols(
+                    provider_type,
+                    UpstreamProtocol::Responses,
+                ),
+                capabilities: ProviderCapabilities {
+                    tool_calls: true,
+                    reasoning: true,
+                    tool_choice: true,
+                    parallel_tool_calls: true,
+                    system_messages: true,
+                    structured_outputs: true,
+                    streaming_usage: true,
+                    max_context_tokens: None,
+                    max_output_tokens: None,
+                },
+            },
+            "openai_compatible"
+            | "kimi"
+            | "deepseek"
+            | "qwen"
+            | "kimi_coding"
+            | "zai_coding_openai"
+            | "zhipu_coding_openai"
+            | "minimax_token_openai"
+            | "bailian_coding_openai"
+            | "bailian_token_openai" => Self {
+                supported_protocols: provider_supported_protocols(
+                    provider_type,
+                    UpstreamProtocol::ChatCompletions,
+                ),
+                capabilities: ProviderCapabilities {
+                    tool_calls: true,
+                    reasoning: false,
+                    tool_choice: true,
+                    parallel_tool_calls: true,
+                    system_messages: true,
+                    structured_outputs: false,
+                    streaming_usage: false,
+                    max_context_tokens: None,
+                    max_output_tokens: None,
+                },
+            },
+            _ => Self {
+                supported_protocols: vec![UpstreamProtocol::ChatCompletions],
+                capabilities: ProviderCapabilities::limited(),
+            },
+        };
+        spec.capabilities = spec.capabilities.with_overrides(overrides);
+        if let Some(protocols) = catalog
+            .and_then(|catalog| catalog.provider(provider_type))
+            .map(|provider| {
+                provider
+                    .protocols
+                    .iter()
+                    .copied()
+                    .map(UpstreamProtocol::from_catalog)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|protocols| !protocols.is_empty())
+        {
+            spec.supported_protocols = protocols;
+        }
+        spec
+    }
+
+    pub fn supports_downstream(&self, downstream_protocol: &str) -> bool {
+        self.supported_protocols
+            .iter()
+            .any(|protocol| protocol.supports_downstream(downstream_protocol))
+    }
+
+    pub fn upstream_for_downstream(&self, downstream_protocol: &str) -> Option<UpstreamProtocol> {
+        let preference = match downstream_protocol {
+            "responses" => &[
+                UpstreamProtocol::Responses,
+                UpstreamProtocol::ChatCompletions,
+            ][..],
+            "chat_completions" => &[UpstreamProtocol::ChatCompletions][..],
+            "images_generations" => &[UpstreamProtocol::ImageGenerations][..],
+            _ => &[][..],
+        };
+        preference
+            .iter()
+            .copied()
+            .find(|protocol| self.supported_protocols.contains(protocol))
+    }
+}
+
+/// 上游协议由目录定义；目录里没有这家供应商时回落到按 provider_type 的历史映射。
+pub fn resolved_upstream_protocols(
+    catalog: Option<&ProviderCatalog>,
+    provider_type: &str,
+) -> Vec<String> {
+    ProviderSpec::from_provider_type_and_overrides(
+        catalog,
+        provider_type,
+        &ProviderCapabilityOverrides::default(),
+    )
+    .supported_protocols
+    .into_iter()
+    .map(UpstreamProtocol::capability_value)
+    .map(str::to_owned)
+    .collect()
+}
+
+fn provider_supported_protocols(
+    provider_type: &str,
+    default_protocol: UpstreamProtocol,
+) -> Vec<UpstreamProtocol> {
+    match provider_type {
+        "kimi_coding" | "zhipu_coding_openai" | "minimax_token_openai" | "deepseek" | "zhipu" => {
+            vec![UpstreamProtocol::ChatCompletions]
+        }
+        "qwen" | "qwen_responses" | "minimax" | "minimax_responses" | "gotoken" => vec![
+            UpstreamProtocol::Responses,
+            UpstreamProtocol::ChatCompletions,
+        ],
+        _ => vec![default_protocol],
+    }
+}

@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use crate::{
+    domain::catalog::ProviderCatalog,
+    domain::registry::ProviderCapabilityOverrides,
     entity::identity::{endpoint_model_routes, endpoint_models, provider_configs},
-    models::ProviderCapabilityOverrides,
-    provider_catalog::ProviderCatalog,
 };
 use prelay_protocol::ProviderProtocol;
 use sea_orm::{

@@ -1,8 +1,8 @@
 use axum::http::StatusCode;
 
 use crate::{
-    activity::RolloutEventBody, error::AppError, models::ProviderConfig, stats::ActivityInsert,
-    AppState,
+    domain::activity::RolloutEventBody, domain::registry::ProviderConfig,
+    domain::stats::ActivityInsert, error::AppError, AppState,
 };
 
 use super::candidate::ResponseBridgeContext;

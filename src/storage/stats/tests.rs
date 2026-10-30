@@ -1,5 +1,5 @@
 use crate::{
-    stats::{ActivityInsert, ModelStatsScope, StatsRange},
+    domain::stats::{ActivityInsert, ModelStatsScope, StatsRange},
     storage::Storage,
 };
 
@@ -328,7 +328,7 @@ pub(super) async fn register_identity(storage: &Storage, suffix: &str) -> String
         .register_identity(
             &format!("machine-{suffix}"),
             &format!("sid-{suffix}"),
-            &crate::identity::credential::generate_credential(),
+            &crate::domain::identity::credential::generate_credential(),
         )
         .await
         .expect("register identity")

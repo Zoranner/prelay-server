@@ -1,7 +1,7 @@
 use crate::{
-    activity::{rollout::SessionContext, RolloutEventBody},
+    domain::activity::{rollout::SessionContext, RolloutEventBody},
+    domain::stats::ActivityInsert,
     routes::v1::auth::CurrentProtocolAccess,
-    stats::ActivityInsert,
     AppState,
 };
 
@@ -9,7 +9,7 @@ use super::IMAGE_GENERATIONS_PROTOCOL;
 
 pub(super) struct ImageActivityParams<'a> {
     pub(super) access: &'a CurrentProtocolAccess,
-    pub(super) provider: &'a crate::models::ProviderConfig,
+    pub(super) provider: &'a crate::domain::registry::ProviderConfig,
     pub(super) model_requested: String,
     pub(super) model_upstream: String,
     pub(super) status: &'a str,

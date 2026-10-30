@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::{
+    domain::catalog::ProviderCatalog,
     entity::identity::{endpoint_model_routes, endpoint_models, provider_configs},
-    provider_catalog::ProviderCatalog,
 };
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ConnectionTrait, DatabaseConnection, DatabaseTransaction,

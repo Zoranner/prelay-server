@@ -1,5 +1,5 @@
-use crate::activity::rollout::{RolloutStatus, RolloutSummary};
-use crate::stats::ActivityInsert;
+use crate::domain::activity::rollout::{RolloutStatus, RolloutSummary};
+use crate::domain::stats::ActivityInsert;
 use crate::storage::RecoveredRollout;
 
 #[tokio::test]
@@ -9,7 +9,7 @@ async fn inserts_and_completes_rollout_index() {
         .register_identity(
             "rollout-machine",
             "S-rollout",
-            &crate::identity::credential::generate_credential(),
+            &crate::domain::identity::credential::generate_credential(),
         )
         .await
         .expect("register identity");
@@ -82,7 +82,7 @@ async fn inserts_a_final_rollout_with_its_completed_status() {
         .register_identity(
             "rollout-final-machine",
             "S-rollout-final",
-            &crate::identity::credential::generate_credential(),
+            &crate::domain::identity::credential::generate_credential(),
         )
         .await
         .expect("register identity");
@@ -125,7 +125,7 @@ async fn recovers_interrupted_activity_and_rollout_status_together() {
         .register_identity(
             "recover-machine",
             "S-recover",
-            &crate::identity::credential::generate_credential(),
+            &crate::domain::identity::credential::generate_credential(),
         )
         .await
         .expect("register identity");
@@ -187,7 +187,7 @@ async fn applies_a_verified_recovered_rollout_to_both_tables() {
         .register_identity(
             "recover-completed-machine",
             "S-recover-completed",
-            &crate::identity::credential::generate_credential(),
+            &crate::domain::identity::credential::generate_credential(),
         )
         .await
         .expect("register identity");

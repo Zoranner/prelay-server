@@ -4,9 +4,9 @@ use bytes::Bytes;
 use futures::Stream;
 
 use crate::{
-    activity::{ActivityStore, RawStreamContentCapture, RolloutEventBody, SessionContext},
-    bridge::stream::SharedStreamStats,
-    stats::ActivityInsert,
+    codec::bridge::stream::SharedStreamStats,
+    domain::activity::{ActivityStore, RawStreamContentCapture, RolloutEventBody, SessionContext},
+    domain::stats::ActivityInsert,
     storage::StorageError,
 };
 

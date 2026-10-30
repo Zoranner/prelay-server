@@ -89,7 +89,7 @@ pub async fn initialize(db: &DatabaseConnection) -> Result<(), DbErr> {
 
 pub async fn initialize_with_catalog(
     db: &DatabaseConnection,
-    catalog: &crate::provider_catalog::ProviderCatalog,
+    catalog: &crate::domain::catalog::ProviderCatalog,
 ) -> Result<(), DbErr> {
     initialize(db).await?;
     provider_catalog::apply(db, catalog).await?;
