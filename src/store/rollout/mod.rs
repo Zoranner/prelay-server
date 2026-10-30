@@ -1,9 +1,9 @@
 use std::{
     collections::HashMap,
     fs::{self, OpenOptions},
-    io::{BufWriter, Write},
+    io::{self, BufWriter, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
 };
 
 use chrono::{SecondsFormat, Utc};
@@ -25,7 +25,7 @@ use crate::domain::activity::rollout::{
 #[derive(Debug, Clone)]
 pub struct RolloutStore {
     root: PathBuf,
-    locks: Arc<Mutex<HashMap<PathBuf, Arc<AsyncMutex<()>>>>>,
+    locks: Arc<Mutex<HashMap<PathBuf, Weak<AsyncMutex<()>>>>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -132,7 +132,15 @@ impl RolloutStore {
 
         let lock = self.lock_for(&final_path);
         let guard = lock.lock_owned().await;
-        let existing_events = read_thread_events(&final_path)?.unwrap_or_default();
+        let path = final_path.clone();
+        let existing_events = tokio::task::spawn_blocking(move || read_thread_events(&path))
+            .await
+            .map_err(|error| {
+                RolloutError::Io(io::Error::other(format!(
+                    "rollout read task failed: {error}"
+                )))
+            })??
+            .unwrap_or_default();
         let line_count = existing_events.len() as u64;
         let seq = existing_events.last().map_or(0, |event| event.seq);
         let file = OpenOptions::new()
@@ -195,7 +203,13 @@ impl RolloutStore {
             .locks
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        locks.entry(path.to_path_buf()).or_default().clone()
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(path).and_then(Weak::upgrade) {
+            return lock;
+        }
+        let lock = Arc::new(AsyncMutex::new(()));
+        locks.insert(path.to_path_buf(), Arc::downgrade(&lock));
+        lock
     }
 }
 

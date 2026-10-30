@@ -259,3 +259,19 @@ async fn repairs_an_incomplete_tail_before_appending() {
     let bytes = std::fs::read(&path).expect("read thread bytes");
     assert!(bytes.ends_with(b"\n"));
 }
+
+#[test]
+fn releases_thread_locks_after_the_writer_is_dropped() {
+    let root = tempfile::tempdir().expect("temp rollout root");
+    let store = RolloutStore::new(root.path().to_path_buf());
+    let first_path = std::path::Path::new("thread-a");
+    let first = store.lock_for(first_path);
+    assert_eq!(store.locks.lock().expect("lock map").len(), 1);
+
+    drop(first);
+    let _second = store.lock_for(std::path::Path::new("thread-b"));
+
+    let locks = store.locks.lock().expect("lock map");
+    assert_eq!(locks.len(), 1);
+    assert!(!locks.contains_key(first_path));
+}
