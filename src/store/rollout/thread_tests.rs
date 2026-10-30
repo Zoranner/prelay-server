@@ -1,4 +1,5 @@
 use serde_json::json;
+use std::io::Write;
 
 use super::RolloutStore;
 use crate::domain::activity::rollout::RolloutStatus;
@@ -201,4 +202,60 @@ async fn isolates_threads_identities_and_activity_line_ranges() {
     assert_eq!(slice.event_count, a_summary.event_count);
     assert_eq!(slice.byte_size, a_summary.byte_size);
     assert_eq!(slice.sha256, a_summary.sha256);
+}
+
+#[tokio::test]
+async fn repairs_an_incomplete_tail_before_appending() {
+    let root = tempfile::tempdir().expect("temp rollout root");
+    let store = RolloutStore::new(root.path().to_path_buf());
+    let session = session("thread-partial");
+    let mut first = store
+        .begin(
+            "identity-1",
+            &session,
+            test_meta("activity-first", "thread-partial"),
+            vec![message(EventPhase::Request, json!("first user"))],
+        )
+        .await
+        .expect("begin first activity");
+    first
+        .finish(RolloutStatus::Completed)
+        .expect("finish first activity");
+
+    let path = root.path().join("identity-1/thread-partial.jsonl");
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .expect("open thread file");
+    file.write_all(br#"{"seq":4,"timestamp":"2026-10-30T00:00:00Z","type":"message","payload":"#)
+        .expect("write partial tail");
+    drop(file);
+
+    let mut second = store
+        .begin(
+            "identity-1",
+            &session,
+            test_meta("activity-second", "thread-partial"),
+            vec![
+                message(EventPhase::Request, json!("first user")),
+                message(EventPhase::Request, json!("second user")),
+            ],
+        )
+        .await
+        .expect("begin after a partial tail");
+    second
+        .finish(RolloutStatus::Completed)
+        .expect("finish second activity");
+
+    let events = store
+        .read_events("identity-1/thread-partial.jsonl")
+        .expect("read the repaired thread");
+    let contents = events
+        .iter()
+        .filter(|event| event.event_type == "message")
+        .map(|event| event.payload["content"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(contents, vec![json!("first user"), json!("second user")]);
+    let bytes = std::fs::read(&path).expect("read thread bytes");
+    assert!(bytes.ends_with(b"\n"));
 }

@@ -1,5 +1,6 @@
 use crate::{
-    service::activity::ActivityStore, store::rollout::RolloutStore, store::storage::StorageError,
+    domain::activity::rollout::RolloutError, service::activity::ActivityStore,
+    store::rollout::RolloutStore, store::storage::StorageError,
 };
 
 const STARTUP_CLEANUP_FAILURE: &str = "startup identity cleanup failed";
@@ -22,14 +23,30 @@ pub(super) fn handle_startup_cleanup_failure(error: StorageError) -> anyhow::Err
 
 pub(super) async fn warn_incomplete_rollout_files(rollout_store: &RolloutStore) {
     let store = rollout_store.clone();
-    match tokio::task::spawn_blocking(move || store.part_files()).await {
-        Ok(Ok(paths)) if paths.is_empty() => {}
-        Ok(Ok(paths)) => {
-            tracing::warn!(
-                incomplete = paths.len(),
-                sample = ?paths.iter().take(10).collect::<Vec<_>>(),
-                "incomplete activity rollout files remain on disk"
-            );
+    match tokio::task::spawn_blocking(move || {
+        let part_files = store.part_files()?;
+        let incomplete_tails = store.incomplete_rollout_files()?;
+        Ok::<_, RolloutError>((part_files, incomplete_tails))
+    })
+    .await
+    {
+        Ok(Ok((part_files, incomplete_tails)))
+            if part_files.is_empty() && incomplete_tails.is_empty() => {}
+        Ok(Ok((part_files, incomplete_tails))) => {
+            if !part_files.is_empty() {
+                tracing::warn!(
+                    incomplete = part_files.len(),
+                    sample = ?part_files.iter().take(10).collect::<Vec<_>>(),
+                    "legacy incomplete activity rollout files remain on disk"
+                );
+            }
+            if !incomplete_tails.is_empty() {
+                tracing::warn!(
+                    incomplete = incomplete_tails.len(),
+                    sample = ?incomplete_tails.iter().take(10).collect::<Vec<_>>(),
+                    "activity rollout files have incomplete tails; the next request for the thread will truncate them"
+                );
+            }
         }
         Ok(Err(error)) => {
             tracing::warn!(

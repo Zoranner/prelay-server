@@ -153,6 +153,23 @@ fn lists_incomplete_part_files_without_deleting_them() {
 }
 
 #[test]
+fn lists_jsonl_files_with_incomplete_tails() {
+    let root = tempfile::tempdir().expect("temporary rollout root");
+    let store = RolloutStore::new(root.path().to_path_buf());
+    let nested = root.path().join("identity-1");
+    std::fs::create_dir_all(&nested).expect("create rollout directory");
+    std::fs::write(nested.join("complete.jsonl"), b"{}\n").expect("write complete thread");
+    std::fs::write(nested.join("partial.jsonl"), b"{\"seq\":1").expect("write partial thread");
+    std::fs::write(nested.join("legacy.jsonl.part"), b"{}").expect("write legacy part");
+
+    let files = store
+        .incomplete_rollout_files()
+        .expect("list incomplete thread files");
+
+    assert_eq!(files, vec![nested.join("partial.jsonl")]);
+}
+
+#[test]
 fn validates_a_writable_rollout_root() {
     let root = tempfile::tempdir().expect("temp rollout root");
     let store = RolloutStore::new(root.path().join("nested/sessions"));

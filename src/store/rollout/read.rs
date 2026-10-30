@@ -1,4 +1,8 @@
-use std::fs;
+use std::{
+    fs::{self, OpenOptions},
+    io,
+    path::Path,
+};
 
 use sha2::{Digest, Sha256};
 
@@ -111,13 +115,30 @@ pub(super) fn parse_events(contents: &str) -> Result<Vec<RolloutEvent>, RolloutE
         .collect()
 }
 
-pub(super) fn valid_prefix(contents: &str) -> usize {
-    contents
-        .lines()
-        .take_while(|line| serde_json::from_str::<RolloutEvent>(line).is_ok())
-        .count()
-}
-
 pub(super) fn completed_contents(contents: &str) -> bool {
     contents.ends_with('\n') || contents.is_empty()
+}
+
+pub(super) fn read_thread_events(path: &Path) -> Result<Option<Vec<RolloutEvent>>, RolloutError> {
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if completed_contents(&contents) {
+        return parse_events(&contents).map(Some);
+    }
+
+    let valid_len = contents.rfind('\n').map_or(0, |index| index + 1);
+    let events = parse_events(&contents[..valid_len])?;
+    let dropped_bytes = contents.len() - valid_len;
+    let file = OpenOptions::new().write(true).open(path)?;
+    file.set_len(valid_len as u64)?;
+    file.sync_all()?;
+    tracing::warn!(
+        path = %path.display(),
+        dropped_bytes,
+        "repaired an incomplete activity rollout tail"
+    );
+    Ok(Some(events))
 }

@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs::{self, OpenOptions},
-    io::{self, BufWriter, Write},
+    io::{BufWriter, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -15,7 +15,7 @@ mod read;
 mod scan;
 mod support;
 
-use self::read::{completed_contents, parse_events, valid_prefix};
+use self::read::read_thread_events;
 use self::support::{common_prefix_len, event_parts, is_safe_path_segment, last_window_generation};
 use crate::domain::activity::rollout::{
     RolloutError, RolloutEvent, RolloutEventBody, RolloutStatus, RolloutSummary, SessionContext,
@@ -132,19 +132,7 @@ impl RolloutStore {
 
         let lock = self.lock_for(&final_path);
         let guard = lock.lock_owned().await;
-        let existing_events = match fs::read_to_string(&final_path) {
-            Ok(contents) => {
-                if !completed_contents(&contents) {
-                    return Err(RolloutError::PartialLine {
-                        path: final_path,
-                        valid_events: valid_prefix(&contents),
-                    });
-                }
-                parse_events(&contents)?
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
-            Err(error) => return Err(error.into()),
-        };
+        let existing_events = read_thread_events(&final_path)?.unwrap_or_default();
         let line_count = existing_events.len() as u64;
         let seq = existing_events.last().map_or(0, |event| event.seq);
         let file = OpenOptions::new()
