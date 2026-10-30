@@ -1,6 +1,6 @@
 use prelay_server::{
-    entity::identity::{endpoint_model_routes, endpoint_models, provider_configs},
-    schema::{initialize, initialize_with_catalog},
+    store::entity::identity::{endpoint_model_routes, endpoint_models, provider_configs},
+    store::schema::{initialize, initialize_with_catalog},
     test_support::fixture_catalog,
 };
 use sea_orm::{

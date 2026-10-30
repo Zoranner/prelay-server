@@ -9,7 +9,7 @@ use prelay_server::{
     },
     domain::identity::credential::generate_credential,
     domain::stats::ActivityInsert,
-    storage::{ResponseSessionInsert, Storage, StorageError},
+    store::storage::{ResponseSessionInsert, Storage, StorageError},
 };
 
 use crate::support;

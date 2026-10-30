@@ -1,6 +1,6 @@
 use prelay_server::{
     codec::internal::InternalRole,
-    storage::{ResponseSessionInsert, StorageError},
+    store::storage::{ResponseSessionInsert, StorageError},
 };
 
 use crate::support;

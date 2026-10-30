@@ -73,7 +73,7 @@ pub(super) async fn create_response(
     if let Err(error) = state
         .storage
         .remember_protocol_model_provider(
-            &crate::storage::ProtocolAccess {
+            &crate::store::storage::ProtocolAccess {
                 identity_id: access.identity_id.clone(),
                 endpoint_id: access.endpoint_id.clone(),
                 endpoint_name: access.endpoint_name.clone(),

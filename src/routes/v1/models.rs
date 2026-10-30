@@ -35,7 +35,7 @@ async fn list_models(
 ) -> Result<Json<ModelsResponse>, AppError> {
     let models = state
         .storage
-        .list_protocol_models(&crate::storage::ProtocolAccess {
+        .list_protocol_models(&crate::store::storage::ProtocolAccess {
             identity_id: access.identity_id,
             endpoint_id: access.endpoint_id,
             endpoint_name: access.endpoint_name,

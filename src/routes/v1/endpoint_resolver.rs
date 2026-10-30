@@ -1,4 +1,4 @@
-use crate::storage::ProtocolAccess;
+use crate::store::storage::ProtocolAccess;
 use crate::{
     codec::providers::spec::UpstreamProtocol, domain::registry::ProviderConfig, error::AppError,
     routes::v1::auth::CurrentProtocolAccess, AppState,
@@ -77,7 +77,7 @@ pub(crate) struct TestEndpointAuth {
 
 #[cfg(test)]
 pub(crate) async fn create_test_endpoint_auth(
-    storage: &crate::storage::Storage,
+    storage: &crate::store::storage::Storage,
     provider: &crate::domain::registry::ProviderConfig,
     model_name: &str,
     upstream_model: &str,
@@ -93,7 +93,7 @@ pub(crate) async fn create_test_endpoint_auth(
 
 #[cfg(test)]
 pub(crate) async fn create_test_endpoint_auth_with_candidates(
-    storage: &crate::storage::Storage,
+    storage: &crate::store::storage::Storage,
     providers: &[crate::domain::registry::ProviderConfig],
     _model_name: &str,
     upstream_model: &str,
@@ -146,7 +146,7 @@ pub(crate) async fn create_test_endpoint_auth_with_candidates(
 
 #[cfg(test)]
 pub(crate) async fn create_empty_test_endpoint_auth(
-    storage: &crate::storage::Storage,
+    storage: &crate::store::storage::Storage,
 ) -> TestEndpointAuth {
     let identity = storage
         .register_identity(

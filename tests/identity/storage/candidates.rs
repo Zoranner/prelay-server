@@ -1,5 +1,7 @@
 use prelay_protocol::{CreateEndpointRequest, EndpointModelInput};
-use prelay_server::{domain::identity::credential::generate_credential, storage::ProtocolAccess};
+use prelay_server::{
+    domain::identity::credential::generate_credential, store::storage::ProtocolAccess,
+};
 
 use crate::support;
 

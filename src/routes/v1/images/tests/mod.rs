@@ -53,9 +53,9 @@ async fn test_state() -> AppState {
 
 async fn test_state_with_connection() -> (AppState, DatabaseConnection) {
     let connection = crate::test_support::test_database_connection().await;
-    let storage = crate::storage::Storage::from_connection(
+    let storage = crate::store::storage::Storage::from_connection(
         connection.clone(),
-        crate::storage::MasterKey::from_bytes([0; 32]),
+        crate::store::storage::MasterKey::from_bytes([0; 32]),
     );
     let activity_store = crate::domain::activity::ActivityStore::new(
         storage.clone(),

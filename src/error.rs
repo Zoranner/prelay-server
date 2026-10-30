@@ -120,15 +120,6 @@ impl From<anyhow::Error> for AppError {
     }
 }
 
-impl From<crate::storage::StorageError> for AppError {
-    fn from(error: crate::storage::StorageError) -> Self {
-        Self::Protocol {
-            code: error.code(),
-            message: error.to_string(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use axum::{body::to_bytes, http::StatusCode, response::IntoResponse};
@@ -144,7 +135,7 @@ mod tests {
     use tracing_subscriber::{layer::Context, prelude::*, Layer, Registry};
 
     use super::AppError;
-    use crate::storage::StorageError;
+    use crate::store::storage::StorageError;
     use prelay_protocol::ProtocolErrorCode;
 
     #[derive(Clone)]

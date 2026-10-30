@@ -8,7 +8,7 @@ use futures::{Stream, StreamExt};
 use tokio::sync::mpsc;
 
 use crate::{
-    domain::activity::ActivityStore, domain::stats::ActivityInsert, storage::StorageError,
+    domain::activity::ActivityStore, domain::stats::ActivityInsert, store::storage::StorageError,
 };
 
 use super::StreamRecordState;

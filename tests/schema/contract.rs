@@ -1,6 +1,6 @@
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
-use prelay_server::{schema::initialize, test_support::test_empty_database_connection};
+use prelay_server::{store::schema::initialize, test_support::test_empty_database_connection};
 
 const TABLES: [&str; 11] = [
     "identities",

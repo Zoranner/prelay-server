@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use crate::{codec::internal::InternalRequest, error::AppError, storage::Storage};
+use crate::{codec::internal::InternalRequest, error::AppError, store::storage::Storage};
 
 pub(super) async fn request_with_session_history(
     storage: &Storage,

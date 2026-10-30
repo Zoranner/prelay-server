@@ -29,7 +29,7 @@ use crate::{
         stream_stats::{record_stream_with_rollout, StreamRecording, StreamRollout, StreamSession},
         upstream_observability::upstream_failure_message,
     },
-    storage::ResponseSessionInsert,
+    store::storage::ResponseSessionInsert,
     AppState,
 };
 

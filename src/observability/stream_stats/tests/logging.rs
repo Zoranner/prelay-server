@@ -10,7 +10,7 @@ use tracing::{
 use tracing_subscriber::{layer::Context, prelude::*, Layer, Registry};
 
 use crate::observability::stream_stats::persistence::log_stream_storage_failure;
-use crate::storage::StorageError;
+use crate::store::storage::StorageError;
 
 #[derive(Clone)]
 struct EventCapture {

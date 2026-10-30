@@ -1,5 +1,7 @@
 use prelay_protocol::ProtocolErrorCode;
-use prelay_server::{domain::identity::credential::generate_credential, storage::StorageError};
+use prelay_server::{
+    domain::identity::credential::generate_credential, store::storage::StorageError,
+};
 
 use crate::support;
 

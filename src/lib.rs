@@ -1,9 +1,7 @@
 pub mod app;
 pub mod client_update;
 pub mod codec;
-pub mod database;
 pub mod domain;
-pub mod entity;
 pub mod error;
 pub mod extensions;
 pub mod failover;
@@ -12,8 +10,7 @@ pub mod image_budget;
 pub mod observability;
 pub mod protocol_body_limit;
 pub mod routes;
-pub mod schema;
-pub mod storage;
+pub mod store;
 pub mod upstream;
 
 use error::AppError;
@@ -21,7 +18,7 @@ use error::AppError;
 #[derive(Clone)]
 pub struct AppState {
     pub provider_catalog: std::sync::Arc<domain::catalog::ProviderCatalog>,
-    pub storage: storage::Storage,
+    pub storage: store::storage::Storage,
     pub activity_store: domain::activity::ActivityStore,
     pub client: reqwest::Client,
     pub provider_clients: upstream::ProviderClientCache,
@@ -56,11 +53,11 @@ pub mod test_support {
 
     use crate::{
         client_update::ClientUpdateCache,
-        database::DatabaseConfig,
         domain::catalog::ProviderCatalog,
         extensions::ExtensionCatalog,
-        schema::initialize,
-        storage::{MasterKey, Storage},
+        store::connect::DatabaseConfig,
+        store::schema::initialize,
+        store::storage::{MasterKey, Storage},
         AppState,
     };
 
@@ -108,7 +105,7 @@ pub mod test_support {
     /// 独立 schema 里的空连接：供 schema 初始化测试自行建表。
     pub async fn test_empty_database_connection() -> DatabaseConnection {
         let config = test_database_config();
-        let admin = crate::database::connect(&config)
+        let admin = crate::store::connect::connect(&config)
             .await
             .expect("connect to the test PostgreSQL database");
         let schema = format!(

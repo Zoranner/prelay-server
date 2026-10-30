@@ -8,7 +8,9 @@ use crate::{
         ErrorEvent, RolloutEventBody,
     },
     domain::stats::ActivityInsert,
-    storage::{InterruptedRollout, RecoveredRollout, ResponseSessionInsert, Storage, StorageError},
+    store::storage::{
+        InterruptedRollout, RecoveredRollout, ResponseSessionInsert, Storage, StorageError,
+    },
 };
 
 #[derive(Clone)]

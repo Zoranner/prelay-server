@@ -1,6 +1,6 @@
 use axum::http::StatusCode;
 use prelay_protocol::{CreateIdentityRequest, ProviderUsageResponse};
-use prelay_server::{domain::stats::ActivityInsert, storage::Storage};
+use prelay_server::{domain::stats::ActivityInsert, store::storage::Storage};
 
 use crate::{
     auth::{register, valid_credential},

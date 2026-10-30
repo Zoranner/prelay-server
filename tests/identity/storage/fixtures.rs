@@ -5,7 +5,7 @@ use prelay_server::{
     },
     domain::identity::credential::generate_credential,
     domain::stats::ActivityInsert,
-    storage::Storage,
+    store::storage::Storage,
 };
 
 pub(super) fn provider_input(name: &str, api_key: &str) -> CreateProviderRequest {

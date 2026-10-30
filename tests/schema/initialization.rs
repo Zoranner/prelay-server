@@ -1,4 +1,4 @@
-use prelay_server::{schema::initialize, test_support::test_empty_database_connection};
+use prelay_server::{store::schema::initialize, test_support::test_empty_database_connection};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, Statement};
 
 pub(super) async fn column_exists(db: &DatabaseConnection, table: &str, column: &str) -> bool {
@@ -95,7 +95,7 @@ async fn initializes_an_empty_database_without_migration_metadata() {
     initialize(&db)
         .await
         .expect("initialize the current schema");
-    prelay_server::entity::identities::Entity::find()
+    prelay_server::store::entity::identities::Entity::find()
         .all(&db)
         .await
         .expect("identities table exists");

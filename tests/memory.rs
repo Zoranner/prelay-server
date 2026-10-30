@@ -1,6 +1,6 @@
 use prelay_server::{
     domain::memory::{MemoryCandidate, MemorySearch},
-    storage::Storage,
+    store::storage::Storage,
 };
 
 #[tokio::test]

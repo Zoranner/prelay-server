@@ -7,7 +7,7 @@ use crate::{
     },
     domain::activity::ActivityStore,
     observability::stream_stats::options::StreamSession,
-    storage::ResponseSessionInsert,
+    store::storage::ResponseSessionInsert,
 };
 
 pub(super) async fn save_response_session(

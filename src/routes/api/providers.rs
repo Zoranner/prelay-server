@@ -266,7 +266,7 @@ async fn test_protocol_for_provider(
         .get_visible_provider(&identity.id, &provider_id)
         .await?;
     if !provider.can_manage {
-        return Err(crate::storage::StorageError::ProviderSharingNotAllowed.into());
+        return Err(crate::store::storage::StorageError::ProviderSharingNotAllowed.into());
     }
     let api_key = state
         .storage

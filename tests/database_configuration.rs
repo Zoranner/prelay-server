@@ -1,6 +1,6 @@
 use prelay_server::{
-    database::{connect, DatabaseConfig, DatabaseConfigError},
-    schema::initialize,
+    store::connect::{connect, DatabaseConfig, DatabaseConfigError},
+    store::schema::initialize,
     test_support::{test_database_config, test_database_connection},
 };
 use sea_orm::{ConnectionTrait, DbBackend, Statement};

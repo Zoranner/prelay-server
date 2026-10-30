@@ -3,7 +3,7 @@ use serde_json::json;
 use crate::{
     domain::activity::{EventPhase, MessageEvent, RolloutEventBody},
     domain::stats::ActivityInsert,
-    storage::Storage,
+    store::storage::Storage,
 };
 
 pub(super) async fn test_storage() -> (Storage, String, crate::domain::activity::ActivityStore) {

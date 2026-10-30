@@ -1,0 +1,371 @@
+use std::collections::HashMap;
+
+use crate::{
+    domain::catalog::ProviderCatalog,
+    store::entity::identity::{endpoint_model_routes, endpoint_models, provider_configs},
+};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
+    DbBackend, DbErr, EntityTrait, IntoActiveModel, Statement, TransactionTrait,
+};
+
+const MIGRATION_VERSION: &str = "provider_catalog_v1";
+const MODEL_SOURCE_MIGRATION_VERSION: &str = "provider_model_catalog_v2";
+
+pub(crate) fn target_provider_id(provider_type: &str) -> Option<&'static str> {
+    // 历史 provider_type 只用于把旧记录映射到当前目录条目，不代表仍启用对应上游协议。
+    match provider_type.trim() {
+        "gotoken" => Some("gotoken"),
+        "deepseek" | "deepseek_anthropic" => Some("deepseek"),
+        "kimi" | "kimi_coding" | "kimi_coding_anthropic" => Some("kimi"),
+        "zhipu_coding" | "zhipu_coding_openai" => Some("bigmodel_coding_plan"),
+        "bigmodel_coding_plan" => Some("bigmodel_coding_plan"),
+        "qwen" | "qwen_token_plan" => Some("qwen_token_plan"),
+        "minimax" | "minimax_token" | "minimax_token_openai" | "minimax_token_plan" => {
+            Some("minimax")
+        }
+        _ => None,
+    }
+}
+
+pub(crate) async fn apply(db: &DatabaseConnection, catalog: &ProviderCatalog) -> Result<(), DbErr> {
+    if db.get_database_backend() != DbBackend::Postgres {
+        return Ok(());
+    }
+    apply_postgres_legacy_migration(db, catalog).await?;
+    apply_postgres_model_source_migration(db, catalog).await
+}
+
+async fn apply_postgres_legacy_migration(
+    db: &DatabaseConnection,
+    catalog: &ProviderCatalog,
+) -> Result<(), DbErr> {
+    let transaction = db.begin().await?;
+    transaction
+        .execute_unprepared(
+            "CREATE TABLE IF NOT EXISTS prelay_schema_migrations (\
+                version VARCHAR(128) PRIMARY KEY,\
+                applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP\
+            )",
+        )
+        .await?;
+
+    let applied = transaction
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT version FROM prelay_schema_migrations WHERE version = $1",
+            [MIGRATION_VERSION.into()],
+        ))
+        .await?
+        .is_some();
+    if applied {
+        transaction.commit().await?;
+        return Ok(());
+    }
+
+    let provider_rows = transaction
+        .query_all_raw(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT id, provider_type FROM identity_provider_configs ORDER BY id".to_owned(),
+        ))
+        .await?;
+    let mut provider_targets = HashMap::with_capacity(provider_rows.len());
+    for row in provider_rows {
+        let provider_id: String = row.try_get("", "id")?;
+        let provider_type: String = row.try_get("", "provider_type")?;
+        let target = target_provider_id(&provider_type).ok_or_else(|| {
+            migration_error(format!(
+                "供应商 {provider_id} 的旧 provider_type {provider_type} 没有明确目录映射"
+            ))
+        })?;
+        if catalog.provider(target).is_none() {
+            return Err(migration_error(format!(
+                "供应商 {provider_id} 映射到目录供应商 {target}，但目录中不存在"
+            )));
+        }
+        provider_targets.insert(provider_id, (provider_type, target));
+    }
+
+    cleanup_endpoint_models(&transaction, catalog, &provider_targets).await?;
+
+    for (provider_id, (provider_type, target)) in &provider_targets {
+        if provider_type != target {
+            transaction
+                .execute_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "UPDATE identity_provider_configs SET provider_type = $1 WHERE id = $2",
+                    [(*target).to_owned().into(), provider_id.clone().into()],
+                ))
+                .await?;
+        }
+    }
+    transaction
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO prelay_schema_migrations (version) VALUES ($1)",
+            [MIGRATION_VERSION.into()],
+        ))
+        .await?;
+    transaction.commit().await
+}
+
+async fn apply_postgres_model_source_migration(
+    db: &DatabaseConnection,
+    catalog: &ProviderCatalog,
+) -> Result<(), DbErr> {
+    let transaction = db.begin().await?;
+    transaction
+        .execute_unprepared(
+            "CREATE TABLE IF NOT EXISTS prelay_schema_migrations (\
+                version VARCHAR(128) PRIMARY KEY,\
+                applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP\
+            )",
+        )
+        .await?;
+
+    let applied = transaction
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT version FROM prelay_schema_migrations WHERE version = $1",
+            [MODEL_SOURCE_MIGRATION_VERSION.into()],
+        ))
+        .await?
+        .is_some();
+    if applied {
+        transaction.commit().await?;
+        return Ok(());
+    }
+
+    let provider_rows = provider_configs::Entity::find().all(&transaction).await?;
+    let mut provider_targets = HashMap::with_capacity(provider_rows.len());
+    for provider in provider_rows {
+        let target = target_provider_id(&provider.provider_type).ok_or_else(|| {
+            migration_error(format!(
+                "供应商 {} 的 provider_type {} 没有明确目录映射",
+                provider.id, provider.provider_type
+            ))
+        })?;
+        if catalog.provider(target).is_none() {
+            return Err(migration_error(format!(
+                "供应商 {} 映射到目录供应商 {}，但目录中不存在",
+                provider.id, target
+            )));
+        }
+        let provider_id = provider.id.clone();
+        if provider.provider_type != target {
+            let mut active = provider.into_active_model();
+            active.provider_type = Set(target.to_string());
+            active.update(&transaction).await?;
+        }
+        provider_targets.insert(provider_id, target);
+    }
+
+    let endpoint_rows = endpoint_models::Entity::find().all(&transaction).await?;
+    for endpoint_model in endpoint_rows {
+        let target = provider_targets
+            .get(&endpoint_model.provider_id)
+            .copied()
+            .ok_or_else(|| {
+                migration_error(format!(
+                    "接入点模型 {} 引用了不存在的供应商 {}",
+                    endpoint_model.id, endpoint_model.provider_id
+                ))
+            })?;
+        if should_remove_model(catalog, target, &endpoint_model.model_name) {
+            endpoint_model_routes::Entity::delete_by_id((
+                endpoint_model.endpoint_id.clone(),
+                endpoint_model.model_name.clone(),
+            ))
+            .exec(&transaction)
+            .await?;
+            endpoint_models::Entity::delete_by_id(endpoint_model.id)
+                .exec(&transaction)
+                .await?;
+        }
+    }
+
+    transaction
+        .execute_unprepared("DROP TABLE IF EXISTS identity_provider_models")
+        .await?;
+    transaction
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO prelay_schema_migrations (version) VALUES ($1)",
+            [MODEL_SOURCE_MIGRATION_VERSION.into()],
+        ))
+        .await?;
+    transaction.commit().await
+}
+
+async fn cleanup_endpoint_models(
+    transaction: &DatabaseTransaction,
+    catalog: &ProviderCatalog,
+    provider_targets: &HashMap<String, (String, &'static str)>,
+) -> Result<(), DbErr> {
+    let rows = transaction
+        .query_all_raw(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT id, endpoint_id, provider_id, model_name FROM identity_endpoint_models ORDER BY id"
+                .to_owned(),
+        ))
+        .await?;
+    for row in rows {
+        let endpoint_model_id: String = row.try_get("", "id")?;
+        let provider_id: String = row.try_get("", "provider_id")?;
+        let model_name: String = row.try_get("", "model_name")?;
+        let target = provider_target(&provider_id, provider_targets)?;
+        if should_remove_model(catalog, target, &model_name) {
+            transaction
+                .execute_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "DELETE FROM identity_endpoint_model_routes WHERE endpoint_id = $1 AND model_name = $2 AND provider_id = $3",
+                    [
+                        row.try_get::<String>("", "endpoint_id")?.into(),
+                        model_name.clone().into(),
+                        provider_id.clone().into(),
+                    ],
+                ))
+                .await?;
+            transaction
+                .execute_raw(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "DELETE FROM identity_endpoint_models WHERE id = $1",
+                    [endpoint_model_id.into()],
+                ))
+                .await?;
+        }
+    }
+    Ok(())
+}
+
+/// 供应商的模型清单落库：存量记录按目录条目回填（扣掉旧的禁用清单），随后删除旧列。
+pub(crate) async fn migrate_provider_models(
+    db: &DatabaseConnection,
+    catalog: &ProviderCatalog,
+) -> Result<(), DbErr> {
+    let has_legacy_column =
+        super::column_exists(db, "identity_provider_configs", "disabled_models_json").await?;
+    let legacy_disabled = if has_legacy_column {
+        legacy_disabled_models(db).await?
+    } else {
+        HashMap::new()
+    };
+
+    for provider in provider_configs::Entity::find().all(db).await? {
+        if provider.models_json.is_some() {
+            continue;
+        }
+        let Some(catalog_provider) = catalog.provider(&provider.provider_type) else {
+            tracing::warn!(
+                provider = %provider.id,
+                provider_type = %provider.provider_type,
+                "provider catalog entry is gone; keeping the provider without a model list"
+            );
+            continue;
+        };
+        let disabled = legacy_disabled
+            .get(&provider.id)
+            .cloned()
+            .unwrap_or_default();
+        let models = catalog_provider
+            .language_models
+            .iter()
+            .chain(catalog_provider.image_generation_models.iter())
+            .filter(|model_id| !disabled.contains(model_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut active = provider.into_active_model();
+        active.models_json =
+            Set(Some(serde_json::to_string(&models).map_err(|error| {
+                DbErr::Custom(format!("serialize provider models: {error}"))
+            })?));
+        active.update(db).await?;
+    }
+    if has_legacy_column {
+        db.execute_unprepared(
+            "ALTER TABLE identity_provider_configs DROP COLUMN disabled_models_json",
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn legacy_disabled_models(
+    db: &DatabaseConnection,
+) -> Result<HashMap<String, Vec<String>>, DbErr> {
+    let rows = db
+        .query_all_raw(Statement::from_string(
+            db.get_database_backend(),
+            "SELECT id, disabled_models_json FROM identity_provider_configs \
+             WHERE disabled_models_json IS NOT NULL"
+                .to_owned(),
+        ))
+        .await?;
+    let mut disabled = HashMap::new();
+    for row in rows {
+        let id: String = row.try_get("", "id")?;
+        let Some(raw) = row.try_get::<Option<String>>("", "disabled_models_json")? else {
+            continue;
+        };
+        disabled.insert(id, serde_json::from_str(&raw).unwrap_or_default());
+    }
+    Ok(disabled)
+}
+
+fn should_remove_model(catalog: &ProviderCatalog, provider_id: &str, model_name: &str) -> bool {
+    !catalog.provider_supports_language_model(provider_id, model_name)
+        && !catalog.provider_supports_image_generation_model(provider_id, model_name)
+}
+
+fn provider_target(
+    provider_id: &str,
+    provider_targets: &HashMap<String, (String, &'static str)>,
+) -> Result<&'static str, DbErr> {
+    provider_targets
+        .get(provider_id)
+        .map(|(_, target)| *target)
+        .ok_or_else(|| migration_error(format!("数据引用了不存在的供应商 {provider_id}")))
+}
+
+fn migration_error(message: impl Into<String>) -> DbErr {
+    DbErr::Custom(format!(
+        "provider catalog migration failed: {}",
+        message.into()
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{should_remove_model, target_provider_id};
+
+    #[test]
+    fn marks_models_outside_provider_catalog_for_cleanup() {
+        let catalog = crate::test_support::fixture_catalog();
+
+        assert!(should_remove_model(
+            &catalog,
+            "gotoken",
+            "codex-auto-review"
+        ));
+        assert!(!should_remove_model(&catalog, "gotoken", "gpt-5.6-sol"));
+    }
+
+    #[test]
+    fn maps_legacy_provider_types_to_current_catalog_ids() {
+        assert_eq!(target_provider_id("gotoken"), Some("gotoken"));
+        assert_eq!(target_provider_id("deepseek_anthropic"), Some("deepseek"));
+        assert_eq!(target_provider_id("kimi_coding_anthropic"), Some("kimi"));
+        assert_eq!(
+            target_provider_id("zhipu_coding"),
+            Some("bigmodel_coding_plan")
+        );
+        assert_eq!(target_provider_id("minimax_token"), Some("minimax"));
+        assert_eq!(target_provider_id("qwen"), Some("qwen_token_plan"));
+    }
+
+    #[test]
+    fn rejects_provider_types_without_an_unambiguous_catalog_mapping() {
+        assert_eq!(target_provider_id("zhipu"), None);
+        assert_eq!(target_provider_id("custom_provider"), None);
+    }
+}

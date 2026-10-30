@@ -1,7 +1,7 @@
 use sha2::{Digest, Sha256};
 
 use super::MemoryCandidate;
-use crate::storage::StorageError;
+use crate::store::storage::StorageError;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct NormalizedMemoryCandidate {

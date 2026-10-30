@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 
-use prelay_server::storage::MasterKey;
+use prelay_server::store::storage::MasterKey;
 
 struct EnvironmentVariableRestore {
     name: &'static str,

@@ -7,7 +7,7 @@ use crate::{
     codec::bridge::stream::SharedStreamStats,
     domain::activity::{ActivityStore, RawStreamContentCapture, RolloutEventBody, SessionContext},
     domain::stats::ActivityInsert,
-    storage::StorageError,
+    store::storage::StorageError,
 };
 
 use super::{

@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-use prelay_server::storage::Storage;
+use prelay_server::store::storage::Storage;
 
 /// 集成测试的存储句柄：包装库内测试基座，附带 `Deref` 方便直接调用存储方法。
 pub struct TestStorage(Storage);

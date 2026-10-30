@@ -2,7 +2,7 @@ use axum::http::StatusCode;
 use prelay_protocol::{
     ActivitySummary, CreateProviderRequest, ModelStatsSummary, ProviderStatsSummary, StatsOverview,
 };
-use prelay_server::{domain::stats::ActivityInsert, storage::Storage};
+use prelay_server::{domain::stats::ActivityInsert, store::storage::Storage};
 
 use crate::{auth::register, http::request_json, test_context};
 

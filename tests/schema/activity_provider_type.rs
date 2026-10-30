@@ -1,5 +1,5 @@
 use prelay_server::{
-    schema::{initialize, initialize_with_catalog},
+    store::schema::{initialize, initialize_with_catalog},
     test_support::{fixture_catalog, test_empty_database_connection},
 };
 use sea_orm::{ConnectionTrait, DbBackend, Statement};

@@ -16,7 +16,7 @@ use crate::{
         state::prepare_stream_with_log_id,
         StreamRecording, StreamRollout,
     },
-    storage::StorageError,
+    store::storage::StorageError,
 };
 
 #[tokio::test]

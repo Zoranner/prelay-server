@@ -11,7 +11,7 @@ use crate::{
         RolloutWriter,
     },
     domain::stats::{ActivityInsert, StreamActivityUpdate},
-    storage::StorageError,
+    store::storage::StorageError,
 };
 
 use super::{

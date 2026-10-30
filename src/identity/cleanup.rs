@@ -2,7 +2,7 @@ pub const INACTIVE_IDENTITY_RETENTION_DAYS: i64 = 90;
 
 use chrono::{Duration, Utc};
 
-use crate::{domain::activity::ActivityStore, storage::StorageError};
+use crate::{domain::activity::ActivityStore, store::storage::StorageError};
 
 pub async fn delete_expired_identities(
     activity_store: &ActivityStore,

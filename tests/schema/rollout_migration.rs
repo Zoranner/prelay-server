@@ -1,4 +1,4 @@
-use prelay_server::{schema::initialize, test_support::test_empty_database_connection};
+use prelay_server::{store::schema::initialize, test_support::test_empty_database_connection};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 async fn column_exists(db: &DatabaseConnection, table: &str, column: &str) -> bool {

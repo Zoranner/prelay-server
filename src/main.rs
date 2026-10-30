@@ -7,13 +7,13 @@ use std::{
 use prelay_server::{
     app,
     client_update::ClientUpdateCache,
-    database::{connect, DatabaseConfig},
     domain::activity::{rollout::RolloutStore, ActivityStore},
     domain::catalog::ProviderCatalog,
     extensions::ExtensionCatalog,
     identity::cleanup::delete_expired_identities,
-    schema::initialize_with_catalog,
-    storage::{MasterKey, Storage, StorageError},
+    store::connect::{connect, DatabaseConfig},
+    store::schema::initialize_with_catalog,
+    store::storage::{MasterKey, Storage, StorageError},
     AppState,
 };
 
@@ -217,7 +217,9 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use prelay_server::{entity::identities, schema::initialize, storage::StorageError};
+    use prelay_server::{
+        store::entity::identities, store::schema::initialize, store::storage::StorageError,
+    };
     use sea_orm::EntityTrait;
     use tracing::{
         field::{Field, Visit},

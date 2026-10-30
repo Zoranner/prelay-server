@@ -119,8 +119,8 @@ impl From<AppError> for ApiError {
     }
 }
 
-impl From<crate::storage::StorageError> for ApiError {
-    fn from(error: crate::storage::StorageError) -> Self {
+impl From<crate::store::storage::StorageError> for ApiError {
+    fn from(error: crate::store::storage::StorageError) -> Self {
         Self::from(AppError::from(error))
     }
 }
