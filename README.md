@@ -26,7 +26,7 @@ Windows PowerShell：
 [Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
 ```
 
-本地 `.env` 会在启动时自动加载；已有进程环境变量优先。`DATABASE_URL` 是数据库位置的唯一选择，没有默认值，且只接受 PostgreSQL（`postgres://` 或 `postgresql://`）；其它 scheme 直接拒绝启动。服务首次连接全新空数据库时会初始化当前 schema。已有当前结构会补齐 `activity_rollouts` 并删除旧的 `activity_contents`；其它不完整或结构不兼容的数据库仍会被拒绝。
+本地 `.env` 会在启动时自动加载；已有进程环境变量优先。`DATABASE_URL` 是数据库位置的唯一选择，没有默认值，且只接受 PostgreSQL（`postgres://` 或 `postgresql://`）；其它 scheme 直接拒绝启动。服务首次连接全新空数据库时会初始化当前 schema。已有当前结构会执行 `activity_rollout_v2`：为 `activity_rollouts` 增加线程、窗口和行号字段，移除 `rollout_path` 唯一索引，并删除旧的 `activity_contents`；其它不完整或结构不兼容的数据库仍会被拒绝。
 
 本地调试时，服务从项目根目录的 `config/catalog/` 读取供应商和模型目录。
 
@@ -76,15 +76,15 @@ Copy-Item deploy/.env.example deploy/.env
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --pull always
 ```
 
-编排内的 PostgreSQL 数据保存在宿主机 `deploy/data/postgres`，活动 JSONL 保存在 `deploy/data/sessions`。容器内服务以 UID 1000 的 `relay` 用户运行；首次部署前需确保 `deploy/data/sessions` 可由该用户写入，否则服务会在启动阶段明确失败。服务首次连接空数据库时初始化当前 schema；已有当前结构会执行活动正文表的替换，不完整或结构不兼容的数据库不进行其它修复或升级。
+编排内的 PostgreSQL 数据保存在宿主机 `deploy/data/postgres`，活动 JSONL 保存在 `deploy/data/sessions`。容器内服务以 UID 1000 的 `relay` 用户运行；首次部署前需确保 `deploy/data/sessions` 可由该用户写入，否则服务会在启动阶段明确失败。服务首次连接空数据库时初始化当前 schema；已有当前结构会执行 `activity_rollout_v2` 增量迁移，不完整或结构不兼容的数据库不进行其它修复或升级。
 
-升级已有部署前必须同时备份 PostgreSQL 数据和 `ACTIVITY_ROLLOUT_DIR`。初始化会删除旧 `activity_contents` 表，并在 `anthropic_removal_v1` 中删除 Anthropic 活动及其 `activity_rollouts` 索引；数据库迁移不会删除对应的 JSONL 文件，遗留文件需要按数据保留策略单独处理。
+升级已有部署前必须同时备份 PostgreSQL 数据和 `ACTIVITY_ROLLOUT_DIR`。`activity_rollout_v2` 会补齐 `activity_rollouts` 的线程、窗口和行号字段，移除 `rollout_path` 唯一索引；旧活动行没有线程和行号区间。初始化仍会删除旧 `activity_contents` 表，并在 `anthropic_removal_v1` 中删除 Anthropic 活动及其 `activity_rollouts` 索引；数据库迁移不会迁移或删除旧活动级 JSONL 文件，遗留文件需要按数据保留策略单独处理。
 
 使用该 Compose 文件时，客户端安装包的容器内目录是 `/app/updates`，对应宿主机的 `deploy/updates`。GitHub 不可用时，可将发布产物原文件直接放入对应目标和版本目录，例如 `deploy/updates/windows/x64/0.2.0/Prelay_0.2.0_x64-setup.exe`。
 
 也可以让服务连接外部 PostgreSQL 实例：为服务设置固定的 `ENCRYPTION_KEY`，并将 `DATABASE_URL` 设为该实例中一个全新空数据库的连接串。
 
-Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.4.2`，并以只读方式挂载 `app/config/catalog/`；目录内必须包含 `providers.toml` 和 `models/` 下的两类模型文件，语言模型的基础指令模板放在同一目录的 `models/instructions/`。
+Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.4.3`，并以只读方式挂载 `app/config/catalog/`；目录内必须包含 `providers.toml` 和 `models/` 下的两类模型文件，语言模型的基础指令模板放在同一目录的 `models/instructions/`。
 
 ## 服务边界
 
@@ -105,9 +105,11 @@ Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.4.2`，并以只读方式
 - `UPSTREAM_RETRY_BACKOFF_MS`：重试前等待的毫秒数，默认 `250`，允许为 `0`。
 - `UPSTREAM_MAX_CANDIDATES`：单次请求最多尝试的候选上游数，默认不限制，必须大于 `0`。
 
-活动正文保存在服务端文件中，数据库只保存索引、状态、大小和 hash。文件按活动拆分，路径为 `sessions/YYYY/MM/DD/rollout-<UTC 时间>-<activity_id>.jsonl`，写入期间使用 `.part`，正常结束后原子重命名为 `.jsonl`。正文不设应用层大小上限，也不做自动归档；磁盘容量和文件系统限制仍是物理边界。目录由启动时读取的环境变量控制，修改后需要重启服务：
+活动正文按身份和会话线程保存在服务端文件中，路径为 `<ACTIVITY_ROLLOUT_DIR>/<identity_id>/<thread_id>.jsonl`。同一线程的历史前缀只追加一次；窗口 generation 变化时写入 `window_start`。文件在后续请求发现末尾半行时会截断到最后一个完整换行，启动日志会报告残留的不完整文件。正文不设应用层大小上限，也不做自动归档；磁盘容量和文件系统限制仍是物理边界。活动索引保存在数据库的 `activity_rollouts` 中，记录线程、窗口、行号区间、状态、大小和 hash。目录由启动时读取的环境变量控制，修改后需要重启服务：
 
 - `ACTIVITY_ROLLOUT_DIR`：活动 JSONL 的根目录，默认 `data/sessions`，必须非空。
+
+`identity_response_sessions` 保存 Responses 续接所需的完整输入和输出，数据库和备份必须按敏感数据处理；它不是活动正文索引或统计来源。
 
 入口请求体仍受 `PROTOCOL_MAX_REQUEST_BODY_BYTES` 限制，默认 `256 MiB`；该限制只决定单次请求能否被服务接收，不截断已经接收的正文。
 

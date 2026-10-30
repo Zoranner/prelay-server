@@ -182,6 +182,7 @@ jobs:
           body: |
             Server image: ${{ needs.prepare.outputs.image }}:${{ needs.prepare.outputs.version }}
             Offline images: prelay-server-${{ needs.prepare.outputs.version }}-linux-amd64.tar, prelay-server-${{ needs.prepare.outputs.version }}-linux-arm64.tar
+            升级前请备份 PostgreSQL 与 ACTIVITY_ROLLOUT_DIR，确认活动目录可写，并按 README 核对数据库迁移和活动文件保留策略。
           files: |
             artifacts/*.tar
           fail_on_unmatched_files: true

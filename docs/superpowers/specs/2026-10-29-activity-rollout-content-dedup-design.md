@@ -87,8 +87,6 @@ data/sessions/
 `identity_activities` 继续保存每次请求的统计和状态：
 
 - activity_id
-- session_id/thread_id
-- window_id/generation
 - model/provider/endpoint
 - token、延迟、HTTP 状态、错误
 
@@ -99,6 +97,8 @@ data/sessions/
 - thread_id、window_id、generation
 - start_line、end_line
 - activity 区间的事件数、字节数和 hash
+
+线程、窗口和 generation 记录在 `activity_rollouts`，不重复写入 `identity_activities`；读取方通过 activity_id 关联两张表。旧活动行没有线程和行号区间，读取方必须按旧数据单独处理。
 
 不再保存“每个 activity 一个文件”的语义。
 

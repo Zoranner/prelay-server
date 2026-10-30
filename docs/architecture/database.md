@@ -38,8 +38,13 @@ PostgreSQL
 - 供应商、加密后的 API Key 与该供应商启用的模型清单（`models_json`）。
 - 接入点、接入点模型映射与最近成功候选供应商。
 - Responses 会话、请求记录和统计所需元数据。
+- 活动 rollout 索引的线程、窗口、行号区间、状态、大小和 hash。
 
 资源 ID 继续使用 UUID 字符串，避免让自增主键语义进入 API。时间在领域层统一使用 UTC；DTO 按既有格式序列化。结构化元数据使用 JSON 值。密文、凭据哈希和令牌保持不透明字符串，不作为 ORM 关系或 JSON 字段处理。
+
+`activity_rollouts` 按线程文件记录 `thread_id`、`window_id`、`generation`、`start_line` 和 `end_line`；同一线程的多个活动共享一个 JSONL 文件。`activity_rollout_v2` 升级后，旧活动行的 `thread_id` 为空、行号区间为 0，旧活动级文件不迁移；读取方必须识别这种旧数据，不能把 `read_slice(path, 0, 0)` 当作旧正文。
+
+`identity_response_sessions` 保存 Responses 续接所需的完整输入和输出，数据库和备份按敏感数据处理；它不是活动正文索引或统计来源。
 
 实体关系、唯一约束、外键和索引由统一 schema 初始化模块定义。全新空库首次启动时创建完整当前 schema；已有完整 schema 在启动时执行幂等迁移（补齐缺失列、删除已废弃的遗留表、清理已退出链路的字段、按目录回填模型清单、按供应商清单对账接入点模型）；仅存在部分业务表时拒绝启动，要求创建新的部署。每一项跨资源写入仍须由单个事务完成；失败时不得留下部分供应商、空接入点或失配的模型映射。
 
@@ -58,6 +63,8 @@ postgres://<user>:<password>@<host>:5432/<database>
 ## 初始化与发布
 
 服务启动时为全新空库创建当前完整 schema，并在基础 schema 初始化后执行版本化的 `provider_catalog_v1` 数据迁移。迁移在单个事务中校验旧供应商类型和供应商引用，清理目录外模型及旧接入点别名后归一化供应商目录 ID 并记录版本。
+
+基础 schema 初始化后还会执行 `activity_rollout_v2`，为 `activity_rollouts` 增加线程、窗口和行号字段并移除旧的 `rollout_path` 唯一索引；该迁移不迁移或删除旧 JSONL 文件。
 
 同一启动流程还执行一次 `anthropic_removal_v1`：删除 `identity_activities` 中协议为 `anthropic` 或 `anthropic_messages` 的历史记录及其 `activity_rollouts` 索引；从供应商 `capabilities_json` 删除 Anthropic 协议地址和协议集合；把仍有目录对应项的旧供应商类型归一化，并删除只支持 Anthropic 的供应商及其接入点模型、路由和分享记录。迁移按版本只执行一次，失败时由所在事务回滚。JSONL rollout 文件不由数据库迁移删除。
 
