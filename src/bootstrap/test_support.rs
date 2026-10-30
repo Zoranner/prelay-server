@@ -24,12 +24,16 @@ static TEST_SCHEMA_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// `TEST_POSTGRES_URL` 必须指向专用测试库：用例会在库里创建 `prelay_test_*` schema。
 pub fn test_database_url() -> String {
-    std::env::var("TEST_POSTGRES_URL").unwrap_or_else(|_| {
+    let url = std::env::var("TEST_POSTGRES_URL").unwrap_or_else(|_| {
         panic!(
             "TEST_POSTGRES_URL must point at a dedicated PostgreSQL test database; \
              the server no longer supports SQLite"
         )
-    })
+    });
+    // 测试会执行建表、加列和删表；关闭 SQLx 预备语句缓存，避免 PostgreSQL
+    // 在 ALTER TABLE 后复用到旧的 result type（cached plan must not change result type）。
+    let separator = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{separator}statement-cache-capacity=0")
 }
 
 pub fn test_database_config() -> DatabaseConfig {
