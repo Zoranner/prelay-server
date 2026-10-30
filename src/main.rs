@@ -68,8 +68,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    prelay_server::protocol_body_limit::initialize_from_environment()
-        .map_err(anyhow::Error::msg)?;
+    prelay_server::inbound::limits::initialize_from_environment().map_err(anyhow::Error::msg)?;
     let provider_catalog = Arc::new(ProviderCatalog::load(&catalog_directory())?);
     let database_config = DatabaseConfig::from_environment()?;
     let db = connect(&database_config).await?;
@@ -121,7 +120,8 @@ async fn main() -> anyhow::Result<()> {
     let upstream_policy = prelay_server::outbound::client::initialize_from_environment()
         .map_err(anyhow::Error::msg)?;
     // 图片预算的默认值按协议入口上限推导，入口上限已在启动时先初始化。
-    prelay_server::image_budget::initialize_from_environment().map_err(anyhow::Error::msg)?;
+    prelay_server::inbound::v1::initialize_image_budget_from_environment()
+        .map_err(anyhow::Error::msg)?;
     let client = prelay_server::outbound::client::build_client(upstream_policy)?;
     let client_update_client =
         prelay_server::outbound::integrations::client_update::http_client_from_environment(

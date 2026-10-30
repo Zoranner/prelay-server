@@ -7,7 +7,7 @@ use crate::{
     },
     domain::activity::rollout::SessionContext,
     error::AppError,
-    routes::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
+    inbound::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
     AppState,
 };
 

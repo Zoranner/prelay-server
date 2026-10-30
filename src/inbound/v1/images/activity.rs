@@ -1,7 +1,7 @@
 use crate::{
     domain::activity::{rollout::SessionContext, RolloutEventBody},
     domain::stats::ActivityInsert,
-    routes::v1::auth::CurrentProtocolAccess,
+    inbound::v1::auth::CurrentProtocolAccess,
     AppState,
 };
 

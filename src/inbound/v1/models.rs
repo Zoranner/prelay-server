@@ -7,7 +7,7 @@ use serde::Serialize;
 use std::collections::HashSet;
 
 use crate::{
-    domain::registry::EndpointModel, error::AppError, routes::v1::auth::CurrentProtocolAccess,
+    domain::registry::EndpointModel, error::AppError, inbound::v1::auth::CurrentProtocolAccess,
     AppState,
 };
 
@@ -79,7 +79,7 @@ mod tests {
     use tower::ServiceExt;
 
     use super::list_models;
-    use crate::routes::v1::endpoint_resolver::{
+    use crate::inbound::v1::endpoint_resolver::{
         create_test_endpoint_auth, create_test_endpoint_auth_with_candidates, test_provider,
         test_provider_with_capabilities,
     };
@@ -184,7 +184,7 @@ mod tests {
                 .with_state(state.clone())
                 .layer(middleware::from_fn_with_state(
                     state,
-                    crate::routes::v1::auth::require_protocol_auth,
+                    crate::inbound::v1::auth::require_protocol_auth,
                 )),
         );
         let response = app

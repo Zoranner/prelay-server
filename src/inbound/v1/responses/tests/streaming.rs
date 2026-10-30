@@ -67,7 +67,7 @@ async fn streams_responses_sse_delta_before_upstream_finishes() {
             .with_state(state.clone())
             .layer(middleware::from_fn_with_state(
                 state.clone(),
-                crate::routes::v1::auth::require_protocol_auth,
+                crate::inbound::v1::auth::require_protocol_auth,
             )),
     );
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -118,7 +118,7 @@ async fn streams_native_responses_sse_without_waiting_for_upstream_done() {
             .with_state(state.clone())
             .layer(middleware::from_fn_with_state(
                 state.clone(),
-                crate::routes::v1::auth::require_protocol_auth,
+                crate::inbound::v1::auth::require_protocol_auth,
             )),
     );
     let listener = TcpListener::bind("127.0.0.1:0")

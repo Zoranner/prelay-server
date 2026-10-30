@@ -1,6 +1,6 @@
 use axum::{extract::DefaultBodyLimit, middleware, Router};
 
-use crate::{protocol_body_limit, AppState};
+use crate::{inbound::limits, AppState};
 
 pub mod auth;
 mod candidates;
@@ -17,11 +17,15 @@ pub fn router(state: AppState) -> Router {
         .merge(models::router())
         .merge(responses::router())
         .with_state(state.clone())
-        .layer(DefaultBodyLimit::max(protocol_body_limit::limit()))
+        .layer(DefaultBodyLimit::max(limits::limit()))
         .layer(middleware::from_fn_with_state(
             state,
             auth::require_protocol_auth,
         ))
+}
+
+pub fn initialize_image_budget_from_environment() -> Result<(), String> {
+    responses::image_budget::initialize_from_environment().map(|_| ())
 }
 
 #[cfg(test)]
@@ -36,7 +40,7 @@ mod tests {
     use serde_json::Value;
     use tower::ServiceExt;
 
-    use crate::protocol_body_limit;
+    use crate::inbound::limits;
 
     #[tokio::test]
     async fn protocol_body_limit_accepts_screenshot_session_payloads() {
@@ -46,7 +50,7 @@ mod tests {
                 "/request",
                 post(|Json(_): Json<Value>| async { StatusCode::NO_CONTENT }),
             )
-            .layer(DefaultBodyLimit::max(protocol_body_limit::limit()));
+            .layer(DefaultBodyLimit::max(limits::limit()));
 
         let response = app
             .oneshot(

@@ -1,7 +1,7 @@
 use crate::store::storage::ProtocolAccess;
 use crate::{
     codec::providers::spec::UpstreamProtocol, domain::registry::ProviderConfig, error::AppError,
-    routes::v1::auth::CurrentProtocolAccess, AppState,
+    inbound::v1::auth::CurrentProtocolAccess, AppState,
 };
 
 #[derive(Clone)]

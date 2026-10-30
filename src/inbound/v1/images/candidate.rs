@@ -17,7 +17,7 @@ use crate::{
         SessionContext,
     },
     error::AppError,
-    routes::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
+    inbound::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
     service::{
         recording::{record_first_chunk_with_rollout_best_effort, StreamRollout},
         upstream_errors::upstream_observability,

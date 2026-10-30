@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::{
     error::AppError,
-    routes::v1::{
+    inbound::v1::{
         auth::CurrentProtocolAccess, candidates::run_endpoint_model_candidates,
         endpoint_resolver::resolve_language_model_candidates,
     },

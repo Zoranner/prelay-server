@@ -17,7 +17,7 @@ use tower::ServiceExt;
 use super::{handler::create_chat_completion, router};
 use crate::{
     domain::registry::ProviderCapabilityOverrides,
-    routes::v1::endpoint_resolver::{
+    inbound::v1::endpoint_resolver::{
         create_test_endpoint_auth, create_test_endpoint_auth_with_candidates, test_provider,
         test_provider_with_capabilities,
     },

@@ -13,7 +13,7 @@ const DEFAULT_KEEP_LAST: usize = 10;
 /// 入口上限表示客户端允许产生多大的会话，预算按固定比例跟随它；上游真实能收多少
 /// 是硬约束，需要用 `IMAGE_BUDGET_MAX_BYTES` 显式对齐（详见 `deploy/.env.example`）。
 fn default_max_bytes() -> usize {
-    crate::protocol_body_limit::limit() / 4
+    crate::inbound::limits::limit() / 4
 }
 
 static IMAGE_BUDGET: OnceLock<ImageBudgetPolicy> = OnceLock::new();

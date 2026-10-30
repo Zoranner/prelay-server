@@ -222,7 +222,7 @@ pub(super) async fn spawn_image_relay(state: AppState) -> (String, tokio::task::
             .with_state(state.clone())
             .layer(middleware::from_fn_with_state(
                 state,
-                crate::routes::v1::auth::require_protocol_auth,
+                crate::inbound::v1::auth::require_protocol_auth,
             )),
     );
     let listener = TcpListener::bind("127.0.0.1:0")

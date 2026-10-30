@@ -6,6 +6,7 @@ mod activity;
 mod candidate;
 mod chat;
 mod handler;
+pub(super) mod image_budget;
 mod native;
 mod sessions;
 

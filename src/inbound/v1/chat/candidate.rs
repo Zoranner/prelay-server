@@ -15,7 +15,7 @@ use crate::{
     domain::activity::rollout::SessionContext,
     domain::stats::ActivityInsert,
     error::AppError,
-    routes::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
+    inbound::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
     service::{
         recording::{record_stream_with_rollout, StreamRecording, StreamRollout},
         upstream_errors::{upstream_failure_message, upstream_observability},

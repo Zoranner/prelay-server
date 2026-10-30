@@ -15,7 +15,7 @@ use tokio::net::TcpListener;
 use tower::ServiceExt;
 
 use super::{handler::create_response, router};
-use crate::routes::v1::endpoint_resolver::{
+use crate::inbound::v1::endpoint_resolver::{
     create_empty_test_endpoint_auth, create_test_endpoint_auth,
     create_test_endpoint_auth_with_candidates, test_provider,
 };

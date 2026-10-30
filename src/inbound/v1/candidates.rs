@@ -1,8 +1,8 @@
 use std::future::Future;
 
 use crate::{
-    error::AppError, outbound::client::retry_with_policy,
-    routes::v1::endpoint_resolver::ResolvedEndpointProvider, service::failover::FailoverRegistry,
+    error::AppError, inbound::v1::endpoint_resolver::ResolvedEndpointProvider,
+    outbound::client::retry_with_policy, service::failover::FailoverRegistry,
 };
 
 pub(super) async fn run_endpoint_model_candidates<T, F, Fut>(
@@ -57,7 +57,7 @@ mod tests {
     use super::run_endpoint_model_candidates;
     use crate::{
         codec::providers::spec::UpstreamProtocol, domain::registry::ProviderConfig,
-        error::AppError, routes::v1::endpoint_resolver::ResolvedEndpointProvider,
+        error::AppError, inbound::v1::endpoint_resolver::ResolvedEndpointProvider,
         service::failover::FailoverRegistry,
     };
     use axum::http::StatusCode;

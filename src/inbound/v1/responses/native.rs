@@ -17,7 +17,7 @@ use crate::{
     domain::activity::events::{events_from_internal_request, events_from_internal_response},
     domain::stats::ActivityInsert,
     error::AppError,
-    image_budget::{self, ImageBudgetOutcome},
+    inbound::v1::responses::image_budget::{self, ImageBudgetOutcome},
     service::{
         recording::{record_stream_with_rollout, StreamRecording, StreamRollout, StreamSession},
         upstream_errors::upstream_failure_message,

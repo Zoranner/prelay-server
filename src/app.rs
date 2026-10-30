@@ -1,12 +1,12 @@
 use anyhow::Result;
 use axum::{http::StatusCode, response::IntoResponse, Router};
 
-use crate::{routes, AppState};
+use crate::{inbound, AppState};
 
 pub async fn router(state: AppState) -> Result<Router> {
     Ok(Router::new()
-        .nest("/api", routes::api::router(state.clone()))
-        .nest("/v1", routes::v1::router(state))
+        .nest("/api", inbound::api::router(state.clone()))
+        .nest("/v1", inbound::v1::router(state))
         .fallback(not_found))
 }
 

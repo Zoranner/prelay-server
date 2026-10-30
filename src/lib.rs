@@ -2,10 +2,8 @@ pub mod app;
 pub mod codec;
 pub mod domain;
 pub mod error;
-pub mod image_budget;
+pub mod inbound;
 pub mod outbound;
-pub mod protocol_body_limit;
-pub mod routes;
 pub mod service;
 pub mod store;
 

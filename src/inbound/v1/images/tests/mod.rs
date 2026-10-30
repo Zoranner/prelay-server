@@ -10,7 +10,7 @@ use std::{
 
 use super::{handler::create_image_generation, router};
 use crate::{
-    routes::v1::endpoint_resolver::{
+    inbound::v1::endpoint_resolver::{
         create_test_endpoint_auth, create_test_endpoint_auth_with_candidates, test_provider,
         test_provider_with_capabilities,
     },

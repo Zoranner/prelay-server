@@ -22,7 +22,7 @@ async fn streams_chat_completion_without_waiting_for_upstream_done() {
             .with_state(state.clone())
             .layer(middleware::from_fn_with_state(
                 state.clone(),
-                crate::routes::v1::auth::require_protocol_auth,
+                crate::inbound::v1::auth::require_protocol_auth,
             )),
     );
     let listener = TcpListener::bind("127.0.0.1:0")
