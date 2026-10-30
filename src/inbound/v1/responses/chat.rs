@@ -8,6 +8,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
+    codec::activity::{events_from_internal_request, events_from_internal_response},
     codec::providers::{
         chat_completions::{decode_chat_response, encode_chat_request},
         spec::{
@@ -21,7 +22,6 @@ use crate::{
         bridge::stream::{chat_sse_response_to_responses_sse_with_stats, with_sse_keepalive},
         internal::InternalRequest,
     },
-    domain::activity::events::{events_from_internal_request, events_from_internal_response},
     domain::registry::ProviderConfig,
     domain::stats::ActivityInsert,
     error::AppError,

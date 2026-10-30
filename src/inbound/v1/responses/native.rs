@@ -7,6 +7,7 @@ use axum::{
 use serde_json::Value;
 
 use crate::{
+    codec::activity::{events_from_internal_request, events_from_internal_response},
     codec::providers::spec::{
         provider_upstream_base_url, with_provider_headers, RequestHeaderContext, UpstreamProtocol,
     },
@@ -14,7 +15,6 @@ use crate::{
         bridge::stream::{native_responses_sse_with_stats, with_sse_keepalive},
         internal::InternalRequest,
     },
-    domain::activity::events::{events_from_internal_request, events_from_internal_response},
     domain::stats::ActivityInsert,
     error::AppError,
     inbound::v1::responses::image_budget::{self, ImageBudgetOutcome},

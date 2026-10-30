@@ -35,7 +35,7 @@ fn layer_dependencies_point_downward() {
 
 fn allowed_layers(layer: &str) -> &'static [&'static str] {
     match layer {
-        "domain" => &["domain", "codec"],
+        "domain" => &["domain"],
         "codec" => &["codec", "domain"],
         "store" => &["store", "codec", "domain"],
         "outbound" => &["outbound", "codec", "domain"],

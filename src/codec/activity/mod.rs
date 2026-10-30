@@ -1,16 +1,22 @@
-use crate::codec::{
-    bridge::stream::StreamStatsSnapshot,
-    internal::{
-        InternalMessage, InternalOutputItem, InternalRequest, InternalResponse, InternalRole,
+use crate::{
+    codec::{
+        bridge::stream::StreamStatsSnapshot,
+        internal::{
+            InternalMessage, InternalOutputItem, InternalRequest, InternalResponse, InternalRole,
+        },
+    },
+    domain::activity::{
+        ActivityMediaMetadata, EventPhase, MediaEvent, MessageEvent, RawStreamContentCapture,
+        ReasoningEvent, RolloutEventBody, ToolCallEvent, ToolResultEvent, UsageEvent,
     },
 };
 use serde_json::Value;
 
-use super::{
-    event_values::{chat_content_value, internal_content_value},
-    ActivityMediaMetadata, EventPhase, MediaEvent, MessageEvent, RawStreamContentCapture,
-    ReasoningEvent, RolloutEventBody, ToolCallEvent, ToolResultEvent, UsageEvent,
-};
+mod values;
+use values::{chat_content_value, internal_content_value};
+
+#[cfg(test)]
+mod tests;
 
 pub fn events_from_internal_request(request: &InternalRequest) -> Vec<RolloutEventBody> {
     let mut events = Vec::new();

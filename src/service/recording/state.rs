@@ -4,11 +4,11 @@ use bytes::Bytes;
 use futures::Stream;
 
 use crate::{
-    codec::bridge::stream::{SharedStreamStats, StreamStatsSnapshot},
-    domain::activity::{
-        events::{events_from_stream_capture, events_from_stream_snapshot},
-        ErrorEvent, RawStreamContentCapture, RolloutEventBody, RolloutStatus,
+    codec::{
+        activity::{events_from_stream_capture, events_from_stream_snapshot},
+        bridge::stream::{SharedStreamStats, StreamStatsSnapshot},
     },
+    domain::activity::{ErrorEvent, RawStreamContentCapture, RolloutEventBody, RolloutStatus},
     domain::stats::{ActivityInsert, StreamActivityUpdate},
     service::activity::ActivityStore,
     store::rollout::RolloutWriter,

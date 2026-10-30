@@ -7,12 +7,12 @@ use futures::TryStreamExt;
 use serde_json::Value;
 
 use crate::{
+    codec::activity::{events_from_image_request, media_event},
     codec::bridge::stream::{upstream_bytes_stream, verify_upstream_sse_head, with_sse_keepalive},
     codec::providers::spec::{
         provider_upstream_base_url, with_provider_headers, RequestHeaderContext,
     },
     domain::activity::{
-        events::{events_from_image_request, media_event},
         media_metadata_from_bytes, EventPhase, RawStreamContentCapture, RawStreamProtocol,
         SessionContext,
     },

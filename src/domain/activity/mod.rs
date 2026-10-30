@@ -1,8 +1,3 @@
-#[cfg(test)]
-#[path = "event_tests.rs"]
-mod event_tests;
-mod event_values;
-pub mod events;
 mod media;
 pub(crate) mod redaction;
 pub mod rollout;

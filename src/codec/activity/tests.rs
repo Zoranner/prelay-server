@@ -1,14 +1,14 @@
 use serde_json::json;
 
 use super::{
-    events::{
-        events_from_chat_request, events_from_internal_request, events_from_internal_response,
-    },
-    RolloutEventBody,
+    events_from_chat_request, events_from_internal_request, events_from_internal_response,
 };
-use crate::codec::internal::{
-    InternalContentPart, InternalMessage, InternalOutputItem, InternalRequest, InternalResponse,
-    InternalRole, InternalToolCall,
+use crate::{
+    codec::internal::{
+        InternalContentPart, InternalMessage, InternalOutputItem, InternalRequest,
+        InternalResponse, InternalRole, InternalToolCall,
+    },
+    domain::activity::RolloutEventBody,
 };
 
 #[test]

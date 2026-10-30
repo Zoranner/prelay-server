@@ -7,11 +7,11 @@ use axum::{
 use serde_json::Value;
 
 use crate::{
+    codec::activity::{events_from_chat_request, events_from_chat_response},
     codec::bridge::stream::{native_chat_sse_with_stats, with_sse_keepalive},
     codec::providers::spec::{
         provider_upstream_base_url, with_provider_headers, RequestHeaderContext,
     },
-    domain::activity::events::{events_from_chat_request, events_from_chat_response},
     domain::activity::rollout::SessionContext,
     domain::stats::ActivityInsert,
     error::AppError,
