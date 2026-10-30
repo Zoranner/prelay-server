@@ -17,7 +17,7 @@ use crate::{
 
 use super::{
     options::{RecordingMode, StreamSession},
-    persistence::{log_stream_storage_failure, update_stream_log},
+    persistence::{final_rollout_status, log_stream_storage_failure, update_stream_log},
 };
 
 mod forwarding;
@@ -372,17 +372,23 @@ impl StreamRecordState {
                 http_status,
             }));
         }
+        let mut append_failed = false;
         for event in events {
             if let Err(error) = rollout.append(event) {
                 log_stream_storage_failure(
                     "append-rollout",
                     &StorageError::Rollout(error.to_string()),
                 );
+                append_failed = true;
             }
         }
+        let status = final_rollout_status(status, append_failed);
         match rollout.finish_with(status, http_status, error_code, error_message) {
             Ok(summary) => {
                 if self.inserted {
+                    if append_failed {
+                        self.mark_rollout_incomplete().await;
+                    }
                     if let Err(error) = self
                         .activity_store
                         .complete_stream(&self.log_id, summary)
@@ -398,6 +404,31 @@ impl StreamRecordState {
             ),
         }
         self.rollout_finalized = true;
+    }
+
+    async fn mark_rollout_incomplete(&mut self) {
+        let snapshot = self.stats_snapshot();
+        let update = StreamActivityUpdate {
+            status: "failed".to_string(),
+            http_status: 502,
+            error_code: Some("activity_rollout_incomplete".to_string()),
+            error_message: Some("activity rollout body could not be fully written".to_string()),
+            input_tokens: snapshot.input_tokens,
+            output_tokens: snapshot.output_tokens,
+            reasoning_tokens: None,
+            cache_read_tokens: snapshot.cache_read_tokens,
+            cache_write_tokens: snapshot.cache_write_tokens,
+            latency_ms: self.started_at.elapsed().as_millis() as i64,
+            tool_call_count: Some(snapshot.tool_call_count),
+            upstream_request_id: self.upstream_request_id.clone(),
+        };
+        update_stream_log(
+            &self.activity_store,
+            &self.identity_id,
+            &self.log_id,
+            update,
+        )
+        .await;
     }
 
     fn stats_snapshot(&self) -> StreamStatsSnapshot {
