@@ -138,6 +138,17 @@ pub fn build_proxied_client(
         .build()
 }
 
+/// 错误消息和日志里使用的代理地址：去掉 userinfo，避免把凭据带出去。
+pub fn redact_proxy_url(value: &str) -> String {
+    let Ok(mut url) = reqwest::Url::parse(value) else {
+        return "[invalid proxy url]".to_string();
+    };
+    if url.set_username("").is_err() || url.set_password(None).is_err() {
+        return "[invalid proxy url]".to_string();
+    }
+    url.to_string()
+}
+
 /// 按代理地址缓存上游客户端，同一个代理地址复用连接池。
 #[derive(Clone, Default)]
 pub struct ProviderClientCache {
@@ -226,7 +237,7 @@ mod tests {
 
     use crate::error::AppError;
 
-    use super::{build_client, send_with_timeout, UpstreamPolicy};
+    use super::{build_client, redact_proxy_url, send_with_timeout, UpstreamPolicy};
 
     const TEST_READ_TIMEOUT: Duration = Duration::from_millis(1000);
     const CHUNK_INTERVAL: Duration = Duration::from_millis(250);
@@ -241,6 +252,16 @@ mod tests {
             max_candidates: None,
         })
         .expect("build test upstream client")
+    }
+
+    #[test]
+    fn redacts_proxy_credentials_from_display_url() {
+        let displayed = redact_proxy_url("http://user:secret@127.0.0.1:7890");
+
+        assert!(!displayed.contains("user"));
+        assert!(!displayed.contains("secret"));
+        assert!(displayed.contains("127.0.0.1:7890"));
+        assert_eq!(redact_proxy_url("not a url"), "[invalid proxy url]");
     }
 
     async fn accept_request(listener: &TcpListener) -> TcpStream {

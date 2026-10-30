@@ -321,9 +321,7 @@ pub(super) fn validate_proxy_url(
         return Ok(None);
     };
     let parsed = reqwest::Url::parse(value).map_err(|_| {
-        ProviderCatalogError(format!(
-            "供应商 {provider_id} 的代理地址不是合法 URL: {value}"
-        ))
+        ProviderCatalogError(format!("供应商 {provider_id} 的代理地址不是合法 URL"))
     })?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err(ProviderCatalogError(format!(
@@ -376,5 +374,14 @@ mod tests {
         let error = validate_proxy_url("provider-a", Some("127.0.0.1:7890"))
             .expect_err("invalid URL must be rejected");
         assert!(error.to_string().contains("不是合法 URL"), "{error}");
+    }
+
+    #[test]
+    fn invalid_url_errors_do_not_echo_credentials() {
+        let error = validate_proxy_url("provider-a", Some("http://user:secret@["))
+            .expect_err("invalid URL must be rejected");
+
+        assert!(!error.to_string().contains("secret"));
+        assert!(!error.to_string().contains("user"));
     }
 }

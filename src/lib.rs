@@ -28,11 +28,17 @@ impl AppState {
         let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
             return Ok(self.client.clone());
         };
+        let display_url = outbound::client::redact_proxy_url(proxy_url);
+        tracing::warn!(
+            provider_type,
+            proxy = %display_url,
+            "failed to build provider proxy client"
+        );
         self.provider_clients
             .client(proxy_url, outbound::client::policy())
-            .map_err(|error| AppError::Upstream {
+            .map_err(|_| AppError::Upstream {
                 status: None,
-                message: format!("供应商代理地址不可用 {proxy_url}: {error}"),
+                message: format!("供应商代理地址不可用 {display_url}"),
             })
     }
 }
