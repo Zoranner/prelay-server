@@ -25,6 +25,13 @@ pub struct SessionMetaEvent {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct WindowStartEvent {
+    pub window_id: Option<String>,
+    pub generation: u64,
+    pub started_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct MessageEvent {
     pub phase: EventPhase,
     pub role: String,
@@ -88,6 +95,7 @@ pub struct SessionEndEvent {
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum RolloutEventBody {
     SessionMeta(SessionMetaEvent),
+    WindowStart(WindowStartEvent),
     Message(MessageEvent),
     ToolCall(ToolCallEvent),
     ToolResult(ToolResultEvent),

@@ -80,7 +80,7 @@ async fn prepends_previous_response_messages_to_upstream_chat_request() {
             .await
             .expect("load response rollout")
             .expect("response rollout exists");
-        conversation_ids.push(rollout.session_id);
+        conversation_ids.push(rollout.thread_id);
     }
     assert!(conversation_ids.iter().all(|id| id.starts_with("conv_")));
     assert!(conversation_ids.windows(2).all(|pair| pair[0] == pair[1]));

@@ -14,7 +14,10 @@ use crate::{
     AppState,
 };
 
-use super::{candidate::create_image_generation_with_candidate, IMAGE_GENERATIONS_PROTOCOL};
+use super::{
+    candidate::{create_image_generation_with_candidate, ImageCandidateRequest},
+    IMAGE_GENERATIONS_PROTOCOL,
+};
 
 pub(super) async fn create_image_generation(
     State(state): State<AppState>,
@@ -31,6 +34,18 @@ pub(super) async fn create_image_generation(
         .get("stream")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let session_id = access
+        .session_id
+        .clone()
+        .unwrap_or_else(|| format!("conv_{}", uuid::Uuid::new_v4().simple()));
+    let session = access.session_context(&session_id);
+    let candidate = ImageCandidateRequest {
+        session_id,
+        session,
+        model: model.clone(),
+        is_streaming,
+        started_at,
+    };
     let candidates =
         resolve_endpoint_model_candidates(&state, &access, &model, IMAGE_GENERATIONS_PROTOCOL)
             .await?;
@@ -43,9 +58,7 @@ pub(super) async fn create_image_generation(
                 &state,
                 &access,
                 payload.clone(),
-                model.clone(),
-                is_streaming,
-                started_at,
+                candidate.clone(),
                 resolved.clone(),
             )
         },

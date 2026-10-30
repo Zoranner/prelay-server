@@ -4,7 +4,7 @@ use bytes::Bytes;
 use futures::Stream;
 
 use crate::{
-    activity::{ActivityStore, RawStreamContentCapture, RolloutEventBody},
+    activity::{ActivityStore, RawStreamContentCapture, RolloutEventBody, SessionContext},
     bridge::stream::SharedStreamStats,
     stats::ActivityInsert,
     storage::StorageError,
@@ -15,14 +15,14 @@ use super::{
     state::{prepare_stream_with_log_id, RecordedStream},
 };
 
-pub struct StreamRollout<'a> {
+pub struct StreamRollout {
     pub request_events: Vec<RolloutEventBody>,
-    pub session_id: Option<&'a str>,
+    pub session: SessionContext,
 }
 
-pub(crate) struct StreamRecording<'a> {
+pub(crate) struct StreamRecording {
     pub(crate) stats: SharedStreamStats,
-    pub(crate) rollout: StreamRollout<'a>,
+    pub(crate) rollout: StreamRollout,
     pub(crate) session: Option<StreamSession>,
 }
 
@@ -33,17 +33,18 @@ pub async fn record_first_chunk_with_rollout<S>(
     log: ActivityInsert,
     started_at: Instant,
     content_capture: RawStreamContentCapture,
-    rollout: StreamRollout<'_>,
+    rollout: StreamRollout,
 ) -> Result<RecordedStream, StorageError>
 where
     S: Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
 {
     let StreamRollout {
         request_events,
-        session_id,
+        session,
     } = rollout;
-    let (activity_id, writer) =
-        activity_store.begin_stream(&identity_id, &log, session_id, request_events)?;
+    let (activity_id, writer) = activity_store
+        .begin_stream(&identity_id, &log, &session, request_events)
+        .await?;
     prepare_stream_with_log_id(
         activity_store,
         identity_id,
@@ -69,27 +70,29 @@ pub async fn record_first_chunk_with_rollout_best_effort<S>(
     log: ActivityInsert,
     started_at: Instant,
     content_capture: RawStreamContentCapture,
-    rollout: StreamRollout<'_>,
+    rollout: StreamRollout,
 ) -> RecordedStream
 where
     S: Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
 {
     let StreamRollout {
         request_events,
-        session_id,
+        session,
     } = rollout;
-    let (activity_id, writer) =
-        match activity_store.begin_stream(&identity_id, &log, session_id, request_events) {
-            Ok(started) => started,
-            Err(error) => {
-                tracing::warn!(
-                    failure_kind = "rollout_begin",
-                    error_code = error.code().as_str(),
-                    "failed to start best-effort rollout recording"
-                );
-                return Box::pin(stream);
-            }
-        };
+    let (activity_id, writer) = match activity_store
+        .begin_stream(&identity_id, &log, &session, request_events)
+        .await
+    {
+        Ok(started) => started,
+        Err(error) => {
+            tracing::warn!(
+                failure_kind = "rollout_begin",
+                error_code = error.code().as_str(),
+                "failed to start best-effort rollout recording"
+            );
+            return Box::pin(stream);
+        }
+    };
     match prepare_stream_with_log_id(
         activity_store,
         identity_id,
@@ -125,7 +128,7 @@ pub(crate) async fn record_stream_with_rollout<S>(
     stream: S,
     log: ActivityInsert,
     started_at: Instant,
-    recording: StreamRecording<'_>,
+    recording: StreamRecording,
 ) -> Result<RecordedStream, StorageError>
 where
     S: Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
@@ -137,10 +140,11 @@ where
     } = recording;
     let StreamRollout {
         request_events,
-        session_id,
+        session: session_context,
     } = rollout;
-    let (activity_id, writer) =
-        activity_store.begin_stream(&identity_id, &log, session_id, request_events)?;
+    let (activity_id, writer) = activity_store
+        .begin_stream(&identity_id, &log, &session_context, request_events)
+        .await?;
     prepare_stream_with_log_id(
         activity_store,
         identity_id,

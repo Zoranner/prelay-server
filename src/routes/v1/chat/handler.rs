@@ -14,7 +14,7 @@ use crate::{
     AppState,
 };
 
-use super::candidate::create_chat_completion_with_candidate;
+use super::candidate::{create_chat_completion_with_candidate, ChatCandidateRequest};
 
 pub(super) async fn create_chat_completion(
     State(state): State<AppState>,
@@ -31,6 +31,18 @@ pub(super) async fn create_chat_completion(
         .get("stream")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let session_id = access
+        .session_id
+        .clone()
+        .unwrap_or_else(|| format!("conv_{}", uuid::Uuid::new_v4().simple()));
+    let session = access.session_context(&session_id);
+    let candidate = ChatCandidateRequest {
+        session_id,
+        session,
+        model: model.clone(),
+        is_streaming,
+        started_at,
+    };
     let candidates =
         resolve_language_model_candidates(&state, &access, &model, "chat_completions").await?;
     let (response, provider_id) = run_endpoint_model_candidates(
@@ -42,9 +54,7 @@ pub(super) async fn create_chat_completion(
                 &state,
                 &access,
                 payload.clone(),
-                model.clone(),
-                is_streaming,
-                started_at,
+                candidate.clone(),
                 resolved.clone(),
             )
         },

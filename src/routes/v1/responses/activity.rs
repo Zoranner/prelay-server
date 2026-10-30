@@ -46,7 +46,6 @@ pub(super) struct UpstreamFailure<'a> {
     pub error_message: String,
     pub upstream_latency_ms: Option<i64>,
     pub request_events: Vec<RolloutEventBody>,
-    pub conversation_id: &'a str,
 }
 
 pub(super) async fn record_upstream_failure(
@@ -63,7 +62,6 @@ pub(super) async fn record_upstream_failure(
         error_message,
         upstream_latency_ms,
         request_events,
-        conversation_id,
     } = failure;
     let latency_ms = context.started_at.elapsed().as_millis() as i64;
     let activity = ActivityInsert {
@@ -97,7 +95,7 @@ pub(super) async fn record_upstream_failure(
         .record_completed(
             &context.identity_id,
             activity,
-            Some(conversation_id),
+            &context.session,
             request_events,
             Vec::new(),
         )

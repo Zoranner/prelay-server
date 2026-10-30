@@ -212,6 +212,9 @@ fn test_endpoint_auth(
             endpoint_id: endpoint.id,
             endpoint_name: endpoint.name,
             session_id: None,
+            thread_id: None,
+            window_id: None,
+            window_generation: None,
         }),
         token: endpoint.token,
     }

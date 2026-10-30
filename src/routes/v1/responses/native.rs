@@ -114,7 +114,6 @@ pub(super) async fn create_native_response(
                         error_message: message,
                         upstream_latency_ms: Some(upstream_started_at.elapsed().as_millis() as i64),
                         request_events: events_from_internal_request(request),
-                        conversation_id: &context.conversation_id,
                     },
                 )
                 .await;
@@ -157,7 +156,7 @@ pub(super) async fn create_native_response(
                     tool_call_count: None,
                     upstream_request_id: None,
                 },
-                Some(&context.conversation_id),
+                &context.session,
                 events_from_internal_request(request),
                 Vec::new(),
             )
@@ -186,7 +185,6 @@ pub(super) async fn create_native_response(
                         error_message: message,
                         upstream_latency_ms: Some(upstream_latency_ms),
                         request_events: events_from_internal_request(request),
-                        conversation_id: &context.conversation_id,
                     },
                 )
                 .await;
@@ -239,7 +237,7 @@ pub(super) async fn create_native_response(
                     stats: stream_stats,
                     rollout: StreamRollout {
                         request_events: events_from_internal_request(request),
-                        session_id: Some(&context.conversation_id),
+                        session: context.session.clone(),
                     },
                     session,
                 },
@@ -272,7 +270,6 @@ pub(super) async fn create_native_response(
                     error_message: message,
                     upstream_latency_ms: Some(upstream_latency_ms),
                     request_events: events_from_internal_request(request),
-                    conversation_id: &context.conversation_id,
                 },
             )
             .await;
@@ -296,7 +293,6 @@ pub(super) async fn create_native_response(
                         error_message: message,
                         upstream_latency_ms: Some(upstream_latency_ms),
                         request_events: events_from_internal_request(request),
-                        conversation_id: &context.conversation_id,
                     },
                 )
                 .await;
@@ -374,7 +370,7 @@ pub(super) async fn create_native_response(
                 tool_call_count: None,
                 upstream_request_id: None,
             },
-            Some(&context.conversation_id),
+            &context.session,
             events_from_internal_request(request),
             events_from_internal_response(&decoded_response),
         )

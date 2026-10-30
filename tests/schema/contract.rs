@@ -219,6 +219,8 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
         "activity_id",
         "identity_id",
         "session_id",
+        "thread_id",
+        "window_id",
         "rollout_path",
         "status",
         "sha256",
@@ -228,7 +230,13 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
     ] {
         assert_string_column(db, "activity_rollouts", column).await;
     }
-    for column in ["event_count", "byte_size"] {
+    for column in [
+        "generation",
+        "start_line",
+        "end_line",
+        "event_count",
+        "byte_size",
+    ] {
         assert_eq!(
             column_type(db, "activity_rollouts", column)
                 .await
@@ -317,7 +325,8 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
         .await
     );
     for index in [
-        "uq_activity_rollouts_path",
+        "idx_activity_rollouts_path",
+        "idx_activity_rollouts_identity_thread",
         "idx_activity_rollouts_identity_created_at",
         "idx_activity_rollouts_session",
     ] {

@@ -73,6 +73,19 @@ async fn fails_over_from_server_error_to_second_image_candidate() {
     assert_eq!(logs.len(), 2);
     assert_eq!(logs.iter().filter(|log| log.status == "failed").count(), 1);
     assert_eq!(logs.iter().filter(|log| log.status == "success").count(), 1);
+    let mut rollout_paths = Vec::new();
+    for log in &logs {
+        rollout_paths.push(
+            state
+                .storage
+                .find_activity_rollout(&log.id)
+                .await
+                .expect("load image rollout")
+                .expect("image rollout")
+                .rollout_path,
+        );
+    }
+    assert_eq!(rollout_paths[0], rollout_paths[1]);
 }
 
 #[tokio::test]

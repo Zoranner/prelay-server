@@ -56,10 +56,20 @@ pub(super) fn activities_identity_created_at() -> IndexCreateStatement {
 
 pub(super) fn activity_rollouts_path() -> IndexCreateStatement {
     Index::create()
-        .name("uq_activity_rollouts_path")
+        .name("idx_activity_rollouts_path")
         .table(ActivityRollouts::Table)
         .col(ActivityRollouts::RolloutPath)
-        .unique()
+        .if_not_exists()
+        .to_owned()
+}
+
+pub(super) fn activity_rollouts_thread() -> IndexCreateStatement {
+    Index::create()
+        .name("idx_activity_rollouts_identity_thread")
+        .table(ActivityRollouts::Table)
+        .col(ActivityRollouts::IdentityId)
+        .col(ActivityRollouts::ThreadId)
+        .col(ActivityRollouts::Generation)
         .if_not_exists()
         .to_owned()
 }

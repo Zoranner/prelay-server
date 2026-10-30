@@ -13,6 +13,8 @@ use super::{rollouts::to_i64, Storage, StorageError};
 pub struct InterruptedRollout {
     pub activity_id: String,
     pub rollout_path: String,
+    pub start_line: u64,
+    pub end_line: u64,
 }
 
 pub struct RecoveredRollout {
@@ -37,6 +39,8 @@ impl Storage {
                     .map(|row| InterruptedRollout {
                         activity_id: row.activity_id,
                         rollout_path: row.rollout_path,
+                        start_line: row.start_line as u64,
+                        end_line: row.end_line as u64,
                     })
                     .collect()
             })

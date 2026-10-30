@@ -1,5 +1,7 @@
 use crate::{
-    activity::RolloutEventBody, routes::v1::auth::CurrentProtocolAccess, stats::ActivityInsert,
+    activity::{rollout::SessionContext, RolloutEventBody},
+    routes::v1::auth::CurrentProtocolAccess,
+    stats::ActivityInsert,
     AppState,
 };
 
@@ -52,6 +54,7 @@ pub(super) fn image_activity(params: ImageActivityParams<'_>) -> ActivityInsert 
 pub(super) async fn record_image_activity_best_effort(
     state: &AppState,
     access: &CurrentProtocolAccess,
+    session: &SessionContext,
     log: ActivityInsert,
     request_events: Vec<RolloutEventBody>,
     response_events: Vec<RolloutEventBody>,
@@ -61,7 +64,7 @@ pub(super) async fn record_image_activity_best_effort(
         .record_completed(
             &access.identity_id,
             log,
-            None,
+            session,
             request_events,
             response_events,
         )

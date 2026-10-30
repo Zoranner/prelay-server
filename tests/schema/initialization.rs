@@ -313,8 +313,11 @@ async fn drops_legacy_activity_contents_and_records_rollout_migration() {
             DbBackend::Postgres,
             "SELECT COUNT(*) AS migration_count
              FROM prelay_schema_migrations
-             WHERE version IN ('activity_content_lifecycle_v1', 'activity_rollout_v1')"
-                .to_owned(),
+             WHERE version IN (
+                 'activity_content_lifecycle_v1',
+                 'activity_rollout_v2'
+             )"
+            .to_owned(),
         ))
         .await
         .expect("query migration history")

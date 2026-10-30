@@ -1,23 +1,31 @@
 use std::{
+    collections::HashMap,
     fs::{self, OpenOptions},
     io::{self, BufWriter, Write},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
 use chrono::{SecondsFormat, Utc};
-use serde_json::Value;
 use sha2::{Digest, Sha256};
+use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use uuid::Uuid;
 
+mod read;
+mod scan;
+mod support;
+
+use self::read::{completed_contents, parse_events, valid_prefix};
+use self::support::{common_prefix_len, event_parts, is_safe_path_segment, last_window_generation};
 use super::{
-    event::{RolloutEvent, RolloutEventBody, SessionEndEvent, SessionMetaEvent},
-    RolloutError, RolloutStatus, RolloutSummary, DEFAULT_ACTIVITY_ROLLOUT_DIR,
+    event::{RolloutEvent, RolloutEventBody, SessionMetaEvent, WindowStartEvent},
+    RolloutError, RolloutStatus, RolloutSummary, SessionContext, DEFAULT_ACTIVITY_ROLLOUT_DIR,
 };
-use crate::activity::redaction::redact_json_value;
 
 #[derive(Debug, Clone)]
 pub struct RolloutStore {
     root: PathBuf,
+    locks: Arc<Mutex<HashMap<PathBuf, Arc<AsyncMutex<()>>>>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -28,9 +36,20 @@ pub struct RolloutFile {
     pub sha256: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct RolloutSlice {
+    pub events: Vec<RolloutEvent>,
+    pub event_count: u64,
+    pub byte_size: u64,
+    pub sha256: String,
+}
+
 impl RolloutStore {
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            locks: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     pub fn from_environment() -> Result<Self, String> {
@@ -42,7 +61,7 @@ impl RolloutStore {
         if root.as_os_str().is_empty() {
             return Err("ACTIVITY_ROLLOUT_DIR must not be empty".to_string());
         }
-        Ok(Self { root })
+        Ok(Self::new(root))
     }
 
     /// Ensure the configured root exists and is writable before the service starts accepting
@@ -85,146 +104,127 @@ impl RolloutStore {
         Ok(self.absolute_path(relative))
     }
 
-    pub fn begin(
+    pub async fn begin(
         &self,
+        identity_id: &str,
+        session: &SessionContext,
         meta: SessionMetaEvent,
         request_events: Vec<RolloutEventBody>,
     ) -> Result<RolloutWriter, RolloutError> {
-        let now = Utc::now();
-        let relative_path = format!(
-            "{}/{}/rollout-{}-{}.jsonl",
-            now.format("%Y"),
-            now.format("%m/%d"),
-            now.format("%Y-%m-%dT%H-%M-%S"),
-            meta.activity_id
-        );
-        let final_path = self.absolute_path(&relative_path);
+        if !is_safe_path_segment(identity_id) {
+            return Err(RolloutError::InvalidPath(format!(
+                "identity id is not a safe path segment: {identity_id}"
+            )));
+        }
+        if !is_safe_path_segment(&session.thread_id) {
+            return Err(RolloutError::InvalidPath(format!(
+                "thread id is not a safe path segment: {}",
+                session.thread_id
+            )));
+        }
+
+        let relative_path = format!("{identity_id}/{}.jsonl", session.thread_id);
+        let final_path = self.checked_absolute_path(&relative_path)?;
         let parent = final_path
             .parent()
             .ok_or_else(|| RolloutError::InvalidPath(relative_path.clone()))?;
         fs::create_dir_all(parent)?;
-        let part_path = PathBuf::from(format!("{}.part", final_path.display()));
+
+        let lock = self.lock_for(&final_path);
+        let guard = lock.lock_owned().await;
+        let existing_events = match fs::read_to_string(&final_path) {
+            Ok(contents) => {
+                if !completed_contents(&contents) {
+                    return Err(RolloutError::PartialLine {
+                        path: final_path,
+                        valid_events: valid_prefix(&contents),
+                    });
+                }
+                parse_events(&contents)?
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => return Err(error.into()),
+        };
+        let line_count = existing_events.len() as u64;
+        let seq = existing_events.last().map_or(0, |event| event.seq);
         let file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&part_path)?;
+            .create(true)
+            .append(true)
+            .open(&final_path)?;
         let mut writer = RolloutWriter {
             activity_id: meta.activity_id.clone(),
-            session_id: meta.session_id.clone(),
+            thread_id: session.thread_id.clone(),
+            window_id: session.window_id.clone(),
+            generation: session.generation,
             relative_path,
-            part_path,
             final_path,
             file: Some(BufWriter::new(file)),
+            _lock: Some(guard),
             hasher: Sha256::new(),
-            seq: 0,
+            seq,
+            line_count,
+            start_line: line_count + 1,
+            end_line: line_count,
             byte_size: 0,
             event_count: 0,
             status: RolloutStatus::Writing,
             finished: false,
         };
-        writer.append(RolloutEventBody::SessionMeta(meta))?;
-        for event in request_events {
+
+        let current_generation = last_window_generation(&existing_events);
+        let window_changed = match current_generation {
+            Some(generation) => generation != session.generation,
+            None => !existing_events.is_empty() && session.generation > 0,
+        };
+        if existing_events.is_empty() {
+            writer.append(RolloutEventBody::SessionMeta(meta))?;
+            writer.append(RolloutEventBody::WindowStart(WindowStartEvent {
+                window_id: session.window_id.clone(),
+                generation: session.generation,
+                started_at: Utc::now().to_rfc3339(),
+            }))?;
+        } else if window_changed {
+            writer.append(RolloutEventBody::WindowStart(WindowStartEvent {
+                window_id: session.window_id.clone(),
+                generation: session.generation,
+                started_at: Utc::now().to_rfc3339(),
+            }))?;
+        }
+
+        let matched = if window_changed || existing_events.is_empty() {
+            0
+        } else {
+            common_prefix_len(&existing_events, &request_events)?
+        };
+        for event in request_events.into_iter().skip(matched) {
             writer.append(event)?;
         }
         Ok(writer)
     }
 
-    pub fn read_events(&self, relative_path: &str) -> Result<Vec<RolloutEvent>, RolloutError> {
-        self.read_verified(relative_path).map(|file| file.events)
+    fn lock_for(&self, path: &Path) -> Arc<AsyncMutex<()>> {
+        let mut locks = self
+            .locks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        locks.entry(path.to_path_buf()).or_default().clone()
     }
-
-    pub fn read_verified(&self, relative_path: &str) -> Result<RolloutFile, RolloutError> {
-        let path = self.checked_absolute_path(relative_path)?;
-        let contents = fs::read_to_string(path)?;
-        let complete = contents.ends_with('\n') || contents.is_empty();
-        if !complete {
-            let valid_events = contents
-                .lines()
-                .take_while(|line| serde_json::from_str::<RolloutEvent>(line).is_ok())
-                .count();
-            return Err(RolloutError::PartialLine {
-                path: self.checked_absolute_path(relative_path)?,
-                valid_events,
-            });
-        }
-        let events = contents
-            .lines()
-            .map(|line| serde_json::from_str::<RolloutEvent>(line).map_err(RolloutError::from))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(RolloutFile {
-            event_count: events.len() as u64,
-            byte_size: contents.len() as u64,
-            sha256: format!("{:x}", Sha256::digest(contents.as_bytes())),
-            events,
-        })
-    }
-
-    pub fn part_files(&self) -> Result<Vec<PathBuf>, RolloutError> {
-        let mut files = Vec::new();
-        collect_part_files(&self.root, &mut files)?;
-        Ok(files)
-    }
-
-    pub fn rollout_files(&self) -> Result<Vec<String>, RolloutError> {
-        let mut files = Vec::new();
-        collect_rollout_files(&self.root, &self.root, &mut files)?;
-        Ok(files)
-    }
-}
-
-fn collect_part_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), RolloutError> {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.into()),
-    };
-    for entry in entries {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            collect_part_files(&entry.path(), files)?;
-        } else if file_type.is_file() && entry.path().extension().is_some_and(|ext| ext == "part") {
-            files.push(entry.path());
-        }
-    }
-    Ok(())
-}
-
-fn collect_rollout_files(
-    root: &Path,
-    dir: &Path,
-    files: &mut Vec<String>,
-) -> Result<(), RolloutError> {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.into()),
-    };
-    for entry in entries {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        let path = entry.path();
-        if file_type.is_dir() {
-            collect_rollout_files(root, &path, files)?;
-        } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "jsonl") {
-            let relative = path
-                .strip_prefix(root)
-                .map_err(|_| RolloutError::InvalidPath(path.display().to_string()))?;
-            files.push(relative.to_string_lossy().replace('\\', "/"));
-        }
-    }
-    Ok(())
 }
 
 pub struct RolloutWriter {
     activity_id: String,
-    session_id: String,
+    thread_id: String,
+    window_id: Option<String>,
+    generation: u64,
     relative_path: String,
-    part_path: PathBuf,
     final_path: PathBuf,
     file: Option<BufWriter<std::fs::File>>,
+    _lock: Option<OwnedMutexGuard<()>>,
     hasher: Sha256,
     seq: u64,
+    line_count: u64,
+    start_line: u64,
+    end_line: u64,
     byte_size: u64,
     event_count: u64,
     status: RolloutStatus,
@@ -238,21 +238,13 @@ impl RolloutWriter {
                 "rollout is already finished".to_string(),
             ));
         }
-        let body_value = serde_json::to_value(body)?;
-        let object = body_value
-            .as_object()
-            .ok_or_else(|| RolloutError::InvalidPath("event body is not an object".to_string()))?;
-        let event_type = object
-            .get("type")
-            .and_then(Value::as_str)
-            .ok_or_else(|| RolloutError::InvalidPath("event type is missing".to_string()))?;
-        let payload = object.get("payload").cloned().unwrap_or(Value::Null);
+        let (event_type, payload) = event_parts(&body)?;
         self.seq += 1;
         let event = RolloutEvent {
             seq: self.seq,
             timestamp: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
-            event_type: event_type.to_string(),
-            payload: redact_json_value(&payload),
+            event_type,
+            payload,
         };
         let mut line = serde_json::to_vec(&event)?;
         line.push(b'\n');
@@ -265,6 +257,8 @@ impl RolloutWriter {
         self.hasher.update(&line);
         self.byte_size += line.len() as u64;
         self.event_count += 1;
+        self.line_count += 1;
+        self.end_line = self.line_count;
         Ok(())
     }
 
@@ -279,37 +273,41 @@ impl RolloutWriter {
     pub fn finish_with(
         &mut self,
         status: RolloutStatus,
-        http_status: Option<u16>,
-        error_code: Option<String>,
-        error_message: Option<String>,
+        _http_status: Option<u16>,
+        _error_code: Option<String>,
+        _error_message: Option<String>,
     ) -> Result<RolloutSummary, RolloutError> {
         if self.finished {
             return Ok(self.summary_with_status(self.status));
         }
-        self.append(RolloutEventBody::SessionEnd(SessionEndEvent {
-            status,
-            http_status,
-            error_code,
-            error_message,
-        }))?;
-        let mut file = self
-            .file
-            .take()
-            .ok_or_else(|| RolloutError::InvalidPath("rollout file is closed".to_string()))?;
-        file.flush()?;
-        file.get_ref().sync_all()?;
-        fs::rename(&self.part_path, &self.final_path)?;
+        if let Some(mut file) = self.file.take() {
+            file.flush()?;
+            file.get_ref().sync_all()?;
+        }
+        self._lock.take();
         self.status = status;
         self.finished = true;
         Ok(self.summary_with_status(self.status))
     }
 
+    pub fn relative_path(&self) -> &str {
+        &self.relative_path
+    }
+
+    pub fn final_path(&self) -> &Path {
+        &self.final_path
+    }
+
     fn summary_with_status(&self, status: RolloutStatus) -> RolloutSummary {
         RolloutSummary {
             activity_id: self.activity_id.clone(),
-            session_id: self.session_id.clone(),
+            thread_id: self.thread_id.clone(),
+            window_id: self.window_id.clone(),
+            generation: self.generation,
             relative_path: self.relative_path.clone(),
             status,
+            start_line: self.start_line,
+            end_line: self.end_line,
             event_count: self.event_count,
             byte_size: self.byte_size,
             sha256: format!("{:x}", self.hasher.clone().finalize()),

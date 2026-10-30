@@ -1,6 +1,92 @@
 use super::*;
 
 #[tokio::test]
+async fn reuses_one_thread_file_across_response_activities() {
+    let upstream = spawn_history_asserting_chat_upstream().await;
+    let state = crate::test_support::test_state().await;
+    let provider = test_provider(
+        "deepseek-chat",
+        "openai_compatible",
+        &upstream,
+        "sk-upstream",
+    )
+    .await
+    .expect("create provider");
+    let mut auth =
+        create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+            .await;
+    auth.access.0.thread_id = Some("thread-shared".to_string());
+
+    let first = create_response(
+        State(state.clone()),
+        auth.access.clone(),
+        axum::Json(json!({
+            "model": "deepseek-chat",
+            "input": "first user"
+        })),
+    )
+    .await
+    .expect("create first response");
+    let first = response_json(first).await;
+    let first_id = first["id"].as_str().expect("first response id");
+
+    create_response(
+        State(state.clone()),
+        auth.access.clone(),
+        axum::Json(json!({
+            "model": "deepseek-chat",
+            "previous_response_id": first_id,
+            "input": "second user"
+        })),
+    )
+    .await
+    .expect("create second response");
+
+    let logs = state
+        .storage
+        .list_activities(&auth.access.0.identity_id, 10)
+        .await
+        .expect("load response activities");
+    assert_eq!(logs.len(), 2);
+    let rollouts = futures::future::join_all(
+        logs.iter()
+            .map(|log| state.storage.find_activity_rollout(&log.id)),
+    )
+    .await
+    .into_iter()
+    .map(|result| result.expect("load rollout").expect("rollout exists"))
+    .collect::<Vec<_>>();
+    let expected_path = format!("{}/thread-shared.jsonl", auth.access.0.identity_id);
+    assert_eq!(rollouts[0].rollout_path, expected_path);
+    assert_eq!(rollouts[0].rollout_path, rollouts[1].rollout_path);
+    assert_eq!(rollouts[0].thread_id, "thread-shared");
+    assert_ne!(rollouts[0].start_line, rollouts[1].start_line);
+
+    let events = state
+        .activity_store
+        .rollouts()
+        .read_events(&rollouts[0].rollout_path)
+        .expect("read shared thread");
+    for content in [
+        "first user",
+        "first assistant",
+        "second user",
+        "history accepted",
+    ] {
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| {
+                    event.event_type == "message" && event.payload["content"] == json!(content)
+                })
+                .count(),
+            1,
+            "expected exactly one event for {content}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn records_successful_response_activity() {
     let upstream = spawn_chat_upstream().await;
     let state = crate::test_support::test_state().await;

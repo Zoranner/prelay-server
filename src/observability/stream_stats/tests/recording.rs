@@ -6,7 +6,7 @@ use serde_json::json;
 
 use super::support::{latest_activity, request_events, test_log, test_storage};
 use crate::{
-    activity::{RawStreamContentCapture, RawStreamProtocol},
+    activity::{RawStreamContentCapture, RawStreamProtocol, SessionContext},
     bridge::stream::{InternalFinishReason, InternalStreamEvent, StreamStatsSnapshot, StreamUsage},
     observability::stream_stats::{
         record_first_chunk_with_rollout, record_stream_with_rollout, StreamRecording, StreamRollout,
@@ -28,7 +28,7 @@ async fn first_chunk_recording_finalizes_a_rollout_on_eof() {
         RawStreamContentCapture::new(RawStreamProtocol::ChatCompletions),
         StreamRollout {
             request_events: request_events("stream input"),
-            session_id: None,
+            session: SessionContext::new("stream-recording-input"),
         },
     )
     .await
@@ -52,14 +52,15 @@ async fn first_chunk_recording_finalizes_a_rollout_on_eof() {
         .read_events(&rollout.rollout_path)
         .expect("read rollout events");
     assert_eq!(events[0].event_type, "session_meta");
-    assert_eq!(events[1].payload["content"], json!("stream input"));
+    assert!(events.iter().any(|event| {
+        event.event_type == "message"
+            && event.payload["phase"] == json!("request")
+            && event.payload["content"] == json!("stream input")
+    }));
     assert!(events
         .iter()
         .any(|event| event.event_type == "message" && event.payload["content"] == json!("hello")));
-    assert_eq!(
-        events.last().map(|event| event.event_type.as_str()),
-        Some("session_end")
-    );
+    assert!(!events.iter().any(|event| event.event_type == "session_end"));
 }
 
 #[tokio::test]
@@ -77,7 +78,7 @@ async fn first_chunk_recording_keeps_content_larger_than_the_old_capture_limit()
         RawStreamContentCapture::new(RawStreamProtocol::ChatCompletions),
         StreamRollout {
             request_events: request_events("large input"),
-            session_id: None,
+            session: SessionContext::new("stream-recording-large"),
         },
     )
     .await
@@ -137,7 +138,7 @@ async fn stream_recording_updates_usage_and_preserves_tool_calls() {
             stats,
             rollout: StreamRollout {
                 request_events: request_events("stream input"),
-                session_id: None,
+                session: SessionContext::new("stream-recording-tool"),
             },
             session: None,
         },

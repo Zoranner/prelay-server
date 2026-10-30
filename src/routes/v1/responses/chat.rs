@@ -54,6 +54,7 @@ pub(super) async fn create_chat_response(
         is_streaming,
         conversation_id,
         session_id,
+        session,
         started_at,
     } = context;
     let failure_context = ResponseBridgeContext {
@@ -63,6 +64,7 @@ pub(super) async fn create_chat_response(
         is_streaming,
         conversation_id: conversation_id.clone(),
         session_id: session_id.clone(),
+        session: session.clone(),
         started_at,
     };
     let request = request_with_session_history(&state.storage, &identity_id, request).await?;
@@ -105,7 +107,6 @@ pub(super) async fn create_chat_response(
                     error_message: message,
                     upstream_latency_ms: Some(upstream_started_at.elapsed().as_millis() as i64),
                     request_events: events_from_internal_request(&request),
-                    conversation_id: &failure_context.conversation_id,
                 },
             )
             .await;
@@ -148,7 +149,7 @@ pub(super) async fn create_chat_response(
                     tool_call_count: None,
                     upstream_request_id: None,
                 },
-                previous_response_id.as_deref(),
+                &session,
                 events_from_internal_request(&request),
                 Vec::new(),
             )
@@ -182,14 +183,13 @@ pub(super) async fn create_chat_response(
                         error_message: message,
                         upstream_latency_ms: Some(upstream_latency_ms),
                         request_events: events_from_internal_request(&request),
-                        conversation_id: &failure_context.conversation_id,
                     },
                 )
                 .await;
                 return Err(error);
             }
         };
-        let session = request.store.then(|| StreamSession {
+        let response_session = request.store.then(|| StreamSession {
             previous_response_id: previous_response_id.clone(),
             conversation_id: conversation_id.clone(),
             provider_id: provider.id.clone(),
@@ -235,9 +235,9 @@ pub(super) async fn create_chat_response(
                     stats: stream_stats,
                     rollout: StreamRollout {
                         request_events: events_from_internal_request(&request),
-                        session_id: Some(&conversation_id),
+                        session: session.clone(),
                     },
-                    session,
+                    session: response_session,
                 },
             )
             .await?,
@@ -268,7 +268,6 @@ pub(super) async fn create_chat_response(
                     error_message: message,
                     upstream_latency_ms: Some(upstream_latency_ms),
                     request_events: events_from_internal_request(&request),
-                    conversation_id: &failure_context.conversation_id,
                 },
             )
             .await;
@@ -291,7 +290,6 @@ pub(super) async fn create_chat_response(
                     error_message: message,
                     upstream_latency_ms: Some(upstream_latency_ms),
                     request_events: events_from_internal_request(&request),
-                    conversation_id: &failure_context.conversation_id,
                 },
             )
             .await;
@@ -358,7 +356,7 @@ pub(super) async fn create_chat_response(
                 tool_call_count: Some(tool_call_count),
                 upstream_request_id: None,
             },
-            Some(&conversation_id),
+            &session,
             events_from_internal_request(&request),
             events_from_internal_response(&response),
         )

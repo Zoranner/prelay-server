@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use crate::{
     activity::events::{events_from_chat_request, events_from_chat_response},
+    activity::rollout::SessionContext,
     bridge::stream::{native_chat_sse_with_stats, with_sse_keepalive},
     error::AppError,
     observability::{
@@ -20,22 +21,31 @@ use crate::{
     AppState,
 };
 
+#[derive(Clone)]
+pub(super) struct ChatCandidateRequest {
+    pub(super) session_id: String,
+    pub(super) session: SessionContext,
+    pub(super) model: String,
+    pub(super) is_streaming: bool,
+    pub(super) started_at: std::time::Instant,
+}
+
 pub(super) async fn create_chat_completion_with_candidate(
     state: &AppState,
     access: &CurrentProtocolAccess,
     mut payload: Value,
-    model: String,
-    is_streaming: bool,
-    started_at: std::time::Instant,
+    candidate: ChatCandidateRequest,
     resolved: ResolvedEndpointProvider,
 ) -> Result<Response, AppError> {
+    let ChatCandidateRequest {
+        session_id,
+        session,
+        model,
+        is_streaming,
+        started_at,
+    } = candidate;
     let provider = resolved.provider;
     let model_upstream = resolved.model_upstream;
-    let session_id = access
-        .session_id
-        .clone()
-        .unwrap_or_else(|| format!("conv_{}", uuid::Uuid::new_v4().simple()));
-
     payload["model"] = Value::String(model_upstream.clone());
     let upstream_base_url = provider_upstream_base_url(&provider, resolved.upstream_protocol);
     let upstream_url = format!(
@@ -93,7 +103,7 @@ pub(super) async fn create_chat_completion_with_candidate(
                     tool_call_count: None,
                     upstream_request_id: observability.request_id,
                 },
-                None,
+                &session,
                 events_from_chat_request(&payload),
                 Vec::new(),
             )
@@ -145,7 +155,7 @@ pub(super) async fn create_chat_completion_with_candidate(
                     stats: stream_stats,
                     rollout: StreamRollout {
                         request_events: events_from_chat_request(&payload),
-                        session_id: None,
+                        session: session.clone(),
                     },
                     session: None,
                 },
@@ -210,7 +220,7 @@ pub(super) async fn create_chat_completion_with_candidate(
                 tool_call_count: Some(tool_call_count),
                 upstream_request_id,
             },
-            None,
+            &session,
             events_from_chat_request(&payload),
             events_from_chat_response(&response),
         )

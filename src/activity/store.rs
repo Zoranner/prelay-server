@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use crate::{
     activity::{
-        rollout::{RolloutStatus, RolloutStore, RolloutWriter, SessionMetaEvent},
-        ErrorEvent, RolloutEvent, RolloutEventBody,
+        rollout::{RolloutStatus, RolloutStore, RolloutWriter, SessionContext, SessionMetaEvent},
+        ErrorEvent, RolloutEventBody,
     },
     stats::ActivityInsert,
     storage::{InterruptedRollout, RecoveredRollout, ResponseSessionInsert, Storage, StorageError},
@@ -76,18 +76,20 @@ impl ActivityStore {
         &self,
         identity_id: &str,
         activity: ActivityInsert,
-        session_id: Option<&str>,
+        session: &SessionContext,
         request_events: Vec<RolloutEventBody>,
         response_events: Vec<RolloutEventBody>,
     ) -> Result<(), StorageError> {
         let activity_id = Uuid::new_v4().to_string();
-        let mut writer = self.begin_rollout(
-            &activity_id,
-            identity_id,
-            &activity,
-            session_id,
-            request_events,
-        )?;
+        let mut writer = self
+            .begin_rollout(
+                &activity_id,
+                identity_id,
+                &activity,
+                session,
+                request_events,
+            )
+            .await?;
         for event in response_events {
             writer
                 .append(event)
@@ -120,21 +122,17 @@ impl ActivityStore {
             .await
     }
 
-    pub fn begin_stream(
+    pub async fn begin_stream(
         &self,
         identity_id: &str,
         activity: &ActivityInsert,
-        session_id: Option<&str>,
+        session: &SessionContext,
         request_events: Vec<RolloutEventBody>,
     ) -> Result<(String, RolloutWriter), StorageError> {
         let activity_id = Uuid::new_v4().to_string();
-        let writer = self.begin_rollout(
-            &activity_id,
-            identity_id,
-            activity,
-            session_id,
-            request_events,
-        )?;
+        let writer = self
+            .begin_rollout(&activity_id, identity_id, activity, session, request_events)
+            .await?;
         Ok((activity_id, writer))
     }
 
@@ -190,21 +188,17 @@ impl ActivityStore {
         self.storage.save_response_session(insert).await
     }
 
-    fn begin_rollout(
+    async fn begin_rollout(
         &self,
         activity_id: &str,
         identity_id: &str,
         activity: &ActivityInsert,
-        session_id: Option<&str>,
+        session: &SessionContext,
         request_events: Vec<RolloutEventBody>,
     ) -> Result<RolloutWriter, StorageError> {
-        let session_id = session_id
-            .filter(|value| !value.is_empty())
-            .unwrap_or(activity_id)
-            .to_string();
         let meta = SessionMetaEvent {
             activity_id: activity_id.to_string(),
-            session_id,
+            session_id: session.thread_id.clone(),
             identity_id: identity_id.to_string(),
             protocol_in: activity.protocol_in.clone(),
             protocol_out: activity.protocol_out.clone(),
@@ -215,12 +209,17 @@ impl ActivityStore {
             started_at: chrono::Utc::now().to_rfc3339(),
         };
         self.rollouts
-            .begin(meta, request_events)
+            .begin(identity_id, session, meta, request_events)
+            .await
             .map_err(|error| StorageError::Rollout(error.to_string()))
     }
 
     async fn remove_rollout_files(&self, relative_paths: &[String]) {
+        let mut seen = HashSet::new();
         for relative_path in relative_paths {
+            if !seen.insert(relative_path.as_str()) {
+                continue;
+            }
             let path = match self.rollouts.checked_absolute_path(relative_path) {
                 Ok(path) => path,
                 Err(error) => {
@@ -233,7 +232,13 @@ impl ActivityStore {
                 }
             };
             match tokio::fs::remove_file(&path).await {
-                Ok(()) => {}
+                Ok(()) => {
+                    if let Some(parent) = path.parent() {
+                        if parent != self.rollouts.root() {
+                            let _ = tokio::fs::remove_dir(parent).await;
+                        }
+                    }
+                }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     tracing::warn!(
                         rollout_path = %path.display(),
@@ -252,31 +257,22 @@ impl ActivityStore {
     }
 
     fn recovered_rollout_status(&self, rollout: &InterruptedRollout) -> RecoveredRollout {
-        match self.rollouts.read_verified(&rollout.rollout_path) {
-            Ok(file) => {
-                let (status, http_status, error_code, error_message) =
-                    terminal_session_end(&file.events).unwrap_or_else(|| {
-                        (
-                            RolloutStatus::Partial,
-                            None,
-                            Some("activity_interrupted".to_string()),
-                            Some(
-                                "process interrupted before activity rollout completion"
-                                    .to_string(),
-                            ),
-                        )
-                    });
-                RecoveredRollout {
-                    activity_id: rollout.activity_id.clone(),
-                    status,
-                    http_status,
-                    error_code,
-                    error_message,
-                    event_count: Some(file.event_count),
-                    byte_size: Some(file.byte_size),
-                    sha256: Some(file.sha256),
-                }
-            }
+        match self
+            .rollouts
+            .read_slice(&rollout.rollout_path, rollout.start_line, rollout.end_line)
+        {
+            Ok(file) => RecoveredRollout {
+                activity_id: rollout.activity_id.clone(),
+                status: RolloutStatus::Partial,
+                http_status: None,
+                error_code: Some("activity_interrupted".to_string()),
+                error_message: Some(
+                    "process interrupted before activity rollout completion".to_string(),
+                ),
+                event_count: Some(file.event_count),
+                byte_size: Some(file.byte_size),
+                sha256: Some(file.sha256),
+            },
             Err(error) => {
                 tracing::warn!(
                     activity_id = %rollout.activity_id,
@@ -298,91 +294,5 @@ impl ActivityStore {
                 }
             }
         }
-    }
-}
-
-type TerminalRollout = (RolloutStatus, Option<i64>, Option<String>, Option<String>);
-
-fn terminal_session_end(events: &[RolloutEvent]) -> Option<TerminalRollout> {
-    let event = events
-        .last()
-        .filter(|event| event.event_type == "session_end")?;
-    let status = match event.payload.get("status")?.as_str()? {
-        "completed" => RolloutStatus::Completed,
-        "failed" => RolloutStatus::Failed,
-        "partial" => RolloutStatus::Partial,
-        _ => return None,
-    };
-    let http_status = event
-        .payload
-        .get("http_status")
-        .and_then(serde_json::Value::as_i64);
-    let error_code = event
-        .payload
-        .get("error_code")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string);
-    let error_message = event
-        .payload
-        .get("error_message")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string);
-    Some((status, http_status, error_code, error_message))
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::terminal_session_end;
-    use crate::activity::rollout::{RolloutEvent, RolloutStatus};
-
-    fn event(event_type: &str, payload: serde_json::Value) -> RolloutEvent {
-        RolloutEvent {
-            seq: 1,
-            timestamp: "2026-10-23T00:00:00Z".to_string(),
-            event_type: event_type.to_string(),
-            payload,
-        }
-    }
-
-    #[test]
-    fn maps_a_completed_session_end_to_completed_status() {
-        let events = vec![event(
-            "session_end",
-            json!({ "status": "completed", "http_status": 200 }),
-        )];
-
-        assert_eq!(
-            terminal_session_end(&events),
-            Some((RolloutStatus::Completed, Some(200), None, None))
-        );
-    }
-
-    #[test]
-    fn maps_a_failed_session_end_and_ignores_non_terminal_files() {
-        let events = vec![event(
-            "session_end",
-            json!({
-                "status": "failed",
-                "http_status": 502,
-                "error_code": "stream_error",
-                "error_message": "upstream failed"
-            }),
-        )];
-
-        assert_eq!(
-            terminal_session_end(&events),
-            Some((
-                RolloutStatus::Failed,
-                Some(502),
-                Some("stream_error".to_string()),
-                Some("upstream failed".to_string())
-            ))
-        );
-        assert_eq!(
-            terminal_session_end(&[event("message", json!({ "content": "partial" }))]),
-            None
-        );
     }
 }

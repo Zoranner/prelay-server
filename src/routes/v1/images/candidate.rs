@@ -10,6 +10,7 @@ use crate::{
     activity::{
         events::{events_from_image_request, media_event},
         media_metadata_from_bytes, EventPhase, RawStreamContentCapture, RawStreamProtocol,
+        SessionContext,
     },
     bridge::stream::{upstream_bytes_stream, verify_upstream_sse_head, with_sse_keepalive},
     error::AppError,
@@ -24,15 +25,29 @@ use crate::{
 
 use super::activity::{image_activity, record_image_activity_best_effort, ImageActivityParams};
 
+#[derive(Clone)]
+pub(super) struct ImageCandidateRequest {
+    pub(super) session_id: String,
+    pub(super) session: SessionContext,
+    pub(super) model: String,
+    pub(super) is_streaming: bool,
+    pub(super) started_at: std::time::Instant,
+}
+
 pub(super) async fn create_image_generation_with_candidate(
     state: &AppState,
     access: &CurrentProtocolAccess,
     mut payload: Value,
-    model: String,
-    is_streaming: bool,
-    started_at: std::time::Instant,
+    candidate: ImageCandidateRequest,
     resolved: ResolvedEndpointProvider,
 ) -> Result<Response, AppError> {
+    let ImageCandidateRequest {
+        session_id,
+        session,
+        model,
+        is_streaming,
+        started_at,
+    } = candidate;
     let provider = resolved.provider;
     let model_upstream = resolved.model_upstream;
 
@@ -44,10 +59,6 @@ pub(super) async fn create_image_generation_with_candidate(
     );
     let upstream_started_at = std::time::Instant::now();
     let client = state.provider_client(&provider.provider_type)?;
-    let session_id = access
-        .session_id
-        .clone()
-        .unwrap_or_else(|| format!("conv_{}", uuid::Uuid::new_v4().simple()));
     let upstream_request = with_provider_headers(
         client.post(upstream_url).bearer_auth(&provider.api_key),
         state
@@ -77,6 +88,7 @@ pub(super) async fn create_image_generation_with_candidate(
                 record_image_activity_best_effort(
                     state,
                     access,
+                    &session,
                     image_activity(ImageActivityParams {
                         access,
                         provider: &provider,
@@ -110,6 +122,7 @@ pub(super) async fn create_image_generation_with_candidate(
         record_image_activity_best_effort(
             state,
             access,
+            &session,
             image_activity(ImageActivityParams {
                 access,
                 provider: &provider,
@@ -167,7 +180,7 @@ pub(super) async fn create_image_generation_with_candidate(
                 RawStreamContentCapture::new(RawStreamProtocol::ImageGeneration),
                 StreamRollout {
                     request_events: events_from_image_request(&payload),
-                    session_id: None,
+                    session: session.clone(),
                 },
             )
             .await,
@@ -186,6 +199,7 @@ pub(super) async fn create_image_generation_with_candidate(
             record_image_activity_best_effort(
                 state,
                 access,
+                &session,
                 image_activity(ImageActivityParams {
                     access,
                     provider: &provider,
@@ -218,6 +232,7 @@ pub(super) async fn create_image_generation_with_candidate(
     record_image_activity_best_effort(
         state,
         access,
+        &session,
         image_activity(ImageActivityParams {
             access,
             provider: &provider,

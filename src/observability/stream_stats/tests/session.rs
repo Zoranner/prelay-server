@@ -6,6 +6,7 @@ use prelay_protocol::CreateProviderRequest;
 
 use super::support::{test_log, test_storage};
 use crate::{
+    activity::SessionContext,
     bridge::{
         internal::{InternalContentPart, InternalMessage, InternalRole},
         stream::{InternalFinishReason, InternalStreamEvent, StreamStatsSnapshot},
@@ -60,7 +61,7 @@ async fn stream_recording_persists_a_completed_response_session() {
             stats,
             rollout: StreamRollout {
                 request_events: Vec::new(),
-                session_id: None,
+                session: SessionContext::new("stream-session"),
             },
             session: Some(StreamSession {
                 previous_response_id: None,

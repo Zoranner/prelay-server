@@ -6,7 +6,7 @@ use serde_json::json;
 
 use super::support::{latest_activity, request_events, test_log, test_storage};
 use crate::{
-    activity::{RawStreamContentCapture, RawStreamProtocol, SessionMetaEvent},
+    activity::{RawStreamContentCapture, RawStreamProtocol, SessionContext, SessionMetaEvent},
     bridge::stream::{InternalStreamEvent, StreamStatsSnapshot},
     observability::stream_stats::{
         options::{RecordingMode, StreamRecordOptions},
@@ -29,7 +29,7 @@ async fn first_chunk_error_finalizes_a_failed_rollout() {
         RawStreamContentCapture::new(RawStreamProtocol::ChatCompletions),
         StreamRollout {
             request_events: request_events("stream input"),
-            session_id: None,
+            session: SessionContext::new("stream-lifecycle-error"),
         },
     )
     .await
@@ -78,7 +78,7 @@ async fn stream_without_a_completion_event_is_failed() {
             stats,
             rollout: StreamRollout {
                 request_events: request_events("stream input"),
-                session_id: None,
+                session: SessionContext::new("stream-lifecycle-incomplete"),
             },
             session: None,
         },
@@ -118,7 +118,7 @@ async fn chat_stream_without_done_marker_is_failed() {
         RawStreamContentCapture::new(RawStreamProtocol::ChatCompletions),
         StreamRollout {
             request_events: request_events("stream input"),
-            session_id: None,
+            session: SessionContext::new("stream-lifecycle-chat"),
         },
     )
     .await
@@ -149,7 +149,7 @@ async fn image_stream_without_completion_event_is_failed() {
         RawStreamContentCapture::new(RawStreamProtocol::ImageGeneration),
         StreamRollout {
             request_events: request_events("image input"),
-            session_id: None,
+            session: SessionContext::new("stream-lifecycle-image"),
         },
     )
     .await
@@ -178,7 +178,7 @@ async fn empty_stream_records_a_failed_rollout() {
         RawStreamContentCapture::new(RawStreamProtocol::ChatCompletions),
         StreamRollout {
             request_events: request_events("empty input"),
-            session_id: None,
+            session: SessionContext::new("stream-lifecycle-empty"),
         },
     )
     .await
@@ -214,6 +214,8 @@ async fn stream_insert_failure_does_not_update_existing_activity() {
     let writer = rollout_store
         .rollouts()
         .begin(
+            &identity_id,
+            &SessionContext::new("duplicate-stream-log"),
             SessionMetaEvent {
                 activity_id: "duplicate-stream-log".to_string(),
                 session_id: "duplicate-stream-log".to_string(),
@@ -228,6 +230,7 @@ async fn stream_insert_failure_does_not_update_existing_activity() {
             },
             Vec::new(),
         )
+        .await
         .expect("begin duplicate rollout");
 
     let result = prepare_stream_with_log_id(

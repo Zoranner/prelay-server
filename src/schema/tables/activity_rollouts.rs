@@ -23,11 +23,36 @@ pub(in crate::schema) fn statement() -> TableCreateStatement {
                 .not_null(),
         )
         .col(
+            ColumnDef::new(ActivityRollouts::ThreadId)
+                .string()
+                .not_null()
+                .default(""),
+        )
+        .col(ColumnDef::new(ActivityRollouts::WindowId).string())
+        .col(
+            ColumnDef::new(ActivityRollouts::Generation)
+                .big_integer()
+                .not_null()
+                .default(0),
+        )
+        .col(
             ColumnDef::new(ActivityRollouts::RolloutPath)
                 .string()
                 .not_null(),
         )
         .col(ColumnDef::new(ActivityRollouts::Status).string().not_null())
+        .col(
+            ColumnDef::new(ActivityRollouts::StartLine)
+                .big_integer()
+                .not_null()
+                .default(0),
+        )
+        .col(
+            ColumnDef::new(ActivityRollouts::EndLine)
+                .big_integer()
+                .not_null()
+                .default(0),
+        )
         .col(
             ColumnDef::new(ActivityRollouts::EventCount)
                 .big_integer()
@@ -63,8 +88,13 @@ pub(in crate::schema) enum ActivityRollouts {
     ActivityId,
     IdentityId,
     SessionId,
+    ThreadId,
+    WindowId,
+    Generation,
     RolloutPath,
     Status,
+    StartLine,
+    EndLine,
     EventCount,
     ByteSize,
     Sha256,

@@ -42,6 +42,25 @@ async fn fails_over_to_a_healthy_candidate_and_keeps_using_it() {
     .await
     .expect("fall back to the healthy candidate");
     assert_eq!(response_json(first).await["id"], "chatcmpl_test");
+    let first_attempt_logs = state
+        .storage
+        .list_activities(&identity_id, 10)
+        .await
+        .expect("load first attempt activities");
+    assert_eq!(first_attempt_logs.len(), 2);
+    let mut first_attempt_paths = Vec::new();
+    for log in &first_attempt_logs {
+        first_attempt_paths.push(
+            state
+                .storage
+                .find_activity_rollout(&log.id)
+                .await
+                .expect("load first attempt rollout")
+                .expect("first attempt rollout")
+                .rollout_path,
+        );
+    }
+    assert_eq!(first_attempt_paths[0], first_attempt_paths[1]);
 
     let second = create_chat_completion(State(state.clone()), auth.access, axum::Json(payload))
         .await

@@ -2,13 +2,13 @@ use serde_json::json;
 
 use super::{
     EventPhase, MessageEvent, RolloutError, RolloutEventBody, RolloutStatus, RolloutStore,
-    SessionMetaEvent,
+    SessionContext, SessionMetaEvent,
 };
 
-fn test_meta(activity_id: &str) -> SessionMetaEvent {
+fn test_meta(activity_id: &str, session_id: &str) -> SessionMetaEvent {
     SessionMetaEvent {
         activity_id: activity_id.to_string(),
-        session_id: "session-1".to_string(),
+        session_id: session_id.to_string(),
         identity_id: "identity-1".to_string(),
         protocol_in: "responses".to_string(),
         protocol_out: "responses".to_string(),
@@ -28,15 +28,23 @@ fn message(phase: EventPhase, content: serde_json::Value) -> RolloutEventBody {
     })
 }
 
-#[test]
-fn writes_events_in_order_and_renames_part_file() {
+fn session(thread_id: &str) -> SessionContext {
+    SessionContext::new(thread_id)
+}
+
+#[tokio::test]
+async fn appends_events_to_one_thread_file_without_session_end() {
     let root = tempfile::tempdir().expect("temp rollout root");
     let store = RolloutStore::new(root.path().to_path_buf());
+    let session = session("thread-1");
     let mut writer = store
         .begin(
-            test_meta("activity-1"),
+            "identity-1",
+            &session,
+            test_meta("activity-1", "thread-1"),
             vec![message(EventPhase::Request, json!("hello"))],
         )
+        .await
         .expect("begin rollout");
 
     writer
@@ -46,7 +54,10 @@ fn writes_events_in_order_and_renames_part_file() {
         .finish(RolloutStatus::Completed)
         .expect("finish rollout");
 
-    assert!(summary.relative_path.ends_with(".jsonl"));
+    assert_eq!(summary.relative_path, "identity-1/thread-1.jsonl");
+    assert_eq!(summary.thread_id, "thread-1");
+    assert_eq!(summary.start_line, 1);
+    assert_eq!(summary.end_line, 4);
     assert!(root.path().join(&summary.relative_path).exists());
     assert!(!root
         .path()
@@ -58,22 +69,26 @@ fn writes_events_in_order_and_renames_part_file() {
         .expect("read events");
     assert_eq!(events.len(), 4);
     assert_eq!(events[0].event_type, "session_meta");
-    assert_eq!(events[1].payload["content"], json!("hello"));
-    assert_eq!(events[2].payload["content"], json!("answer"));
-    assert_eq!(events[3].event_type, "session_end");
-    assert_eq!(events[3].payload["status"], json!("completed"));
+    assert_eq!(events[1].event_type, "window_start");
+    assert_eq!(events[2].payload["content"], json!("hello"));
+    assert_eq!(events[3].payload["content"], json!("answer"));
+    assert!(!events.iter().any(|event| event.event_type == "session_end"));
 }
 
-#[test]
-fn preserves_content_larger_than_the_old_64k_limit() {
+#[tokio::test]
+async fn preserves_content_larger_than_the_old_64k_limit() {
     let root = tempfile::tempdir().expect("temp rollout root");
     let store = RolloutStore::new(root.path().to_path_buf());
+    let session = session("thread-large");
     let large = "x".repeat(1024 * 1024);
     let mut writer = store
         .begin(
-            test_meta("activity-large"),
+            "identity-1",
+            &session,
+            test_meta("activity-large", "thread-large"),
             vec![message(EventPhase::Request, json!(large.clone()))],
         )
+        .await
         .expect("begin large rollout");
     let summary = writer
         .finish(RolloutStatus::Completed)
@@ -90,18 +105,22 @@ fn preserves_content_larger_than_the_old_64k_limit() {
     assert_eq!(summary.event_count, 3);
 }
 
-#[test]
-fn redacts_sensitive_values_before_writing() {
+#[tokio::test]
+async fn redacts_sensitive_values_before_writing() {
     let root = tempfile::tempdir().expect("temp rollout root");
     let store = RolloutStore::new(root.path().to_path_buf());
+    let session = session("thread-secret");
     let mut writer = store
         .begin(
-            test_meta("activity-secret"),
+            "identity-1",
+            &session,
+            test_meta("activity-secret", "thread-secret"),
             vec![message(
                 EventPhase::Request,
                 json!("Authorization: Bearer sk-live-secret"),
             )],
         )
+        .await
         .expect("begin rollout");
     let summary = writer
         .finish(RolloutStatus::Completed)
@@ -119,11 +138,11 @@ fn redacts_sensitive_values_before_writing() {
 fn lists_incomplete_part_files_without_deleting_them() {
     let root = tempfile::tempdir().expect("temp rollout root");
     let store = RolloutStore::new(root.path().to_path_buf());
-    let nested = root.path().join("2026/10/22");
+    let nested = root.path().join("identity-1");
     std::fs::create_dir_all(&nested).expect("create nested rollout directory");
-    let part = nested.join("rollout-incomplete.jsonl.part");
+    let part = nested.join("thread-incomplete.jsonl.part");
     std::fs::write(&part, b"{}").expect("write incomplete rollout");
-    std::fs::write(nested.join("rollout-complete.jsonl"), b"{}").expect("write complete rollout");
+    std::fs::write(nested.join("thread-complete.jsonl"), b"{}").expect("write complete rollout");
 
     assert_eq!(
         store.part_files().expect("list incomplete rollouts"),
@@ -163,7 +182,7 @@ fn rejects_a_rollout_root_that_is_a_file() {
 fn reports_an_incomplete_last_line_with_the_valid_prefix_length() {
     let root = tempfile::tempdir().expect("temp rollout root");
     let store = RolloutStore::new(root.path().to_path_buf());
-    let relative = "2026/10/22/rollout-partial.jsonl";
+    let relative = "identity-1/thread-partial.jsonl";
     let path = store.absolute_path(relative);
     std::fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
     std::fs::write(
@@ -191,40 +210,50 @@ fn reports_an_incomplete_last_line_with_the_valid_prefix_length() {
 fn lists_completed_rollout_files_as_posix_relative_paths() {
     let root = tempfile::tempdir().expect("temp rollout root");
     let store = RolloutStore::new(root.path().to_path_buf());
-    let nested = root.path().join("2026/10/22");
+    let nested = root.path().join("identity-1");
     std::fs::create_dir_all(&nested).expect("create nested rollout directory");
-    std::fs::write(nested.join("rollout-complete.jsonl"), b"{}").expect("write rollout");
-    std::fs::write(nested.join("rollout-incomplete.jsonl.part"), b"{}")
+    std::fs::write(nested.join("thread-complete.jsonl"), b"{}").expect("write rollout");
+    std::fs::write(nested.join("thread-incomplete.jsonl.part"), b"{}")
         .expect("write incomplete rollout");
 
     assert_eq!(
         store.rollout_files().expect("list completed rollouts"),
-        vec!["2026/10/22/rollout-complete.jsonl".to_string()]
+        vec!["identity-1/thread-complete.jsonl".to_string()]
     );
 }
 
 #[test]
 fn finished_writer_keeps_its_persisted_status_on_repeated_finish() {
-    let root = tempfile::tempdir().expect("temp rollout root");
-    let store = RolloutStore::new(root.path().to_path_buf());
-    let mut writer = store
-        .begin(test_meta("activity-finished"), Vec::new())
-        .expect("begin rollout");
+    let runtime = tokio::runtime::Runtime::new().expect("test runtime");
+    runtime.block_on(async {
+        let root = tempfile::tempdir().expect("temp rollout root");
+        let store = RolloutStore::new(root.path().to_path_buf());
+        let session = session("thread-finished");
+        let mut writer = store
+            .begin(
+                "identity-1",
+                &session,
+                test_meta("activity-finished", "thread-finished"),
+                Vec::new(),
+            )
+            .await
+            .expect("begin rollout");
 
-    let first = writer
-        .finish(RolloutStatus::Failed)
-        .expect("finish failed rollout");
-    let second = writer
-        .finish(RolloutStatus::Completed)
-        .expect("repeat finish");
+        let first = writer
+            .finish(RolloutStatus::Failed)
+            .expect("finish failed rollout");
+        let second = writer
+            .finish(RolloutStatus::Completed)
+            .expect("repeat finish");
 
-    assert_eq!(first.status, RolloutStatus::Failed);
-    assert_eq!(second.status, RolloutStatus::Failed);
-    assert_eq!(second.relative_path, first.relative_path);
+        assert_eq!(first.status, RolloutStatus::Failed);
+        assert_eq!(second.status, RolloutStatus::Failed);
+        assert_eq!(second.relative_path, first.relative_path);
+    });
 }
 
 #[test]
-fn rejects_path_traversal_when_resolving_a_rollout_file() {
+fn rejects_path_traversal_and_unsafe_thread_segments() {
     let root = tempfile::tempdir().expect("temp rollout root");
     let store = RolloutStore::new(root.path().to_path_buf());
 
@@ -238,32 +267,20 @@ fn rejects_path_traversal_when_resolving_a_rollout_file() {
             Err(RolloutError::InvalidPath(_))
         ));
     }
-}
 
-#[test]
-fn reports_matching_metrics_when_reading_a_completed_rollout() {
-    let root = tempfile::tempdir().expect("temp rollout root");
-    let store = RolloutStore::new(root.path().to_path_buf());
-    let mut writer = store
-        .begin(
-            test_meta("activity-verified"),
-            vec![message(EventPhase::Request, json!("verified input"))],
-        )
-        .expect("begin verified rollout");
-    let summary = writer
-        .finish(RolloutStatus::Completed)
-        .expect("finish verified rollout");
-
-    let file = store
-        .read_verified(&summary.relative_path)
-        .expect("read verified rollout");
-
-    assert_eq!(file.events.len(), summary.event_count as usize);
-    assert_eq!(file.event_count, summary.event_count);
-    assert_eq!(file.byte_size, summary.byte_size);
-    assert_eq!(file.sha256, summary.sha256);
-    assert_eq!(
-        file.events.last().map(|event| event.event_type.as_str()),
-        Some("session_end")
-    );
+    let runtime = tokio::runtime::Runtime::new().expect("test runtime");
+    runtime.block_on(async {
+        let unsafe_session = session("../outside");
+        assert!(matches!(
+            store
+                .begin(
+                    "identity-1",
+                    &unsafe_session,
+                    test_meta("activity-unsafe", "../outside"),
+                    Vec::new(),
+                )
+                .await,
+            Err(RolloutError::InvalidPath(_))
+        ));
+    });
 }

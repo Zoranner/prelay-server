@@ -1,6 +1,7 @@
 use axum::response::Response;
 
 use crate::{
+    activity::rollout::SessionContext,
     bridge::{internal::InternalRequest, responses::decode::validate_responses_bridge_payload},
     error::AppError,
     providers::{responses::encode_responses_request, spec::UpstreamProtocol},
@@ -20,6 +21,7 @@ pub(super) struct ResponseBridgeContext {
     pub(super) is_streaming: bool,
     pub(super) conversation_id: String,
     pub(super) session_id: String,
+    pub(super) session: SessionContext,
     pub(super) started_at: std::time::Instant,
 }
 
@@ -45,6 +47,7 @@ pub(super) async fn create_response_with_candidate(
         .session_id
         .clone()
         .unwrap_or_else(|| conversation_id.clone());
+    let session = access.session_context(&conversation_id);
     let context = ResponseBridgeContext {
         identity_id: access.identity_id.clone(),
         endpoint_name: access.endpoint_name.clone(),
@@ -52,6 +55,7 @@ pub(super) async fn create_response_with_candidate(
         is_streaming,
         conversation_id,
         session_id,
+        session,
         started_at,
     };
 

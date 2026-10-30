@@ -2,7 +2,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement, 
 
 use super::{indexes, tables};
 
-const MIGRATION_VERSION: &str = "activity_rollout_v1";
+const MIGRATION_VERSION: &str = "activity_rollout_v2";
 
 pub(super) async fn apply(db: &DatabaseConnection) -> Result<(), DbErr> {
     let transaction = db.begin().await?;
@@ -19,7 +19,19 @@ pub(super) async fn apply_in<C: ConnectionTrait>(db: &C) -> Result<(), DbErr> {
     )
     .await?;
     db.execute(&tables::activity_rollouts::statement()).await?;
+    for statement in [
+        "ALTER TABLE activity_rollouts ADD COLUMN IF NOT EXISTS thread_id TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE activity_rollouts ADD COLUMN IF NOT EXISTS window_id TEXT",
+        "ALTER TABLE activity_rollouts ADD COLUMN IF NOT EXISTS generation BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE activity_rollouts ADD COLUMN IF NOT EXISTS start_line BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE activity_rollouts ADD COLUMN IF NOT EXISTS end_line BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE activity_rollouts DROP CONSTRAINT IF EXISTS uq_activity_rollouts_path",
+        "DROP INDEX IF EXISTS uq_activity_rollouts_path",
+    ] {
+        db.execute_unprepared(statement).await?;
+    }
     db.execute(&indexes::activity_rollouts_path()).await?;
+    db.execute(&indexes::activity_rollouts_thread()).await?;
     db.execute(&indexes::activity_rollouts_identity_created_at())
         .await?;
     db.execute(&indexes::activity_rollouts_session()).await?;

@@ -133,6 +133,9 @@ async fn initialize_memory_schema<C: ConnectionTrait>(
         .create_index(indexes::activity_rollouts_path())
         .await?;
     manager
+        .create_index(indexes::activity_rollouts_thread())
+        .await?;
+    manager
         .create_index(indexes::activity_rollouts_identity_created_at())
         .await?;
     manager

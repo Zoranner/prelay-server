@@ -1,7 +1,9 @@
 use chrono::{Duration, Utc};
 use prelay_protocol::{CreateEndpointRequest, CreateProviderRequest, EndpointModelInput};
 use prelay_server::{
-    activity::{ActivityStore, RolloutStore},
+    activity::{
+        ActivityStore, EventPhase, MessageEvent, RolloutEventBody, RolloutStore, SessionContext,
+    },
     bridge::internal::{
         InternalContentPart, InternalMessage, InternalOutputItem, InternalResponse, InternalRole,
     },
@@ -43,7 +45,7 @@ async fn cleanup_removes_an_inactive_identity_and_all_accessible_owned_resources
                 latency_ms: 1,
                 ..Default::default()
             },
-            None,
+            &SessionContext::new("thread-inactive"),
             vec![prelay_server::activity::RolloutEventBody::Message(
                 prelay_server::activity::MessageEvent {
                     phase: prelay_server::activity::EventPhase::Request,
@@ -119,6 +121,79 @@ async fn cleanup_removes_an_inactive_identity_and_all_accessible_owned_resources
             .await,
         Err(StorageError::EndpointNotFound)
     ));
+}
+
+#[tokio::test]
+async fn cleanup_removes_one_shared_thread_file_for_multiple_activities() {
+    let storage = support::test_storage().await;
+    let rollout_root = tempfile::tempdir().expect("temporary rollout root");
+    let rollout_store = RolloutStore::new(rollout_root.path().to_path_buf());
+    let activity_store = ActivityStore::new(storage.clone(), rollout_store.clone());
+    let identity = storage
+        .register_identity(
+            "machine-shared-file",
+            "S-1-5-21-300",
+            &generate_credential(),
+        )
+        .await
+        .expect("register identity");
+    let session = SessionContext::new("thread-shared");
+
+    for content in ["first", "second"] {
+        activity_store
+            .record_completed(
+                &identity.identity_id,
+                ActivityInsert {
+                    protocol_in: "responses".to_string(),
+                    protocol_out: "responses".to_string(),
+                    protocol_upstream: "responses".to_string(),
+                    status: "success".to_string(),
+                    http_status: 200,
+                    latency_ms: 1,
+                    ..Default::default()
+                },
+                &session,
+                vec![RolloutEventBody::Message(MessageEvent {
+                    phase: EventPhase::Request,
+                    role: "user".to_string(),
+                    content: serde_json::json!(content),
+                })],
+                Vec::new(),
+            )
+            .await
+            .expect("record shared-thread activity");
+    }
+
+    let activities = storage
+        .list_activities(&identity.identity_id, 10)
+        .await
+        .expect("load shared-thread activities");
+    assert_eq!(activities.len(), 2);
+    let mut rollout_paths = Vec::new();
+    for activity in &activities {
+        rollout_paths.push(
+            storage
+                .find_activity_rollout(&activity.id)
+                .await
+                .expect("load shared-thread rollout")
+                .expect("shared-thread rollout")
+                .rollout_path,
+        );
+    }
+    assert_eq!(rollout_paths[0], rollout_paths[1]);
+    assert!(rollout_store.absolute_path(&rollout_paths[0]).exists());
+
+    let deleted = activity_store
+        .delete_inactive_identities(Utc::now() + Duration::days(91), Duration::days(90))
+        .await
+        .expect("clean shared-thread identity");
+    assert_eq!(deleted, 1);
+    assert!(!rollout_store.absolute_path(&rollout_paths[0]).exists());
+    assert!(storage
+        .list_activities(&identity.identity_id, 10)
+        .await
+        .expect("list deleted shared-thread activities")
+        .is_empty());
 }
 
 #[tokio::test]

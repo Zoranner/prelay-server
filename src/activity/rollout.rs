@@ -8,11 +8,40 @@ mod store;
 pub use event::{
     ErrorEvent, EventPhase, MediaEvent, MessageEvent, ReasoningEvent, RolloutEvent,
     RolloutEventBody, SessionEndEvent, SessionMetaEvent, ToolCallEvent, ToolResultEvent,
-    UsageEvent,
+    UsageEvent, WindowStartEvent,
 };
-pub use store::{RolloutFile, RolloutStore, RolloutWriter};
+pub use store::{RolloutFile, RolloutSlice, RolloutStore, RolloutWriter};
 
 pub const DEFAULT_ACTIVITY_ROLLOUT_DIR: &str = "data/sessions";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionContext {
+    pub thread_id: String,
+    pub window_id: Option<String>,
+    pub generation: u64,
+}
+
+impl SessionContext {
+    pub fn new(thread_id: impl Into<String>) -> Self {
+        Self {
+            thread_id: thread_id.into(),
+            window_id: None,
+            generation: 0,
+        }
+    }
+
+    pub fn with_window(
+        thread_id: impl Into<String>,
+        window_id: Option<String>,
+        generation: u64,
+    ) -> Self {
+        Self {
+            thread_id: thread_id.into(),
+            window_id,
+            generation,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum RolloutError {
@@ -85,9 +114,13 @@ impl RolloutStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RolloutSummary {
     pub activity_id: String,
-    pub session_id: String,
+    pub thread_id: String,
+    pub window_id: Option<String>,
+    pub generation: u64,
     pub relative_path: String,
     pub status: RolloutStatus,
+    pub start_line: u64,
+    pub end_line: u64,
     pub event_count: u64,
     pub byte_size: u64,
     pub sha256: String,
@@ -96,3 +129,7 @@ pub struct RolloutSummary {
 #[cfg(test)]
 #[path = "rollout_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "rollout_thread_tests.rs"]
+mod thread_tests;
