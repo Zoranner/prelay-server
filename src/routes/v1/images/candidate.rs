@@ -71,50 +71,53 @@ pub(super) async fn create_image_generation_with_candidate(
         },
     )
     .json(&payload);
-    let mut upstream_response =
-        match crate::upstream::send_with_timeout(crate::upstream::policy(), upstream_request).await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                let (status, error_code, safe_error_message) = match &error {
-                    AppError::Upstream {
-                        status: Some(StatusCode::GATEWAY_TIMEOUT),
-                        ..
-                    } => (
-                        Some(StatusCode::GATEWAY_TIMEOUT),
-                        "upstream_response_head_timeout",
-                        "上游响应超时",
-                    ),
-                    _ => (None, "upstream_connection", "上游连接失败"),
-                };
-                record_image_activity_best_effort(
-                    state,
+    let mut upstream_response = match crate::outbound::client::send_with_timeout(
+        crate::outbound::client::policy(),
+        upstream_request,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            let (status, error_code, safe_error_message) = match &error {
+                AppError::Upstream {
+                    status: Some(StatusCode::GATEWAY_TIMEOUT),
+                    ..
+                } => (
+                    Some(StatusCode::GATEWAY_TIMEOUT),
+                    "upstream_response_head_timeout",
+                    "上游响应超时",
+                ),
+                _ => (None, "upstream_connection", "上游连接失败"),
+            };
+            record_image_activity_best_effort(
+                state,
+                access,
+                &session,
+                image_activity(ImageActivityParams {
                     access,
-                    &session,
-                    image_activity(ImageActivityParams {
-                        access,
-                        provider: &provider,
-                        model_requested: model,
-                        model_upstream,
-                        status: "failed",
-                        http_status: status.map_or(0, |status| status.as_u16() as i64),
-                        error_code: Some(error_code),
-                        is_streaming,
-                        latency_ms: started_at.elapsed().as_millis() as i64,
-                        upstream_latency_ms: None,
-                        upstream_request_id: None,
-                        error_message: Some(safe_error_message.to_string()),
-                    }),
-                    events_from_image_request(&payload),
-                    Vec::new(),
-                )
-                .await;
-                return Err(AppError::Upstream {
-                    status,
-                    message: safe_error_message.to_string(),
-                });
-            }
-        };
+                    provider: &provider,
+                    model_requested: model,
+                    model_upstream,
+                    status: "failed",
+                    http_status: status.map_or(0, |status| status.as_u16() as i64),
+                    error_code: Some(error_code),
+                    is_streaming,
+                    latency_ms: started_at.elapsed().as_millis() as i64,
+                    upstream_latency_ms: None,
+                    upstream_request_id: None,
+                    error_message: Some(safe_error_message.to_string()),
+                }),
+                events_from_image_request(&payload),
+                Vec::new(),
+            )
+            .await;
+            return Err(AppError::Upstream {
+                status,
+                message: safe_error_message.to_string(),
+            });
+        }
+    };
     let upstream_latency_ms = upstream_started_at.elapsed().as_millis() as i64;
     let upstream_status = upstream_response.status();
 

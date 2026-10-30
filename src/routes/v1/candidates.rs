@@ -1,8 +1,8 @@
 use std::future::Future;
 
 use crate::{
-    error::AppError, routes::v1::endpoint_resolver::ResolvedEndpointProvider,
-    service::failover::FailoverRegistry, upstream::retry_with_policy,
+    error::AppError, outbound::client::retry_with_policy,
+    routes::v1::endpoint_resolver::ResolvedEndpointProvider, service::failover::FailoverRegistry,
 };
 
 pub(super) async fn run_endpoint_model_candidates<T, F, Fut>(
@@ -15,7 +15,7 @@ where
     F: FnMut(ResolvedEndpointProvider) -> Fut,
     Fut: Future<Output = Result<T, AppError>>,
 {
-    let policy = crate::upstream::policy();
+    let policy = crate::outbound::client::policy();
     let mut last_upstream_error = None;
 
     for resolved in order_candidates(candidates, failover)

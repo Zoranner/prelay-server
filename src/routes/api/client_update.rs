@@ -9,7 +9,7 @@ use axum::{
 use prelay_protocol::{ClientUpdateResponse, ClientUpdateTarget, ProtocolErrorCode};
 use tokio_util::io::ReaderStream;
 
-use crate::{client_update::CachedClientUpdate, AppState};
+use crate::{outbound::integrations::client_update::CachedClientUpdate, AppState};
 
 use super::{ApiError, ApiQuery};
 

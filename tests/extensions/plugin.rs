@@ -1,5 +1,7 @@
 use prelay_protocol::{CatalogKind, ExtensionKind};
-use prelay_server::extensions::{CatalogError, ExtensionCatalog, ExtensionCatalogConfig};
+use prelay_server::outbound::integrations::extensions::{
+    CatalogError, ExtensionCatalog, ExtensionCatalogConfig,
+};
 
 #[tokio::test]
 async fn builds_a_plugin_bundle_and_filters_catalog_by_artifact() {

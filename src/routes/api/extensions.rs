@@ -10,7 +10,7 @@ use prelay_protocol::{
 };
 
 use crate::{
-    extensions::{CatalogError, ExtensionCatalog},
+    outbound::integrations::extensions::{CatalogError, ExtensionCatalog},
     AppState,
 };
 

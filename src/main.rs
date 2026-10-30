@@ -6,9 +6,9 @@ use std::{
 
 use prelay_server::{
     app,
-    client_update::ClientUpdateCache,
     domain::catalog::ProviderCatalog,
-    extensions::ExtensionCatalog,
+    outbound::integrations::client_update::ClientUpdateCache,
+    outbound::integrations::extensions::ExtensionCatalog,
     service::activity::ActivityStore,
     service::cleanup::delete_expired_identities,
     store::connect::{connect, DatabaseConfig},
@@ -118,15 +118,16 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     });
-    let upstream_policy =
-        prelay_server::upstream::initialize_from_environment().map_err(anyhow::Error::msg)?;
+    let upstream_policy = prelay_server::outbound::client::initialize_from_environment()
+        .map_err(anyhow::Error::msg)?;
     // 图片预算的默认值按协议入口上限推导，入口上限已在启动时先初始化。
     prelay_server::image_budget::initialize_from_environment().map_err(anyhow::Error::msg)?;
-    let client = prelay_server::upstream::build_client(upstream_policy)?;
-    let client_update_client = prelay_server::client_update::http_client_from_environment(
-        upstream_policy.connect_timeout,
-        upstream_policy.read_timeout,
-    )?;
+    let client = prelay_server::outbound::client::build_client(upstream_policy)?;
+    let client_update_client =
+        prelay_server::outbound::integrations::client_update::http_client_from_environment(
+            upstream_policy.connect_timeout,
+            upstream_policy.read_timeout,
+        )?;
     let client_update = ClientUpdateCache::from_environment(client_update_client).await?;
     // 首次刷新在后台立即开始：服务先进入监听，不等待下载完成。
     let refresh_client_update = client_update.clone();

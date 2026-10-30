@@ -1,5 +1,5 @@
 use prelay_protocol::{CatalogKind, ExtensionKind};
-use prelay_server::extensions::{
+use prelay_server::outbound::integrations::extensions::{
     classify_paths, versions_from_tags, ExtensionCatalog, ExtensionCatalogConfig, GiteaTag,
 };
 

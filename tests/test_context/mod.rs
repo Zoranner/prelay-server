@@ -1,7 +1,8 @@
 use axum::Router;
 use prelay_server::{
-    app, client_update::ClientUpdateCache, domain::catalog::ProviderCatalog,
-    extensions::ExtensionCatalog, AppState,
+    app, domain::catalog::ProviderCatalog,
+    outbound::integrations::client_update::ClientUpdateCache,
+    outbound::integrations::extensions::ExtensionCatalog, AppState,
 };
 
 use crate::support::TestStorage;

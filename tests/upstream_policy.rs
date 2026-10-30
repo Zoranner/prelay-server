@@ -6,7 +6,7 @@ use std::{
 use axum::http::StatusCode;
 use prelay_server::{
     error::AppError,
-    upstream::{retry_with_policy, UpstreamPolicy},
+    outbound::client::{retry_with_policy, UpstreamPolicy},
 };
 
 #[test]

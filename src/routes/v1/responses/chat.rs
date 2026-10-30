@@ -86,8 +86,8 @@ pub(super) async fn create_chat_response(
         },
     )
     .json(&encode_chat_request(&request));
-    let upstream_response = match crate::upstream::send_with_timeout(
-        crate::upstream::policy(),
+    let upstream_response = match crate::outbound::client::send_with_timeout(
+        crate::outbound::client::policy(),
         request_builder,
     )
     .await

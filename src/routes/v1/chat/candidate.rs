@@ -66,8 +66,11 @@ pub(super) async fn create_chat_completion_with_candidate(
         },
     )
     .json(&payload);
-    let upstream_response =
-        crate::upstream::send_with_timeout(crate::upstream::policy(), upstream_request).await?;
+    let upstream_response = crate::outbound::client::send_with_timeout(
+        crate::outbound::client::policy(),
+        upstream_request,
+    )
+    .await?;
     let upstream_latency_ms = upstream_started_at.elapsed().as_millis() as i64;
 
     if !upstream_response.status().is_success() {

@@ -99,30 +99,33 @@ pub(super) async fn create_native_response(
         },
     )
     .body(upstream_request_body);
-    let upstream_response =
-        match crate::upstream::send_with_timeout(crate::upstream::policy(), upstream_request).await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                let (error_code, status, message) = upstream_error_details(&error);
-                record_upstream_failure(
-                    state,
-                    &context,
-                    &provider,
-                    UpstreamFailure {
-                        protocol_upstream: "responses",
-                        model_upstream,
-                        status,
-                        error_code,
-                        error_message: message,
-                        upstream_latency_ms: Some(upstream_started_at.elapsed().as_millis() as i64),
-                        request_events: events_from_internal_request(request),
-                    },
-                )
-                .await;
-                return Err(error);
-            }
-        };
+    let upstream_response = match crate::outbound::client::send_with_timeout(
+        crate::outbound::client::policy(),
+        upstream_request,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            let (error_code, status, message) = upstream_error_details(&error);
+            record_upstream_failure(
+                state,
+                &context,
+                &provider,
+                UpstreamFailure {
+                    protocol_upstream: "responses",
+                    model_upstream,
+                    status,
+                    error_code,
+                    error_message: message,
+                    upstream_latency_ms: Some(upstream_started_at.elapsed().as_millis() as i64),
+                    request_events: events_from_internal_request(request),
+                },
+            )
+            .await;
+            return Err(error);
+        }
+    };
     let upstream_latency_ms = upstream_started_at.elapsed().as_millis() as i64;
 
     if !upstream_response.status().is_success() {

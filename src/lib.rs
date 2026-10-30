@@ -1,15 +1,13 @@
 pub mod app;
-pub mod client_update;
 pub mod codec;
 pub mod domain;
 pub mod error;
-pub mod extensions;
 pub mod image_budget;
+pub mod outbound;
 pub mod protocol_body_limit;
 pub mod routes;
 pub mod service;
 pub mod store;
-pub mod upstream;
 
 use error::AppError;
 
@@ -19,9 +17,9 @@ pub struct AppState {
     pub storage: store::storage::Storage,
     pub activity_store: service::activity::ActivityStore,
     pub client: reqwest::Client,
-    pub provider_clients: upstream::ProviderClientCache,
-    pub client_update: client_update::ClientUpdateCache,
-    pub extensions: extensions::ExtensionCatalog,
+    pub provider_clients: outbound::client::ProviderClientCache,
+    pub client_update: outbound::integrations::client_update::ClientUpdateCache,
+    pub extensions: outbound::integrations::extensions::ExtensionCatalog,
     pub failover: service::failover::FailoverRegistry,
 }
 
@@ -33,7 +31,7 @@ impl AppState {
             return Ok(self.client.clone());
         };
         self.provider_clients
-            .client(proxy_url, upstream::policy())
+            .client(proxy_url, outbound::client::policy())
             .map_err(|error| AppError::Upstream {
                 status: None,
                 message: format!("供应商代理地址不可用 {proxy_url}: {error}"),
@@ -50,9 +48,9 @@ pub mod test_support {
     };
 
     use crate::{
-        client_update::ClientUpdateCache,
         domain::catalog::ProviderCatalog,
-        extensions::ExtensionCatalog,
+        outbound::integrations::client_update::ClientUpdateCache,
+        outbound::integrations::extensions::ExtensionCatalog,
         store::connect::DatabaseConfig,
         store::schema::initialize,
         store::storage::{MasterKey, Storage},
