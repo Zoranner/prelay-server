@@ -9,8 +9,10 @@ use crate::codec::internal::{
 };
 use crate::{
     store::entity::identity::response_sessions as identity_response_sessions,
-    store::storage::{Storage, StorageError},
+    store::storage::{crypto::KeyCipher, Storage, StorageError},
 };
+
+const SESSION_CIPHERTEXT_PREFIX: &str = "enc:v1:";
 
 pub struct ResponseSessionInsert<'a> {
     pub identity_id: &'a str,
@@ -28,7 +30,7 @@ impl Storage {
         &self,
         insert: ResponseSessionInsert<'_>,
     ) -> Result<(), StorageError> {
-        save_response_session(&self.db, insert).await
+        save_response_session(&self.db, &self.crypto, insert).await
     }
 
     pub async fn load_response_session_messages(
@@ -36,7 +38,7 @@ impl Storage {
         identity_id: &str,
         response_id: &str,
     ) -> Result<Option<Vec<InternalMessage>>, StorageError> {
-        load_response_session_messages(&self.db, identity_id, response_id).await
+        load_response_session_messages(&self.db, &self.crypto, identity_id, response_id).await
     }
 
     pub async fn load_response_session_conversation_id(
@@ -55,8 +57,13 @@ impl Storage {
 
 pub(super) async fn save_response_session(
     db: &DatabaseConnection,
+    crypto: &KeyCipher,
     insert: ResponseSessionInsert<'_>,
 ) -> Result<(), StorageError> {
+    let input_messages_json =
+        encrypt_session_value(crypto, &serde_json::to_string(insert.input_messages)?)?;
+    let output_items_json =
+        encrypt_session_value(crypto, &serde_json::to_string(&insert.response.output)?)?;
     let session = identity_response_sessions::ActiveModel {
         response_id: Set(insert.response_id.to_string()),
         identity_id: Set(insert.identity_id.to_string()),
@@ -64,8 +71,8 @@ pub(super) async fn save_response_session(
         conversation_id: Set(Some(insert.conversation_id.to_string())),
         provider_id: Set(insert.provider_id.to_string()),
         model: Set(insert.model.to_string()),
-        input_messages_json: Set(serde_json::to_string(insert.input_messages)?),
-        output_items_json: Set(serde_json::to_string(&insert.response.output)?),
+        input_messages_json: Set(input_messages_json),
+        output_items_json: Set(output_items_json),
         created_at: Set(Utc::now().to_rfc3339()),
     };
     identity_response_sessions::Entity::insert(session)
@@ -92,6 +99,7 @@ pub(super) async fn save_response_session(
 
 pub(super) async fn load_response_session_messages(
     db: &DatabaseConnection,
+    crypto: &KeyCipher,
     identity_id: &str,
     response_id: &str,
 ) -> Result<Option<Vec<InternalMessage>>, StorageError> {
@@ -103,10 +111,24 @@ pub(super) async fn load_response_session_messages(
     let Some(row) = row else {
         return Ok(None);
     };
-    let mut messages: Vec<InternalMessage> = serde_json::from_str(&row.input_messages_json)?;
-    let items: Vec<InternalOutputItem> = serde_json::from_str(&row.output_items_json)?;
+    let input_messages_json = decrypt_session_value(crypto, &row.input_messages_json)?;
+    let output_items_json = decrypt_session_value(crypto, &row.output_items_json)?;
+    let mut messages: Vec<InternalMessage> = serde_json::from_str(&input_messages_json)?;
+    let items: Vec<InternalOutputItem> = serde_json::from_str(&output_items_json)?;
     messages.extend(items.into_iter().map(output_item_to_message));
     Ok(Some(messages))
+}
+
+fn encrypt_session_value(crypto: &KeyCipher, value: &str) -> Result<String, StorageError> {
+    let ciphertext = crypto.encrypt(value)?;
+    Ok(format!("{SESSION_CIPHERTEXT_PREFIX}{ciphertext}"))
+}
+
+fn decrypt_session_value(crypto: &KeyCipher, value: &str) -> Result<String, StorageError> {
+    match value.strip_prefix(SESSION_CIPHERTEXT_PREFIX) {
+        Some(ciphertext) => crypto.decrypt(ciphertext),
+        None => Ok(value.to_string()),
+    }
 }
 
 fn output_item_to_message(item: InternalOutputItem) -> InternalMessage {
@@ -140,7 +162,7 @@ fn output_item_to_message(item: InternalOutputItem) -> InternalMessage {
 #[cfg(test)]
 mod tests {
     use prelay_protocol::CreateProviderRequest;
-    use sea_orm::{ActiveModelTrait, ActiveValue::Set};
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 
     use super::ResponseSessionInsert;
     use crate::{
@@ -238,6 +260,49 @@ mod tests {
                 .await
                 .expect("load identity B conversation"),
             Some("conversation-b".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn saves_response_session_content_as_ciphertext() {
+        let storage = test_storage().await;
+        let (identity_id, provider_id) = seed_identity_and_provider(&storage, "encrypted").await;
+        let input = vec![message("sensitive prompt")];
+        let response = response("resp_secret", "sensitive output");
+        storage
+            .save_response_session(ResponseSessionInsert {
+                identity_id: &identity_id,
+                response_id: "resp_secret",
+                previous_response_id: None,
+                conversation_id: "conversation-encrypted",
+                provider_id: &provider_id,
+                model: "model-encrypted",
+                input_messages: &input,
+                response: &response,
+            })
+            .await
+            .expect("save encrypted session");
+
+        let row = identity_response_sessions::Entity::find()
+            .filter(identity_response_sessions::Column::ResponseId.eq("resp_secret"))
+            .filter(identity_response_sessions::Column::IdentityId.eq(&identity_id))
+            .one(&storage.db)
+            .await
+            .expect("load stored session")
+            .expect("stored session");
+        assert!(row.input_messages_json.starts_with("enc:v1:"));
+        assert!(row.output_items_json.starts_with("enc:v1:"));
+        assert!(!row.input_messages_json.contains("sensitive prompt"));
+        assert!(!row.output_items_json.contains("sensitive output"));
+        assert_eq!(
+            storage
+                .load_response_session_messages(&identity_id, "resp_secret")
+                .await
+                .expect("load encrypted session"),
+            Some(vec![
+                message("sensitive prompt"),
+                assistant_message("sensitive output"),
+            ])
         );
     }
 

@@ -44,7 +44,7 @@ PostgreSQL
 
 `activity_rollouts` 按线程文件记录 `thread_id`、`window_id`、`generation`、`start_line` 和 `end_line`；同一线程的多个活动共享一个 JSONL 文件。`activity_rollout_v2` 升级后，旧活动行的 `thread_id` 为空、行号区间为 0，旧活动级文件不迁移；读取方必须识别这种旧数据，不能把 `read_slice(path, 0, 0)` 当作旧正文。
 
-`identity_response_sessions` 保存 Responses 续接所需的完整输入和输出，数据库和备份按敏感数据处理；它不是活动正文索引或统计来源。
+`identity_response_sessions` 保存 Responses 续接所需的完整输入和输出，内容使用 `ENCRYPTION_KEY` 加密保存，数据库和备份仍必须按敏感数据处理；它不是活动正文索引或统计来源。旧版本留下的明文行仍可读取，新写入使用密文。
 
 实体关系、唯一约束、外键和索引由统一 schema 初始化模块定义。全新空库首次启动时创建完整当前 schema；已有完整 schema 在启动时执行幂等迁移（补齐缺失列、删除已废弃的遗留表、清理已退出链路的字段、按目录回填模型清单、按供应商清单对账接入点模型）；仅存在部分业务表时拒绝启动，要求创建新的部署。每一项跨资源写入仍须由单个事务完成；失败时不得留下部分供应商、空接入点或失配的模型映射。
 

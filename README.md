@@ -109,7 +109,7 @@ Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.4.3`，并以只读方式
 
 - `ACTIVITY_ROLLOUT_DIR`：活动 JSONL 的根目录，默认 `data/sessions`，必须非空。
 
-`identity_response_sessions` 保存 Responses 续接所需的完整输入和输出，数据库和备份必须按敏感数据处理；它不是活动正文索引或统计来源。
+`identity_response_sessions` 保存 Responses 续接所需的完整输入和输出，内容使用 `ENCRYPTION_KEY` 加密保存，数据库和备份仍必须按敏感数据处理；它不是活动正文索引或统计来源。旧版本留下的明文行仍可读取，新写入使用密文。
 
 入口请求体仍受 `PROTOCOL_MAX_REQUEST_BODY_BYTES` 限制，默认 `256 MiB`；该限制只决定单次请求能否被服务接收，不截断已经接收的正文。
 
