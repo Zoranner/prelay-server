@@ -36,7 +36,7 @@ async fn upsert(
     identity_id: &str,
     candidate: MemoryCandidate,
 ) -> Result<MemoryRecord, StorageError> {
-    let candidate = normalize_candidate(candidate)?;
+    let candidate = normalize_candidate(candidate).map_err(StorageError::ValidationFailed)?;
     let transaction = db.begin().await?;
     let now = Utc::now().to_rfc3339();
     let memory = memories::Entity::find()
