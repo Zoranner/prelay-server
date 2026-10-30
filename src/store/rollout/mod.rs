@@ -22,6 +22,14 @@ use crate::domain::activity::rollout::{
     SessionMetaEvent, WindowStartEvent, DEFAULT_ACTIVITY_ROLLOUT_DIR,
 };
 
+const MAX_RECOVERED_SEGMENTS: usize = 10;
+
+enum ThreadCandidate {
+    Missing,
+    Corrupt,
+    Events(Vec<RolloutEvent>),
+}
+
 #[derive(Debug, Clone)]
 pub struct RolloutStore {
     root: PathBuf,
@@ -123,24 +131,25 @@ impl RolloutStore {
             )));
         }
 
-        let relative_path = format!("{identity_id}/{}.jsonl", session.thread_id);
+        let lock_key = PathBuf::from(format!("{identity_id}/{}", session.thread_id));
+        let lock = self.lock_for(&lock_key);
+        let guard = lock.lock_owned().await;
+        let store = self.clone();
+        let identity = identity_id.to_string();
+        let thread = session.thread_id.clone();
+        let (relative_path, existing_events) =
+            tokio::task::spawn_blocking(move || store.read_thread_source(&identity, &thread))
+                .await
+                .map_err(|error| {
+                    RolloutError::Io(io::Error::other(format!(
+                        "rollout read task failed: {error}"
+                    )))
+                })??;
         let final_path = self.checked_absolute_path(&relative_path)?;
         let parent = final_path
             .parent()
             .ok_or_else(|| RolloutError::InvalidPath(relative_path.clone()))?;
         fs::create_dir_all(parent)?;
-
-        let lock = self.lock_for(&final_path);
-        let guard = lock.lock_owned().await;
-        let path = final_path.clone();
-        let existing_events = tokio::task::spawn_blocking(move || read_thread_events(&path))
-            .await
-            .map_err(|error| {
-                RolloutError::Io(io::Error::other(format!(
-                    "rollout read task failed: {error}"
-                )))
-            })??
-            .unwrap_or_default();
         let line_count = existing_events.len() as u64;
         let seq = existing_events.last().map_or(0, |event| event.seq);
         let file = OpenOptions::new()
@@ -210,6 +219,74 @@ impl RolloutStore {
         let lock = Arc::new(AsyncMutex::new(()));
         locks.insert(path.to_path_buf(), Arc::downgrade(&lock));
         lock
+    }
+
+    fn read_thread_source(
+        &self,
+        identity_id: &str,
+        thread_id: &str,
+    ) -> Result<(String, Vec<RolloutEvent>), RolloutError> {
+        let base = format!("{identity_id}/{thread_id}.jsonl");
+        match self.read_thread_candidate(&base)? {
+            ThreadCandidate::Events(events) => Ok((base, events)),
+            ThreadCandidate::Missing => {
+                for index in 1..=MAX_RECOVERED_SEGMENTS {
+                    let candidate = recovered_thread_path(identity_id, thread_id, index);
+                    match self.read_thread_candidate(&candidate)? {
+                        ThreadCandidate::Events(events) => return Ok((candidate, events)),
+                        ThreadCandidate::Corrupt => continue,
+                        ThreadCandidate::Missing if index == 1 => {
+                            return Ok((base, Vec::new()));
+                        }
+                        ThreadCandidate::Missing => {
+                            return Ok((candidate, Vec::new()));
+                        }
+                    }
+                }
+                Err(RolloutError::InvalidPath(format!(
+                    "thread {thread_id} has too many corrupt recovered segments"
+                )))
+            }
+            ThreadCandidate::Corrupt => {
+                for index in 1..=MAX_RECOVERED_SEGMENTS {
+                    let candidate = recovered_thread_path(identity_id, thread_id, index);
+                    match self.read_thread_candidate(&candidate)? {
+                        ThreadCandidate::Events(events) => return Ok((candidate, events)),
+                        ThreadCandidate::Corrupt => continue,
+                        ThreadCandidate::Missing => {
+                            return Ok((candidate, Vec::new()));
+                        }
+                    }
+                }
+                Err(RolloutError::InvalidPath(format!(
+                    "thread {thread_id} has too many corrupt segments"
+                )))
+            }
+        }
+    }
+
+    fn read_thread_candidate(&self, relative: &str) -> Result<ThreadCandidate, RolloutError> {
+        let path = self.checked_absolute_path(relative)?;
+        match read_thread_events(&path) {
+            Ok(Some(events)) => Ok(ThreadCandidate::Events(events)),
+            Ok(None) => Ok(ThreadCandidate::Missing),
+            Err(RolloutError::Serialize(_)) => {
+                tracing::warn!(
+                    thread = %relative,
+                    "activity rollout has a corrupt line; trying a recovered segment"
+                );
+                Ok(ThreadCandidate::Corrupt)
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
+fn recovered_thread_path(identity_id: &str, thread_id: &str, index: usize) -> String {
+    if index == 1 {
+        format!("{identity_id}/{thread_id}.recovered.jsonl")
+    } else {
+        format!("{identity_id}/{thread_id}.recovered-{index}.jsonl")
     }
 }
 

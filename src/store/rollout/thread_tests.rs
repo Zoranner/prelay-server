@@ -275,3 +275,69 @@ fn releases_thread_locks_after_the_writer_is_dropped() {
     assert_eq!(locks.len(), 1);
     assert!(!locks.contains_key(first_path));
 }
+
+#[tokio::test]
+async fn starts_a_recovered_segment_when_a_complete_line_is_corrupt() {
+    let root = tempfile::tempdir().expect("temp rollout root");
+    let store = RolloutStore::new(root.path().to_path_buf());
+    let session = session("thread-corrupt");
+    let mut first = store
+        .begin(
+            "identity-1",
+            &session,
+            test_meta("activity-first", "thread-corrupt"),
+            vec![message(EventPhase::Request, json!("first"))],
+        )
+        .await
+        .expect("begin first activity");
+    first
+        .finish(RolloutStatus::Completed)
+        .expect("finish first activity");
+
+    let base_path = root.path().join("identity-1/thread-corrupt.jsonl");
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&base_path)
+        .expect("open base thread");
+    file.write_all(b"{not-json}\n").expect("write corrupt line");
+    drop(file);
+
+    let mut second = store
+        .begin(
+            "identity-1",
+            &session,
+            test_meta("activity-second", "thread-corrupt"),
+            vec![message(EventPhase::Request, json!("second"))],
+        )
+        .await
+        .expect("begin recovered segment");
+    let summary = second
+        .finish(RolloutStatus::Completed)
+        .expect("finish recovered segment");
+    assert!(summary
+        .relative_path
+        .ends_with("thread-corrupt.recovered.jsonl"));
+    assert!(std::fs::read(&base_path)
+        .expect("read base thread")
+        .ends_with(b"{not-json}\n"));
+    let recovered_events = store
+        .read_events(&summary.relative_path)
+        .expect("read recovered segment");
+    assert!(recovered_events.iter().any(|event| {
+        event.event_type == "message" && event.payload["content"] == json!("second")
+    }));
+
+    let mut third = store
+        .begin(
+            "identity-1",
+            &session,
+            test_meta("activity-third", "thread-corrupt"),
+            vec![message(EventPhase::Request, json!("third"))],
+        )
+        .await
+        .expect("reuse recovered segment");
+    let third_summary = third
+        .finish(RolloutStatus::Completed)
+        .expect("finish reused segment");
+    assert_eq!(third_summary.relative_path, summary.relative_path);
+}

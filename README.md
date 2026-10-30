@@ -105,7 +105,7 @@ Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.4.3`，并以只读方式
 - `UPSTREAM_RETRY_BACKOFF_MS`：重试前等待的毫秒数，默认 `250`，允许为 `0`。
 - `UPSTREAM_MAX_CANDIDATES`：单次请求最多尝试的候选上游数，默认不限制，必须大于 `0`。
 
-活动正文按身份和会话线程保存在服务端文件中，路径为 `<ACTIVITY_ROLLOUT_DIR>/<identity_id>/<thread_id>.jsonl`。同一线程的历史前缀只追加一次；窗口 generation 变化时写入 `window_start`。文件在后续请求发现末尾半行时会截断到最后一个完整换行，启动日志会报告残留的不完整文件。正文不设应用层大小上限，也不做自动归档；磁盘容量和文件系统限制仍是物理边界。活动索引保存在数据库的 `activity_rollouts` 中，记录线程、窗口、行号区间、状态、大小和 hash。目录由启动时读取的环境变量控制，修改后需要重启服务：
+活动正文按身份和会话线程保存在服务端文件中，路径为 `<ACTIVITY_ROLLOUT_DIR>/<identity_id>/<thread_id>.jsonl`。同一线程的历史前缀只追加一次；窗口 generation 变化时写入 `window_start`。文件在后续请求发现末尾半行时会截断到最后一个完整换行，启动日志会报告残留的不完整文件。线程文件出现无法解析的完整行时，原文件保留，后续活动改用 `<thread_id>.recovered.jsonl` 继续追加。正文不设应用层大小上限，也不做自动归档；磁盘容量和文件系统限制仍是物理边界。活动索引保存在数据库的 `activity_rollouts` 中，记录线程、窗口、行号区间、状态、大小和 hash。目录由启动时读取的环境变量控制，修改后需要重启服务：
 
 - `ACTIVITY_ROLLOUT_DIR`：活动 JSONL 的根目录，默认 `data/sessions`，必须非空。
 

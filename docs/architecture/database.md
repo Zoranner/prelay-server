@@ -42,7 +42,7 @@ PostgreSQL
 
 资源 ID 继续使用 UUID 字符串，避免让自增主键语义进入 API。时间在领域层统一使用 UTC；DTO 按既有格式序列化。结构化元数据使用 JSON 值。密文、凭据哈希和令牌保持不透明字符串，不作为 ORM 关系或 JSON 字段处理。
 
-`activity_rollouts` 按线程文件记录 `thread_id`、`window_id`、`generation`、`start_line` 和 `end_line`；同一线程的多个活动共享一个 JSONL 文件。`activity_rollout_v2` 升级后，旧活动行的 `thread_id` 为空、行号区间为 0，旧活动级文件不迁移；读取方必须识别这种旧数据，不能把 `read_slice(path, 0, 0)` 当作旧正文。
+`activity_rollouts` 按线程文件记录 `thread_id`、`window_id`、`generation`、`start_line` 和 `end_line`；同一线程的多个活动通常共享一个 JSONL 文件，线程文件出现无法解析的完整行时，后续活动改用 `.recovered.jsonl` 分段，原文件保留。`activity_rollout_v2` 升级后，旧活动行的 `thread_id` 为空、行号区间为 0，旧活动级文件不迁移；读取方必须识别这种旧数据，不能把 `read_slice(path, 0, 0)` 当作旧正文。
 
 `identity_response_sessions` 保存 Responses 续接所需的完整输入和输出，内容使用 `ENCRYPTION_KEY` 加密保存，数据库和备份仍必须按敏感数据处理；它不是活动正文索引或统计来源。旧版本留下的明文行仍可读取，新写入使用密文。
 
