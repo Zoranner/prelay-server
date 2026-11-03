@@ -45,62 +45,125 @@ struct RewriteState {
 }
 
 struct ResponseIdRewriter {
-    line_buffer: Vec<u8>,
+    event_buffer: Vec<u8>,
     local_id: String,
 }
 
 impl ResponseIdRewriter {
     fn new(local_id: String) -> Self {
         Self {
-            line_buffer: Vec::new(),
+            event_buffer: Vec::new(),
             local_id,
         }
     }
 
     fn push_chunk(&mut self, chunk: &[u8]) -> Vec<Bytes> {
-        self.line_buffer.extend_from_slice(chunk);
+        self.event_buffer.extend_from_slice(chunk);
         let mut output = Vec::new();
-        while let Some(index) = self.line_buffer.iter().position(|byte| *byte == b'\n') {
-            let line = self.line_buffer.drain(..=index).collect::<Vec<_>>();
-            output.push(self.rewrite_line(&line));
+        while let Some(end) = event_end(&self.event_buffer) {
+            let event = self.event_buffer.drain(..end).collect::<Vec<_>>();
+            output.push(self.rewrite_event(&event));
         }
         output
     }
 
     fn finish(&mut self) -> Vec<Bytes> {
-        if self.line_buffer.is_empty() {
+        if self.event_buffer.is_empty() {
             return Vec::new();
         }
-        let line = std::mem::take(&mut self.line_buffer);
-        vec![self.rewrite_line(&line)]
+        let event = std::mem::take(&mut self.event_buffer);
+        vec![self.rewrite_event(&event)]
     }
 
-    fn rewrite_line(&self, line: &[u8]) -> Bytes {
-        let Ok(text) = std::str::from_utf8(line) else {
-            return Bytes::copy_from_slice(line);
-        };
-        let (body, ending) = if let Some(body) = text.strip_suffix("\r\n") {
-            (body, "\r\n")
-        } else if let Some(body) = text.strip_suffix('\n') {
-            (body, "\n")
-        } else {
-            (text, "")
-        };
-        let Some(data) = body.strip_prefix("data:") else {
-            return Bytes::copy_from_slice(line);
-        };
-        let data = data.strip_prefix(' ').unwrap_or(data);
-        let Ok(mut value) = serde_json::from_str::<Value>(data) else {
-            return Bytes::copy_from_slice(line);
+    fn rewrite_event(&self, event: &[u8]) -> Bytes {
+        let lines = split_lines(event);
+        let data_lines = lines
+            .iter()
+            .enumerate()
+            .filter_map(|(index, line)| data_payload(line).map(|data| (index, data)))
+            .collect::<Vec<_>>();
+        if data_lines.is_empty() {
+            return Bytes::copy_from_slice(event);
+        }
+        let joined = data_lines
+            .iter()
+            .map(|(_, data)| *data)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let Ok(mut value) = serde_json::from_str::<Value>(&joined) else {
+            return Bytes::copy_from_slice(event);
         };
         let original = value.clone();
         rewrite_value(&mut value, &self.local_id);
         if value == original {
-            return Bytes::copy_from_slice(line);
+            return Bytes::copy_from_slice(event);
         }
         let serialized =
             serde_json::to_string(&value).expect("serializing an SSE JSON value cannot fail");
-        Bytes::from(format!("data: {serialized}{ending}"))
+        let first_data_line = data_lines[0].0;
+        let data_indexes = data_lines
+            .iter()
+            .map(|(index, _)| *index)
+            .collect::<std::collections::HashSet<_>>();
+        let mut output = Vec::new();
+        for (index, line) in lines.iter().enumerate() {
+            if index == first_data_line {
+                output.extend_from_slice(
+                    format!("data: {serialized}{}", line_ending(line)).as_bytes(),
+                );
+            } else if !data_indexes.contains(&index) {
+                output.extend_from_slice(line);
+            }
+        }
+        Bytes::from(output)
+    }
+}
+
+fn event_end(buffer: &[u8]) -> Option<usize> {
+    let mut line_start = 0;
+    for (index, byte) in buffer.iter().enumerate() {
+        if *byte == b'\n' {
+            let line = &buffer[line_start..index];
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            if line.is_empty() {
+                return Some(index + 1);
+            }
+            line_start = index + 1;
+        }
+    }
+    None
+}
+
+fn split_lines(event: &[u8]) -> Vec<&[u8]> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    for (index, byte) in event.iter().enumerate() {
+        if *byte == b'\n' {
+            lines.push(&event[start..=index]);
+            start = index + 1;
+        }
+    }
+    if start < event.len() {
+        lines.push(&event[start..]);
+    }
+    lines
+}
+
+fn data_payload(line: &[u8]) -> Option<&str> {
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    let text = std::str::from_utf8(line).ok()?;
+    let data = text.strip_prefix("data:")?;
+    Some(data.strip_prefix(' ').unwrap_or(data))
+}
+
+fn line_ending(line: &[u8]) -> &'static str {
+    if line.ends_with(b"\r\n") {
+        "\r\n"
+    } else if line.ends_with(b"\n") {
+        "\n"
+    } else {
+        ""
     }
 }
 
