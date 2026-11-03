@@ -52,7 +52,7 @@ PostgreSQL
 - `request_items_json`、`response_items_json`：本轮实际发送的 input items 和上游返回的 output items，使用 `ENCRYPTION_KEY` 加密保存。
 - `expires_at`：普通响应的过期时间，创建后 30 天。
 
-`provider_id` 是历史元数据，不做硬外键；删除供应商不阻断历史状态读取。`conversation_id` 是内部活动分组，不是协议 `conversation`。只有 `status='completed'`、`protocol_format='responses_items_v1'` 且未过期的行可以作为 `previous_response_id`；legacy、未完成和过期行统一按父响应不存在处理。服务启动时执行一次过期状态清理，之后每日执行；清理只删除 `expires_at` 已过期的行，不删除 legacy 行。旧列 `input_messages_json`、`output_items_json` 继续由新的保存函数写入派生值，只保留一个迁移周期，不再作为精确续接来源。
+`provider_id` 是历史元数据，不做硬外键；删除供应商不阻断历史状态读取。`conversation_id` 是内部活动分组，不是协议 `conversation`。只有 `status='completed'`、`protocol_format='responses_items_v1'` 且未过期的行可以作为 `previous_response_id`；legacy、未完成和过期行统一按父响应不存在处理。服务启动时对 `legacy_internal_v1` 行的明文列执行一次幂等加密迁移，之后每日清理过期状态；清理只删除 `expires_at` 已过期的行，不删除 legacy 行。旧列 `input_messages_json`、`output_items_json` 继续由新的保存函数写入派生值，只保留一个迁移周期，不再作为精确续接来源。
 
 数据库和备份仍必须按敏感数据处理；旧版本留下的明文行仍可读取，新写入使用密文。
 

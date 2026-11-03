@@ -119,7 +119,7 @@ Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.4.3`，并以只读方式
 
 - `ACTIVITY_ROLLOUT_DIR`：活动 JSONL 的根目录，默认 `data/sessions`，必须非空。
 
-`identity_response_sessions` 保存 `store=true` 的精确 Responses 状态：本轮实际发送的 input items、上游返回的 output items、完成状态和过期时间。请求项和输出项使用 `ENCRYPTION_KEY` 加密保存，数据库和备份仍必须按敏感数据处理；它不是活动正文索引或统计来源。旧版本留下的行标记为 `legacy_internal_v1`，不能作为 `previous_response_id` 续接。`provider_id` 只是历史元数据，删除供应商不阻断状态读取；`conversation_id` 是内部活动分组，不是协议 `conversation`。服务启动时和之后每日各执行一次过期状态清理，只删除 `expires_at` 已过期的精确状态，不删除 legacy 行。
+`identity_response_sessions` 保存 `store=true` 的精确 Responses 状态：本轮实际发送的 input items、上游返回的 output items、完成状态和过期时间。请求项和输出项使用 `ENCRYPTION_KEY` 加密保存，数据库和备份仍必须按敏感数据处理；它不是活动正文索引或统计来源。旧版本留下的行标记为 `legacy_internal_v1`，不能作为 `previous_response_id` 续接。服务启动时会对这些 legacy 行的明文列执行一次幂等加密迁移，并在之后每日清理过期精确状态；清理不删除 legacy 行。`provider_id` 只是历史元数据，删除供应商不阻断状态读取；`conversation_id` 是内部活动分组，不是协议 `conversation`。
 
 入口请求体仍受 `PROTOCOL_MAX_REQUEST_BODY_BYTES` 限制，默认 `256 MiB`；该限制只决定单次请求能否被服务接收，不截断已经接收的正文。
 

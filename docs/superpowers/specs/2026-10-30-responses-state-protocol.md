@@ -122,6 +122,7 @@ expires_at             text null            -- RFC3339；普通响应 created_at
 
 - 新 schema 迁移只增列、补索引、移除 provider 外键，不删除旧列。
 - 旧行标记为 `legacy_internal_v1`；`previous_response_id` 命中旧行时返回 `previous_response_not_found`，客户端应改用完整历史。
+- 启动时对 `legacy_internal_v1` 行的明文列执行一次幂等加密迁移；只改写为 `enc:v1:` 密文，不改变 legacy 标记或续接语义。
 - 旧列保留到所有读取方都切到精确 items 后再单独清理。
 - 当前库为空，不需要数据回填或删除；如果其他环境存在旧行，它们没有精确 items，也没有可续接语义，TTL 清理只删除 `expires_at` 已过期的精确状态，旧行清理单独评估。
 
