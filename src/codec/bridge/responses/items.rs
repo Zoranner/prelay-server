@@ -107,6 +107,11 @@ fn decode_content_part(part: &Value) -> Result<InternalContentPart, AppError> {
             .and_then(Value::as_str)
             .map(|text| InternalContentPart::Text(text.to_string()))
             .ok_or_else(|| invalid(format!("{part_type} content part requires text"))),
+        "refusal" => part
+            .get("refusal")
+            .and_then(Value::as_str)
+            .map(|text| InternalContentPart::Text(text.to_string()))
+            .ok_or_else(|| invalid("refusal content part requires refusal")),
         "input_image" => {
             let image_url = part.get("image_url").cloned();
             let file_id = string_field(part.get("file_id"));

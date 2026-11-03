@@ -1,11 +1,9 @@
 use serde_json::Value;
 
-use crate::codec::internal::{
-    InternalContentPart, InternalImagePart, InternalMessage, InternalRequest, InternalRole,
-    InternalTool,
-};
+use crate::codec::internal::{InternalContentPart, InternalRequest, InternalTool};
 use crate::error::AppError;
 
+use super::input::decode_input;
 pub use super::items::decode_items_for_chat_bridge;
 
 pub fn decode_responses_request(value: &Value) -> Result<InternalRequest, AppError> {
@@ -129,6 +127,12 @@ fn decode_conversation(value: Option<&Value>) -> Result<Option<String>, AppError
 /// Validate the subset of Responses requests that can be represented by the
 /// internal chat bridge without silently changing their meaning.
 pub fn validate_responses_bridge_payload(value: &Value) -> Result<(), AppError> {
+    if value
+        .get("instructions")
+        .is_some_and(|instructions| !instructions.is_null() && !instructions.is_string())
+    {
+        return Err(unsupported_bridge_feature("instruction items"));
+    }
     if value.get("reasoning").is_some() {
         return Err(unsupported_bridge_feature("reasoning"));
     }
@@ -156,7 +160,7 @@ pub fn validate_responses_bridge_payload(value: &Value) -> Result<(), AppError> 
         for item in items {
             let item_type = item.get("type").and_then(Value::as_str);
             match item_type {
-                Some("function_call") | Some("function_call_output") | None => {}
+                Some("message" | "function_call" | "function_call_output") | None => {}
                 Some(other) => {
                     return Err(unsupported_bridge_feature(format!(
                         "input item type `{other}`"
@@ -167,7 +171,7 @@ pub fn validate_responses_bridge_payload(value: &Value) -> Result<(), AppError> 
             if let Some(parts) = item.get("content").and_then(Value::as_array) {
                 for part in parts {
                     let part_type = part.get("type").and_then(Value::as_str).unwrap_or("text");
-                    if !matches!(part_type, "input_text" | "text") {
+                    if !matches!(part_type, "input_text" | "output_text" | "text" | "refusal") {
                         return Err(unsupported_bridge_feature(format!(
                             "content part type `{part_type}`"
                         )));
@@ -258,155 +262,6 @@ fn decode_tool(tool: &Value) -> Option<InternalTool> {
         description,
         input_schema,
     })
-}
-
-fn decode_input(input: &Value) -> Result<Vec<InternalMessage>, AppError> {
-    if input.is_null() {
-        return Ok(Vec::new());
-    }
-    if let Some(text) = input.as_str() {
-        return Ok(vec![InternalMessage {
-            role: InternalRole::User,
-            content: vec![InternalContentPart::Text(text.to_string())],
-            tool_call_id: None,
-            tool_calls: Vec::new(),
-            reasoning_content: None,
-        }]);
-    }
-
-    let items = input
-        .as_array()
-        .ok_or_else(|| AppError::BadRequest("input 必须是字符串或消息数组".to_string()))?;
-    items.iter().map(decode_message).collect()
-}
-
-fn decode_message(value: &Value) -> Result<InternalMessage, AppError> {
-    if value
-        .get("type")
-        .and_then(Value::as_str)
-        .is_some_and(|kind| kind == "function_call_output")
-    {
-        let output = value.get("output").cloned().unwrap_or(Value::Null);
-        let content = if output.is_null() {
-            Vec::new()
-        } else {
-            decode_content(&output)?
-        };
-        return Ok(InternalMessage {
-            role: InternalRole::Tool,
-            content,
-            tool_call_id: value
-                .get("call_id")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            tool_calls: Vec::new(),
-            reasoning_content: None,
-        });
-    }
-
-    if value
-        .get("type")
-        .and_then(Value::as_str)
-        .is_some_and(|kind| kind == "function_call")
-    {
-        return Ok(InternalMessage {
-            role: InternalRole::Assistant,
-            content: Vec::new(),
-            tool_call_id: None,
-            tool_calls: decode_function_call(value).into_iter().collect(),
-            reasoning_content: None,
-        });
-    }
-
-    let role = value
-        .get("role")
-        .and_then(Value::as_str)
-        .map(decode_role)
-        .unwrap_or(InternalRole::User);
-    let content = value.get("content").unwrap_or(value);
-
-    Ok(InternalMessage {
-        role,
-        content: decode_content(content)?,
-        tool_call_id: value
-            .get("call_id")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        tool_calls: Vec::new(),
-        reasoning_content: None,
-    })
-}
-
-fn decode_function_call(value: &Value) -> Option<crate::codec::internal::InternalToolCall> {
-    let id = value
-        .get("call_id")
-        .or_else(|| value.get("id"))
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .unwrap_or_else(|| "call_unknown".to_string());
-    let name = value.get("name").and_then(Value::as_str)?.to_string();
-    let arguments = match value.get("arguments") {
-        Some(arguments) if arguments.is_string() => value_to_text(arguments),
-        Some(arguments) => value_to_text(arguments),
-        None => "{}".to_string(),
-    };
-
-    Some(crate::codec::internal::InternalToolCall {
-        id,
-        name,
-        arguments,
-    })
-}
-
-fn decode_role(role: &str) -> InternalRole {
-    match role {
-        "user" => InternalRole::User,
-        "assistant" => InternalRole::Assistant,
-        "system" | "developer" => InternalRole::System,
-        "tool" => InternalRole::Tool,
-        _ => InternalRole::User,
-    }
-}
-
-fn decode_content(value: &Value) -> Result<Vec<InternalContentPart>, AppError> {
-    if let Some(text) = value.as_str() {
-        return Ok(vec![InternalContentPart::Text(text.to_string())]);
-    }
-
-    let Some(parts) = value.as_array() else {
-        return Ok(vec![InternalContentPart::Text(value_to_text(value))]);
-    };
-    Ok(parts.iter().map(decode_content_part).collect())
-}
-
-fn decode_content_part(part: &Value) -> InternalContentPart {
-    match part.get("type").and_then(Value::as_str) {
-        Some("input_image") => InternalContentPart::Image(InternalImagePart {
-            image_url: part.get("image_url").cloned(),
-            file_id: part
-                .get("file_id")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            detail: part
-                .get("detail")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-        }),
-        Some("input_text" | "text" | "output_text") => part
-            .get("text")
-            .or_else(|| part.get("content"))
-            .and_then(Value::as_str)
-            .map(|text| InternalContentPart::Text(text.to_string()))
-            .unwrap_or_else(|| InternalContentPart::Text(value_to_text(part))),
-        _ => InternalContentPart::Text(value_to_text(part)),
-    }
-}
-
-fn value_to_text(value: &Value) -> String {
-    value
-        .as_str()
-        .map(str::to_string)
-        .unwrap_or_else(|| value.to_string())
 }
 
 #[cfg(test)]

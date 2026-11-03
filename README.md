@@ -102,6 +102,7 @@ Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.4.3`，并以只读方式
 - `store` 缺省为 `true`。普通响应保存 30 天，过期后按父响应不存在处理。当前 Codex 显式发送 `store=false`，这部分流量不会写入状态表。
 - `store=false` 的响应仍返回本地 `resp_` ID，但不保存状态，不能作为下一次请求的 `previous_response_id`。
 - 使用 `previous_response_id` 时，服务端按当前身份读取上一轮已完成的精确 input/output items，并与本次输入拼接后发送；上一轮的 `instructions` 不继承。
+- 不使用 `previous_response_id` 时按官方 stateless 模式接收完整 `input` 历史。原生 Responses 上游直通保留客户端 input items；活动正文只映射可表示的 message、function call/output 和 reasoning summary/content，`configuration_update`、`item_reference`、compaction 及仅含 `encrypted_content` 的 reasoning 不会伪装成 user 文本。桥接到 Chat Completions 时只接受可表达的子集，并显式拒绝 reasoning、opaque input item、instruction items 等内容。
 - `conversation` 尚未实现，请求中出现时返回 `unsupported_parameter`；不能和 `previous_response_id` 同时使用。
 - 流式事件中的 `response.id` 和顶层 `response_id` 使用 Prelay ID；输出项的 `item.id`、`item_id` 和 `call_id` 保持上游值。
 

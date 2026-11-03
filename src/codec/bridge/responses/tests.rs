@@ -8,10 +8,14 @@ use crate::codec::internal::{
     InternalContentPart, InternalImagePart, InternalMessage, InternalRequest, InternalRole,
     InternalToolCall,
 };
+#[path = "tests/bridge_validation.rs"]
+mod bridge_validation;
 #[path = "tests/items.rs"]
 mod items;
 #[path = "tests/parameter_validation.rs"]
 mod parameter_validation;
+#[path = "tests/reasoning_input.rs"]
+mod reasoning_input;
 
 #[test]
 fn decodes_string_input_into_user_message() {
