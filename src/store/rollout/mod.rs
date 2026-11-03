@@ -16,7 +16,7 @@ mod read;
 mod scan;
 mod support;
 
-use self::cache::{ThreadSource, ThreadState};
+use self::cache::{FileStamp, ThreadIndex, ThreadSource, ThreadState};
 use self::support::{
     common_prefix_len, event_parts, is_content_event, is_safe_path_segment, ContentChain,
 };
@@ -29,7 +29,7 @@ use crate::domain::activity::rollout::{
 pub struct RolloutStore {
     root: PathBuf,
     locks: Arc<Mutex<HashMap<PathBuf, Weak<AsyncMutex<()>>>>>,
-    cache: Arc<Mutex<HashMap<PathBuf, ThreadState>>>,
+    cache: Arc<Mutex<ThreadIndex>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,7 +53,7 @@ impl RolloutStore {
         Self {
             root,
             locks: Arc::new(Mutex::new(HashMap::new())),
-            cache: Arc::new(Mutex::new(HashMap::new())),
+            cache: Arc::new(Mutex::new(ThreadIndex::default())),
         }
     }
 
@@ -188,7 +188,6 @@ impl RolloutStore {
         let prior_generation = state.generation;
         let prior_seq = state.seq;
         let prior_line_count = state.line_count;
-        let prior_file_size = state.file_size;
         let prior_content = state.content;
         let file = OpenOptions::new()
             .create(true)
@@ -211,7 +210,6 @@ impl RolloutStore {
             end_line: prior_line_count,
             byte_size: 0,
             event_count: 0,
-            file_byte_size: prior_file_size,
             content: prior_content,
             cache_key,
             cache: Arc::clone(&self.cache),
@@ -272,10 +270,9 @@ pub struct RolloutWriter {
     end_line: u64,
     byte_size: u64,
     event_count: u64,
-    file_byte_size: u64,
     content: ContentChain,
     cache_key: PathBuf,
-    cache: Arc<Mutex<HashMap<PathBuf, ThreadState>>>,
+    cache: Arc<Mutex<ThreadIndex>>,
     status: RolloutStatus,
     finished: bool,
 }
@@ -317,7 +314,6 @@ impl RolloutWriter {
         file.flush()?;
         self.hasher.update(&line);
         self.byte_size += line.len() as u64;
-        self.file_byte_size += line.len() as u64;
         self.event_count += 1;
         self.line_count += 1;
         self.end_line = self.line_count;
@@ -352,20 +348,31 @@ impl RolloutWriter {
             file.flush()?;
             file.get_ref().sync_all()?;
         }
-        self.cache
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(
-                self.cache_key.clone(),
-                ThreadState {
-                    relative_path: self.relative_path.clone(),
-                    file_size: self.file_byte_size,
-                    line_count: self.line_count,
-                    seq: self.seq,
-                    generation: self.thread_generation,
-                    content: self.content,
-                },
-            );
+        match fs::metadata(&self.final_path) {
+            Ok(metadata) => {
+                self.cache
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .insert(
+                        self.cache_key.clone(),
+                        ThreadState {
+                            relative_path: self.relative_path.clone(),
+                            stamp: FileStamp::from_metadata(&metadata),
+                            line_count: self.line_count,
+                            seq: self.seq,
+                            generation: self.thread_generation,
+                            content: self.content,
+                        },
+                    );
+            }
+            Err(error) => {
+                tracing::warn!(
+                    rollout_path = %self.final_path.display(),
+                    error = %error,
+                    "failed to read rollout metadata after finish; skipping cache update"
+                );
+            }
+        }
         self._lock.take();
         self.status = status;
         self.finished = true;

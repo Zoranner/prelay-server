@@ -6,7 +6,10 @@ use std::{
 
 use sha2::{Digest, Sha256};
 
-use super::{cache::ThreadState, RolloutFile, RolloutSlice, RolloutStore};
+use super::{
+    cache::{FileStamp, ThreadState},
+    RolloutFile, RolloutSlice, RolloutStore,
+};
 use crate::domain::activity::rollout::{RolloutError, RolloutEvent};
 
 const MAX_RECOVERED_SEGMENTS: usize = 10;
@@ -14,7 +17,7 @@ const MAX_RECOVERED_SEGMENTS: usize = 10;
 enum ThreadCandidate {
     Missing,
     Corrupt,
-    Events(Vec<RolloutEvent>, u64),
+    Events(Vec<RolloutEvent>, FileStamp),
 }
 
 impl RolloutStore {
@@ -113,16 +116,16 @@ impl RolloutStore {
     ) -> Result<(ThreadState, Vec<RolloutEvent>), RolloutError> {
         let base = format!("{identity_id}/{thread_id}.jsonl");
         match self.read_thread_candidate(&base)? {
-            ThreadCandidate::Events(events, file_size) => {
-                let state = ThreadState::from_events(base, file_size, &events)?;
+            ThreadCandidate::Events(events, stamp) => {
+                let state = ThreadState::from_events(base, stamp, &events)?;
                 Ok((state, events))
             }
             ThreadCandidate::Missing => {
                 for index in 1..=MAX_RECOVERED_SEGMENTS {
                     let candidate = recovered_thread_path(identity_id, thread_id, index);
                     match self.read_thread_candidate(&candidate)? {
-                        ThreadCandidate::Events(events, file_size) => {
-                            let state = ThreadState::from_events(candidate, file_size, &events)?;
+                        ThreadCandidate::Events(events, stamp) => {
+                            let state = ThreadState::from_events(candidate, stamp, &events)?;
                             return Ok((state, events));
                         }
                         ThreadCandidate::Corrupt => continue,
@@ -142,8 +145,8 @@ impl RolloutStore {
                 for index in 1..=MAX_RECOVERED_SEGMENTS {
                     let candidate = recovered_thread_path(identity_id, thread_id, index);
                     match self.read_thread_candidate(&candidate)? {
-                        ThreadCandidate::Events(events, file_size) => {
-                            let state = ThreadState::from_events(candidate, file_size, &events)?;
+                        ThreadCandidate::Events(events, stamp) => {
+                            let state = ThreadState::from_events(candidate, stamp, &events)?;
                             return Ok((state, events));
                         }
                         ThreadCandidate::Corrupt => continue,
@@ -163,8 +166,8 @@ impl RolloutStore {
         let path = self.checked_absolute_path(relative)?;
         match read_thread_events(&path) {
             Ok(Some(events)) => {
-                let file_size = fs::metadata(&path)?.len();
-                Ok(ThreadCandidate::Events(events, file_size))
+                let stamp = FileStamp::from_metadata(&fs::metadata(&path)?);
+                Ok(ThreadCandidate::Events(events, stamp))
             }
             Ok(None) => Ok(ThreadCandidate::Missing),
             Err(RolloutError::Serialize(_)) => {
