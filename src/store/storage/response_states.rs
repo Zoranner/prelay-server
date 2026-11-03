@@ -5,6 +5,8 @@ use sea_orm::{
 };
 use serde_json::Value;
 
+mod legacy;
+
 use crate::{
     codec::internal::{InternalMessage, InternalResponse},
     store::entity::identity::response_sessions as identity_response_sessions,
@@ -65,6 +67,10 @@ impl Storage {
         now: DateTime<Utc>,
     ) -> Result<u64, StorageError> {
         delete_expired_response_states(&self.db, now).await
+    }
+
+    pub async fn encrypt_legacy_response_sessions(&self) -> Result<u64, StorageError> {
+        legacy::encrypt_legacy_response_sessions(&self.db, &self.crypto).await
     }
 }
 
@@ -366,6 +372,8 @@ mod tests {
 
     #[path = "expiry_tests.rs"]
     mod expiry_tests;
+    #[path = "legacy_encryption.rs"]
+    mod legacy_encryption;
 
     async fn test_storage() -> Storage {
         crate::test_support::test_storage().await

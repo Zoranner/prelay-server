@@ -19,3 +19,7 @@ pub(super) fn decrypt_session_value(
         None => Ok(value.to_string()),
     }
 }
+
+pub(super) fn is_encrypted_session_value(value: &str) -> bool {
+    value.starts_with(SESSION_CIPHERTEXT_PREFIX)
+}
