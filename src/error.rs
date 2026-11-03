@@ -24,6 +24,13 @@ pub enum AppError {
         code: ProtocolErrorCode,
         message: String,
     },
+    OpenAi {
+        status: StatusCode,
+        error_type: &'static str,
+        code: &'static str,
+        param: Option<&'static str>,
+        message: String,
+    },
     Internal(anyhow::Error),
 }
 
@@ -55,6 +62,21 @@ impl IntoResponse for AppError {
 
                 (status, json!({ "code": code.as_str(), "message": message }))
             }
+            AppError::OpenAi {
+                status,
+                error_type,
+                code,
+                param,
+                message,
+            } => (
+                status,
+                json!({
+                    "type": error_type,
+                    "code": code,
+                    "param": param,
+                    "message": message,
+                }),
+            ),
             AppError::Internal(_error) => {
                 tracing::error!(
                     error_code = ProtocolErrorCode::Internal.as_str(),
@@ -95,6 +117,26 @@ pub(crate) fn http_status_for(code: ProtocolErrorCode) -> StatusCode {
 }
 
 impl AppError {
+    pub(crate) fn openai_invalid(param: &'static str, message: impl Into<String>) -> Self {
+        Self::OpenAi {
+            status: StatusCode::BAD_REQUEST,
+            error_type: "invalid_request_error",
+            code: "invalid_request_error",
+            param: Some(param),
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn openai_unsupported(param: &'static str, message: impl Into<String>) -> Self {
+        Self::OpenAi {
+            status: StatusCode::BAD_REQUEST,
+            error_type: "invalid_request_error",
+            code: "unsupported_parameter",
+            param: Some(param),
+            message: message.into(),
+        }
+    }
+
     pub fn is_retryable_upstream(&self) -> bool {
         match self {
             Self::Upstream { status: None, .. } => true,
@@ -357,5 +399,33 @@ mod tests {
 
             assert_eq!(response.status(), expected_status, "{}", code.as_str());
         }
+    }
+
+    #[tokio::test]
+    async fn openai_error_uses_the_protocol_envelope() {
+        let response = AppError::OpenAi {
+            status: StatusCode::BAD_REQUEST,
+            error_type: "invalid_request_error",
+            code: "unsupported_parameter",
+            param: Some("conversation"),
+            message: "conversation is not supported yet".to_string(),
+        }
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("read error response");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).expect("JSON error"),
+            json!({
+                "error": {
+                    "type": "invalid_request_error",
+                    "code": "unsupported_parameter",
+                    "param": "conversation",
+                    "message": "conversation is not supported yet"
+                }
+            })
+        );
     }
 }

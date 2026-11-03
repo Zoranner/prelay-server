@@ -13,22 +13,28 @@ pub fn decode_responses_request(value: &Value) -> Result<InternalRequest, AppErr
         .filter(|model| !model.trim().is_empty())
         .ok_or_else(|| AppError::BadRequest("model 不能为空".to_string()))?
         .to_string();
-    let stream = value
-        .get("stream")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let previous_response_id = value
-        .get("previous_response_id")
-        .and_then(Value::as_str)
-        .filter(|id| !id.trim().is_empty())
-        .map(str::to_string);
+    let stream = decode_optional_bool(value.get("stream"), "stream", false)?;
+    let previous_response_id = decode_previous_response_id(value.get("previous_response_id"))?;
+    let conversation = decode_conversation(value.get("conversation"))?;
+    if previous_response_id.is_some() && conversation.is_some() {
+        return Err(AppError::openai_invalid(
+            "conversation",
+            "previous_response_id and conversation cannot be used together",
+        ));
+    }
+    if conversation.is_some() {
+        return Err(AppError::openai_unsupported(
+            "conversation",
+            "conversation is not supported yet",
+        ));
+    }
     let max_tokens = value.get("max_output_tokens").and_then(Value::as_i64);
     let max_completion_tokens = max_tokens;
     let instructions = value
         .get("instructions")
         .and_then(Value::as_str)
         .map(str::to_string);
-    let store = value.get("store").and_then(Value::as_bool).unwrap_or(true);
+    let store = decode_optional_bool(value.get("store"), "store", true)?;
     let reasoning = value.get("reasoning").cloned();
     let tool_choice = value.get("tool_choice").cloned();
     let parallel_tool_calls = value.get("parallel_tool_calls").and_then(Value::as_bool);
@@ -63,6 +69,59 @@ pub fn decode_responses_request(value: &Value) -> Result<InternalRequest, AppErr
         messages: decode_input(input)?,
     };
     Ok(request)
+}
+
+fn decode_optional_bool(
+    value: Option<&Value>,
+    param: &'static str,
+    default: bool,
+) -> Result<bool, AppError> {
+    match value {
+        None | Some(Value::Null) => Ok(default),
+        Some(Value::Bool(value)) => Ok(*value),
+        Some(_) => Err(AppError::openai_invalid(
+            param,
+            format!("{param} must be a boolean or null"),
+        )),
+    }
+}
+
+fn decode_previous_response_id(value: Option<&Value>) -> Result<Option<String>, AppError> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(id)) if !id.trim().is_empty() => Ok(Some(id.clone())),
+        Some(Value::String(_)) => Err(AppError::openai_invalid(
+            "previous_response_id",
+            "previous_response_id must not be empty",
+        )),
+        Some(_) => Err(AppError::openai_invalid(
+            "previous_response_id",
+            "previous_response_id must be a string or null",
+        )),
+    }
+}
+
+fn decode_conversation(value: Option<&Value>) -> Result<Option<String>, AppError> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(id)) if !id.trim().is_empty() => Ok(Some(id.clone())),
+        Some(Value::Object(object)) => object
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .map(str::to_string)
+            .map(Some)
+            .ok_or_else(|| {
+                AppError::openai_invalid(
+                    "conversation",
+                    "conversation must be a string or an object with a non-empty id",
+                )
+            }),
+        Some(_) => Err(AppError::openai_invalid(
+            "conversation",
+            "conversation must be a string or an object with a non-empty id",
+        )),
+    }
 }
 
 /// Validate the subset of Responses requests that can be represented by the

@@ -105,6 +105,9 @@ impl From<AppError> for ApiError {
             AppError::PayloadTooLarge(message) => {
                 Self::validation_failed(message).with_status(Some(StatusCode::PAYLOAD_TOO_LARGE))
             }
+            AppError::OpenAi {
+                status, message, ..
+            } => Self::validation_failed(message).with_status(Some(status)),
             // 管理面不承载上游故障：上游结果通过 ProviderOperationResponse 返回。
             // 这里保留上游状态和消息，避免把诊断信息替换成通用的内部错误。
             AppError::Upstream { status, message } => {

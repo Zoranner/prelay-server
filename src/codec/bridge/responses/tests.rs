@@ -8,6 +8,8 @@ use crate::codec::internal::{
     InternalContentPart, InternalImagePart, InternalMessage, InternalRequest, InternalRole,
     InternalToolCall,
 };
+#[path = "tests/parameter_validation.rs"]
+mod parameter_validation;
 
 #[test]
 fn decodes_string_input_into_user_message() {
