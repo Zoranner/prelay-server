@@ -259,6 +259,7 @@ impl ActivityStore {
                 }
             }
         }
+        self.rollouts.forget_relative_paths(relative_paths);
     }
 
     fn recovered_rollout_status(&self, rollout: &InterruptedRollout) -> RecoveredRollout {
