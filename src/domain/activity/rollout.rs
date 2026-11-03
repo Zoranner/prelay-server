@@ -17,6 +17,12 @@ pub struct SessionContext {
     pub thread_id: String,
     pub window_id: Option<String>,
     pub generation: u64,
+    /// Whether `input` is expected to replay the stored conversation history.
+    ///
+    /// Native Responses requests with `previous_response_id` only carry the
+    /// current turn, so their events must be appended even when they match
+    /// stored content. Bridge paths rebuild the full input before recording.
+    pub replay_history: bool,
 }
 
 impl SessionContext {
@@ -25,6 +31,7 @@ impl SessionContext {
             thread_id: thread_id.into(),
             window_id: None,
             generation: 0,
+            replay_history: true,
         }
     }
 
@@ -37,7 +44,13 @@ impl SessionContext {
             thread_id: thread_id.into(),
             window_id,
             generation,
+            replay_history: true,
         }
+    }
+
+    pub fn with_replay_history(mut self, replay_history: bool) -> Self {
+        self.replay_history = replay_history;
+        self
     }
 }
 

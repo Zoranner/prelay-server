@@ -57,7 +57,11 @@ pub(super) async fn create_response_with_candidate(
         .session_id
         .clone()
         .unwrap_or_else(|| conversation_id.clone());
-    let session = access.session_context(&conversation_id);
+    let replays_history =
+        previous_response_id.is_none() || upstream_protocol != UpstreamProtocol::Responses;
+    let session = access
+        .session_context(&conversation_id)
+        .with_replay_history(replays_history);
     let context = ResponseBridgeContext {
         identity_id: access.identity_id.clone(),
         endpoint_name: access.endpoint_name.clone(),

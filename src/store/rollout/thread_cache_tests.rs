@@ -95,13 +95,31 @@ async fn reuses_a_persisted_thread_index_after_restart() {
     };
     assert_eq!(state.relative_path, "identity-1/thread-persisted.jsonl");
     assert_eq!(state.line_count, 3);
-    assert_eq!(
-        state
-            .content
-            .matches_request_prefix(&[message(EventPhase::Request, json!("first"))])
-            .expect("match persisted content hash"),
-        Some(1)
-    );
+    assert_eq!(state.event_counts.values().sum::<u64>(), 1);
+
+    let mut resumed = restarted
+        .begin(
+            "identity-1",
+            &session,
+            test_meta("activity-persisted-second", "thread-persisted"),
+            vec![
+                message(EventPhase::Request, json!("first")),
+                message(EventPhase::Request, json!("second")),
+            ],
+        )
+        .await
+        .expect("resume persisted thread");
+    resumed
+        .finish(RolloutStatus::Completed)
+        .expect("finish resumed thread");
+    let contents = restarted
+        .read_events("identity-1/thread-persisted.jsonl")
+        .expect("read resumed thread")
+        .into_iter()
+        .filter(|event| event.event_type == "message")
+        .map(|event| event.payload["content"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(contents, vec![json!("first"), json!("second")]);
 }
 
 #[tokio::test]

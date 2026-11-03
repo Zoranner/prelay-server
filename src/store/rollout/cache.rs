@@ -6,7 +6,7 @@ use std::{
 };
 
 use super::{
-    support::{last_window_generation, ContentHash},
+    support::{event_identity, is_content_event, last_window_generation, ContentHash},
     RolloutStore,
 };
 use crate::domain::activity::rollout::{RolloutError, RolloutEvent, SessionContext};
@@ -41,6 +41,7 @@ pub(super) struct ThreadState {
     pub(super) seq: u64,
     pub(super) generation: Option<u64>,
     pub(super) content: ContentHash,
+    pub(super) event_counts: HashMap<[u8; 32], u64>,
 }
 
 impl ThreadState {
@@ -52,6 +53,7 @@ impl ThreadState {
             seq: 0,
             generation: None,
             content: ContentHash::default(),
+            event_counts: HashMap::new(),
         }
     }
 
@@ -60,6 +62,15 @@ impl ThreadState {
         stamp: FileStamp,
         events: &[RolloutEvent],
     ) -> Result<Self, RolloutError> {
+        let mut event_counts = HashMap::new();
+        for event in events {
+            if event.event_type == "window_start" {
+                event_counts.clear();
+            } else if is_content_event(&event.event_type) {
+                let identity = event_identity(&event.event_type, &event.payload)?;
+                *event_counts.entry(identity).or_default() += 1;
+            }
+        }
         Ok(Self {
             relative_path,
             stamp,
@@ -67,6 +78,7 @@ impl ThreadState {
             seq: events.last().map_or(0, |event| event.seq),
             generation: last_window_generation(events),
             content: ContentHash::from_events(events)?,
+            event_counts,
         })
     }
 

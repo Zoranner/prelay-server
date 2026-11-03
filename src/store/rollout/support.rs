@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -40,35 +42,10 @@ impl ContentHash {
     }
 
     pub(super) fn append(&mut self, event_type: &str, payload: &Value) -> Result<(), RolloutError> {
-        let canonical = serde_json::to_vec(&(event_type, comparison_payload(payload)))?;
+        let canonical = canonical_event(event_type, payload)?;
         self.digest = chain_digest(self.digest, &canonical);
         self.count += 1;
         Ok(())
-    }
-
-    pub(super) fn matches_request_prefix(
-        &self,
-        request: &[RolloutEventBody],
-    ) -> Result<Option<usize>, RolloutError> {
-        if self.count == 0 {
-            return Ok(Some(0));
-        }
-
-        let mut digest = [0; 32];
-        let mut matched = 0usize;
-        for body in request {
-            let (event_type, payload) = event_parts(body)?;
-            if !is_content_event(&event_type) {
-                return Ok(None);
-            }
-            let canonical = serde_json::to_vec(&(event_type, comparison_payload(&payload)))?;
-            digest = chain_digest(digest, &canonical);
-            matched += 1;
-            if matched as u64 == self.count {
-                return Ok((digest == self.digest).then_some(matched));
-            }
-        }
-        Ok(None)
     }
 
     #[cfg(test)]
@@ -85,6 +62,39 @@ fn chain_digest(previous: [u8; 32], canonical: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+fn canonical_event(event_type: &str, payload: &Value) -> Result<Vec<u8>, RolloutError> {
+    Ok(serde_json::to_vec(&(
+        event_type,
+        comparison_payload(payload),
+    ))?)
+}
+
+pub(super) fn event_identity(event_type: &str, payload: &Value) -> Result<[u8; 32], RolloutError> {
+    Ok(Sha256::digest(canonical_event(event_type, payload)?).into())
+}
+
+pub(super) fn new_request_events(
+    request: Vec<RolloutEventBody>,
+    stored_counts: &HashMap<[u8; 32], u64>,
+) -> Result<Vec<RolloutEventBody>, RolloutError> {
+    let mut request_counts = HashMap::<[u8; 32], u64>::new();
+    let mut events = Vec::new();
+    for body in request {
+        let (event_type, payload) = event_parts(&body)?;
+        if !is_content_event(&event_type) {
+            events.push(body);
+            continue;
+        }
+        let identity = event_identity(&event_type, &payload)?;
+        let occurrence = request_counts.entry(identity).or_default();
+        *occurrence += 1;
+        if *occurrence > stored_counts.get(&identity).copied().unwrap_or(0) {
+            events.push(body);
+        }
+    }
+    Ok(events)
+}
+
 pub(super) fn is_safe_path_segment(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
@@ -99,30 +109,6 @@ pub(super) fn last_window_generation(events: &[RolloutEvent]) -> Option<u64> {
             .then(|| event.payload.get("generation").and_then(Value::as_u64))
             .flatten()
     })
-}
-
-pub(super) fn common_prefix_len(
-    existing: &[RolloutEvent],
-    request: &[RolloutEventBody],
-) -> Result<usize, RolloutError> {
-    let mut existing_content = existing
-        .iter()
-        .filter(|event| is_content_event(&event.event_type));
-    let mut matched = 0;
-    for body in request {
-        let Some(event) = existing_content.next() else {
-            break;
-        };
-        let (event_type, payload) = event_parts(body)?;
-        if event.event_type == event_type
-            && comparison_payload(&event.payload) == comparison_payload(&payload)
-        {
-            matched += 1;
-        } else {
-            break;
-        }
-    }
-    Ok(matched)
 }
 
 pub(super) fn is_content_event(event_type: &str) -> bool {

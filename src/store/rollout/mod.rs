@@ -19,7 +19,8 @@ mod support;
 
 use self::cache::{FileStamp, ThreadIndex, ThreadSource, ThreadState};
 use self::support::{
-    common_prefix_len, event_parts, is_content_event, is_safe_path_segment, ContentHash,
+    event_identity, event_parts, is_content_event, is_safe_path_segment, new_request_events,
+    ContentHash,
 };
 use crate::domain::activity::rollout::{
     RolloutError, RolloutEvent, RolloutEventBody, RolloutStatus, RolloutSummary, SessionContext,
@@ -143,42 +144,16 @@ impl RolloutStore {
                         "rollout read task failed: {error}"
                     )))
                 })??;
-        let (mut state, events) = match source {
+        let (state, _events) = match source {
             ThreadSource::Cached(state) => (state, None),
             ThreadSource::Loaded(state, events) => (state, Some(events)),
         };
-        let mut window_changed = state.window_changed(session);
-        let matched = if window_changed {
-            0
-        } else if let Some(events) = events.as_deref() {
-            common_prefix_len(events, &request_events)?
+        let window_changed = state.window_changed(session);
+        let is_empty = state.is_empty();
+        let request_events = if window_changed || is_empty || !session.replay_history {
+            request_events
         } else {
-            match state.content.matches_request_prefix(&request_events)? {
-                Some(matched) => matched,
-                None => {
-                    let store = self.clone();
-                    let identity = identity_id.to_string();
-                    let thread = session.thread_id.clone();
-                    let (loaded_state, loaded_events) = tokio::task::spawn_blocking(move || {
-                        store.load_thread_source(&identity, &thread)
-                    })
-                    .await
-                    .map_err(|error| {
-                        RolloutError::Io(io::Error::other(format!(
-                            "rollout read task failed: {error}"
-                        )))
-                    })??;
-                    state = loaded_state;
-                    self.cache_thread(cache_key.clone(), state.clone());
-                    self.persist_thread_index(identity_id, &session.thread_id, &state);
-                    window_changed = state.window_changed(session);
-                    if window_changed {
-                        0
-                    } else {
-                        common_prefix_len(&loaded_events, &request_events)?
-                    }
-                }
-            }
+            new_request_events(request_events, &state.event_counts)?
         };
         let relative_path = state.relative_path.clone();
         let final_path = self.checked_absolute_path(&relative_path)?;
@@ -186,12 +161,12 @@ impl RolloutStore {
             .parent()
             .ok_or_else(|| RolloutError::InvalidPath(relative_path.clone()))?;
         fs::create_dir_all(parent)?;
-        let is_empty = state.is_empty();
         let prior_generation = state.generation;
         let prior_seq = state.seq;
         let prior_line_count = state.line_count;
         let prior_len = state.stamp.len;
         let prior_content = state.content;
+        let prior_event_counts = state.event_counts.clone();
         let thread_relative = format!("{identity_id}/{}.jsonl", session.thread_id);
         let thread_path = self.checked_absolute_path(&thread_relative)?;
         let index_relative = format!("{thread_relative}.index");
@@ -222,6 +197,7 @@ impl RolloutStore {
             expected_len: prior_len,
             event_count: 0,
             content: prior_content,
+            event_counts: prior_event_counts,
             cache_key,
             cache: Arc::clone(&self.cache),
             status: RolloutStatus::Writing,
@@ -243,7 +219,7 @@ impl RolloutStore {
             }))?;
         }
 
-        for event in request_events.into_iter().skip(matched) {
+        for event in request_events {
             writer.append(event)?;
         }
         Ok(writer)
@@ -286,6 +262,7 @@ pub struct RolloutWriter {
     expected_len: u64,
     event_count: u64,
     content: ContentHash,
+    event_counts: HashMap<[u8; 32], u64>,
     cache_key: PathBuf,
     cache: Arc<Mutex<ThreadIndex>>,
     status: RolloutStatus,
@@ -305,6 +282,9 @@ impl RolloutWriter {
         if content_event {
             content.append(&event_type, &payload)?;
         }
+        let identity = content_event
+            .then(|| event_identity(&event_type, &payload))
+            .transpose()?;
         let window_generation = if event_type == "window_start" {
             payload
                 .get("generation")
@@ -312,6 +292,7 @@ impl RolloutWriter {
         } else {
             None
         };
+        let is_window_start = event_type == "window_start";
         self.seq += 1;
         let event = RolloutEvent {
             seq: self.seq,
@@ -334,6 +315,11 @@ impl RolloutWriter {
         self.end_line = self.line_count;
         if let Some(generation) = window_generation {
             self.thread_generation = Some(generation);
+        }
+        if is_window_start {
+            self.event_counts.clear();
+        } else if let Some(identity) = identity {
+            *self.event_counts.entry(identity).or_default() += 1;
         }
         if content_event {
             self.content = content;
@@ -381,6 +367,7 @@ impl RolloutWriter {
                     seq: self.seq,
                     generation: self.thread_generation,
                     content: self.content.clone(),
+                    event_counts: self.event_counts.clone(),
                 };
                 self.cache
                     .lock()
@@ -435,6 +422,9 @@ mod thread_tests;
 
 #[cfg(test)]
 mod thread_cache_tests;
+
+#[cfg(test)]
+mod thread_dedupe_tests;
 
 #[cfg(test)]
 mod benchmark_tests;

@@ -1,4 +1,5 @@
 use std::{
+    collections::{BTreeMap, HashMap},
     fs::{self, File},
     io::{self, Read, Seek, SeekFrom},
     path::Path,
@@ -15,7 +16,7 @@ use super::{
 };
 use crate::domain::activity::rollout::RolloutError;
 
-const THREAD_INDEX_VERSION: u8 = 1;
+const THREAD_INDEX_VERSION: u8 = 2;
 
 #[derive(Clone, Copy, Deserialize, PartialEq, Eq, Serialize)]
 struct PersistedStamp {
@@ -51,6 +52,7 @@ struct PersistedThreadIndex {
     generation: Option<u64>,
     content_count: u64,
     content_sha256: String,
+    event_counts: BTreeMap<String, u64>,
 }
 
 impl RolloutStore {
@@ -101,6 +103,16 @@ impl RolloutStore {
         let Some(digest) = decode_digest(&index.content_sha256) else {
             return Ok(None);
         };
+        let mut event_counts = HashMap::new();
+        for (identity, count) in index.event_counts {
+            let Some(identity) = decode_digest(&identity) else {
+                return Ok(None);
+            };
+            if count == 0 {
+                return Ok(None);
+            }
+            event_counts.insert(identity, count);
+        }
         Ok(Some(ThreadState {
             relative_path: index.relative_path,
             stamp: source_stamp,
@@ -108,6 +120,7 @@ impl RolloutStore {
             seq: index.seq,
             generation: index.generation,
             content: ContentHash::from_parts(index.content_count, digest),
+            event_counts,
         }))
     }
 
@@ -233,6 +246,11 @@ pub(super) fn write_thread_index(
         generation: state.generation,
         content_count: state.content.count,
         content_sha256: encode_digest(&state.content.digest_bytes()),
+        event_counts: state
+            .event_counts
+            .iter()
+            .map(|(identity, count)| (encode_digest(identity), *count))
+            .collect(),
     };
     let bytes = serde_json::to_vec(&index)?;
     fs::write(index_path, bytes)?;
