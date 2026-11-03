@@ -412,3 +412,6 @@ mod thread_tests;
 
 #[cfg(test)]
 mod thread_cache_tests;
+
+#[cfg(test)]
+mod benchmark_tests;

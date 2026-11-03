@@ -128,3 +128,39 @@ pub(super) fn event_parts(body: &RolloutEventBody) -> Result<(String, Value), Ro
     let payload = redact_json_value(&object.get("payload").cloned().unwrap_or(Value::Null));
     Ok((event_type, payload))
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::ContentChain;
+
+    #[test]
+    fn content_chain_ignores_object_key_order_and_phase() {
+        let mut request = ContentChain::default();
+        request
+            .append(
+                "message",
+                &json!({
+                    "phase": "request",
+                    "role": "user",
+                    "content": { "b": 2, "a": 1 }
+                }),
+            )
+            .expect("hash request event");
+
+        let mut response = ContentChain::default();
+        response
+            .append(
+                "message",
+                &json!({
+                    "content": { "a": 1, "b": 2 },
+                    "role": "user",
+                    "phase": "response"
+                }),
+            )
+            .expect("hash response event");
+
+        assert_eq!(request, response);
+    }
+}
