@@ -6,7 +6,7 @@ use std::{
 };
 
 use super::{
-    support::{last_window_generation, ContentChain},
+    support::{last_window_generation, ContentHash},
     RolloutStore,
 };
 use crate::domain::activity::rollout::{RolloutError, RolloutEvent, SessionContext};
@@ -40,7 +40,7 @@ pub(super) struct ThreadState {
     pub(super) line_count: u64,
     pub(super) seq: u64,
     pub(super) generation: Option<u64>,
-    pub(super) content: ContentChain,
+    pub(super) content: ContentHash,
 }
 
 impl ThreadState {
@@ -51,7 +51,7 @@ impl ThreadState {
             line_count: 0,
             seq: 0,
             generation: None,
-            content: ContentChain::default(),
+            content: ContentHash::default(),
         }
     }
 
@@ -66,7 +66,7 @@ impl ThreadState {
             line_count: events.len() as u64,
             seq: events.last().map_or(0, |event| event.seq),
             generation: last_window_generation(events),
-            content: ContentChain::from_events(events)?,
+            content: ContentHash::from_events(events)?,
         })
     }
 

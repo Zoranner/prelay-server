@@ -7,13 +7,22 @@ use crate::domain::activity::{
     rollout::{RolloutError, RolloutEventBody},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) struct ContentChain {
+#[derive(Debug, Clone)]
+pub(super) struct ContentHash {
     pub(super) count: u64,
-    pub(super) hash: [u8; 32],
+    hasher: Sha256,
 }
 
-impl ContentChain {
+impl Default for ContentHash {
+    fn default() -> Self {
+        Self {
+            count: 0,
+            hasher: Sha256::new(),
+        }
+    }
+}
+
+impl ContentHash {
     pub(super) fn from_events(events: &[RolloutEvent]) -> Result<Self, RolloutError> {
         let mut chain = Self::default();
         for event in events
@@ -27,10 +36,8 @@ impl ContentChain {
 
     pub(super) fn append(&mut self, event_type: &str, payload: &Value) -> Result<(), RolloutError> {
         let canonical = serde_json::to_vec(&(event_type, comparison_payload(payload)))?;
-        let mut hasher = Sha256::new();
-        hasher.update(self.hash);
-        hasher.update(canonical);
-        self.hash = hasher.finalize().into();
+        self.hasher.update((canonical.len() as u64).to_le_bytes());
+        self.hasher.update(canonical);
         self.count += 1;
         Ok(())
     }
@@ -43,20 +50,28 @@ impl ContentChain {
             return Ok(Some(0));
         }
 
-        let mut chain = Self::default();
-        let mut matched = 0;
+        let expected = self.hasher.clone().finalize();
+        let mut hasher = Sha256::new();
+        let mut matched = 0usize;
         for body in request {
             let (event_type, payload) = event_parts(body)?;
             if !is_content_event(&event_type) {
                 return Ok(None);
             }
-            chain.append(&event_type, &payload)?;
+            let canonical = serde_json::to_vec(&(event_type, comparison_payload(&payload)))?;
+            hasher.update((canonical.len() as u64).to_le_bytes());
+            hasher.update(canonical);
             matched += 1;
-            if chain.count == self.count {
-                return Ok((chain.hash == self.hash).then_some(matched));
+            if matched as u64 == self.count {
+                return Ok((hasher.finalize() == expected).then_some(matched));
             }
         }
         Ok(None)
+    }
+
+    #[cfg(test)]
+    fn digest(&self) -> [u8; 32] {
+        self.hasher.clone().finalize().into()
     }
 }
 
@@ -133,11 +148,11 @@ pub(super) fn event_parts(body: &RolloutEventBody) -> Result<(String, Value), Ro
 mod tests {
     use serde_json::json;
 
-    use super::ContentChain;
+    use super::ContentHash;
 
     #[test]
     fn content_chain_ignores_object_key_order_and_phase() {
-        let mut request = ContentChain::default();
+        let mut request = ContentHash::default();
         request
             .append(
                 "message",
@@ -149,7 +164,7 @@ mod tests {
             )
             .expect("hash request event");
 
-        let mut response = ContentChain::default();
+        let mut response = ContentHash::default();
         response
             .append(
                 "message",
@@ -161,6 +176,6 @@ mod tests {
             )
             .expect("hash response event");
 
-        assert_eq!(request, response);
+        assert_eq!(request.digest(), response.digest());
     }
 }

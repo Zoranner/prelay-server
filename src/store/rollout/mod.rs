@@ -18,7 +18,7 @@ mod support;
 
 use self::cache::{FileStamp, ThreadIndex, ThreadSource, ThreadState};
 use self::support::{
-    common_prefix_len, event_parts, is_content_event, is_safe_path_segment, ContentChain,
+    common_prefix_len, event_parts, is_content_event, is_safe_path_segment, ContentHash,
 };
 use crate::domain::activity::rollout::{
     RolloutError, RolloutEvent, RolloutEventBody, RolloutStatus, RolloutSummary, SessionContext,
@@ -270,7 +270,7 @@ pub struct RolloutWriter {
     end_line: u64,
     byte_size: u64,
     event_count: u64,
-    content: ContentChain,
+    content: ContentHash,
     cache_key: PathBuf,
     cache: Arc<Mutex<ThreadIndex>>,
     status: RolloutStatus,
@@ -285,7 +285,7 @@ impl RolloutWriter {
             ));
         }
         let (event_type, payload) = event_parts(&body)?;
-        let mut content = self.content;
+        let mut content = self.content.clone();
         let content_event = is_content_event(&event_type);
         if content_event {
             content.append(&event_type, &payload)?;
@@ -361,7 +361,7 @@ impl RolloutWriter {
                             line_count: self.line_count,
                             seq: self.seq,
                             generation: self.thread_generation,
-                            content: self.content,
+                            content: self.content.clone(),
                         },
                     );
             }
