@@ -22,6 +22,7 @@ use super::{candidate::create_response_with_candidate, sessions::conversation_id
 pub(super) struct ResponseCandidateRequest {
     pub(super) payload: Arc<Value>,
     pub(super) request: Arc<InternalRequest>,
+    pub(super) response_id: String,
     pub(super) model_requested: String,
     pub(super) is_streaming: bool,
     pub(super) previous_response_id: Option<String>,
@@ -39,6 +40,7 @@ pub(super) async fn create_response(
     let payload = Arc::new(payload);
     let model_requested = request.model.clone();
     let is_streaming = request.stream;
+    let response_id = format!("resp_{}", uuid::Uuid::new_v4().simple());
     let previous_response_id = request.previous_response_id.clone();
     let conversation_id = conversation_id_for_request(
         &state.storage,
@@ -59,6 +61,7 @@ pub(super) async fn create_response(
                 ResponseCandidateRequest {
                     payload: Arc::clone(&payload),
                     request: Arc::clone(&request),
+                    response_id: response_id.clone(),
                     model_requested: model_requested.clone(),
                     is_streaming,
                     previous_response_id: previous_response_id.clone(),

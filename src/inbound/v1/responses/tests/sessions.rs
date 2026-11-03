@@ -1,6 +1,33 @@
 use super::*;
 
 #[tokio::test]
+async fn native_non_streaming_returns_a_local_response_id() {
+    let upstream = spawn_native_responses_upstream().await;
+    let state = crate::test_support::test_state().await;
+    let provider = test_provider("gpt-4.1", "openai", &upstream, "sk-upstream")
+        .await
+        .expect("create provider");
+    let auth = create_test_endpoint_auth(&state.storage, &provider, "gpt-4.1", "gpt-4.1").await;
+
+    let response = create_response(
+        State(state),
+        auth.access,
+        axum::Json(json!({
+            "model": "gpt-4.1",
+            "input": "hello",
+            "store": true
+        })),
+    )
+    .await
+    .expect("create response");
+    let body = response_json(response).await;
+    let id = body["id"].as_str().expect("response id");
+
+    assert!(id.starts_with("resp_"));
+    assert_ne!(id, "resp_native");
+}
+
+#[tokio::test]
 async fn prepends_previous_response_messages_to_upstream_chat_request() {
     let upstream = spawn_history_asserting_chat_upstream().await;
     let state = crate::test_support::test_state().await;
@@ -28,6 +55,7 @@ async fn prepends_previous_response_messages_to_upstream_chat_request() {
     .expect("create first response");
     let first = response_json(first).await;
     let first_id = first["id"].as_str().expect("first id");
+    assert!(first_id.starts_with("resp_"));
 
     let second = create_response(
         State(state.clone()),

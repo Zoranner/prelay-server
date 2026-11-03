@@ -204,7 +204,7 @@ pub(super) async fn create_native_response(
             model: model_upstream.to_string(),
             input_messages: request.messages.clone(),
             store: true,
-            response_id: None,
+            response_id: Some(context.response_id.clone()),
         });
         let log = ActivityInsert {
             protocol_in: "responses".to_string(),
@@ -257,7 +257,7 @@ pub(super) async fn create_native_response(
             .into_response());
     }
 
-    let response = match upstream_response.json::<Value>().await {
+    let mut response = match upstream_response.json::<Value>().await {
         Ok(response) => response,
         Err(_) => {
             let error = AppError::UpstreamInvalidResponse {
@@ -282,6 +282,16 @@ pub(super) async fn create_native_response(
             return Err(error);
         }
     };
+    let upstream_response_id = response
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    response["id"] = Value::String(context.response_id.clone());
+    tracing::debug!(
+        response_id = %context.response_id,
+        upstream_response_id = upstream_response_id.as_deref(),
+        "rewrote the native Responses identifier"
+    );
     let decoded_response =
         match crate::codec::providers::responses::decode_responses_response(response.clone()) {
             Ok(response) => response,

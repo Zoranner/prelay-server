@@ -5,7 +5,6 @@ use axum::{
     Json,
 };
 use serde_json::Value;
-use uuid::Uuid;
 
 use crate::{
     codec::activity::{events_from_internal_request, events_from_internal_response},
@@ -50,6 +49,7 @@ pub(super) async fn create_chat_response(
     let ResponseBridgeContext {
         identity_id,
         endpoint_name,
+        response_id,
         model_requested,
         is_streaming,
         conversation_id,
@@ -60,6 +60,7 @@ pub(super) async fn create_chat_response(
     let failure_context = ResponseBridgeContext {
         identity_id: identity_id.clone(),
         endpoint_name: endpoint_name.clone(),
+        response_id: response_id.clone(),
         model_requested: model_requested.clone(),
         is_streaming,
         conversation_id: conversation_id.clone(),
@@ -161,7 +162,6 @@ pub(super) async fn create_chat_response(
     }
 
     if is_streaming {
-        let response_id = format!("resp_{}", Uuid::new_v4().simple());
         let (stream, stream_stats) = match chat_sse_response_to_responses_sse_with_stats(
             upstream_response,
             response_id.clone(),
@@ -296,7 +296,7 @@ pub(super) async fn create_chat_response(
             return Err(error);
         }
     };
-    response.id = format!("resp_{}", Uuid::new_v4().simple());
+    response.id = response_id;
     let reasoning_tokens = response
         .usage
         .as_ref()

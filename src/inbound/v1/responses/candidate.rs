@@ -19,6 +19,7 @@ use super::{
 pub(super) struct ResponseBridgeContext {
     pub(super) identity_id: String,
     pub(super) endpoint_name: String,
+    pub(super) response_id: String,
     pub(super) model_requested: String,
     pub(super) is_streaming: bool,
     pub(super) conversation_id: String,
@@ -36,6 +37,7 @@ pub(super) async fn create_response_with_candidate(
     let ResponseCandidateRequest {
         payload,
         request,
+        response_id,
         model_requested,
         is_streaming,
         previous_response_id,
@@ -53,6 +55,7 @@ pub(super) async fn create_response_with_candidate(
     let context = ResponseBridgeContext {
         identity_id: access.identity_id.clone(),
         endpoint_name: access.endpoint_name.clone(),
+        response_id,
         model_requested,
         is_streaming,
         conversation_id,

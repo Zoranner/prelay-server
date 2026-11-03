@@ -60,7 +60,9 @@ async fn forwards_responses_request_to_native_upstream() {
     .expect("create response");
     let response = response_json(response).await;
 
-    assert_eq!(response["id"], "resp_native");
+    let response_id = response["id"].as_str().expect("response id");
+    assert!(response_id.starts_with("resp_"));
+    assert_ne!(response_id, "resp_native");
     assert_eq!(response["object"], "response");
     assert_eq!(response["model"], "gpt-4.1");
     assert_eq!(
