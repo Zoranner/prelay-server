@@ -10,6 +10,7 @@ mod provider_usage;
 mod provider_validation;
 mod provider_views;
 mod provider_visibility;
+mod response_states;
 mod rollout_recovery;
 mod rollouts;
 mod sessions;
@@ -26,6 +27,7 @@ use sea_orm::{DatabaseConnection, DbErr};
 pub use crypto::MasterKey;
 pub use identities::{AuthenticatedIdentity, DeleteInactiveResult};
 pub(crate) use provider_validation::parse_models;
+pub use response_states::{ResponseState, ResponseStateInsert};
 pub use rollout_recovery::{InterruptedRollout, RecoveredRollout};
 pub use sessions::ResponseSessionInsert;
 
@@ -62,6 +64,7 @@ pub enum StorageError {
     EndpointNotFound,
     ActivityNotFound,
     MemoryNotFound,
+    InvalidStoredState(String),
     ValidationFailed(String),
     InvalidTimestamp(String),
     InvalidMasterKey(String),
@@ -90,6 +93,7 @@ impl StorageError {
                 ProtocolErrorCode::ValidationFailed
             }
             Self::InvalidTimestamp(_)
+            | Self::InvalidStoredState(_)
             | Self::Crypto(_)
             | Self::Rollout(_)
             | Self::Serialization(_)
@@ -110,6 +114,9 @@ impl fmt::Display for StorageError {
             Self::EndpointNotFound => formatter.write_str("endpoint does not exist for identity"),
             Self::ActivityNotFound => formatter.write_str("activity does not exist for identity"),
             Self::MemoryNotFound => formatter.write_str("memory does not exist"),
+            Self::InvalidStoredState(message) => {
+                write!(formatter, "invalid stored response state: {message}")
+            }
             Self::ValidationFailed(message) => formatter.write_str(message),
             Self::InvalidTimestamp(message) => {
                 write!(formatter, "invalid stored timestamp: {message}")

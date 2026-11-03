@@ -71,6 +71,12 @@ pub(super) async fn save_response_session(
         conversation_id: Set(Some(insert.conversation_id.to_string())),
         provider_id: Set(insert.provider_id.to_string()),
         model: Set(insert.model.to_string()),
+        status: Set("legacy".to_string()),
+        protocol_format: Set("legacy_internal_v1".to_string()),
+        upstream_response_id: Set(None),
+        request_items_json: Set(None),
+        response_items_json: Set(None),
+        expires_at: Set(None),
         input_messages_json: Set(input_messages_json),
         output_items_json: Set(output_items_json),
         created_at: Set(Utc::now().to_rfc3339()),
@@ -119,12 +125,18 @@ pub(super) async fn load_response_session_messages(
     Ok(Some(messages))
 }
 
-fn encrypt_session_value(crypto: &KeyCipher, value: &str) -> Result<String, StorageError> {
+pub(super) fn encrypt_session_value(
+    crypto: &KeyCipher,
+    value: &str,
+) -> Result<String, StorageError> {
     let ciphertext = crypto.encrypt(value)?;
     Ok(format!("{SESSION_CIPHERTEXT_PREFIX}{ciphertext}"))
 }
 
-fn decrypt_session_value(crypto: &KeyCipher, value: &str) -> Result<String, StorageError> {
+pub(super) fn decrypt_session_value(
+    crypto: &KeyCipher,
+    value: &str,
+) -> Result<String, StorageError> {
     match value.strip_prefix(SESSION_CIPHERTEXT_PREFIX) {
         Some(ciphertext) => crypto.decrypt(ciphertext),
         None => Ok(value.to_string()),
@@ -318,6 +330,12 @@ mod tests {
             conversation_id: Set(None),
             provider_id: Set(provider_id),
             model: Set("deepseek-chat".to_string()),
+            status: Set("legacy".to_string()),
+            protocol_format: Set("legacy_internal_v1".to_string()),
+            upstream_response_id: Set(None),
+            request_items_json: Set(None),
+            response_items_json: Set(None),
+            expires_at: Set(None),
             input_messages_json: Set(
                 r#"[{"role":"User","content":[{"Text":"read Cargo.toml"}],"tool_call_id":null,"tool_calls":[]}]"#
                     .to_string(),

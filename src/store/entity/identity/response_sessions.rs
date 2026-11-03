@@ -11,6 +11,12 @@ pub struct Model {
     pub conversation_id: Option<String>,
     pub provider_id: String,
     pub model: String,
+    pub status: String,
+    pub protocol_format: String,
+    pub upstream_response_id: Option<String>,
+    pub request_items_json: Option<String>,
+    pub response_items_json: Option<String>,
+    pub expires_at: Option<String>,
     pub input_messages_json: String,
     pub output_items_json: String,
     pub created_at: String,
@@ -24,23 +30,11 @@ pub enum Relation {
         to = "super::super::identities::Column::Id"
     )]
     Identity,
-    #[sea_orm(
-        belongs_to = "super::provider_configs::Entity",
-        from = "Column::ProviderId",
-        to = "super::provider_configs::Column::Id"
-    )]
-    Provider,
 }
 
 impl Related<super::super::identities::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Identity.def()
-    }
-}
-
-impl Related<super::provider_configs::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::Provider.def()
     }
 }
 

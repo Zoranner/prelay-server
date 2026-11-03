@@ -30,8 +30,6 @@ pub enum Relation {
     EndpointModels,
     #[sea_orm(has_many = "super::endpoint_model_routes::Entity")]
     EndpointModelRoutes,
-    #[sea_orm(has_many = "super::response_sessions::Entity")]
-    ResponseSessions,
 }
 
 impl Related<super::super::identities::Entity> for Entity {
@@ -55,12 +53,6 @@ impl Related<super::endpoint_models::Entity> for Entity {
 impl Related<super::endpoint_model_routes::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::EndpointModelRoutes.def()
-    }
-}
-
-impl Related<super::response_sessions::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::ResponseSessions.def()
     }
 }
 
