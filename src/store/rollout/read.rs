@@ -6,8 +6,16 @@ use std::{
 
 use sha2::{Digest, Sha256};
 
-use super::{RolloutFile, RolloutSlice, RolloutStore};
+use super::{cache::ThreadState, RolloutFile, RolloutSlice, RolloutStore};
 use crate::domain::activity::rollout::{RolloutError, RolloutEvent};
+
+const MAX_RECOVERED_SEGMENTS: usize = 10;
+
+enum ThreadCandidate {
+    Missing,
+    Corrupt,
+    Events(Vec<RolloutEvent>, u64),
+}
 
 impl RolloutStore {
     pub fn read_events(&self, relative_path: &str) -> Result<Vec<RolloutEvent>, RolloutError> {
@@ -96,6 +104,86 @@ impl RolloutStore {
             sha256: format!("{:x}", Sha256::digest(&bytes)),
             events,
         })
+    }
+
+    pub(super) fn load_thread_source(
+        &self,
+        identity_id: &str,
+        thread_id: &str,
+    ) -> Result<(ThreadState, Vec<RolloutEvent>), RolloutError> {
+        let base = format!("{identity_id}/{thread_id}.jsonl");
+        match self.read_thread_candidate(&base)? {
+            ThreadCandidate::Events(events, file_size) => {
+                let state = ThreadState::from_events(base, file_size, &events)?;
+                Ok((state, events))
+            }
+            ThreadCandidate::Missing => {
+                for index in 1..=MAX_RECOVERED_SEGMENTS {
+                    let candidate = recovered_thread_path(identity_id, thread_id, index);
+                    match self.read_thread_candidate(&candidate)? {
+                        ThreadCandidate::Events(events, file_size) => {
+                            let state = ThreadState::from_events(candidate, file_size, &events)?;
+                            return Ok((state, events));
+                        }
+                        ThreadCandidate::Corrupt => continue,
+                        ThreadCandidate::Missing if index == 1 => {
+                            return Ok((ThreadState::empty(base), Vec::new()));
+                        }
+                        ThreadCandidate::Missing => {
+                            return Ok((ThreadState::empty(candidate), Vec::new()));
+                        }
+                    }
+                }
+                Err(RolloutError::InvalidPath(format!(
+                    "thread {thread_id} has too many corrupt recovered segments"
+                )))
+            }
+            ThreadCandidate::Corrupt => {
+                for index in 1..=MAX_RECOVERED_SEGMENTS {
+                    let candidate = recovered_thread_path(identity_id, thread_id, index);
+                    match self.read_thread_candidate(&candidate)? {
+                        ThreadCandidate::Events(events, file_size) => {
+                            let state = ThreadState::from_events(candidate, file_size, &events)?;
+                            return Ok((state, events));
+                        }
+                        ThreadCandidate::Corrupt => continue,
+                        ThreadCandidate::Missing => {
+                            return Ok((ThreadState::empty(candidate), Vec::new()));
+                        }
+                    }
+                }
+                Err(RolloutError::InvalidPath(format!(
+                    "thread {thread_id} has too many corrupt segments"
+                )))
+            }
+        }
+    }
+
+    fn read_thread_candidate(&self, relative: &str) -> Result<ThreadCandidate, RolloutError> {
+        let path = self.checked_absolute_path(relative)?;
+        match read_thread_events(&path) {
+            Ok(Some(events)) => {
+                let file_size = fs::metadata(&path)?.len();
+                Ok(ThreadCandidate::Events(events, file_size))
+            }
+            Ok(None) => Ok(ThreadCandidate::Missing),
+            Err(RolloutError::Serialize(_)) => {
+                tracing::warn!(
+                    thread = %relative,
+                    "activity rollout has a corrupt line; trying a recovered segment"
+                );
+                Ok(ThreadCandidate::Corrupt)
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
+fn recovered_thread_path(identity_id: &str, thread_id: &str, index: usize) -> String {
+    if index == 1 {
+        format!("{identity_id}/{thread_id}.recovered.jsonl")
+    } else {
+        format!("{identity_id}/{thread_id}.recovered-{index}.jsonl")
     }
 }
 

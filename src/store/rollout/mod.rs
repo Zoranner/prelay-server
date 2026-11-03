@@ -11,29 +11,25 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use uuid::Uuid;
 
+mod cache;
 mod read;
 mod scan;
 mod support;
 
-use self::read::read_thread_events;
-use self::support::{common_prefix_len, event_parts, is_safe_path_segment, last_window_generation};
+use self::cache::{ThreadSource, ThreadState};
+use self::support::{
+    common_prefix_len, event_parts, is_content_event, is_safe_path_segment, ContentChain,
+};
 use crate::domain::activity::rollout::{
     RolloutError, RolloutEvent, RolloutEventBody, RolloutStatus, RolloutSummary, SessionContext,
     SessionMetaEvent, WindowStartEvent, DEFAULT_ACTIVITY_ROLLOUT_DIR,
 };
 
-const MAX_RECOVERED_SEGMENTS: usize = 10;
-
-enum ThreadCandidate {
-    Missing,
-    Corrupt,
-    Events(Vec<RolloutEvent>),
-}
-
 #[derive(Debug, Clone)]
 pub struct RolloutStore {
     root: PathBuf,
     locks: Arc<Mutex<HashMap<PathBuf, Weak<AsyncMutex<()>>>>>,
+    cache: Arc<Mutex<HashMap<PathBuf, ThreadState>>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -57,6 +53,7 @@ impl RolloutStore {
         Self {
             root,
             locks: Arc::new(Mutex::new(HashMap::new())),
+            cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -131,27 +128,68 @@ impl RolloutStore {
             )));
         }
 
-        let lock_key = PathBuf::from(format!("{identity_id}/{}", session.thread_id));
-        let lock = self.lock_for(&lock_key);
+        let cache_key = PathBuf::from(format!("{identity_id}/{}", session.thread_id));
+        let lock = self.lock_for(&cache_key);
         let guard = lock.lock_owned().await;
         let store = self.clone();
         let identity = identity_id.to_string();
         let thread = session.thread_id.clone();
-        let (relative_path, existing_events) =
-            tokio::task::spawn_blocking(move || store.read_thread_source(&identity, &thread))
+        let source =
+            tokio::task::spawn_blocking(move || store.resolve_thread_source(&identity, &thread))
                 .await
                 .map_err(|error| {
                     RolloutError::Io(io::Error::other(format!(
                         "rollout read task failed: {error}"
                     )))
                 })??;
+        let (mut state, events) = match source {
+            ThreadSource::Cached(state) => (state, None),
+            ThreadSource::Loaded(state, events) => (state, Some(events)),
+        };
+        let mut window_changed = state.window_changed(session);
+        let matched = if window_changed {
+            0
+        } else if let Some(events) = events.as_deref() {
+            common_prefix_len(events, &request_events)?
+        } else {
+            match state.content.matches_request_prefix(&request_events)? {
+                Some(matched) => matched,
+                None => {
+                    let store = self.clone();
+                    let identity = identity_id.to_string();
+                    let thread = session.thread_id.clone();
+                    let (loaded_state, loaded_events) = tokio::task::spawn_blocking(move || {
+                        store.load_thread_source(&identity, &thread)
+                    })
+                    .await
+                    .map_err(|error| {
+                        RolloutError::Io(io::Error::other(format!(
+                            "rollout read task failed: {error}"
+                        )))
+                    })??;
+                    state = loaded_state;
+                    self.cache_thread(cache_key.clone(), state.clone());
+                    window_changed = state.window_changed(session);
+                    if window_changed {
+                        0
+                    } else {
+                        common_prefix_len(&loaded_events, &request_events)?
+                    }
+                }
+            }
+        };
+        let relative_path = state.relative_path.clone();
         let final_path = self.checked_absolute_path(&relative_path)?;
         let parent = final_path
             .parent()
             .ok_or_else(|| RolloutError::InvalidPath(relative_path.clone()))?;
         fs::create_dir_all(parent)?;
-        let line_count = existing_events.len() as u64;
-        let seq = existing_events.last().map_or(0, |event| event.seq);
+        let is_empty = state.is_empty();
+        let prior_generation = state.generation;
+        let prior_seq = state.seq;
+        let prior_line_count = state.line_count;
+        let prior_file_size = state.file_size;
+        let prior_content = state.content;
         let file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -161,27 +199,27 @@ impl RolloutStore {
             thread_id: session.thread_id.clone(),
             window_id: session.window_id.clone(),
             generation: session.generation,
+            thread_generation: prior_generation,
             relative_path,
             final_path,
             file: Some(BufWriter::new(file)),
             _lock: Some(guard),
             hasher: Sha256::new(),
-            seq,
-            line_count,
-            start_line: line_count + 1,
-            end_line: line_count,
+            seq: prior_seq,
+            line_count: prior_line_count,
+            start_line: prior_line_count + 1,
+            end_line: prior_line_count,
             byte_size: 0,
             event_count: 0,
+            file_byte_size: prior_file_size,
+            content: prior_content,
+            cache_key,
+            cache: Arc::clone(&self.cache),
             status: RolloutStatus::Writing,
             finished: false,
         };
 
-        let current_generation = last_window_generation(&existing_events);
-        let window_changed = match current_generation {
-            Some(generation) => generation != session.generation,
-            None => !existing_events.is_empty() && session.generation > 0,
-        };
-        if existing_events.is_empty() {
+        if is_empty {
             writer.append(RolloutEventBody::SessionMeta(meta))?;
             writer.append(RolloutEventBody::WindowStart(WindowStartEvent {
                 window_id: session.window_id.clone(),
@@ -196,11 +234,6 @@ impl RolloutStore {
             }))?;
         }
 
-        let matched = if window_changed || existing_events.is_empty() {
-            0
-        } else {
-            common_prefix_len(&existing_events, &request_events)?
-        };
         for event in request_events.into_iter().skip(matched) {
             writer.append(event)?;
         }
@@ -220,74 +253,6 @@ impl RolloutStore {
         locks.insert(path.to_path_buf(), Arc::downgrade(&lock));
         lock
     }
-
-    fn read_thread_source(
-        &self,
-        identity_id: &str,
-        thread_id: &str,
-    ) -> Result<(String, Vec<RolloutEvent>), RolloutError> {
-        let base = format!("{identity_id}/{thread_id}.jsonl");
-        match self.read_thread_candidate(&base)? {
-            ThreadCandidate::Events(events) => Ok((base, events)),
-            ThreadCandidate::Missing => {
-                for index in 1..=MAX_RECOVERED_SEGMENTS {
-                    let candidate = recovered_thread_path(identity_id, thread_id, index);
-                    match self.read_thread_candidate(&candidate)? {
-                        ThreadCandidate::Events(events) => return Ok((candidate, events)),
-                        ThreadCandidate::Corrupt => continue,
-                        ThreadCandidate::Missing if index == 1 => {
-                            return Ok((base, Vec::new()));
-                        }
-                        ThreadCandidate::Missing => {
-                            return Ok((candidate, Vec::new()));
-                        }
-                    }
-                }
-                Err(RolloutError::InvalidPath(format!(
-                    "thread {thread_id} has too many corrupt recovered segments"
-                )))
-            }
-            ThreadCandidate::Corrupt => {
-                for index in 1..=MAX_RECOVERED_SEGMENTS {
-                    let candidate = recovered_thread_path(identity_id, thread_id, index);
-                    match self.read_thread_candidate(&candidate)? {
-                        ThreadCandidate::Events(events) => return Ok((candidate, events)),
-                        ThreadCandidate::Corrupt => continue,
-                        ThreadCandidate::Missing => {
-                            return Ok((candidate, Vec::new()));
-                        }
-                    }
-                }
-                Err(RolloutError::InvalidPath(format!(
-                    "thread {thread_id} has too many corrupt segments"
-                )))
-            }
-        }
-    }
-
-    fn read_thread_candidate(&self, relative: &str) -> Result<ThreadCandidate, RolloutError> {
-        let path = self.checked_absolute_path(relative)?;
-        match read_thread_events(&path) {
-            Ok(Some(events)) => Ok(ThreadCandidate::Events(events)),
-            Ok(None) => Ok(ThreadCandidate::Missing),
-            Err(RolloutError::Serialize(_)) => {
-                tracing::warn!(
-                    thread = %relative,
-                    "activity rollout has a corrupt line; trying a recovered segment"
-                );
-                Ok(ThreadCandidate::Corrupt)
-            }
-            Err(error) => Err(error),
-        }
-    }
-}
-
-fn recovered_thread_path(identity_id: &str, thread_id: &str, index: usize) -> String {
-    if index == 1 {
-        format!("{identity_id}/{thread_id}.recovered.jsonl")
-    } else {
-        format!("{identity_id}/{thread_id}.recovered-{index}.jsonl")
-    }
 }
 
 pub struct RolloutWriter {
@@ -295,6 +260,7 @@ pub struct RolloutWriter {
     thread_id: String,
     window_id: Option<String>,
     generation: u64,
+    thread_generation: Option<u64>,
     relative_path: String,
     final_path: PathBuf,
     file: Option<BufWriter<std::fs::File>>,
@@ -306,6 +272,10 @@ pub struct RolloutWriter {
     end_line: u64,
     byte_size: u64,
     event_count: u64,
+    file_byte_size: u64,
+    content: ContentChain,
+    cache_key: PathBuf,
+    cache: Arc<Mutex<HashMap<PathBuf, ThreadState>>>,
     status: RolloutStatus,
     finished: bool,
 }
@@ -318,6 +288,18 @@ impl RolloutWriter {
             ));
         }
         let (event_type, payload) = event_parts(&body)?;
+        let mut content = self.content;
+        let content_event = is_content_event(&event_type);
+        if content_event {
+            content.append(&event_type, &payload)?;
+        }
+        let window_generation = if event_type == "window_start" {
+            payload
+                .get("generation")
+                .and_then(serde_json::Value::as_u64)
+        } else {
+            None
+        };
         self.seq += 1;
         let event = RolloutEvent {
             seq: self.seq,
@@ -335,9 +317,16 @@ impl RolloutWriter {
         file.flush()?;
         self.hasher.update(&line);
         self.byte_size += line.len() as u64;
+        self.file_byte_size += line.len() as u64;
         self.event_count += 1;
         self.line_count += 1;
         self.end_line = self.line_count;
+        if let Some(generation) = window_generation {
+            self.thread_generation = Some(generation);
+        }
+        if content_event {
+            self.content = content;
+        }
         Ok(())
     }
 
@@ -363,6 +352,20 @@ impl RolloutWriter {
             file.flush()?;
             file.get_ref().sync_all()?;
         }
+        self.cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(
+                self.cache_key.clone(),
+                ThreadState {
+                    relative_path: self.relative_path.clone(),
+                    file_size: self.file_byte_size,
+                    line_count: self.line_count,
+                    seq: self.seq,
+                    generation: self.thread_generation,
+                    content: self.content,
+                },
+            );
         self._lock.take();
         self.status = status;
         self.finished = true;
@@ -399,3 +402,6 @@ mod tests;
 
 #[cfg(test)]
 mod thread_tests;
+
+#[cfg(test)]
+mod thread_cache_tests;

@@ -1,10 +1,64 @@
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::domain::activity::rollout::RolloutEvent;
 use crate::domain::activity::{
     redaction::redact_json_value,
     rollout::{RolloutError, RolloutEventBody},
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) struct ContentChain {
+    pub(super) count: u64,
+    pub(super) hash: [u8; 32],
+}
+
+impl ContentChain {
+    pub(super) fn from_events(events: &[RolloutEvent]) -> Result<Self, RolloutError> {
+        let mut chain = Self::default();
+        for event in events
+            .iter()
+            .filter(|event| is_content_event(&event.event_type))
+        {
+            chain.append(&event.event_type, &event.payload)?;
+        }
+        Ok(chain)
+    }
+
+    pub(super) fn append(&mut self, event_type: &str, payload: &Value) -> Result<(), RolloutError> {
+        let canonical = serde_json::to_vec(&(event_type, comparison_payload(payload)))?;
+        let mut hasher = Sha256::new();
+        hasher.update(self.hash);
+        hasher.update(canonical);
+        self.hash = hasher.finalize().into();
+        self.count += 1;
+        Ok(())
+    }
+
+    pub(super) fn matches_request_prefix(
+        &self,
+        request: &[RolloutEventBody],
+    ) -> Result<Option<usize>, RolloutError> {
+        if self.count == 0 {
+            return Ok(Some(0));
+        }
+
+        let mut chain = Self::default();
+        let mut matched = 0;
+        for body in request {
+            let (event_type, payload) = event_parts(body)?;
+            if !is_content_event(&event_type) {
+                return Ok(None);
+            }
+            chain.append(&event_type, &payload)?;
+            matched += 1;
+            if chain.count == self.count {
+                return Ok((chain.hash == self.hash).then_some(matched));
+            }
+        }
+        Ok(None)
+    }
+}
 
 pub(super) fn is_safe_path_segment(value: &str) -> bool {
     !value.is_empty()
@@ -46,7 +100,7 @@ pub(super) fn common_prefix_len(
     Ok(matched)
 }
 
-fn is_content_event(event_type: &str) -> bool {
+pub(super) fn is_content_event(event_type: &str) -> bool {
     !matches!(
         event_type,
         "session_meta" | "window_start" | "media" | "usage" | "error" | "session_end"
