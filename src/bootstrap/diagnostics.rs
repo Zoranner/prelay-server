@@ -1,6 +1,5 @@
 use crate::{
-    domain::activity::rollout::RolloutError, service::activity::ActivityStore,
-    store::rollout::RolloutStore, store::storage::StorageError,
+    service::activity::ActivityStore, store::rollout::RolloutStore, store::storage::StorageError,
 };
 
 const STARTUP_CLEANUP_FAILURE: &str = "startup identity cleanup failed";
@@ -53,30 +52,14 @@ pub(super) fn handle_startup_legacy_session_encryption_failure(
 
 pub(super) async fn warn_incomplete_rollout_files(rollout_store: &RolloutStore) {
     let store = rollout_store.clone();
-    match tokio::task::spawn_blocking(move || {
-        let part_files = store.part_files()?;
-        let incomplete_tails = store.incomplete_rollout_files()?;
-        Ok::<_, RolloutError>((part_files, incomplete_tails))
-    })
-    .await
-    {
-        Ok(Ok((part_files, incomplete_tails)))
-            if part_files.is_empty() && incomplete_tails.is_empty() => {}
-        Ok(Ok((part_files, incomplete_tails))) => {
-            if !part_files.is_empty() {
-                tracing::warn!(
-                    incomplete = part_files.len(),
-                    sample = ?part_files.iter().take(10).collect::<Vec<_>>(),
-                    "legacy incomplete activity rollout files remain on disk"
-                );
-            }
-            if !incomplete_tails.is_empty() {
-                tracing::warn!(
-                    incomplete = incomplete_tails.len(),
-                    sample = ?incomplete_tails.iter().take(10).collect::<Vec<_>>(),
-                    "activity rollout files have incomplete tails; the next request for the thread will truncate them"
-                );
-            }
+    match tokio::task::spawn_blocking(move || store.incomplete_rollout_files()).await {
+        Ok(Ok(incomplete_tails)) if incomplete_tails.is_empty() => {}
+        Ok(Ok(incomplete_tails)) => {
+            tracing::warn!(
+                incomplete = incomplete_tails.len(),
+                sample = ?incomplete_tails.iter().take(10).collect::<Vec<_>>(),
+                "activity rollout files have incomplete tails; the next request for the thread will truncate them"
+            );
         }
         Ok(Err(error)) => {
             tracing::warn!(

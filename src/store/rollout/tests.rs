@@ -136,23 +136,6 @@ async fn redacts_sensitive_values_before_writing() {
 }
 
 #[test]
-fn lists_incomplete_part_files_without_deleting_them() {
-    let root = tempfile::tempdir().expect("temp rollout root");
-    let store = RolloutStore::new(root.path().to_path_buf());
-    let nested = root.path().join("identity-1");
-    std::fs::create_dir_all(&nested).expect("create nested rollout directory");
-    let part = nested.join("thread-incomplete.jsonl.part");
-    std::fs::write(&part, b"{}").expect("write incomplete rollout");
-    std::fs::write(nested.join("thread-complete.jsonl"), b"{}").expect("write complete rollout");
-
-    assert_eq!(
-        store.part_files().expect("list incomplete rollouts"),
-        vec![part.clone()]
-    );
-    assert!(part.exists());
-}
-
-#[test]
 fn lists_jsonl_files_with_incomplete_tails() {
     let root = tempfile::tempdir().expect("temporary rollout root");
     let store = RolloutStore::new(root.path().to_path_buf());
