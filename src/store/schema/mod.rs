@@ -115,6 +115,9 @@ async fn initialize_empty_schema<C: ConnectionTrait>(
     manager.create_table(tables::endpoints::routes()).await?;
     manager.create_table(tables::sessions::statement()).await?;
     manager
+        .create_index(indexes::response_sessions_expires_at())
+        .await?;
+    manager
         .create_table(tables::activities::statement())
         .await?;
     manager
@@ -214,6 +217,46 @@ impl<C: ConnectionTrait> SchemaInitializer<'_, C> {
                 "UPDATE identity_response_sessions
                  SET conversation_id = response_id
                  WHERE conversation_id IS NULL",
+            )
+            .await?;
+        self.db
+            .execute_unprepared(
+                "ALTER TABLE identity_response_sessions
+                 ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'legacy',
+                 ADD COLUMN IF NOT EXISTS protocol_format TEXT NOT NULL DEFAULT 'legacy_internal_v1',
+                 ADD COLUMN IF NOT EXISTS upstream_response_id TEXT,
+                 ADD COLUMN IF NOT EXISTS request_items_json TEXT,
+                 ADD COLUMN IF NOT EXISTS response_items_json TEXT,
+                 ADD COLUMN IF NOT EXISTS expires_at TEXT",
+            )
+            .await?;
+        self.create_index(indexes::response_sessions_expires_at())
+            .await?;
+        self.db
+            .execute_unprepared(
+                r#"DO $$
+                DECLARE
+                    fk_name text;
+                BEGIN
+                    SELECT con.conname
+                      INTO fk_name
+                      FROM pg_constraint con
+                      JOIN pg_class rel ON rel.oid = con.conrelid
+                      JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+                     WHERE nsp.nspname = current_schema()
+                       AND rel.relname = 'identity_response_sessions'
+                       AND con.contype = 'f'
+                       AND pg_get_constraintdef(con.oid) LIKE 'FOREIGN KEY (provider_id)%'
+                     LIMIT 1;
+
+                    IF fk_name IS NOT NULL THEN
+                        EXECUTE format(
+                            'ALTER TABLE identity_response_sessions DROP CONSTRAINT %I',
+                            fk_name
+                        );
+                    END IF;
+                END
+                $$;"#,
             )
             .await?;
         Ok(())

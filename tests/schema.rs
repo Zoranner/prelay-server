@@ -10,5 +10,7 @@ mod initialization;
 mod provider_sharing_migration;
 #[path = "schema/reconciliation.rs"]
 mod reconciliation;
+#[path = "schema/response_state_migration.rs"]
+mod response_state_migration;
 #[path = "schema/rollout_migration.rs"]
 mod rollout_migration;

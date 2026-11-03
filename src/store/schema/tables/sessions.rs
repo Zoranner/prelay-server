@@ -1,6 +1,6 @@
 use sea_query::{ColumnDef, ForeignKey, Iden, Table, TableCreateStatement};
 
-use super::{super::indexes, identity::Identities, providers::ProviderConfigs};
+use super::{super::indexes, identity::Identities};
 
 pub(in crate::store::schema) fn statement() -> TableCreateStatement {
     Table::create()
@@ -25,6 +25,22 @@ pub(in crate::store::schema) fn statement() -> TableCreateStatement {
         )
         .col(ColumnDef::new(ResponseSessions::Model).string().not_null())
         .col(
+            ColumnDef::new(ResponseSessions::Status)
+                .string()
+                .not_null()
+                .default("legacy"),
+        )
+        .col(
+            ColumnDef::new(ResponseSessions::ProtocolFormat)
+                .string()
+                .not_null()
+                .default("legacy_internal_v1"),
+        )
+        .col(ColumnDef::new(ResponseSessions::UpstreamResponseId).string())
+        .col(ColumnDef::new(ResponseSessions::RequestItemsJson).string())
+        .col(ColumnDef::new(ResponseSessions::ResponseItemsJson).string())
+        .col(ColumnDef::new(ResponseSessions::ExpiresAt).string())
+        .col(
             ColumnDef::new(ResponseSessions::InputMessagesJson)
                 .string()
                 .not_null(),
@@ -45,11 +61,6 @@ pub(in crate::store::schema) fn statement() -> TableCreateStatement {
                 .from(ResponseSessions::Table, ResponseSessions::IdentityId)
                 .to(Identities::Table, Identities::Id),
         )
-        .foreign_key(
-            ForeignKey::create()
-                .from(ResponseSessions::Table, ResponseSessions::ProviderId)
-                .to(ProviderConfigs::Table, ProviderConfigs::Id),
-        )
         .to_owned()
 }
 
@@ -63,6 +74,12 @@ pub(in crate::store::schema) enum ResponseSessions {
     ConversationId,
     ProviderId,
     Model,
+    Status,
+    ProtocolFormat,
+    UpstreamResponseId,
+    RequestItemsJson,
+    ResponseItemsJson,
+    ExpiresAt,
     InputMessagesJson,
     OutputItemsJson,
     CreatedAt,

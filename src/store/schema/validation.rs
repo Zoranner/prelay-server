@@ -61,6 +61,12 @@ pub(super) async fn response_session_schema_exists<C: ConnectionTrait>(
         "conversation_id",
         "provider_id",
         "model",
+        "status",
+        "protocol_format",
+        "upstream_response_id",
+        "request_items_json",
+        "response_items_json",
+        "expires_at",
         "input_messages_json",
         "output_items_json",
         "created_at",
@@ -69,7 +75,12 @@ pub(super) async fn response_session_schema_exists<C: ConnectionTrait>(
             return Ok(false);
         }
     }
-    Ok(true)
+    index_exists(
+        db,
+        "identity_response_sessions",
+        "idx_identity_response_sessions_expires_at",
+    )
+    .await
 }
 
 pub(super) async fn required_base_tables_exist<C: ConnectionTrait>(db: &C) -> Result<bool, DbErr> {

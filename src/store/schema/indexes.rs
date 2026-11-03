@@ -45,6 +45,15 @@ pub(super) fn response_sessions_primary_key() -> IndexCreateStatement {
         .to_owned()
 }
 
+pub(super) fn response_sessions_expires_at() -> IndexCreateStatement {
+    Index::create()
+        .name("idx_identity_response_sessions_expires_at")
+        .table(ResponseSessions::Table)
+        .col(ResponseSessions::ExpiresAt)
+        .if_not_exists()
+        .to_owned()
+}
+
 pub(super) fn activities_identity_created_at() -> IndexCreateStatement {
     Index::create()
         .name("idx_identity_activities_identity_created_at")

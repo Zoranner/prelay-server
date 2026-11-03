@@ -73,6 +73,25 @@ async fn index_exists(db: &DatabaseConnection, table: &str, index: &str) -> bool
     row.try_get::<i64>("", COUNT_COLUMN).unwrap() == 1
 }
 
+async fn provider_response_session_fk_exists(db: &DatabaseConnection) -> bool {
+    let sql = format!(
+        "SELECT COUNT(*) AS {COUNT_COLUMN}
+         FROM pg_constraint con
+         JOIN pg_class rel ON rel.oid = con.conrelid
+         JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+         WHERE nsp.nspname = current_schema()
+           AND rel.relname = 'identity_response_sessions'
+           AND con.contype = 'f'
+           AND pg_get_constraintdef(con.oid) LIKE 'FOREIGN KEY (provider_id)%'"
+    );
+    let row = db
+        .query_one_raw(Statement::from_string(DbBackend::Postgres, sql))
+        .await
+        .unwrap()
+        .unwrap();
+    row.try_get::<i64>("", COUNT_COLUMN).unwrap() > 0
+}
+
 async fn assert_string_column(db: &DatabaseConnection, table: &str, column: &str) {
     let column_type = column_type(db, table, column).await.to_ascii_uppercase();
     assert!(
@@ -215,6 +234,29 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
         "candidate_order must map to an i64-compatible BIGINT"
     );
     assert_string_column(db, "identity_response_sessions", "conversation_id").await;
+    for column in [
+        "status",
+        "protocol_format",
+        "upstream_response_id",
+        "request_items_json",
+        "response_items_json",
+        "expires_at",
+    ] {
+        assert_string_column(db, "identity_response_sessions", column).await;
+    }
+    assert!(
+        index_exists(
+            db,
+            "identity_response_sessions",
+            "idx_identity_response_sessions_expires_at"
+        )
+        .await,
+        "missing identity_response_sessions TTL index"
+    );
+    assert!(
+        !provider_response_session_fk_exists(db).await,
+        "identity_response_sessions.provider_id must not have a foreign key"
+    );
     for column in [
         "activity_id",
         "identity_id",
