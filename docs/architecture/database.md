@@ -44,7 +44,17 @@ PostgreSQL
 
 `activity_rollouts` 按线程文件记录 `thread_id`、`window_id`、`generation`、`start_line` 和 `end_line`；同一线程的多个活动通常共享一个 JSONL 文件，线程文件出现无法解析的完整行时，后续活动改用 `.recovered.jsonl` 分段，原文件保留。`activity_rollout_v2` 升级后，旧活动行的 `thread_id` 为空、行号区间为 0，旧活动级文件不迁移；读取方必须识别这种旧数据，不能把 `read_slice(path, 0, 0)` 当作旧正文。
 
-`identity_response_sessions` 保存 Responses 续接所需的完整输入和输出，内容使用 `ENCRYPTION_KEY` 加密保存，数据库和备份仍必须按敏感数据处理；它不是活动正文索引或统计来源。旧版本留下的明文行仍可读取，新写入使用密文。
+`identity_response_sessions` 保存 Responses 精确状态，主键仍是 `(response_id, identity_id)`。精确状态列包括：
+
+- `status`：`completed` 或 `legacy`。
+- `protocol_format`：精确状态为 `responses_items_v1`，旧行为 `legacy_internal_v1`。
+- `upstream_response_id`：上游响应 ID，只作元数据。
+- `request_items_json`、`response_items_json`：本轮实际发送的 input items 和上游返回的 output items，使用 `ENCRYPTION_KEY` 加密保存。
+- `expires_at`：普通响应的过期时间，创建后 30 天。
+
+`provider_id` 是历史元数据，不做硬外键；删除供应商不阻断历史状态读取。`conversation_id` 是内部活动分组，不是协议 `conversation`。只有 `status='completed'`、`protocol_format='responses_items_v1'` 且未过期的行可以作为 `previous_response_id`；legacy、未完成和过期行统一按父响应不存在处理。服务启动时执行一次过期状态清理，之后每日执行；清理只删除 `expires_at` 已过期的行，不删除 legacy 行。旧列 `input_messages_json`、`output_items_json` 继续由新的保存函数写入派生值，只保留一个迁移周期，不再作为精确续接来源。
+
+数据库和备份仍必须按敏感数据处理；旧版本留下的明文行仍可读取，新写入使用密文。
 
 实体关系、唯一约束、外键和索引由统一 schema 初始化模块定义。全新空库首次启动时创建完整当前 schema；已有完整 schema 在启动时执行幂等迁移（补齐缺失列、删除已废弃的遗留表、清理已退出链路的字段、按目录回填模型清单、按供应商清单对账接入点模型）；仅存在部分业务表时拒绝启动，要求创建新的部署。每一项跨资源写入仍须由单个事务完成；失败时不得留下部分供应商、空接入点或失配的模型映射。
 
@@ -86,6 +96,7 @@ postgres://<user>:<password>@<host>:5432/<database>
 - 身份、供应商、接入点、模型映射、会话和请求记录具有相同的约束与可见范围。
 - 供应商及模型、接入点及映射的完整保存保持事务原子性。
 - 设备凭据轮换、接入点令牌认证、候选供应商解析和失活身份清理保持既有语义。
+- Responses 精确状态按身份隔离，legacy、过期和未完成状态不可续接，供应商删除不影响历史读取。
 - 请求记录、时间范围和统计聚合返回一致结果。
 - 重复资源、跨身份访问、无效引用和数据库约束失败均返回既有稳定错误码，且不泄露数据库细节。
 

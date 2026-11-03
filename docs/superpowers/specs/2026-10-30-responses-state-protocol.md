@@ -141,3 +141,14 @@ expires_at             text null            -- RFC3339；普通响应 created_at
 - 不为了填充状态表把客户端的 `store=false` 改写为 `true`；是否保存由客户端请求决定。
 - 不在 `store=false` 时写入响应状态。
 - 不在 `previous_response_id` 缺失或过期时伪造历史。
+
+## 实现落点
+
+- 入口校验、父状态加载和本地 ID 生成：`src/inbound/v1/responses/handler.rs`。
+- 精确 items 拼接：`src/inbound/v1/responses/state.rs`。
+- 原生与聊天桥接的请求编码和状态保存：`src/inbound/v1/responses/native.rs`、`src/inbound/v1/responses/chat.rs`。
+- 精确状态读写、加密和 TTL 清理：`src/store/storage/response_states.rs`。
+- 流式响应 ID 改写：`src/inbound/v1/responses/stream_rewrite.rs`。
+- 启动清理和每日任务：`src/bootstrap/serve.rs`、`src/bootstrap/tasks.rs`。
+
+回归覆盖父链精确 items、`store=false` 不可续接、跨身份隔离、过期和 legacy 拒绝、流式本地 ID、item/call ID 保持不变、精确输出项保存、供应商删除后历史可读，以及启动清理失败的安全日志。

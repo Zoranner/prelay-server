@@ -95,6 +95,16 @@ Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.4.3`，并以只读方式
 - 服务自身不提供 TLS。暴露到非受信网络时，部署环境必须提供 TLS 与网络访问控制。
 - 通用 `/proxy` 入口已移除，不应恢复。
 
+## Responses 状态
+
+`/v1/responses` 的响应 `id` 由 Prelay 生成，格式为 `resp_<uuid>`。客户端只能把这个 ID 用作 `previous_response_id`；上游返回的响应 ID 只作为 `upstream_response_id` 元数据保存。
+
+- `store` 缺省为 `true`。普通响应保存 30 天，过期后按父响应不存在处理。当前 Codex 显式发送 `store=false`，这部分流量不会写入状态表。
+- `store=false` 的响应仍返回本地 `resp_` ID，但不保存状态，不能作为下一次请求的 `previous_response_id`。
+- 使用 `previous_response_id` 时，服务端按当前身份读取上一轮已完成的精确 input/output items，并与本次输入拼接后发送；上一轮的 `instructions` 不继承。
+- `conversation` 尚未实现，请求中出现时返回 `unsupported_parameter`；不能和 `previous_response_id` 同时使用。
+- 流式事件中的 `response.id` 和顶层 `response_id` 使用 Prelay ID；输出项的 `item.id`、`item_id` 和 `call_id` 保持上游值。
+
 ## 上游故障转移
 
 上游故障转移属于服务端部署策略，不向桌面客户端或最终用户开放。以下变量在启动时读取，修改后需要重启服务：
@@ -109,7 +119,7 @@ Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.4.3`，并以只读方式
 
 - `ACTIVITY_ROLLOUT_DIR`：活动 JSONL 的根目录，默认 `data/sessions`，必须非空。
 
-`identity_response_sessions` 保存 Responses 续接所需的完整输入和输出，内容使用 `ENCRYPTION_KEY` 加密保存，数据库和备份仍必须按敏感数据处理；它不是活动正文索引或统计来源。旧版本留下的明文行仍可读取，新写入使用密文。
+`identity_response_sessions` 保存 `store=true` 的精确 Responses 状态：本轮实际发送的 input items、上游返回的 output items、完成状态和过期时间。请求项和输出项使用 `ENCRYPTION_KEY` 加密保存，数据库和备份仍必须按敏感数据处理；它不是活动正文索引或统计来源。旧版本留下的行标记为 `legacy_internal_v1`，不能作为 `previous_response_id` 续接。`provider_id` 只是历史元数据，删除供应商不阻断状态读取；`conversation_id` 是内部活动分组，不是协议 `conversation`。服务启动时和之后每日各执行一次过期状态清理，只删除 `expires_at` 已过期的精确状态，不删除 legacy 行。
 
 入口请求体仍受 `PROTOCOL_MAX_REQUEST_BODY_BYTES` 限制，默认 `256 MiB`；该限制只决定单次请求能否被服务接收，不截断已经接收的正文。
 
