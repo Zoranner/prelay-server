@@ -182,6 +182,8 @@ async fn cleanup_removes_one_shared_thread_file_for_multiple_activities() {
     }
     assert_eq!(rollout_paths[0], rollout_paths[1]);
     assert!(rollout_store.absolute_path(&rollout_paths[0]).exists());
+    let index_path = format!("{}.index", rollout_paths[0]);
+    assert!(rollout_store.absolute_path(&index_path).exists());
 
     let deleted = activity_store
         .delete_inactive_identities(Utc::now() + Duration::days(91), Duration::days(90))
@@ -189,6 +191,7 @@ async fn cleanup_removes_one_shared_thread_file_for_multiple_activities() {
         .expect("clean shared-thread identity");
     assert_eq!(deleted, 1);
     assert!(!rollout_store.absolute_path(&rollout_paths[0]).exists());
+    assert!(!rollout_store.absolute_path(&index_path).exists());
     assert!(storage
         .list_activities(&identity.identity_id, 10)
         .await

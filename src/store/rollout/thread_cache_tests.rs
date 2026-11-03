@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use serde_json::json;
 
 use super::{RolloutStore, ThreadSource};
@@ -51,6 +53,8 @@ async fn reuses_cached_thread_state_after_the_first_load() {
         .finish(RolloutStatus::Completed)
         .expect("finish cached thread");
 
+    std::fs::remove_file(root.path().join("identity-1/thread-cache.jsonl.index"))
+        .expect("remove persisted index");
     let fresh = RolloutStore::new(root.path().to_path_buf());
     let loaded = fresh
         .resolve_thread_source("identity-1", "thread-cache")
@@ -61,6 +65,240 @@ async fn reuses_cached_thread_state_after_the_first_load() {
         .resolve_thread_source("identity-1", "thread-cache")
         .expect("load cached thread");
     assert!(matches!(cached, ThreadSource::Cached(_)));
+}
+
+#[tokio::test]
+async fn reuses_a_persisted_thread_index_after_restart() {
+    let root = tempfile::tempdir().expect("temp rollout root");
+    let store = RolloutStore::new(root.path().to_path_buf());
+    let session = session("thread-persisted");
+    let mut writer = store
+        .begin(
+            "identity-1",
+            &session,
+            test_meta("activity-persisted", "thread-persisted"),
+            vec![message(EventPhase::Request, json!("first"))],
+        )
+        .await
+        .expect("begin persisted thread");
+    writer
+        .finish(RolloutStatus::Completed)
+        .expect("finish persisted thread");
+
+    let restarted = RolloutStore::new(root.path().to_path_buf());
+    let loaded = restarted
+        .resolve_thread_source("identity-1", "thread-persisted")
+        .expect("load persisted thread");
+
+    let ThreadSource::Cached(state) = loaded else {
+        panic!("expected the persisted index to be reused");
+    };
+    assert_eq!(state.relative_path, "identity-1/thread-persisted.jsonl");
+    assert_eq!(state.line_count, 3);
+    assert_eq!(
+        state
+            .content
+            .matches_request_prefix(&[message(EventPhase::Request, json!("first"))])
+            .expect("match persisted content hash"),
+        Some(1)
+    );
+}
+
+#[tokio::test]
+async fn reuses_a_persisted_index_for_a_recovered_segment() {
+    let root = tempfile::tempdir().expect("temp rollout root");
+    let store = RolloutStore::new(root.path().to_path_buf());
+    let session = session("thread-recovered-index");
+    let mut first = store
+        .begin(
+            "identity-1",
+            &session,
+            test_meta("activity-recovered-first", "thread-recovered-index"),
+            vec![message(EventPhase::Request, json!("first"))],
+        )
+        .await
+        .expect("begin base thread");
+    first
+        .finish(RolloutStatus::Completed)
+        .expect("finish base thread");
+
+    let base_path = root.path().join("identity-1/thread-recovered-index.jsonl");
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&base_path)
+        .expect("open base thread");
+    writeln!(file, "{{not-json}}").expect("write corrupt line");
+    drop(file);
+
+    let mut recovered = store
+        .begin(
+            "identity-1",
+            &session,
+            test_meta("activity-recovered-second", "thread-recovered-index"),
+            vec![message(EventPhase::Request, json!("second"))],
+        )
+        .await
+        .expect("begin recovered segment");
+    let summary = recovered
+        .finish(RolloutStatus::Completed)
+        .expect("finish recovered segment");
+    assert!(summary
+        .relative_path
+        .ends_with("thread-recovered-index.recovered.jsonl"));
+
+    let restarted = RolloutStore::new(root.path().to_path_buf());
+    let loaded = restarted
+        .resolve_thread_source("identity-1", "thread-recovered-index")
+        .expect("load recovered index");
+
+    let ThreadSource::Cached(state) = loaded else {
+        panic!("expected the recovered segment index to be reused");
+    };
+    assert_eq!(state.relative_path, summary.relative_path);
+}
+
+#[tokio::test]
+async fn falls_back_to_a_full_read_when_the_persisted_index_is_missing() {
+    let root = tempfile::tempdir().expect("temp rollout root");
+    let store = RolloutStore::new(root.path().to_path_buf());
+    let session = session("thread-index-missing");
+    let mut writer = store
+        .begin(
+            "identity-1",
+            &session,
+            test_meta("activity-index-missing", "thread-index-missing"),
+            vec![message(EventPhase::Request, json!("first"))],
+        )
+        .await
+        .expect("begin thread");
+    writer
+        .finish(RolloutStatus::Completed)
+        .expect("finish thread");
+
+    std::fs::remove_file(
+        root.path()
+            .join("identity-1/thread-index-missing.jsonl.index"),
+    )
+    .expect("remove persisted thread index");
+
+    let restarted = RolloutStore::new(root.path().to_path_buf());
+    let loaded = restarted
+        .resolve_thread_source("identity-1", "thread-index-missing")
+        .expect("load thread");
+
+    assert!(matches!(loaded, ThreadSource::Loaded(_, _)));
+}
+
+#[tokio::test]
+async fn ignores_a_stale_persisted_index_after_an_external_append() {
+    let root = tempfile::tempdir().expect("temp rollout root");
+    let store = RolloutStore::new(root.path().to_path_buf());
+    let session = session("thread-stale-index");
+    let mut writer = store
+        .begin(
+            "identity-1",
+            &session,
+            test_meta("activity-stale-index", "thread-stale-index"),
+            vec![message(EventPhase::Request, json!("first"))],
+        )
+        .await
+        .expect("begin thread");
+    writer
+        .finish(RolloutStatus::Completed)
+        .expect("finish thread");
+
+    let thread_path = root.path().join("identity-1/thread-stale-index.jsonl");
+    let external_event = json!({
+        "seq": 99,
+        "timestamp": "2026-11-03T00:00:00Z",
+        "type": "message",
+        "payload": {
+            "phase": "request",
+            "role": "user",
+            "content": "external"
+        }
+    });
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&thread_path)
+        .expect("open thread for external append");
+    writeln!(file, "{external_event}").expect("append external event");
+    drop(file);
+
+    let restarted = RolloutStore::new(root.path().to_path_buf());
+    let loaded = restarted
+        .resolve_thread_source("identity-1", "thread-stale-index")
+        .expect("load stale-index thread");
+
+    assert!(matches!(loaded, ThreadSource::Loaded(_, _)));
+}
+
+#[tokio::test]
+async fn falls_back_to_a_full_read_when_the_persisted_index_is_corrupt() {
+    let root = tempfile::tempdir().expect("temp rollout root");
+    let store = RolloutStore::new(root.path().to_path_buf());
+    let session = session("thread-corrupt-index");
+    let mut writer = store
+        .begin(
+            "identity-1",
+            &session,
+            test_meta("activity-corrupt-index", "thread-corrupt-index"),
+            vec![message(EventPhase::Request, json!("first"))],
+        )
+        .await
+        .expect("begin thread");
+    writer
+        .finish(RolloutStatus::Completed)
+        .expect("finish thread");
+    std::fs::write(
+        root.path()
+            .join("identity-1/thread-corrupt-index.jsonl.index"),
+        b"{not-json",
+    )
+    .expect("corrupt persisted thread index");
+
+    let restarted = RolloutStore::new(root.path().to_path_buf());
+    let loaded = restarted
+        .resolve_thread_source("identity-1", "thread-corrupt-index")
+        .expect("load thread");
+
+    assert!(matches!(loaded, ThreadSource::Loaded(_, _)));
+}
+
+#[tokio::test]
+async fn skips_the_index_when_the_thread_changed_during_writing() {
+    let root = tempfile::tempdir().expect("temp rollout root");
+    let store = RolloutStore::new(root.path().to_path_buf());
+    let session = session("thread-concurrent-write");
+    let mut writer = store
+        .begin(
+            "identity-1",
+            &session,
+            test_meta("activity-concurrent-write", "thread-concurrent-write"),
+            vec![message(EventPhase::Request, json!("first"))],
+        )
+        .await
+        .expect("begin thread");
+    let mut external = std::fs::OpenOptions::new()
+        .append(true)
+        .open(writer.final_path())
+        .expect("open external writer");
+    external
+        .write_all(
+            br#"{"seq":99,"timestamp":"2026-11-03T00:00:00Z","type":"message","payload":{"phase":"request","role":"user","content":"external"}}"#,
+        )
+        .expect("append external event");
+    external.write_all(b"\n").expect("terminate external event");
+    drop(external);
+
+    writer
+        .finish(RolloutStatus::Completed)
+        .expect("finish thread");
+
+    assert!(!root
+        .path()
+        .join("identity-1/thread-concurrent-write.jsonl.index")
+        .exists());
 }
 
 #[tokio::test]
@@ -82,6 +320,8 @@ async fn forgetting_a_thread_drops_its_cached_state() {
         .expect("finish forgotten thread");
 
     store.forget_relative_paths(&["identity-1/thread-forget.jsonl".to_string()]);
+    std::fs::remove_file(root.path().join("identity-1/thread-forget.jsonl.index"))
+        .expect("remove persisted index");
 
     let loaded = store
         .resolve_thread_source("identity-1", "thread-forget")

@@ -12,6 +12,7 @@ use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use uuid::Uuid;
 
 mod cache;
+mod index;
 mod read;
 mod scan;
 mod support;
@@ -169,6 +170,7 @@ impl RolloutStore {
                     })??;
                     state = loaded_state;
                     self.cache_thread(cache_key.clone(), state.clone());
+                    self.persist_thread_index(identity_id, &session.thread_id, &state);
                     window_changed = state.window_changed(session);
                     if window_changed {
                         0
@@ -188,7 +190,12 @@ impl RolloutStore {
         let prior_generation = state.generation;
         let prior_seq = state.seq;
         let prior_line_count = state.line_count;
+        let prior_len = state.stamp.len;
         let prior_content = state.content;
+        let thread_relative = format!("{identity_id}/{}.jsonl", session.thread_id);
+        let thread_path = self.checked_absolute_path(&thread_relative)?;
+        let index_relative = format!("{thread_relative}.index");
+        let index_path = self.checked_absolute_path(&index_relative)?;
         let file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -201,6 +208,9 @@ impl RolloutStore {
             thread_generation: prior_generation,
             relative_path,
             final_path,
+            thread_relative,
+            thread_path,
+            index_path,
             file: Some(BufWriter::new(file)),
             _lock: Some(guard),
             hasher: Sha256::new(),
@@ -209,6 +219,7 @@ impl RolloutStore {
             start_line: prior_line_count + 1,
             end_line: prior_line_count,
             byte_size: 0,
+            expected_len: prior_len,
             event_count: 0,
             content: prior_content,
             cache_key,
@@ -261,6 +272,9 @@ pub struct RolloutWriter {
     thread_generation: Option<u64>,
     relative_path: String,
     final_path: PathBuf,
+    thread_relative: String,
+    thread_path: PathBuf,
+    index_path: PathBuf,
     file: Option<BufWriter<std::fs::File>>,
     _lock: Option<OwnedMutexGuard<()>>,
     hasher: Sha256,
@@ -269,6 +283,7 @@ pub struct RolloutWriter {
     start_line: u64,
     end_line: u64,
     byte_size: u64,
+    expected_len: u64,
     event_count: u64,
     content: ContentHash,
     cache_key: PathBuf,
@@ -348,22 +363,30 @@ impl RolloutWriter {
             file.flush()?;
             file.get_ref().sync_all()?;
         }
+        let expected_len = self.expected_len + self.byte_size;
         match fs::metadata(&self.final_path) {
+            Ok(metadata) if metadata.len() != expected_len => {
+                tracing::warn!(
+                    rollout_path = %self.final_path.display(),
+                    expected_len,
+                    actual_len = metadata.len(),
+                    "rollout file length changed outside the writer; skipping cache update"
+                );
+            }
             Ok(metadata) => {
+                let state = ThreadState {
+                    relative_path: self.relative_path.clone(),
+                    stamp: FileStamp::from_metadata(&metadata),
+                    line_count: self.line_count,
+                    seq: self.seq,
+                    generation: self.thread_generation,
+                    content: self.content.clone(),
+                };
                 self.cache
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .insert(
-                        self.cache_key.clone(),
-                        ThreadState {
-                            relative_path: self.relative_path.clone(),
-                            stamp: FileStamp::from_metadata(&metadata),
-                            line_count: self.line_count,
-                            seq: self.seq,
-                            generation: self.thread_generation,
-                            content: self.content.clone(),
-                        },
-                    );
+                    .insert(self.cache_key.clone(), state.clone());
+                self.persist_index(&state);
             }
             Err(error) => {
                 tracing::warn!(

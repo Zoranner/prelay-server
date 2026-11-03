@@ -163,9 +163,14 @@ impl RolloutStore {
                 return Ok(ThreadSource::Cached(state));
             }
         }
+        if let Some(state) = self.load_persisted_thread(identity_id, thread_id)? {
+            self.cache_thread(key, state.clone());
+            return Ok(ThreadSource::Cached(state));
+        }
 
         let (state, events) = self.load_thread_source(identity_id, thread_id)?;
         self.cache_thread(key, state.clone());
+        self.persist_thread_index(identity_id, thread_id, &state);
         Ok(ThreadSource::Loaded(state, events))
     }
 

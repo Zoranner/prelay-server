@@ -10,19 +10,24 @@ use crate::domain::activity::{
 #[derive(Debug, Clone)]
 pub(super) struct ContentHash {
     pub(super) count: u64,
-    hasher: Sha256,
+    digest: [u8; 32],
 }
 
 impl Default for ContentHash {
     fn default() -> Self {
-        Self {
-            count: 0,
-            hasher: Sha256::new(),
-        }
+        Self::from_parts(0, [0; 32])
     }
 }
 
 impl ContentHash {
+    pub(super) fn from_parts(count: u64, digest: [u8; 32]) -> Self {
+        Self { count, digest }
+    }
+
+    pub(super) fn digest_bytes(&self) -> [u8; 32] {
+        self.digest
+    }
+
     pub(super) fn from_events(events: &[RolloutEvent]) -> Result<Self, RolloutError> {
         let mut chain = Self::default();
         for event in events
@@ -36,8 +41,7 @@ impl ContentHash {
 
     pub(super) fn append(&mut self, event_type: &str, payload: &Value) -> Result<(), RolloutError> {
         let canonical = serde_json::to_vec(&(event_type, comparison_payload(payload)))?;
-        self.hasher.update((canonical.len() as u64).to_le_bytes());
-        self.hasher.update(canonical);
+        self.digest = chain_digest(self.digest, &canonical);
         self.count += 1;
         Ok(())
     }
@@ -50,8 +54,7 @@ impl ContentHash {
             return Ok(Some(0));
         }
 
-        let expected = self.hasher.clone().finalize();
-        let mut hasher = Sha256::new();
+        let mut digest = [0; 32];
         let mut matched = 0usize;
         for body in request {
             let (event_type, payload) = event_parts(body)?;
@@ -59,11 +62,10 @@ impl ContentHash {
                 return Ok(None);
             }
             let canonical = serde_json::to_vec(&(event_type, comparison_payload(&payload)))?;
-            hasher.update((canonical.len() as u64).to_le_bytes());
-            hasher.update(canonical);
+            digest = chain_digest(digest, &canonical);
             matched += 1;
             if matched as u64 == self.count {
-                return Ok((hasher.finalize() == expected).then_some(matched));
+                return Ok((digest == self.digest).then_some(matched));
             }
         }
         Ok(None)
@@ -71,8 +73,16 @@ impl ContentHash {
 
     #[cfg(test)]
     fn digest(&self) -> [u8; 32] {
-        self.hasher.clone().finalize().into()
+        self.digest
     }
+}
+
+fn chain_digest(previous: [u8; 32], canonical: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(previous);
+    hasher.update((canonical.len() as u64).to_le_bytes());
+    hasher.update(canonical);
+    hasher.finalize().into()
 }
 
 pub(super) fn is_safe_path_segment(value: &str) -> bool {

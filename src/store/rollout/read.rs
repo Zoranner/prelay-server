@@ -12,7 +12,7 @@ use super::{
 };
 use crate::domain::activity::rollout::{RolloutError, RolloutEvent};
 
-const MAX_RECOVERED_SEGMENTS: usize = 10;
+pub(super) const MAX_RECOVERED_SEGMENTS: usize = 10;
 
 enum ThreadCandidate {
     Missing,
@@ -188,6 +188,15 @@ fn recovered_thread_path(identity_id: &str, thread_id: &str, index: usize) -> St
     } else {
         format!("{identity_id}/{thread_id}.recovered-{index}.jsonl")
     }
+}
+
+pub(super) fn thread_candidate_paths(identity_id: &str, thread_id: &str) -> Vec<String> {
+    let mut paths = Vec::with_capacity(MAX_RECOVERED_SEGMENTS + 1);
+    paths.push(format!("{identity_id}/{thread_id}.jsonl"));
+    for index in 1..=MAX_RECOVERED_SEGMENTS {
+        paths.push(recovered_thread_path(identity_id, thread_id, index));
+    }
+    paths
 }
 
 fn empty_slice() -> RolloutSlice {

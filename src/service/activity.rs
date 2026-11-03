@@ -236,6 +236,7 @@ impl ActivityStore {
                     continue;
                 }
             };
+            self.rollouts.remove_thread_index(relative_path);
             match tokio::fs::remove_file(&path).await {
                 Ok(()) => {
                     if let Some(parent) = path.parent() {
