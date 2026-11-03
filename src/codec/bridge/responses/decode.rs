@@ -158,6 +158,9 @@ pub fn validate_responses_bridge_payload(value: &Value) -> Result<(), AppError> 
     };
     if let Some(items) = input.as_array() {
         for item in items {
+            if item.get("phase").is_some_and(|phase| !phase.is_null()) {
+                return Err(unsupported_bridge_feature("assistant message phase"));
+            }
             let item_type = item.get("type").and_then(Value::as_str);
             match item_type {
                 Some("message" | "function_call" | "function_call_output") | None => {}

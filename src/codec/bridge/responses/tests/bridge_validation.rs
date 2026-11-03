@@ -44,3 +44,18 @@ fn rejects_instruction_items() {
 
     assert!(format!("{error:?}").contains("instruction items"));
 }
+
+#[test]
+fn rejects_assistant_message_phase() {
+    let error = validate_responses_bridge_payload(&json!({
+        "input": [{
+            "type": "message",
+            "role": "assistant",
+            "phase": "commentary",
+            "content": [{ "type": "output_text", "text": "checking" }]
+        }]
+    }))
+    .expect_err("assistant message phase cannot be represented by the chat bridge");
+
+    assert!(format!("{error:?}").contains("assistant message phase"));
+}
