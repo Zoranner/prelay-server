@@ -10,6 +10,7 @@ pub(super) mod image_budget;
 mod native;
 mod sessions;
 mod state;
+mod stream_rewrite;
 
 #[cfg(test)]
 mod tests;

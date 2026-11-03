@@ -31,6 +31,7 @@ use crate::{
 use super::{
     activity::{record_upstream_failure, upstream_error_details, UpstreamFailure},
     candidate::ResponseBridgeContext,
+    stream_rewrite::rewrite_response_ids,
 };
 
 pub(super) struct NativeResponseRequest<'a> {
@@ -176,6 +177,7 @@ pub(super) async fn create_native_response(
                 return Err(error);
             }
         };
+        let stream = rewrite_response_ids(stream, context.response_id.clone());
         let session = request.store.then(|| StreamSession {
             previous_response_id: previous_response_id.clone(),
             conversation_id: context.conversation_id.clone(),

@@ -3,10 +3,12 @@ use std::sync::Arc;
 use tokio::sync::Notify;
 
 mod candidates;
+mod rewriting;
 
 pub(super) use candidates::{
     spawn_failing_chat_upstream, spawn_invalid_chat_upstream, spawn_status_chat_upstream,
 };
+pub(super) use rewriting::spawn_rewriting_native_responses_upstream;
 
 pub(super) fn responses_sse_from_text_chunks(chunks: &[&str]) -> String {
     let mut output = String::new();

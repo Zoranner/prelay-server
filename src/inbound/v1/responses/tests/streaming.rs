@@ -1,6 +1,71 @@
 use super::*;
 
 #[tokio::test]
+async fn native_streaming_returns_local_id_and_persists_exact_state() {
+    let upstream = spawn_rewriting_native_responses_upstream().await;
+    let state = crate::test_support::test_state().await;
+    let provider = test_provider("gpt-4.1", "openai", &upstream, "sk-upstream")
+        .await
+        .expect("create provider");
+    let auth = create_test_endpoint_auth(&state.storage, &provider, "gpt-4.1", "gpt-4.1").await;
+    let identity_id = auth.access.0.identity_id.clone();
+
+    let response = create_response(
+        State(state.clone()),
+        auth.access,
+        axum::Json(json!({
+            "model": "gpt-4.1",
+            "input": "hello",
+            "stream": true,
+            "store": true
+        })),
+    )
+    .await
+    .expect("create response")
+    .into_response();
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("read body");
+    let body = String::from_utf8(body.to_vec()).expect("utf8 body");
+
+    let completed = body
+        .lines()
+        .find(|line| line.contains("\"type\":\"response.completed\""))
+        .and_then(|line| line.strip_prefix("data: "))
+        .expect("completed event");
+    let completed: serde_json::Value =
+        serde_json::from_str(completed).expect("completed event json");
+    let local_id = completed["response"]["id"]
+        .as_str()
+        .expect("local response id");
+
+    assert!(local_id.starts_with("resp_"));
+    assert_ne!(local_id, "resp_upstream");
+    assert_eq!(completed["response_id"], local_id);
+    assert!(body.contains(r#""item":{"id":"item_upstream""#));
+    assert!(body.contains(r#""call_id":"call_1""#));
+    assert!(body.contains(r#""item_id":"item_upstream""#));
+    assert!(body.ends_with("data: [DONE]\n\n"));
+
+    let stored = state
+        .storage
+        .load_response_state(&identity_id, local_id)
+        .await
+        .expect("load response state")
+        .expect("response state exists");
+    assert_eq!(
+        stored.upstream_response_id.as_deref(),
+        Some("resp_upstream")
+    );
+    assert_eq!(
+        stored.request_items,
+        json!([{ "role": "user", "content": "hello" }])
+    );
+    assert_eq!(stored.response_items[0]["type"], "reasoning");
+    assert_eq!(stored.response_items[1]["call_id"], "call_1");
+}
+
+#[tokio::test]
 async fn returns_responses_sse_when_stream_is_true() {
     let upstream = spawn_streaming_chat_upstream().await;
     let state = crate::test_support::test_state().await;
@@ -15,9 +80,10 @@ async fn returns_responses_sse_when_stream_is_true() {
     let auth =
         create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
             .await;
+    let identity_id = auth.access.0.identity_id.clone();
 
     let response = create_response(
-        State(state),
+        State(state.clone()),
         auth.access,
         axum::Json(json!({
             "model": "deepseek-chat",
@@ -44,6 +110,31 @@ async fn returns_responses_sse_when_stream_is_true() {
     assert!(body.contains("\"delta\":\"hel\""));
     assert!(body.contains("\"delta\":\"lo\""));
     assert!(body.ends_with("data: [DONE]\n\n"));
+
+    let completed = body
+        .lines()
+        .find(|line| line.contains("\"type\":\"response.completed\""))
+        .and_then(|line| line.strip_prefix("data: "))
+        .expect("completed event");
+    let completed: serde_json::Value =
+        serde_json::from_str(completed).expect("completed event json");
+    let local_id = completed["response"]["id"]
+        .as_str()
+        .expect("local response id");
+    assert!(local_id.starts_with("resp_"));
+    assert_eq!(
+        completed["response"]["output"][0]["content"][0]["text"],
+        "hello"
+    );
+
+    let stored = state
+        .storage
+        .load_response_state(&identity_id, local_id)
+        .await
+        .expect("load response state")
+        .expect("response state exists");
+    assert_eq!(stored.upstream_response_id, None);
+    assert_eq!(stored.response_items, completed["response"]["output"]);
 }
 
 #[tokio::test]
