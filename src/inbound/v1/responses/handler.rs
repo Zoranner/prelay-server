@@ -14,14 +14,16 @@ use crate::{
         auth::CurrentProtocolAccess, candidates::run_endpoint_model_candidates,
         endpoint_resolver::resolve_language_model_candidates,
     },
+    store::storage::ResponseState,
     AppState,
 };
 
-use super::{candidate::create_response_with_candidate, sessions::conversation_id_for_request};
+use super::candidate::create_response_with_candidate;
 
 pub(super) struct ResponseCandidateRequest {
     pub(super) payload: Arc<Value>,
     pub(super) request: Arc<InternalRequest>,
+    pub(super) parent_state: Option<Arc<ResponseState>>,
     pub(super) response_id: String,
     pub(super) model_requested: String,
     pub(super) is_streaming: bool,
@@ -42,12 +44,21 @@ pub(super) async fn create_response(
     let is_streaming = request.stream;
     let response_id = format!("resp_{}", uuid::Uuid::new_v4().simple());
     let previous_response_id = request.previous_response_id.clone();
-    let conversation_id = conversation_id_for_request(
-        &state.storage,
-        &access.identity_id,
-        previous_response_id.as_deref(),
-    )
-    .await?;
+    let parent_state = match previous_response_id.as_deref() {
+        Some(response_id) => state
+            .storage
+            .load_response_state(&access.identity_id, response_id)
+            .await?
+            .map(Arc::new),
+        None => None,
+    };
+    if previous_response_id.is_some() && parent_state.is_none() {
+        return Err(AppError::openai_previous_response_not_found());
+    }
+    let conversation_id = parent_state
+        .as_ref()
+        .and_then(|parent| parent.conversation_id.clone())
+        .unwrap_or_else(|| format!("conv_{}", uuid::Uuid::new_v4().simple()));
     let candidates =
         resolve_language_model_candidates(&state, &access, &request.model, "responses").await?;
     let (response, provider_id) = run_endpoint_model_candidates(
@@ -61,6 +72,7 @@ pub(super) async fn create_response(
                 ResponseCandidateRequest {
                     payload: Arc::clone(&payload),
                     request: Arc::clone(&request),
+                    parent_state: parent_state.clone(),
                     response_id: response_id.clone(),
                     model_requested: model_requested.clone(),
                     is_streaming,

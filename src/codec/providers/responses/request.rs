@@ -41,20 +41,33 @@ pub fn encode_responses_request(request: &InternalRequest) -> Value {
     value
 }
 
-/// 原生 Responses 直通的上行请求体：按原 payload 写出，只替换顶层 `model`。
+/// 原生 Responses 直通的上行请求体：按原 payload 写出，替换顶层 `model`，
+/// 移除本地状态字段，并固定 `store=false`。
 ///
 /// 直通时 payload 可能就是几十 MB（长会话、截图），为换一个模型名深拷贝整个
 /// `Value` 代价过高；这里直接序列化写出，结果与“先替换 `model` 再序列化”一致。
-pub fn encode_native_responses_request_body(payload: &Value, model: &str) -> Vec<u8> {
+pub fn encode_native_responses_request_body(
+    payload: &Value,
+    model: &str,
+    input_items: Option<&[Value]>,
+) -> Vec<u8> {
     let mut body = Vec::new();
-    serde_json::to_writer(&mut body, &PayloadWithModel { payload, model })
-        .expect("serializing a JSON payload into a Vec cannot fail");
+    serde_json::to_writer(
+        &mut body,
+        &PayloadWithModel {
+            payload,
+            model,
+            input_items,
+        },
+    )
+    .expect("serializing a JSON payload into a Vec cannot fail");
     body
 }
 
 struct PayloadWithModel<'a> {
     payload: &'a Value,
     model: &'a str,
+    input_items: Option<&'a [Value]>,
 }
 
 impl Serialize for PayloadWithModel<'_> {
@@ -66,18 +79,42 @@ impl Serialize for PayloadWithModel<'_> {
             return self.payload.serialize(serializer);
         };
 
-        let mut map = serializer.serialize_map(Some(object.len().max(1)))?;
-        let mut replaced = false;
+        let mut map = serializer.serialize_map(Some(object.len().max(3)))?;
+        let mut replaced_model = false;
+        let mut wrote_store = false;
+        let mut wrote_input = false;
         for (key, value) in object {
-            if key == "model" {
-                map.serialize_entry(key, self.model)?;
-                replaced = true;
-            } else {
-                map.serialize_entry(key, value)?;
+            match key.as_str() {
+                "model" => {
+                    map.serialize_entry(key, self.model)?;
+                    replaced_model = true;
+                }
+                "store" => {
+                    map.serialize_entry(key, &false)?;
+                    wrote_store = true;
+                }
+                "previous_response_id" | "conversation" => {}
+                "input" => {
+                    if let Some(items) = self.input_items {
+                        map.serialize_entry(key, items)?;
+                        wrote_input = true;
+                    } else {
+                        map.serialize_entry(key, value)?;
+                    }
+                }
+                _ => map.serialize_entry(key, value)?,
             }
         }
-        if !replaced {
+        if !replaced_model {
             map.serialize_entry("model", self.model)?;
+        }
+        if !wrote_store {
+            map.serialize_entry("store", &false)?;
+        }
+        if let Some(items) = self.input_items {
+            if !wrote_input {
+                map.serialize_entry("input", items)?;
+            }
         }
         map.end()
     }

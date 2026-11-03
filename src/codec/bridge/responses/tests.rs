@@ -1,13 +1,15 @@
 use serde_json::json;
 
 use super::{
-    decode_responses_request, validate_internal_request_for_bridge,
+    decode_items_for_chat_bridge, decode_responses_request, validate_internal_request_for_bridge,
     validate_responses_bridge_payload,
 };
 use crate::codec::internal::{
     InternalContentPart, InternalImagePart, InternalMessage, InternalRequest, InternalRole,
     InternalToolCall,
 };
+#[path = "tests/items.rs"]
+mod items;
 #[path = "tests/parameter_validation.rs"]
 mod parameter_validation;
 

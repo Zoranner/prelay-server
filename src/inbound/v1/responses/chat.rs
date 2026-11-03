@@ -28,14 +28,14 @@ use crate::{
         recording::{record_stream_with_rollout, StreamRecording, StreamRollout, StreamSession},
         upstream_errors::upstream_failure_message,
     },
-    store::storage::ResponseSessionInsert,
+    store::storage::ResponseStateInsert,
     AppState,
 };
 
 use super::{
     activity::{record_upstream_failure, upstream_error_details, UpstreamFailure},
     candidate::ResponseBridgeContext,
-    sessions::{count_tool_calls, request_with_session_history},
+    sessions::count_tool_calls,
 };
 
 pub(super) async fn create_chat_response(
@@ -44,6 +44,7 @@ pub(super) async fn create_chat_response(
     provider: ProviderConfig,
     upstream_protocol: UpstreamProtocol,
     previous_response_id: Option<String>,
+    input_items: &[Value],
     context: ResponseBridgeContext,
 ) -> Result<Response, AppError> {
     let ResponseBridgeContext {
@@ -68,7 +69,6 @@ pub(super) async fn create_chat_response(
         session: session.clone(),
         started_at,
     };
-    let request = request_with_session_history(&state.storage, &identity_id, request).await?;
     validate_internal_request_for_bridge(&request)?;
     let upstream_base_url = provider_upstream_base_url(&provider, upstream_protocol);
     let upstream_url = format!(
@@ -297,21 +297,30 @@ pub(super) async fn create_chat_response(
         }
     };
     response.id = response_id;
+    let encoded_response = encode_responses_response(response.clone());
     let reasoning_tokens = response
         .usage
         .as_ref()
         .and_then(|usage| usage.reasoning_tokens);
     let tool_call_count = count_tool_calls(&response);
     if request.store {
+        let request_items = Value::Array(input_items.to_vec());
+        let response_items = encoded_response
+            .get("output")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new()));
         state
-            .activity_store
-            .save_response_session(ResponseSessionInsert {
+            .storage
+            .save_response_state(ResponseStateInsert {
                 identity_id: &identity_id,
                 response_id: &response.id,
                 previous_response_id: previous_response_id.as_deref(),
                 conversation_id: &conversation_id,
                 provider_id: &provider.id,
                 model: &response.model,
+                upstream_response_id: None,
+                request_items: &request_items,
+                response_items: &response_items,
                 input_messages: &request.messages,
                 response: &response,
             })
@@ -362,5 +371,5 @@ pub(super) async fn create_chat_response(
         )
         .await?;
 
-    Ok(Json(encode_responses_response(response)).into_response())
+    Ok(Json(encoded_response).into_response())
 }

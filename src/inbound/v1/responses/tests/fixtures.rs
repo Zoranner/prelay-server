@@ -142,7 +142,10 @@ pub(super) async fn spawn_delayed_streaming_chat_upstream() -> (String, Arc<Noti
 pub(super) async fn spawn_native_responses_upstream() -> String {
     pub(super) async fn handler(Json(payload): Json<serde_json::Value>) -> Json<serde_json::Value> {
         assert_eq!(payload["model"], "gpt-4.1");
-        assert_eq!(payload["input"], "hello");
+        assert_eq!(
+            payload["input"],
+            json!([{ "role": "user", "content": "hello" }])
+        );
         Json(json!({
             "id": "resp_native",
             "object": "response",
@@ -177,6 +180,48 @@ pub(super) async fn spawn_native_responses_upstream() -> String {
     format!("http://{addr}")
 }
 
+pub(super) async fn spawn_capturing_native_responses_upstream() -> (
+    String,
+    std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+) {
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let state = captured.clone();
+    let app = Router::new().route(
+        "/responses",
+        post(move |Json(payload): Json<serde_json::Value>| {
+            let state = state.clone();
+            async move {
+                state
+                    .lock()
+                    .expect("capture upstream request")
+                    .push(payload);
+                Json(json!({
+                    "id": "resp_upstream",
+                    "object": "response",
+                    "status": "completed",
+                    "model": "gpt-4.1",
+                    "output": [{
+                        "type": "message",
+                        "id": "msg_upstream",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "ok", "annotations": []}]
+                    }],
+                    "usage": {"input_tokens": 1, "output_tokens": 1}
+                }))
+            }
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind upstream");
+    let address = listener.local_addr().expect("upstream address");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve upstream");
+    });
+    (format!("http://{address}"), captured)
+}
+
 pub(super) async fn spawn_streaming_native_responses_upstream() -> (String, Arc<Notify>) {
     pub(super) async fn handler(
         State(release_tail): State<Arc<Notify>>,
@@ -186,6 +231,10 @@ pub(super) async fn spawn_streaming_native_responses_upstream() -> (String, Arc<
 
         assert_eq!(payload["model"], "gpt-4.1");
         assert_eq!(payload["stream"], true);
+        assert_eq!(
+            payload["input"],
+            json!([{ "role": "user", "content": "hello" }])
+        );
         let stream = futures::stream::unfold(
             (0, release_tail),
             |(step, release_tail)| async move {
@@ -306,7 +355,6 @@ pub(super) async fn spawn_tool_roundtrip_chat_upstream() -> String {
                         "message": {
                             "role": "assistant",
                             "content": null,
-                            "reasoning_content": "Need to inspect the file before answering.",
                             "tool_calls": [
                                 {
                                     "id": "call_1",
@@ -327,10 +375,6 @@ pub(super) async fn spawn_tool_roundtrip_chat_upstream() -> String {
         assert_eq!(messages[0]["role"], "user");
         assert_eq!(messages[0]["content"], "please read");
         assert_eq!(messages[1]["role"], "assistant");
-        assert_eq!(
-            messages[1]["reasoning_content"],
-            "Need to inspect the file before answering."
-        );
         assert_eq!(messages[1]["tool_calls"][0]["id"], "call_1");
         assert_eq!(messages[2]["role"], "tool");
         assert_eq!(messages[2]["tool_call_id"], "call_1");

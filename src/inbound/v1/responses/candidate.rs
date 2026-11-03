@@ -1,9 +1,12 @@
 use axum::response::Response;
 
 use crate::{
-    codec::providers::{responses::encode_responses_request, spec::UpstreamProtocol},
+    codec::providers::spec::UpstreamProtocol,
     codec::{
-        bridge::responses::decode::validate_responses_bridge_payload, internal::InternalRequest,
+        bridge::responses::decode::{
+            decode_items_for_chat_bridge, validate_responses_bridge_payload,
+        },
+        internal::InternalRequest,
     },
     domain::activity::rollout::SessionContext,
     error::AppError,
@@ -12,8 +15,10 @@ use crate::{
 };
 
 use super::{
-    chat::create_chat_response, handler::ResponseCandidateRequest, native::create_native_response,
-    sessions::request_with_session_history,
+    chat::create_chat_response,
+    handler::ResponseCandidateRequest,
+    native::{create_native_response, NativeResponseRequest},
+    state::{continuation_items, current_input_items},
 };
 
 pub(super) struct ResponseBridgeContext {
@@ -37,6 +42,7 @@ pub(super) async fn create_response_with_candidate(
     let ResponseCandidateRequest {
         payload,
         request,
+        parent_state,
         response_id,
         model_requested,
         is_streaming,
@@ -63,47 +69,38 @@ pub(super) async fn create_response_with_candidate(
         session,
         started_at,
     };
+    let current_items = current_input_items(payload.as_ref())?;
+    let input_items = match parent_state.as_deref() {
+        Some(parent) => continuation_items(parent, &current_items),
+        None => current_items,
+    };
 
     if upstream_protocol == UpstreamProtocol::Responses {
-        if previous_response_id.is_some() {
-            let request = request_with_session_history(
-                &state.storage,
-                &access.identity_id,
-                request_for_upstream(request.as_ref(), &model_upstream),
-            )
-            .await?;
-            let payload = encode_responses_request(&request);
-            return create_native_response(
-                state,
-                &payload,
-                &request,
-                &model_upstream,
-                provider,
-                previous_response_id,
-                context,
-            )
-            .await;
-        }
         return create_native_response(
             state,
-            payload.as_ref(),
-            request.as_ref(),
+            NativeResponseRequest {
+                payload: payload.as_ref(),
+                request: request.as_ref(),
+                previous_response_id,
+                input_items: &input_items,
+            },
             &model_upstream,
             provider,
-            previous_response_id,
             context,
         )
         .await;
     }
 
     validate_responses_bridge_payload(payload.as_ref())?;
-    let request = request_for_upstream(request.as_ref(), &model_upstream);
+    let mut request = request_for_upstream(request.as_ref(), &model_upstream);
+    request.messages = decode_items_for_chat_bridge(&input_items)?;
     create_chat_response(
         state,
         request,
         provider,
         upstream_protocol,
         previous_response_id,
+        &input_items,
         context,
     )
     .await

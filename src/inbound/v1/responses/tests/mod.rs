@@ -24,6 +24,7 @@ mod activities;
 mod auth;
 mod candidates;
 mod fixtures;
+mod native_budget;
 mod routing;
 mod sessions;
 mod streaming;

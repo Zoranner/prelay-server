@@ -137,6 +137,16 @@ impl AppError {
         }
     }
 
+    pub(crate) fn openai_previous_response_not_found() -> Self {
+        Self::OpenAi {
+            status: StatusCode::BAD_REQUEST,
+            error_type: "invalid_request_error",
+            code: "previous_response_not_found",
+            param: Some("previous_response_id"),
+            message: "Previous response not found".to_string(),
+        }
+    }
+
     pub fn is_retryable_upstream(&self) -> bool {
         match self {
             Self::Upstream { status: None, .. } => true,

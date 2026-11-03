@@ -6,6 +6,8 @@ use crate::codec::internal::{
 };
 use crate::error::AppError;
 
+pub use super::items::decode_items_for_chat_bridge;
+
 pub fn decode_responses_request(value: &Value) -> Result<InternalRequest, AppError> {
     let model = value
         .get("model")

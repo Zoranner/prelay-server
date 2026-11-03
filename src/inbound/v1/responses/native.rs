@@ -1,10 +1,12 @@
+use std::borrow::Cow;
+
 use axum::{
     body::Body,
     http::header,
     response::{IntoResponse, Response},
     Json,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::{
     codec::activity::{events_from_internal_request, events_from_internal_response},
@@ -17,12 +19,12 @@ use crate::{
     },
     domain::stats::ActivityInsert,
     error::AppError,
-    inbound::v1::responses::image_budget::{self, ImageBudgetOutcome},
+    inbound::v1::responses::image_budget::{self, ImageBudgetOutcome, ImageBudgetPolicy},
     service::{
         recording::{record_stream_with_rollout, StreamRecording, StreamRollout, StreamSession},
         upstream_errors::upstream_failure_message,
     },
-    store::storage::ResponseSessionInsert,
+    store::storage::ResponseStateInsert,
     AppState,
 };
 
@@ -31,60 +33,37 @@ use super::{
     candidate::ResponseBridgeContext,
 };
 
+pub(super) struct NativeResponseRequest<'a> {
+    pub(super) payload: &'a Value,
+    pub(super) request: &'a InternalRequest,
+    pub(super) previous_response_id: Option<String>,
+    pub(super) input_items: &'a [Value],
+}
+
 pub(super) async fn create_native_response(
     state: &AppState,
-    payload: &Value,
-    request: &InternalRequest,
+    request: NativeResponseRequest<'_>,
     model_upstream: &str,
     provider: crate::domain::registry::ProviderConfig,
-    previous_response_id: Option<String>,
     context: ResponseBridgeContext,
 ) -> Result<Response, AppError> {
+    let NativeResponseRequest {
+        payload,
+        request,
+        previous_response_id,
+        input_items,
+    } = request;
     let upstream_base_url = provider_upstream_base_url(&provider, UpstreamProtocol::Responses);
     let upstream_url = format!("{}/responses", upstream_base_url.trim_end_matches('/'));
     let upstream_started_at = std::time::Instant::now();
     let client = state.provider_client(&provider.provider_type)?;
     let image_budget_policy = image_budget::policy();
-    let budget = image_budget::apply(payload, image_budget_policy);
-    let payload = match &budget {
-        ImageBudgetOutcome::Disabled => payload,
-        ImageBudgetOutcome::WithinBudget(report) => {
-            tracing::debug!(
-                total_bytes = report.total_bytes,
-                max_bytes = image_budget_policy.max_bytes,
-                "image payload is within the upstream budget"
-            );
-            payload
-        }
-        ImageBudgetOutcome::Trimmed { payload, report } => {
-            tracing::info!(
-                total_bytes = report.total_bytes,
-                remaining_bytes = report.remaining_bytes,
-                dropped_images = report.dropped_images,
-                max_bytes = image_budget_policy.max_bytes,
-                "trimmed historical images for the upstream image budget"
-            );
-            payload
-        }
-        ImageBudgetOutcome::CannotMeetBudget(report) => {
-            tracing::warn!(
-                total_bytes = report.total_bytes,
-                remaining_bytes = report.remaining_bytes,
-                dropped_images = report.dropped_images,
-                max_bytes = image_budget_policy.max_bytes,
-                keep_last = image_budget_policy.keep_last,
-                "image payload cannot be reduced to the upstream budget"
-            );
-            return Err(AppError::PayloadTooLarge(format!(
-                "图片请求体超过上游预算：已丢弃 {} 张历史图片，仍有 {} 字节，预算 {} 字节。请减少图片，或调整 IMAGE_BUDGET_MAX_BYTES。",
-                report.dropped_images, report.remaining_bytes, image_budget_policy.max_bytes
-            )));
-        }
-    };
+    let input_items = budget_input_items(input_items, image_budget_policy)?;
     let upstream_request_body =
         crate::codec::providers::responses::encode_native_responses_request_body(
             payload,
             model_upstream,
+            Some(input_items.as_ref()),
         );
     let upstream_request = with_provider_headers(
         client
@@ -316,15 +295,23 @@ pub(super) async fn create_native_response(
             }
         };
     if request.store {
+        let request_items = Value::Array(input_items.to_vec());
+        let response_items = response
+            .get("output")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new()));
         state
-            .activity_store
-            .save_response_session(ResponseSessionInsert {
+            .storage
+            .save_response_state(ResponseStateInsert {
                 identity_id: &context.identity_id,
                 response_id: &decoded_response.id,
                 previous_response_id: previous_response_id.as_deref(),
                 conversation_id: &context.conversation_id,
                 provider_id: &provider.id,
                 model: &decoded_response.model,
+                upstream_response_id: upstream_response_id.as_deref(),
+                request_items: &request_items,
+                response_items: &response_items,
                 input_messages: &request.messages,
                 response: &decoded_response,
             })
@@ -393,4 +380,55 @@ pub(super) async fn create_native_response(
         .await?;
 
     Ok(Json(response).into_response())
+}
+
+pub(super) fn budget_input_items<'a>(
+    input_items: &'a [Value],
+    policy: &ImageBudgetPolicy,
+) -> Result<Cow<'a, [Value]>, AppError> {
+    if !policy.enabled {
+        return Ok(Cow::Borrowed(input_items));
+    }
+    let budget_payload = json!({ "input": input_items });
+    match image_budget::apply(&budget_payload, policy) {
+        ImageBudgetOutcome::Disabled => Ok(Cow::Borrowed(input_items)),
+        ImageBudgetOutcome::WithinBudget(report) => {
+            tracing::debug!(
+                total_bytes = report.total_bytes,
+                max_bytes = policy.max_bytes,
+                "image payload is within the upstream budget"
+            );
+            Ok(Cow::Borrowed(input_items))
+        }
+        ImageBudgetOutcome::Trimmed { payload, report } => {
+            tracing::info!(
+                total_bytes = report.total_bytes,
+                remaining_bytes = report.remaining_bytes,
+                dropped_images = report.dropped_images,
+                max_bytes = policy.max_bytes,
+                "trimmed historical images for the upstream image budget"
+            );
+            Ok(Cow::Owned(
+                payload
+                    .get("input")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default(),
+            ))
+        }
+        ImageBudgetOutcome::CannotMeetBudget(report) => {
+            tracing::warn!(
+                total_bytes = report.total_bytes,
+                remaining_bytes = report.remaining_bytes,
+                dropped_images = report.dropped_images,
+                max_bytes = policy.max_bytes,
+                keep_last = policy.keep_last,
+                "image payload cannot be reduced to the upstream budget"
+            );
+            Err(AppError::PayloadTooLarge(format!(
+                "图片请求体超过上游预算：已丢弃 {} 张历史图片，仍有 {} 字节，预算 {} 字节。请减少图片，或调整 IMAGE_BUDGET_MAX_BYTES。",
+                report.dropped_images, report.remaining_bytes, policy.max_bytes
+            )))
+        }
+    }
 }

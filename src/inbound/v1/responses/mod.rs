@@ -9,6 +9,7 @@ mod handler;
 pub(super) mod image_budget;
 mod native;
 mod sessions;
+mod state;
 
 #[cfg(test)]
 mod tests;

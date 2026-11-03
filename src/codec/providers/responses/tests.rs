@@ -9,33 +9,55 @@ use crate::codec::internal::{
 };
 
 #[test]
-fn native_request_body_replaces_only_the_model_field() {
+fn native_request_body_forces_stateless_upstream_and_removes_local_state() {
     let payload = json!({
         "model": "gpt-6.1-sol",
         "stream": true,
         "input": "hello",
+        "store": true,
+        "previous_response_id": "resp_previous",
+        "conversation": { "id": "conv_previous" },
         "metadata": { "nested": [1, 2, 3] }
     });
-    let mut expected_payload = payload.clone();
-    expected_payload["model"] = json!("gpt-6.1-sol-upstream");
 
-    let body = encode_native_responses_request_body(&payload, "gpt-6.1-sol-upstream");
+    let body = encode_native_responses_request_body(&payload, "gpt-6.1-sol-upstream", None);
+    let body = serde_json::from_slice::<serde_json::Value>(&body).expect("body is json");
 
-    assert_eq!(
-        body,
-        serde_json::to_vec(&expected_payload).expect("expected body")
-    );
+    assert_eq!(body["model"], "gpt-6.1-sol-upstream");
+    assert_eq!(body["stream"], true);
+    assert_eq!(body["input"], "hello");
+    assert_eq!(body["store"], false);
+    assert!(body.get("previous_response_id").is_none());
+    assert!(body.get("conversation").is_none());
+    assert_eq!(body["metadata"], json!({ "nested": [1, 2, 3] }));
     assert_eq!(payload["model"], "gpt-6.1-sol");
 }
 
 #[test]
-fn native_request_body_adds_model_when_absent() {
-    let body = encode_native_responses_request_body(&json!({ "input": "hello" }), "k3");
-
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&body).expect("body is json")["model"],
-        "k3"
+fn native_request_body_replaces_input_with_exact_items() {
+    let items = vec![
+        json!({ "role": "user", "content": "first" }),
+        json!({ "type": "message", "role": "assistant", "content": "reply" }),
+        json!({ "role": "user", "content": "second" }),
+    ];
+    let body = encode_native_responses_request_body(
+        &json!({ "model": "gpt-4.1", "input": "ignored", "store": true }),
+        "gpt-4.1-upstream",
+        Some(&items),
     );
+    let body = serde_json::from_slice::<serde_json::Value>(&body).expect("body is json");
+
+    assert_eq!(body["input"], json!(items));
+    assert_eq!(body["store"], false);
+}
+
+#[test]
+fn native_request_body_adds_model_and_store_when_absent() {
+    let body = encode_native_responses_request_body(&json!({ "input": "hello" }), "k3", None);
+    let body = serde_json::from_slice::<serde_json::Value>(&body).expect("body is json");
+
+    assert_eq!(body["model"], "k3");
+    assert_eq!(body["store"], false);
 }
 
 #[test]

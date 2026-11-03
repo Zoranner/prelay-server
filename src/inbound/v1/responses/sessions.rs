@@ -1,50 +1,9 @@
-use uuid::Uuid;
+use crate::codec::internal::InternalResponse;
 
-use crate::{codec::internal::InternalRequest, error::AppError, store::storage::Storage};
-
-pub(super) async fn request_with_session_history(
-    storage: &Storage,
-    identity_id: &str,
-    mut request: InternalRequest,
-) -> Result<InternalRequest, AppError> {
-    let Some(previous_response_id) = request.previous_response_id.as_deref() else {
-        return Ok(request);
-    };
-    let Some(mut history) = storage
-        .load_response_session_messages(identity_id, previous_response_id)
-        .await?
-    else {
-        return Err(AppError::BadRequest(format!(
-            "previous_response_id {previous_response_id} 不存在"
-        )));
-    };
-    history.extend(request.messages);
-    request.messages = history;
-    Ok(request)
-}
-
-pub(super) fn count_tool_calls(response: &crate::codec::internal::InternalResponse) -> i64 {
+pub(super) fn count_tool_calls(response: &InternalResponse) -> i64 {
     response
         .output
         .iter()
         .filter(|item| item.is_tool_call())
         .count() as i64
-}
-
-pub(super) async fn conversation_id_for_request(
-    storage: &Storage,
-    identity_id: &str,
-    previous_response_id: Option<&str>,
-) -> Result<String, AppError> {
-    let Some(previous_response_id) = previous_response_id else {
-        return Ok(format!("conv_{}", Uuid::new_v4().simple()));
-    };
-    storage
-        .load_response_session_conversation_id(identity_id, previous_response_id)
-        .await?
-        .ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "previous_response_id {previous_response_id} 不存在"
-            ))
-        })
 }
