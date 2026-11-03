@@ -7,32 +7,67 @@ use crate::{
     },
     service::activity::ActivityStore,
     service::recording::options::StreamSession,
-    store::storage::ResponseSessionInsert,
+    store::storage::ResponseStateInsert,
 };
+use serde_json::Value;
 
-pub(super) async fn save_response_session(
+pub(super) async fn save_stream_response_state(
     activity_store: &ActivityStore,
     identity_id: &str,
     session: StreamSession,
     response: InternalResponse,
+    snapshot: &StreamStatsSnapshot,
 ) {
-    let insert = ResponseSessionInsert {
+    let request_items = Value::Array(session.request_items.clone());
+    let response_items = Value::Array(snapshot.response_output_items.clone());
+    let insert = ResponseStateInsert {
         identity_id,
-        response_id: &response.id,
+        response_id: &session.response_id,
         previous_response_id: session.previous_response_id.as_deref(),
         conversation_id: &session.conversation_id,
         provider_id: &session.provider_id,
         model: &session.model,
+        upstream_response_id: snapshot.upstream_response_id.as_deref(),
+        request_items: &request_items,
+        response_items: &response_items,
         input_messages: &session.input_messages,
         response: &response,
     };
-    if let Err(error) = activity_store.save_response_session(insert).await {
+    if let Err(error) = activity_store.save_response_state(insert).await {
         tracing::error!(
-            operation = "save_stream_response_session",
+            operation = "save_stream_response_state",
             error_code = error.code().as_str(),
-            "failed to persist streamed response session"
+            "streamed response was delivered but its exact state was not persisted"
         );
     }
+}
+
+pub(super) async fn save_stream_state_if_ready(
+    session_slot: &mut Option<StreamSession>,
+    activity_store: &ActivityStore,
+    identity_id: &str,
+    snapshot: &StreamStatsSnapshot,
+) {
+    let Some(session) = session_slot.as_ref() else {
+        return;
+    };
+    if !snapshot.completed {
+        return;
+    }
+    if snapshot.response_output_items.is_empty() {
+        tracing::error!(
+            operation = "save_stream_response_state",
+            response_id = %session.response_id,
+            "stream completed without exact output items; response state will not be persisted"
+        );
+        *session_slot = None;
+        return;
+    }
+    let Some(response) = response_from_stream_session(session, snapshot) else {
+        return;
+    };
+    let session = session_slot.take().expect("session checked above");
+    save_stream_response_state(activity_store, identity_id, session, response, snapshot).await;
 }
 
 pub(super) fn response_from_stream_session(
@@ -42,12 +77,9 @@ pub(super) fn response_from_stream_session(
     if !snapshot.completed {
         return None;
     }
-    let response_id = snapshot
-        .response_id
-        .as_deref()
-        .or(session.response_id.as_deref())
-        .filter(|id| !id.trim().is_empty())?
-        .to_string();
+    if session.response_id.trim().is_empty() {
+        return None;
+    }
 
     let mut output = Vec::new();
     if !snapshot.output_text.is_empty() {
@@ -70,7 +102,7 @@ pub(super) fn response_from_stream_session(
     }
 
     Some(InternalResponse {
-        id: response_id,
+        id: session.response_id.clone(),
         model: session.model.clone(),
         output,
         usage: Some(InternalUsage {
@@ -98,7 +130,13 @@ mod tests {
 
     fn completed_snapshot() -> StreamStatsSnapshot {
         let mut snapshot = StreamStatsSnapshot {
-            response_id: Some("resp_upstream".to_string()),
+            upstream_response_id: Some("resp_upstream".to_string()),
+            response_output_items: vec![serde_json::json!({
+                "type": "message",
+                "id": "msg_0",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "hello"}]
+            })],
             ..Default::default()
         };
         snapshot.record_event(&InternalStreamEvent::TextDelta("hello".to_string()));
@@ -126,8 +164,8 @@ mod tests {
             provider_id: "provider-a".to_string(),
             model: "deepseek-flash".to_string(),
             input_messages: Vec::new(),
-            store: true,
-            response_id: Some("resp_local".to_string()),
+            request_items: Vec::new(),
+            response_id: "resp_local".to_string(),
         }
     }
 
@@ -136,7 +174,7 @@ mod tests {
         let response =
             response_from_stream_session(&session(), &completed_snapshot()).expect("response");
 
-        assert_eq!(response.id, "resp_upstream");
+        assert_eq!(response.id, "resp_local");
         assert_eq!(response.model, "deepseek-flash");
         assert_eq!(
             response.output,
@@ -161,13 +199,11 @@ mod tests {
     }
 
     #[test]
-    fn uses_the_bridge_response_id_when_the_stream_has_none() {
-        let mut snapshot = completed_snapshot();
-        snapshot.response_id = None;
+    fn never_uses_the_upstream_response_id_as_the_local_id() {
+        let response =
+            response_from_stream_session(&session(), &completed_snapshot()).expect("response");
 
-        let response = response_from_stream_session(&session(), &snapshot).expect("response");
-
-        assert_eq!(response.id, "resp_local");
+        assert_ne!(response.id, "resp_upstream");
     }
 
     #[test]

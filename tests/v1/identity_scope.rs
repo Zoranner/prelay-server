@@ -379,12 +379,20 @@ async fn protocol_request_writes_identity_scoped_log_and_response_session() {
             && event.payload["content"] == serde_json::json!("hello")
     }));
     let response_id = response["id"].as_str().expect("response id");
-    assert!(context
+    let state = context
         .storage
-        .load_response_session_messages(&access.identity_id, response_id)
+        .load_response_state(&access.identity_id, response_id)
         .await
-        .expect("load protocol response session")
-        .is_some());
+        .expect("load protocol response state")
+        .expect("protocol response state exists");
+    assert_eq!(
+        state.request_items,
+        serde_json::json!([{ "role": "user", "content": "hello" }])
+    );
+    assert_eq!(
+        state.response_items[0]["content"][0]["text"],
+        serde_json::json!("hello")
+    );
 
     assert!(identity_b.get("credential").is_none());
     let (status, stats) = request(

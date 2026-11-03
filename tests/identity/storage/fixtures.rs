@@ -1,8 +1,6 @@
 use prelay_protocol::CreateProviderRequest;
 use prelay_server::{
-    codec::internal::{
-        InternalContentPart, InternalMessage, InternalOutputItem, InternalResponse, InternalRole,
-    },
+    codec::internal::{InternalContentPart, InternalOutputItem, InternalResponse, InternalRole},
     domain::identity::credential::generate_credential,
     domain::stats::ActivityInsert,
     store::storage::Storage,
@@ -58,16 +56,6 @@ pub(super) async fn seed_identity_and_provider(
         .await
         .expect("create provider");
     (identity.identity_id, provider_id)
-}
-
-pub(super) fn message(role: InternalRole, text: &str) -> InternalMessage {
-    InternalMessage {
-        role,
-        content: vec![InternalContentPart::Text(text.to_string())],
-        tool_call_id: None,
-        tool_calls: Vec::new(),
-        reasoning_content: None,
-    }
 }
 
 pub(super) fn response(id: &str, text: &str) -> InternalResponse {

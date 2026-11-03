@@ -11,11 +11,15 @@ fn records_the_upstream_response_id_from_native_responses_sse() {
 
     decoder.push_chunk(
         b"event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_upstream\"}}\n\n\
-          event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_upstream\",\"usage\":{\"input_tokens\":3,\"output_tokens\":5}}}\n\n",
+          event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_upstream\",\"output\":[{\"type\":\"reasoning\",\"id\":\"rs_1\"}],\"usage\":{\"input_tokens\":3,\"output_tokens\":5}}}\n\n",
     );
 
     let stats = stats.lock().expect("stats lock");
-    assert_eq!(stats.response_id.as_deref(), Some("resp_upstream"));
+    assert_eq!(stats.upstream_response_id.as_deref(), Some("resp_upstream"));
+    assert_eq!(
+        stats.response_output_items,
+        vec![serde_json::json!({ "type": "reasoning", "id": "rs_1" })]
+    );
     assert!(stats.completed);
 }
 

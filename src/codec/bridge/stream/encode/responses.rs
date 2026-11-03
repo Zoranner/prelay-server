@@ -19,17 +19,21 @@ pub fn responses_text_delta_sse(delta: &str) -> Bytes {
 }
 
 pub fn responses_completed_sse() -> Bytes {
-    responses_completed_sse_with_usage(None, "resp_unknown")
+    responses_completed_sse_with_usage(None, "resp_unknown", &[])
 }
 
-pub fn responses_completed_sse_with_usage(usage: Option<&StreamUsage>, response_id: &str) -> Bytes {
+pub fn responses_completed_sse_with_usage(
+    usage: Option<&StreamUsage>,
+    response_id: &str,
+    output: &[Value],
+) -> Bytes {
     let event = json!({
         "type": "response.completed",
         "response": {
             "id": response_id,
             "object": "response",
             "status": "completed",
-            "output": [],
+            "output": output,
             "usage": usage.map(|usage| json!({
                 "input_tokens": usage.input_tokens,
                 "output_tokens": usage.output_tokens,
@@ -120,6 +124,16 @@ pub(crate) fn responses_output_item_done_sse(index: usize, tool_call: &ChatToolC
             "sequence_number": 0
         }),
     )
+}
+
+pub(crate) fn responses_tool_call_done_sse(
+    index: usize,
+    tool_call: &ChatToolCallState,
+) -> Vec<Bytes> {
+    vec![
+        responses_function_call_arguments_done_sse(index, tool_call),
+        responses_output_item_done_sse(index, tool_call),
+    ]
 }
 
 fn responses_sse_event(event: &str, data: Value) -> Bytes {

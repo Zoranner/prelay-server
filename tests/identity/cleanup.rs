@@ -9,7 +9,7 @@ use prelay_server::{
     domain::stats::ActivityInsert,
     service::activity::ActivityStore,
     store::rollout::RolloutStore,
-    store::storage::{ResponseSessionInsert, Storage, StorageError},
+    store::storage::{ResponseStateInsert, Storage, StorageError},
 };
 
 use crate::support;
@@ -104,9 +104,9 @@ async fn cleanup_removes_an_inactive_identity_and_all_accessible_owned_resources
         .is_none());
     assert_eq!(
         storage
-            .load_response_session_messages(&identity.identity_id, "response-inactive")
+            .load_response_state(&identity.identity_id, "resp_inactive")
             .await
-            .expect("load deleted response session"),
+            .expect("load deleted response state"),
         None
     );
     assert!(matches!(
@@ -247,9 +247,9 @@ async fn cleanup_keeps_an_identity_that_is_newer_than_its_cutoff() {
         1
     );
     assert!(storage
-        .load_response_session_messages(&identity.identity_id, "response-active")
+        .load_response_state(&identity.identity_id, "resp_active")
         .await
-        .expect("load active response session")
+        .expect("load active response state")
         .is_some());
 }
 
@@ -316,7 +316,7 @@ async fn seed_owned_resources(
         reasoning_content: None,
     }];
     let response = InternalResponse {
-        id: format!("response-{suffix}"),
+        id: format!("resp_{suffix}"),
         model: "upstream-model".to_string(),
         output: vec![InternalOutputItem::Message {
             id: format!("message-{suffix}"),
@@ -325,14 +325,23 @@ async fn seed_owned_resources(
         }],
         usage: None,
     };
+    let request_items = serde_json::json!([{ "role": "user", "content": "input" }]);
+    let response_items = serde_json::json!([{
+        "type": "message",
+        "role": "assistant",
+        "content": [{ "type": "output_text", "text": "output" }]
+    }]);
     storage
-        .save_response_session(ResponseSessionInsert {
+        .save_response_state(ResponseStateInsert {
             identity_id,
             response_id: &response.id,
             previous_response_id: None,
             conversation_id: "conversation-inactive",
             provider_id: &provider_id,
             model: "upstream-model",
+            upstream_response_id: None,
+            request_items: &request_items,
+            response_items: &response_items,
             input_messages: &input,
             response: &response,
         })

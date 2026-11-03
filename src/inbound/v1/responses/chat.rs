@@ -195,8 +195,8 @@ pub(super) async fn create_chat_response(
             provider_id: provider.id.clone(),
             model: request.model.clone(),
             input_messages: request.messages.clone(),
-            store: true,
-            response_id: Some(response_id),
+            request_items: input_items.to_vec(),
+            response_id,
         });
         let log = ActivityInsert {
             protocol_in: "responses".to_string(),

@@ -2,6 +2,7 @@ use crate::{
     codec::bridge::stream::SharedStreamStats, codec::internal::InternalMessage,
     domain::activity::RawStreamContentCapture, store::rollout::RolloutWriter,
 };
+use serde_json::Value;
 
 #[derive(Clone, Copy)]
 pub(super) enum RecordingMode {
@@ -25,7 +26,7 @@ pub(crate) struct StreamSession {
     pub provider_id: String,
     pub model: String,
     pub input_messages: Vec<InternalMessage>,
-    pub store: bool,
-    /// 桥接流在服务端生成；原生 Responses 流留空，由 SSE 的响应 id 填入。
-    pub response_id: Option<String>,
+    pub request_items: Vec<Value>,
+    /// 客户端可见的本地响应 id；上游 id 只从流统计中读取。
+    pub response_id: String,
 }

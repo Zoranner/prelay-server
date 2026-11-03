@@ -11,7 +11,7 @@ use crate::{
     store::{
         rollout::{RolloutStore, RolloutWriter},
         storage::{
-            InterruptedRollout, RecoveredRollout, ResponseSessionInsert, Storage, StorageError,
+            InterruptedRollout, RecoveredRollout, ResponseStateInsert, Storage, StorageError,
         },
     },
 };
@@ -186,11 +186,11 @@ impl ActivityStore {
             .await
     }
 
-    pub async fn save_response_session(
+    pub async fn save_response_state(
         &self,
-        insert: ResponseSessionInsert<'_>,
+        insert: ResponseStateInsert<'_>,
     ) -> Result<(), StorageError> {
-        self.storage.save_response_session(insert).await
+        self.storage.save_response_state(insert).await
     }
 
     async fn begin_rollout(

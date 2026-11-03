@@ -24,7 +24,7 @@ mod forwarding;
 mod session;
 
 pub(super) use forwarding::{prepare_stream_with_log_id, RecordedStream};
-use session::{response_from_stream_session, save_response_session};
+use session::save_stream_state_if_ready;
 
 struct StreamRecordState {
     activity_store: ActivityStore,
@@ -169,22 +169,14 @@ impl StreamRecordState {
     }
 
     async fn save_session_if_ready(&mut self) {
-        let Some(session) = self.session.as_ref() else {
-            return;
-        };
-        if !session.store {
-            self.session = None;
-            return;
-        }
         let snapshot = self.stats_snapshot();
-        if !snapshot.completed {
-            return;
-        }
-        let Some(response) = response_from_stream_session(session, &snapshot) else {
-            return;
-        };
-        let session = self.session.take().expect("session checked above");
-        save_response_session(&self.activity_store, &self.identity_id, session, response).await;
+        save_stream_state_if_ready(
+            &mut self.session,
+            &self.activity_store,
+            &self.identity_id,
+            &snapshot,
+        )
+        .await;
     }
 
     async fn record_final_usage(&mut self) {

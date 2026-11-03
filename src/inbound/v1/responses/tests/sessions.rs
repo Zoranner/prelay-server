@@ -92,51 +92,6 @@ async fn previous_response_replays_exact_items_and_removes_upstream_state_fields
 }
 
 #[tokio::test]
-async fn legacy_previous_response_is_rejected_without_leaking_state() {
-    let upstream = spawn_native_responses_upstream().await;
-    let state = crate::test_support::test_state().await;
-    let provider = test_provider("gpt-4.1", "openai", &upstream, "sk-upstream")
-        .await
-        .expect("create provider");
-    let auth = create_test_endpoint_auth(&state.storage, &provider, "gpt-4.1", "gpt-4.1").await;
-    let identity_id = auth.access.0.identity_id.clone();
-
-    state
-        .storage
-        .save_response_session(crate::store::storage::ResponseSessionInsert {
-            identity_id: &identity_id,
-            response_id: "resp_legacy",
-            previous_response_id: None,
-            conversation_id: "conv_legacy",
-            provider_id: &provider.id,
-            model: "gpt-4.1",
-            input_messages: &[],
-            response: &crate::codec::internal::InternalResponse {
-                id: "resp_legacy".to_string(),
-                model: "gpt-4.1".to_string(),
-                output: Vec::new(),
-                usage: None,
-            },
-        })
-        .await
-        .expect("save legacy response");
-
-    let error = create_response(
-        State(state),
-        auth.access,
-        axum::Json(json!({
-            "model": "gpt-4.1",
-            "previous_response_id": "resp_legacy",
-            "input": "again"
-        })),
-    )
-    .await
-    .expect_err("legacy response cannot be continued");
-
-    assert_previous_response_not_found(error);
-}
-
-#[tokio::test]
 async fn previous_response_cannot_cross_identities() {
     let (upstream, captured) = spawn_capturing_native_responses_upstream().await;
     let state = crate::test_support::test_state().await;
@@ -177,6 +132,51 @@ async fn previous_response_cannot_cross_identities() {
 
     assert_previous_response_not_found(error);
     assert_eq!(captured.lock().expect("lock captured requests").len(), 1);
+}
+
+#[tokio::test]
+async fn store_false_does_not_persist_a_continuable_response() {
+    let upstream = spawn_chat_upstream().await;
+    let state = crate::test_support::test_state().await;
+    let provider = test_provider(
+        "deepseek-chat",
+        "openai_compatible",
+        &upstream,
+        "sk-upstream",
+    )
+    .await
+    .expect("create provider");
+    let auth =
+        create_test_endpoint_auth(&state.storage, &provider, "deepseek-chat", "deepseek-chat")
+            .await;
+
+    let first = create_response(
+        State(state.clone()),
+        auth.access.clone(),
+        axum::Json(json!({
+            "model": "deepseek-chat",
+            "input": "hello",
+            "store": false
+        })),
+    )
+    .await
+    .expect("create response");
+    let first = response_json(first).await;
+    let id = first["id"].as_str().expect("response id");
+
+    let error = create_response(
+        State(state),
+        auth.access,
+        axum::Json(json!({
+            "model": "deepseek-chat",
+            "previous_response_id": id,
+            "input": "again"
+        })),
+    )
+    .await
+    .expect_err("unstored response cannot be continued");
+
+    assert_previous_response_not_found(error);
 }
 
 #[tokio::test]

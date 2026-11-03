@@ -250,7 +250,7 @@ pub(super) async fn spawn_streaming_native_responses_upstream() -> (String, Arc<
                         Some((
                         Ok::<_, Infallible>(Bytes::from_static(
                             b"event: response.output_text.delta\ndata: lo\n\n\
-                              event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7,\"total_tokens\":18}}}\n\n",
+                              event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_upstream\",\"output\":[{\"type\":\"message\",\"id\":\"msg_upstream\",\"status\":\"completed\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hello\",\"annotations\":[]}]}],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7,\"total_tokens\":18}}}\n\n",
                         )),
                         (2, release_tail),
                     ))

@@ -1,12 +1,13 @@
 use std::collections::BTreeMap;
 
 use axum::body::Bytes;
+use serde_json::{json, Value};
 
 use super::chat_event::decode_chat_sse_event;
 use crate::codec::bridge::stream::{
     encode::responses::{
         responses_function_call_added_sse, responses_function_call_arguments_delta_sse,
-        responses_function_call_arguments_done_sse, responses_output_item_done_sse,
+        responses_tool_call_done_sse,
     },
     events::{ChatToolCallDelta, ChatToolCallState, InternalFinishReason},
     pipeline::{ByteStreamDecoder, SharedStreamStats},
@@ -165,7 +166,7 @@ impl ChatToResponsesSseDecoder {
                     arguments: tool_call.arguments.clone(),
                 };
                 events_to_record.push(event.clone());
-                output.extend(responses_tool_call_done_sse(event, tool_call));
+                output.extend(responses_tool_call_done_sse(*index, tool_call));
             }
         }
         for event in events_to_record {
@@ -178,9 +179,11 @@ impl ChatToResponsesSseDecoder {
             InternalStreamEvent::Finished(self.finish_reason.unwrap_or(InternalFinishReason::Stop));
         self.record_internal_event(&finished_event);
         self.record_response_id();
+        let response_output = self.response_output_items();
         output.push(responses_completed_sse_with_usage(
             self.usage.as_ref(),
             &self.response_id,
+            &response_output,
         ));
         output
     }
@@ -189,24 +192,49 @@ impl ChatToResponsesSseDecoder {
         let Some(stats) = &self.stats else {
             return;
         };
+        let response_output_items = self.response_output_items();
         if let Ok(mut stats) = stats.lock() {
-            stats.response_id = Some(self.response_id.clone());
+            stats.upstream_response_id = None;
+            stats.response_output_items = response_output_items;
         }
     }
-}
 
-fn responses_tool_call_done_sse(
-    event: InternalStreamEvent,
-    tool_call: &ChatToolCallState,
-) -> Vec<Bytes> {
-    let InternalStreamEvent::ToolCallDone { index, .. } = event else {
-        return Vec::new();
-    };
-
-    vec![
-        responses_function_call_arguments_done_sse(index, tool_call),
-        responses_output_item_done_sse(index, tool_call),
-    ]
+    fn response_output_items(&self) -> Vec<Value> {
+        let output_text = self
+            .stats
+            .as_ref()
+            .and_then(|stats| stats.lock().ok())
+            .map(|stats| stats.output_text.clone())
+            .unwrap_or_default();
+        let mut items = Vec::new();
+        if !output_text.is_empty() {
+            items.push(json!({
+                "type": "message",
+                "id": "msg_0",
+                "status": "completed",
+                "role": "assistant",
+                "content": [{
+                    "type": "output_text",
+                    "text": output_text,
+                    "annotations": []
+                }]
+            }));
+        }
+        for tool_call in self.tool_calls.values() {
+            if tool_call.id.is_empty() || tool_call.name.is_empty() {
+                continue;
+            }
+            items.push(json!({
+                "type": "function_call",
+                "id": tool_call.id,
+                "call_id": tool_call.id,
+                "name": tool_call.name,
+                "arguments": tool_call.arguments,
+                "status": "completed"
+            }));
+        }
+        items
+    }
 }
 
 impl ByteStreamDecoder for ChatToResponsesSseDecoder {
@@ -242,9 +270,12 @@ impl ByteStreamDecoder for ChatToResponsesSseDecoder {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use super::ChatToResponsesSseDecoder;
     use crate::codec::bridge::stream::{
         pipeline::ByteStreamDecoder, responses_completed_sse, responses_text_delta_sse,
+        StreamStatsSnapshot,
     };
 
     #[test]
@@ -287,6 +318,47 @@ mod tests {
 
         assert!(output.contains(r#""id":"resp_local""#));
         assert!(!output.contains("resp_unknown"));
+    }
+
+    #[test]
+    fn completed_event_carries_exact_output_items_and_state() {
+        let mut decoder = ChatToResponsesSseDecoder::new("resp_local".to_string());
+        let stats = Arc::new(Mutex::new(StreamStatsSnapshot::default()));
+        decoder.set_stats(stats.clone());
+
+        let chunks = decoder.push_chunk(
+            br#"data: {"choices":[{"delta":{"content":"hello"}}]}
+
+data: [DONE]
+
+"#,
+        );
+        let output = chunks
+            .iter()
+            .map(|chunk| std::str::from_utf8(chunk).expect("utf8 chunk"))
+            .collect::<String>();
+        let completed = output
+            .lines()
+            .find(|line| line.contains("\"type\":\"response.completed\""))
+            .and_then(|line| line.strip_prefix("data: "))
+            .expect("completed event");
+        let completed: serde_json::Value =
+            serde_json::from_str(completed).expect("completed event json");
+
+        assert_eq!(completed["response"]["id"], "resp_local");
+        assert_eq!(
+            completed["response"]["output"][0]["content"][0]["text"],
+            "hello"
+        );
+        let stats = stats.lock().expect("stats lock");
+        assert_eq!(stats.upstream_response_id, None);
+        assert_eq!(
+            stats.response_output_items,
+            completed["response"]["output"]
+                .as_array()
+                .expect("output items")
+                .clone()
+        );
     }
 
     #[test]

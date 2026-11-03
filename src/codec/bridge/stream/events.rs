@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use serde_json::Value;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InternalStreamEvent {
     TextDelta(String),
@@ -29,14 +31,15 @@ pub struct StreamUsage {
     pub cache_write_tokens: Option<u64>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct StreamStatsSnapshot {
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
     pub cache_read_tokens: Option<i64>,
     pub cache_write_tokens: Option<i64>,
-    pub response_id: Option<String>,
+    pub upstream_response_id: Option<String>,
+    pub response_output_items: Vec<Value>,
     pub tool_call_count: i64,
     pub output_text: String,
     pub reasoning_text: String,

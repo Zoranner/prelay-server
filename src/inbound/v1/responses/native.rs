@@ -182,8 +182,8 @@ pub(super) async fn create_native_response(
             provider_id: provider.id.clone(),
             model: model_upstream.to_string(),
             input_messages: request.messages.clone(),
-            store: true,
-            response_id: Some(context.response_id.clone()),
+            request_items: input_items.to_vec(),
+            response_id: context.response_id.clone(),
         });
         let log = ActivityInsert {
             protocol_in: "responses".to_string(),

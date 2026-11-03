@@ -47,7 +47,10 @@ impl NativeResponsesSseStatsDecoder {
             return;
         };
         if let Some(response_id) = decode_responses_response_id(&data) {
-            stats.response_id = Some(response_id);
+            stats.upstream_response_id = Some(response_id);
+        }
+        if let Some(output_items) = decode_responses_output_items(&data) {
+            stats.response_output_items = output_items;
         }
         for event in decode_responses_sse_event(event_name.as_deref(), &data) {
             stats.record_event(&event);
@@ -97,6 +100,14 @@ fn decode_responses_response_id(data: &str) -> Option<String> {
         .or_else(|| value.get("response_id").and_then(Value::as_str))
         .filter(|id| !id.trim().is_empty())
         .map(str::to_string)
+}
+
+fn decode_responses_output_items(data: &str) -> Option<Vec<Value>> {
+    let value = serde_json::from_str::<Value>(data).ok()?;
+    value
+        .pointer("/response/output")
+        .and_then(Value::as_array)
+        .cloned()
 }
 
 fn decode_responses_sse_event(event_name: Option<&str>, data: &str) -> Vec<InternalStreamEvent> {

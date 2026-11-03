@@ -1,11 +1,9 @@
-use prelay_server::{
-    codec::internal::InternalRole,
-    store::storage::{ResponseSessionInsert, StorageError},
-};
+use prelay_server::store::storage::{ResponseStateInsert, StorageError};
+use serde_json::json;
 
 use crate::support;
 
-use super::fixtures::{message, response, seed_identity_and_provider};
+use super::fixtures::{response, seed_identity_and_provider};
 
 #[tokio::test]
 async fn provider_keys_and_response_sessions_stay_scoped_to_the_identity() {
@@ -19,53 +17,64 @@ async fn provider_keys_and_response_sessions_stay_scoped_to_the_identity() {
         .expect_err("identity A cannot read identity B provider key");
     assert!(matches!(error, StorageError::ProviderNotFound));
 
-    let input_a = vec![message(InternalRole::User, "identity-a input")];
-    let input_b = vec![message(InternalRole::User, "identity-b input")];
+    let request_a = json!([{ "role": "user", "content": "identity-a input" }]);
+    let request_b = json!([{ "role": "user", "content": "identity-b input" }]);
+    let response_items_a = json!([{
+        "type": "message",
+        "role": "assistant",
+        "content": [{ "type": "output_text", "text": "identity-a output" }]
+    }]);
+    let response_items_b = json!([{
+        "type": "message",
+        "role": "assistant",
+        "content": [{ "type": "output_text", "text": "identity-b output" }]
+    }]);
     storage
-        .save_response_session(ResponseSessionInsert {
+        .save_response_state(ResponseStateInsert {
             identity_id: &identity_a,
             response_id: "shared-response",
             previous_response_id: None,
             conversation_id: "conversation-a",
             provider_id: &provider_a,
             model: "test-model",
-            input_messages: &input_a,
+            upstream_response_id: None,
+            request_items: &request_a,
+            response_items: &response_items_a,
+            input_messages: &[],
             response: &response("response-a", "identity-a output"),
         })
         .await
         .expect("save identity A session");
     storage
-        .save_response_session(ResponseSessionInsert {
+        .save_response_state(ResponseStateInsert {
             identity_id: &identity_b,
             response_id: "shared-response",
             previous_response_id: None,
             conversation_id: "conversation-b",
             provider_id: &provider_b,
             model: "test-model",
-            input_messages: &input_b,
+            upstream_response_id: None,
+            request_items: &request_b,
+            response_items: &response_items_b,
+            input_messages: &[],
             response: &response("response-b", "identity-b output"),
         })
         .await
         .expect("save identity B session");
 
-    assert_eq!(
-        storage
-            .load_response_session_messages(&identity_a, "shared-response")
-            .await
-            .expect("load identity A session"),
-        Some(vec![
-            message(InternalRole::User, "identity-a input"),
-            message(InternalRole::Assistant, "identity-a output"),
-        ])
-    );
-    assert_eq!(
-        storage
-            .load_response_session_messages(&identity_b, "shared-response")
-            .await
-            .expect("load identity B session"),
-        Some(vec![
-            message(InternalRole::User, "identity-b input"),
-            message(InternalRole::Assistant, "identity-b output"),
-        ])
-    );
+    let state_a = storage
+        .load_response_state(&identity_a, "shared-response")
+        .await
+        .expect("load identity A state")
+        .expect("identity A state exists");
+    assert_eq!(state_a.request_items, request_a);
+    assert_eq!(state_a.response_items, response_items_a);
+
+    let state_b = storage
+        .load_response_state(&identity_b, "shared-response")
+        .await
+        .expect("load identity B state")
+        .expect("identity B state exists");
+    assert_eq!(state_b.request_items, request_b);
+    assert_eq!(state_b.response_items, response_items_b);
 }

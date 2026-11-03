@@ -29,7 +29,6 @@ pub use identities::{AuthenticatedIdentity, DeleteInactiveResult};
 pub(crate) use provider_validation::parse_models;
 pub use response_states::{ResponseState, ResponseStateInsert};
 pub use rollout_recovery::{InterruptedRollout, RecoveredRollout};
-pub use sessions::ResponseSessionInsert;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProtocolAccess {
