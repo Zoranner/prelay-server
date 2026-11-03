@@ -22,11 +22,12 @@ use crate::{
 
 use super::{
     diagnostics::{
-        handle_startup_cleanup_failure, warn_incomplete_rollout_files, warn_orphan_rollout_files,
+        handle_startup_cleanup_failure, handle_startup_response_state_cleanup_failure,
+        warn_incomplete_rollout_files, warn_orphan_rollout_files,
     },
     environment::{catalog_directory, listen_address, load_environment_file},
     router::router,
-    tasks::{spawn_client_update_refresh, spawn_identity_cleanup},
+    tasks::{spawn_client_update_refresh, spawn_identity_cleanup, spawn_response_state_cleanup},
 };
 
 pub async fn serve() -> anyhow::Result<()> {
@@ -74,6 +75,14 @@ pub async fn serve() -> anyhow::Result<()> {
         tracing::info!(deleted, "deleted inactive identities at startup");
     }
     spawn_identity_cleanup(activity_store.clone());
+    let deleted = storage
+        .delete_expired_response_states(chrono::Utc::now())
+        .await
+        .map_err(handle_startup_response_state_cleanup_failure)?;
+    if deleted > 0 {
+        tracing::info!(deleted, "deleted expired response states at startup");
+    }
+    spawn_response_state_cleanup(storage.clone());
 
     let upstream_policy = client::initialize_from_environment().map_err(anyhow::Error::msg)?;
     // 图片预算的默认值按协议入口上限推导，入口上限已在启动时先初始化。

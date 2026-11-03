@@ -14,7 +14,10 @@ use tracing::{
 };
 use tracing_subscriber::{layer::Context, prelude::*, Layer, Registry};
 
-use super::diagnostics::{handle_startup_cleanup_failure, log_cleanup_failure};
+use super::diagnostics::{
+    handle_startup_cleanup_failure, handle_startup_response_state_cleanup_failure,
+    log_cleanup_failure,
+};
 use super::environment::{listen_address, load_environment_file};
 
 #[derive(Clone)]
@@ -119,6 +122,32 @@ fn startup_cleanup_failure_uses_safe_error_and_log() {
     assert!(events[0].contains("error_code=internal"));
     assert!(events[0].contains("failure_kind=startup_identity_cleanup"));
     assert!(events[0].contains("failed to delete inactive identities at startup"));
+    assert_excludes_storage_error_details(&events[0]);
+}
+
+#[test]
+fn startup_response_state_cleanup_failure_uses_safe_error_and_log() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let subscriber = Registry::default().with(EventCapture {
+        events: Arc::clone(&events),
+    });
+    let error = StorageError::Database(sea_orm::DbErr::Custom(
+        "SQL database DB crypto provider_key device_credential secret".to_string(),
+    ));
+
+    let startup_error = tracing::subscriber::with_default(subscriber, || {
+        handle_startup_response_state_cleanup_failure(error)
+    });
+
+    let returned = format!("{startup_error:#}");
+    assert_eq!(returned, "startup response state cleanup failed");
+    assert_excludes_storage_error_details(&returned);
+
+    let events = events.lock().expect("lock captured tracing events");
+    assert_eq!(events.len(), 1);
+    assert!(events[0].contains("error_code=internal"));
+    assert!(events[0].contains("failure_kind=startup_response_state_cleanup"));
+    assert!(events[0].contains("failed to delete expired response states at startup"));
     assert_excludes_storage_error_details(&events[0]);
 }
 

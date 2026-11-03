@@ -364,6 +364,9 @@ mod tests {
             .is_none());
     }
 
+    #[path = "expiry_tests.rs"]
+    mod expiry_tests;
+
     async fn test_storage() -> Storage {
         crate::test_support::test_storage().await
     }

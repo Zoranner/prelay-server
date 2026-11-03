@@ -4,6 +4,7 @@ use crate::{
 };
 
 const STARTUP_CLEANUP_FAILURE: &str = "startup identity cleanup failed";
+const STARTUP_RESPONSE_STATE_CLEANUP_FAILURE: &str = "startup response state cleanup failed";
 
 pub(super) fn log_cleanup_failure(error: &StorageError) {
     tracing::warn!(
@@ -19,6 +20,22 @@ pub(super) fn handle_startup_cleanup_failure(error: StorageError) -> anyhow::Err
         "failed to delete inactive identities at startup"
     );
     anyhow::anyhow!(STARTUP_CLEANUP_FAILURE)
+}
+
+pub(super) fn log_response_state_cleanup_failure(error: &StorageError) {
+    tracing::warn!(
+        error_code = error.code().as_str(),
+        "failed to delete expired response states"
+    );
+}
+
+pub(super) fn handle_startup_response_state_cleanup_failure(error: StorageError) -> anyhow::Error {
+    tracing::error!(
+        error_code = error.code().as_str(),
+        failure_kind = "startup_response_state_cleanup",
+        "failed to delete expired response states at startup"
+    );
+    anyhow::anyhow!(STARTUP_RESPONSE_STATE_CLEANUP_FAILURE)
 }
 
 pub(super) async fn warn_incomplete_rollout_files(rollout_store: &RolloutStore) {
