@@ -5,9 +5,10 @@ use serde::Serialize;
 mod event;
 
 pub use event::{
-    ErrorEvent, EventPhase, MediaEvent, MessageEvent, ReasoningEvent, RolloutEvent,
-    RolloutEventBody, SessionEndEvent, SessionMetaEvent, ToolCallEvent, ToolResultEvent,
-    UsageEvent, WindowStartEvent,
+    ContentDraft, ContentEventBody, ConversationError, ConversationMessage, ConversationReasoning,
+    ConversationToolCall, ConversationToolResult, ConversationUsage, ErrorEvent, EventPhase,
+    MediaEvent, MessageEvent, ReasoningEvent, RolloutEvent, RolloutEventBody, SessionEndEvent,
+    SessionMetaEvent, ToolCallEvent, ToolResultEvent, UsageEvent, WindowStartEvent,
 };
 
 pub const DEFAULT_ACTIVITY_ROLLOUT_DIR: &str = "data/sessions";

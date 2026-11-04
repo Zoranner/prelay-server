@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use super::RolloutStatus;
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum EventPhase {
     Request,
@@ -113,4 +113,91 @@ pub struct RolloutEvent {
     #[serde(rename = "type")]
     pub event_type: String,
     pub payload: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConversationMessage {
+    pub phase: EventPhase,
+    pub role: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_phase: Option<String>,
+    pub content: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConversationReasoning {
+    pub phase: EventPhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConversationToolCall {
+    pub phase: EventPhase,
+    pub tool_call_id: String,
+    pub name: String,
+    pub arguments: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConversationToolResult {
+    pub phase: EventPhase,
+    pub tool_call_id: String,
+    pub content: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConversationUsage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_tokens: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_tokens: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConversationError {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", content = "payload", rename_all = "snake_case")]
+pub enum ContentEventBody {
+    Message(ConversationMessage),
+    Reasoning(ConversationReasoning),
+    ToolCall(ConversationToolCall),
+    ToolResult(ConversationToolResult),
+    Usage(ConversationUsage),
+    Error(ConversationError),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ContentDraft {
+    pub item_id: Option<String>,
+    pub body: ContentEventBody,
+}
+
+impl ContentDraft {
+    pub fn new(body: ContentEventBody) -> Self {
+        Self {
+            item_id: None,
+            body,
+        }
+    }
+
+    pub fn with_item_id(mut self, item_id: impl Into<String>) -> Self {
+        self.item_id = Some(item_id.into());
+        self
+    }
 }

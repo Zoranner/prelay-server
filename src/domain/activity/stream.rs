@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RawStreamProtocol {
     ChatCompletions,
     ImageGeneration,
@@ -65,6 +66,10 @@ impl RawStreamContentCapture {
 
     pub fn is_completed(&self) -> bool {
         self.completed
+    }
+
+    pub fn protocol(&self) -> RawStreamProtocol {
+        self.protocol
     }
 
     pub fn output_text(&self) -> &str {
