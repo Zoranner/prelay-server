@@ -1,6 +1,8 @@
 # 活动与自动记忆设计
 
 > `activity_contents` 正文存储部分已被 `2026-10-22-activity-rollout-storage-design.md` 取代：活动正文改为每活动一份 JSONL 文件，数据库只保存索引。本文的记忆模型和来源设计继续保留。
+>
+> 活动正文和记忆来源正文的采集边界已由 `2026-11-04-conversation-content-source-design.md` 取代；本文的记忆、实体和关系模型继续保留。
 
 ## 目标
 
