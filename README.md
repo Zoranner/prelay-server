@@ -116,7 +116,13 @@ Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.4.5`，并以只读方式
 - `UPSTREAM_RETRY_BACKOFF_MS`：重试前等待的毫秒数，默认 `250`，允许为 `0`。
 - `UPSTREAM_MAX_CANDIDATES`：单次请求最多尝试的候选上游数，默认不限制，必须大于 `0`。
 
-活动正文按身份和会话线程保存在服务端文件中，路径为 `<ACTIVITY_ROLLOUT_DIR>/<identity_id>/<thread_id>.jsonl`。无状态请求会按 `(type, payload)` 事件身份和出现次数去重，只追加本线程尚未记录的事件；比较时忽略事件落盘阶段 `phase`，因此响应阶段的 reasoning、消息和工具调用可以在下一轮请求历史中匹配。直通原生 Responses 且带 `previous_response_id` 的请求只携带当前增量，必须直接追加，不能按历史回放去重；桥接到 Chat Completions 时会先拼入父轮历史，因此仍按回放去重。窗口 generation 变化时写入 `window_start`，并按新窗口重新计数。服务在进程内缓存每个线程的行数、末序号、窗口 generation、内容哈希和事件计数，按最近访问淘汰，最多保留 65,536 个线程；每个逻辑线程维护一个 `<thread_id>.jsonl.index` 持久索引，记录当前活动分段（主文件或 `.recovered` 分段）、文件戳、行数、末序号、generation、内容哈希和事件计数。缓存或持久索引命中时先比对当前分段和基线文件的长度、修改时间，再遍历本次请求历史并只追加超过已存次数的事件，不再读取完整线程文件。索引 version 1 或损坏、文件长度或修改时间变化时回退到完整校验并重建索引；索引只在线程尾部完整且可解析后建立。索引文件在身份清理时与线程文件一起删除。线程损坏时继续使用 `.recovered.jsonl` 分段。文件在后续请求发现末尾半行时会截断到最后一个完整换行，启动日志会报告残留的不完整文件。正文不设应用层大小上限，也不做自动归档；磁盘容量和文件系统限制仍是物理边界。活动索引保存在数据库的 `activity_rollouts` 中，记录线程、窗口、行号区间、状态、大小和 hash。目录由启动时读取的环境变量控制，修改后需要重启服务：
+活动正文按身份和会话线程保存在服务端文件中，路径为 `<ACTIVITY_ROLLOUT_DIR>/<identity_id>/<thread_id>.jsonl`。新线程首行只写一次 v1 文件头（`{"v":1,"type":"meta",...}`）；窗口变化写 `window`，每次请求写 `turn`、内容事件、`context` 和 `turn_end`。内容事件类型包括 `message`、`reasoning`、`tool_call`、`tool_result`、`error` 和 `usage`，统一使用线程内 `seq`、带时区的 RFC 3339 时间、`type` 和 `payload`。图片、文件、音频只保留类型占位；纯控制项和只有 `encrypted_content` 的 reasoning 不写入。
+
+`context.refs` 按本轮实际输入顺序引用内容事件，是模型本轮实际看到的完整输入。历史回放只写引用，不重复写正文；原生 Responses 带 `previous_response_id` 时会先拼入父轮请求项和响应项，再按回放规则去重，不是无条件追加。匹配时优先使用稳定 `item_id` 或 `tool_call_id`；没有稳定 ID 时按内容身份和当前窗口内已出现次数匹配，超出次数的相同内容作为真实新消息写入。窗口 generation 变化会清空当前窗口的出现次数，但 `context.refs` 仍可跨窗口引用旧内容。会话展示、记忆和审计读取同一份内容事件流；`context` 是审计事件，不进入普通展示或记忆正文。
+
+服务在进程内缓存每个线程的行数、末序号、窗口 generation、内容哈希和事件计数，按最近访问淘汰，最多保留 65,536 个线程。每个逻辑线程维护一个 `<thread_id>.jsonl.index` 持久索引，记录当前活动分段（主文件或 `.recovered` 分段）、文件戳、行数、末序号、generation、内容身份及出现次数、稳定 ID 引用和事件计数，不保存正文。索引 version 为 3；version 1、version 2、损坏或文件戳变化时回退到完整校验并重建。缓存或索引命中时先比对文件长度和修改时间，再遍历本轮历史，只追加超出已存次数的内容。索引只在线程尾部完整且可解析后建立，身份清理时随线程文件一起删除。
+
+旧线程没有 v1 文件头，按 legacy 读取，旧数据中缺失的 refusal、内置工具调用、附件或其他内容不会被伪造；续写时保留原前缀并在尾部追加 v1 事件。线程损坏时继续使用 `.recovered.jsonl` 分段；末尾半行会在后续请求中截断到最后一个完整换行，启动日志报告残留的不完整文件。`activity_rollouts.event_count` 表示该活动写入的事件行数，不包含线程文件头；完整文件的 `RolloutFile.line_count` 单独表示物理行数。正文不设应用层大小上限，也不做自动归档，磁盘容量和文件系统限制仍是物理边界。目录由启动时读取的环境变量控制，修改后需要重启服务：
 
 - `ACTIVITY_ROLLOUT_DIR`：活动 JSONL 的根目录，默认 `data/sessions`，必须非空。
 

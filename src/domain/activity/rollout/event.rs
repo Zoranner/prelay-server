@@ -6,7 +6,9 @@ use super::RolloutStatus;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ConversationFormat {
+    /// 首行为 v1 文件头。
     V1,
+    /// 没有 v1 文件头，按旧行格式读取；续写后仍保留该标记，尾部可能包含新追加的 v1 事件。
     Legacy,
 }
 
