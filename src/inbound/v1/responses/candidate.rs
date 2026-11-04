@@ -9,14 +9,14 @@ use crate::{
         },
         internal::InternalRequest,
     },
-    domain::activity::{rollout::SessionContext, ContentDraft},
+    domain::activity::rollout::SessionContext,
     error::AppError,
     inbound::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
     AppState,
 };
 
 use super::{
-    chat::create_chat_response,
+    chat::{create_chat_response, ChatBridgeInput},
     handler::ResponseCandidateRequest,
     native::{create_native_response, NativeResponseRequest},
     state::{continuation_items, current_input_items},
@@ -31,7 +31,6 @@ pub(super) struct ResponseBridgeContext {
     pub(super) conversation_id: String,
     pub(super) session_id: String,
     pub(super) session: SessionContext,
-    pub(super) request_events: Vec<ContentDraft>,
     pub(super) started_at: std::time::Instant,
 }
 
@@ -65,7 +64,6 @@ pub(super) async fn create_response_with_candidate(
         Some(parent) => continuation_items(parent, &current_items),
         None => current_items,
     };
-    let request_events = conversation_events_from_responses_request(payload.as_ref(), &input_items);
     let context = ResponseBridgeContext {
         identity_id: access.identity_id.clone(),
         endpoint_name: access.endpoint_name.clone(),
@@ -75,7 +73,6 @@ pub(super) async fn create_response_with_candidate(
         conversation_id,
         session_id,
         session,
-        request_events,
         started_at,
     };
 
@@ -96,6 +93,7 @@ pub(super) async fn create_response_with_candidate(
     }
 
     validate_responses_bridge_payload(payload.as_ref())?;
+    let request_events = conversation_events_from_responses_request(payload.as_ref(), &input_items);
     let mut request = request_for_upstream(request.as_ref(), &model_upstream);
     request.messages = decode_items_for_chat_bridge(&input_items)?;
     create_chat_response(
@@ -104,8 +102,11 @@ pub(super) async fn create_response_with_candidate(
         provider,
         upstream_protocol,
         previous_response_id,
-        &input_items,
         context,
+        ChatBridgeInput {
+            input_items: &input_items,
+            request_events,
+        },
     )
     .await
 }

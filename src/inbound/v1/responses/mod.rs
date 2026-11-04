@@ -8,6 +8,7 @@ mod chat;
 mod handler;
 pub(super) mod image_budget;
 mod native;
+mod native_input;
 mod sessions;
 mod state;
 mod stream_rewrite;

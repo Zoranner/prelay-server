@@ -229,3 +229,72 @@ async fn records_failed_response_activity_when_upstream_fails() {
         event.event_type == "turn_end" && event.payload["status"] == json!("failed")
     }));
 }
+
+#[tokio::test]
+async fn records_native_response_content_events() {
+    let upstream = spawn_rich_native_responses_upstream().await;
+    let state = crate::test_support::test_state().await;
+    let provider = test_provider("gpt-4.1", "openai", &upstream, "sk-upstream")
+        .await
+        .expect("create provider");
+    let auth = create_test_endpoint_auth(&state.storage, &provider, "gpt-4.1", "gpt-4.1").await;
+
+    create_response(
+        State(state.clone()),
+        auth.access.clone(),
+        axum::Json(json!({
+            "model": "gpt-4.1",
+            "input": "hello"
+        })),
+    )
+    .await
+    .expect("create native response");
+
+    let logs = state
+        .storage
+        .list_activities(&auth.access.0.identity_id, 10)
+        .await
+        .expect("load native activities");
+    let rollout = state
+        .storage
+        .find_activity_rollout(&logs[0].id)
+        .await
+        .expect("load native rollout")
+        .expect("native rollout exists");
+    let file = state
+        .activity_store
+        .rollouts()
+        .read_verified(&rollout.rollout_path)
+        .expect("read native rollout");
+    let content = file.content_events();
+
+    assert!(content.iter().any(|event| matches!(
+        &event.body,
+        crate::domain::activity::ContentEventBody::Reasoning(reasoning)
+            if reasoning.summary.as_deref() == Some("inspect first")
+                && reasoning.content.as_deref() == Some("detailed reasoning")
+    )));
+    assert!(content.iter().any(|event| matches!(
+        &event.body,
+        crate::domain::activity::ContentEventBody::Message(message)
+            if message.message_phase.as_deref() == Some("final_answer")
+                && message.content[1] == json!({ "type": "refusal", "text": "cannot comply" })
+    )));
+    assert!(content.iter().any(|event| matches!(
+        &event.body,
+        crate::domain::activity::ContentEventBody::ToolCall(tool_call)
+            if tool_call.tool_call_id == "call_custom" && tool_call.name == "apply_patch"
+    )));
+    let usage = file
+        .events
+        .iter()
+        .find(|event| event.event_type == "usage")
+        .expect("usage event");
+    assert_eq!(usage.payload["input_tokens"], json!(3));
+    assert_eq!(usage.payload["output_tokens"], json!(4));
+    assert_eq!(usage.payload["reasoning_tokens"], json!(2));
+    assert_eq!(usage.payload["cache_read_tokens"], json!(1));
+    assert_eq!(usage.payload["cache_write_tokens"], json!(2));
+    let serialized = serde_json::to_string(&file.events).expect("serialize native content");
+    assert!(!serialized.contains("opaque-reasoning"));
+}

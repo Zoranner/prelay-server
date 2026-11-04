@@ -21,6 +21,7 @@ use crate::{
         bridge::stream::{chat_sse_response_to_responses_sse_with_stats, with_sse_keepalive},
         internal::InternalRequest,
     },
+    domain::activity::ContentDraft,
     domain::registry::ProviderConfig,
     domain::stats::ActivityInsert,
     error::AppError,
@@ -38,15 +39,24 @@ use super::{
     sessions::count_tool_calls,
 };
 
+pub(super) struct ChatBridgeInput<'a> {
+    pub(super) input_items: &'a [Value],
+    pub(super) request_events: Vec<ContentDraft>,
+}
+
 pub(super) async fn create_chat_response(
     state: &AppState,
     request: InternalRequest,
     provider: ProviderConfig,
     upstream_protocol: UpstreamProtocol,
     previous_response_id: Option<String>,
-    input_items: &[Value],
     context: ResponseBridgeContext,
+    bridge: ChatBridgeInput<'_>,
 ) -> Result<Response, AppError> {
+    let ChatBridgeInput {
+        input_items,
+        request_events,
+    } = bridge;
     let ResponseBridgeContext {
         identity_id,
         endpoint_name,
@@ -56,7 +66,6 @@ pub(super) async fn create_chat_response(
         conversation_id,
         session_id,
         session,
-        request_events,
         started_at,
     } = context;
     let failure_context = ResponseBridgeContext {
@@ -68,7 +77,6 @@ pub(super) async fn create_chat_response(
         conversation_id: conversation_id.clone(),
         session_id: session_id.clone(),
         session: session.clone(),
-        request_events: request_events.clone(),
         started_at,
     };
     validate_internal_request_for_bridge(&request)?;

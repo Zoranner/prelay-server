@@ -1,12 +1,10 @@
-use std::borrow::Cow;
-
 use axum::{
     body::Body,
     http::header,
     response::{IntoResponse, Response},
     Json,
 };
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::{
     codec::activity::conversation_events_from_responses_output,
@@ -19,7 +17,7 @@ use crate::{
     },
     domain::stats::ActivityInsert,
     error::AppError,
-    inbound::v1::responses::image_budget::{self, ImageBudgetOutcome, ImageBudgetPolicy},
+    inbound::v1::responses::image_budget,
     service::{
         recording::{record_stream_with_rollout, StreamRecording, StreamRollout, StreamSession},
         upstream_errors::upstream_failure_message,
@@ -31,6 +29,7 @@ use crate::{
 use super::{
     activity::{record_upstream_failure, upstream_error_details, UpstreamFailure},
     candidate::ResponseBridgeContext,
+    native_input::prepare_native_input,
     stream_rewrite::rewrite_response_ids,
 };
 
@@ -59,7 +58,8 @@ pub(super) async fn create_native_response(
     let upstream_started_at = std::time::Instant::now();
     let client = state.provider_client(&provider.provider_type)?;
     let image_budget_policy = image_budget::policy();
-    let input_items = budget_input_items(input_items, image_budget_policy)?;
+    let (input_items, request_events) =
+        prepare_native_input(payload, input_items, image_budget_policy)?;
     let upstream_request_body =
         crate::codec::providers::responses::encode_native_responses_request_body(
             payload,
@@ -99,7 +99,7 @@ pub(super) async fn create_native_response(
                     error_code,
                     error_message: message,
                     upstream_latency_ms: Some(upstream_started_at.elapsed().as_millis() as i64),
-                    request_events: context.request_events.clone(),
+                    request_events: request_events.clone(),
                 },
             )
             .await;
@@ -143,7 +143,7 @@ pub(super) async fn create_native_response(
                     upstream_request_id: None,
                 },
                 &context.session,
-                context.request_events.clone(),
+                request_events.clone(),
                 Vec::new(),
             )
             .await?;
@@ -170,7 +170,7 @@ pub(super) async fn create_native_response(
                         error_code,
                         error_message: message,
                         upstream_latency_ms: Some(upstream_latency_ms),
-                        request_events: context.request_events.clone(),
+                        request_events: request_events.clone(),
                     },
                 )
                 .await;
@@ -223,7 +223,7 @@ pub(super) async fn create_native_response(
                 StreamRecording {
                     stats: stream_stats,
                     rollout: StreamRollout {
-                        request_events: context.request_events.clone(),
+                        request_events: request_events.clone(),
                         session: context.session.clone(),
                     },
                     session,
@@ -256,7 +256,7 @@ pub(super) async fn create_native_response(
                     error_code,
                     error_message: message,
                     upstream_latency_ms: Some(upstream_latency_ms),
-                    request_events: context.request_events.clone(),
+                    request_events: request_events.clone(),
                 },
             )
             .await;
@@ -289,7 +289,7 @@ pub(super) async fn create_native_response(
                         error_code,
                         error_message: message,
                         upstream_latency_ms: Some(upstream_latency_ms),
-                        request_events: context.request_events.clone(),
+                        request_events: request_events.clone(),
                     },
                 )
                 .await;
@@ -380,61 +380,10 @@ pub(super) async fn create_native_response(
                 upstream_request_id: None,
             },
             &context.session,
-            context.request_events.clone(),
+            request_events.clone(),
             conversation_events_from_responses_output(&response_output, response.get("usage")),
         )
         .await?;
 
     Ok(Json(response).into_response())
-}
-
-pub(super) fn budget_input_items<'a>(
-    input_items: &'a [Value],
-    policy: &ImageBudgetPolicy,
-) -> Result<Cow<'a, [Value]>, AppError> {
-    if !policy.enabled {
-        return Ok(Cow::Borrowed(input_items));
-    }
-    let budget_payload = json!({ "input": input_items });
-    match image_budget::apply(&budget_payload, policy) {
-        ImageBudgetOutcome::Disabled => Ok(Cow::Borrowed(input_items)),
-        ImageBudgetOutcome::WithinBudget(report) => {
-            tracing::debug!(
-                total_bytes = report.total_bytes,
-                max_bytes = policy.max_bytes,
-                "image payload is within the upstream budget"
-            );
-            Ok(Cow::Borrowed(input_items))
-        }
-        ImageBudgetOutcome::Trimmed { payload, report } => {
-            tracing::info!(
-                total_bytes = report.total_bytes,
-                remaining_bytes = report.remaining_bytes,
-                dropped_images = report.dropped_images,
-                max_bytes = policy.max_bytes,
-                "trimmed historical images for the upstream image budget"
-            );
-            Ok(Cow::Owned(
-                payload
-                    .get("input")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default(),
-            ))
-        }
-        ImageBudgetOutcome::CannotMeetBudget(report) => {
-            tracing::warn!(
-                total_bytes = report.total_bytes,
-                remaining_bytes = report.remaining_bytes,
-                dropped_images = report.dropped_images,
-                max_bytes = policy.max_bytes,
-                keep_last = policy.keep_last,
-                "image payload cannot be reduced to the upstream budget"
-            );
-            Err(AppError::PayloadTooLarge(format!(
-                "图片请求体超过上游预算：已丢弃 {} 张历史图片，仍有 {} 字节，预算 {} 字节。请减少图片，或调整 IMAGE_BUDGET_MAX_BYTES。",
-                report.dropped_images, report.remaining_bytes, policy.max_bytes
-            )))
-        }
-    }
 }
