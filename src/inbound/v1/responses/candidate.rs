@@ -1,6 +1,7 @@
 use axum::response::Response;
 
 use crate::{
+    codec::activity::conversation_events_from_responses_request,
     codec::providers::spec::UpstreamProtocol,
     codec::{
         bridge::responses::decode::{
@@ -8,7 +9,7 @@ use crate::{
         },
         internal::InternalRequest,
     },
-    domain::activity::rollout::SessionContext,
+    domain::activity::{rollout::SessionContext, ContentDraft},
     error::AppError,
     inbound::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
     AppState,
@@ -30,6 +31,7 @@ pub(super) struct ResponseBridgeContext {
     pub(super) conversation_id: String,
     pub(super) session_id: String,
     pub(super) session: SessionContext,
+    pub(super) request_events: Vec<ContentDraft>,
     pub(super) started_at: std::time::Instant,
 }
 
@@ -57,11 +59,13 @@ pub(super) async fn create_response_with_candidate(
         .session_id
         .clone()
         .unwrap_or_else(|| conversation_id.clone());
-    let replays_history =
-        previous_response_id.is_none() || upstream_protocol != UpstreamProtocol::Responses;
-    let session = access
-        .session_context(&conversation_id)
-        .with_replay_history(replays_history);
+    let session = access.session_context(&conversation_id);
+    let current_items = current_input_items(payload.as_ref())?;
+    let input_items = match parent_state.as_deref() {
+        Some(parent) => continuation_items(parent, &current_items),
+        None => current_items,
+    };
+    let request_events = conversation_events_from_responses_request(payload.as_ref(), &input_items);
     let context = ResponseBridgeContext {
         identity_id: access.identity_id.clone(),
         endpoint_name: access.endpoint_name.clone(),
@@ -71,12 +75,8 @@ pub(super) async fn create_response_with_candidate(
         conversation_id,
         session_id,
         session,
+        request_events,
         started_at,
-    };
-    let current_items = current_input_items(payload.as_ref())?;
-    let input_items = match parent_state.as_deref() {
-        Some(parent) => continuation_items(parent, &current_items),
-        None => current_items,
     };
 
     if upstream_protocol == UpstreamProtocol::Responses {

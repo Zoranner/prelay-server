@@ -1,5 +1,5 @@
 use crate::{
-    domain::activity::{rollout::SessionContext, RolloutEventBody},
+    domain::activity::{rollout::SessionContext, ContentDraft},
     domain::stats::ActivityInsert,
     inbound::v1::auth::CurrentProtocolAccess,
     AppState,
@@ -56,8 +56,8 @@ pub(super) async fn record_image_activity_best_effort(
     access: &CurrentProtocolAccess,
     session: &SessionContext,
     log: ActivityInsert,
-    request_events: Vec<RolloutEventBody>,
-    response_events: Vec<RolloutEventBody>,
+    request_events: Vec<ContentDraft>,
+    response_events: Vec<ContentDraft>,
 ) {
     if state
         .activity_store

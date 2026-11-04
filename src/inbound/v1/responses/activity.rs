@@ -1,7 +1,7 @@
 use axum::http::StatusCode;
 
 use crate::{
-    domain::activity::RolloutEventBody, domain::registry::ProviderConfig,
+    domain::activity::ContentDraft, domain::registry::ProviderConfig,
     domain::stats::ActivityInsert, error::AppError, AppState,
 };
 
@@ -45,7 +45,7 @@ pub(super) struct UpstreamFailure<'a> {
     pub error_code: &'a str,
     pub error_message: String,
     pub upstream_latency_ms: Option<i64>,
-    pub request_events: Vec<RolloutEventBody>,
+    pub request_events: Vec<ContentDraft>,
 }
 
 pub(super) async fn record_upstream_failure(

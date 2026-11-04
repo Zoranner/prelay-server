@@ -7,15 +7,14 @@ use futures::TryStreamExt;
 use serde_json::Value;
 
 use crate::{
-    codec::activity::{events_from_image_request, media_event},
+    codec::activity::{
+        conversation_events_from_image_request, conversation_events_from_image_response,
+    },
     codec::bridge::stream::{upstream_bytes_stream, verify_upstream_sse_head, with_sse_keepalive},
     codec::providers::spec::{
         provider_upstream_base_url, with_provider_headers, RequestHeaderContext,
     },
-    domain::activity::{
-        media_metadata_from_bytes, EventPhase, RawStreamContentCapture, RawStreamProtocol,
-        SessionContext,
-    },
+    domain::activity::{RawStreamContentCapture, RawStreamProtocol, SessionContext},
     error::AppError,
     inbound::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
     service::{
@@ -108,7 +107,7 @@ pub(super) async fn create_image_generation_with_candidate(
                     upstream_request_id: None,
                     error_message: Some(safe_error_message.to_string()),
                 }),
-                events_from_image_request(&payload),
+                conversation_events_from_image_request(&payload),
                 Vec::new(),
             )
             .await;
@@ -142,7 +141,7 @@ pub(super) async fn create_image_generation_with_candidate(
                 upstream_request_id: observability.request_id,
                 error_message: Some(safe_error_message.clone()),
             }),
-            events_from_image_request(&payload),
+            conversation_events_from_image_request(&payload),
             Vec::new(),
         )
         .await;
@@ -184,7 +183,7 @@ pub(super) async fn create_image_generation_with_candidate(
                 started_at,
                 RawStreamContentCapture::new(RawStreamProtocol::ImageGeneration),
                 StreamRollout {
-                    request_events: events_from_image_request(&payload),
+                    request_events: conversation_events_from_image_request(&payload),
                     session: session.clone(),
                 },
             )
@@ -219,7 +218,7 @@ pub(super) async fn create_image_generation_with_candidate(
                     upstream_request_id,
                     error_message: Some(safe_error_message.clone()),
                 }),
-                events_from_image_request(&payload),
+                conversation_events_from_image_request(&payload),
                 Vec::new(),
             )
             .await;
@@ -229,11 +228,6 @@ pub(super) async fn create_image_generation_with_candidate(
             });
         }
     };
-    let media_type = content_type
-        .as_ref()
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("application/octet-stream");
-    let media = media_metadata_from_bytes(media_type, &response_bytes);
     record_image_activity_best_effort(
         state,
         access,
@@ -252,8 +246,8 @@ pub(super) async fn create_image_generation_with_candidate(
             upstream_request_id,
             error_message: None,
         }),
-        events_from_image_request(&payload),
-        vec![media_event(EventPhase::Response, &media)],
+        conversation_events_from_image_request(&payload),
+        conversation_events_from_image_response(),
     )
     .await;
 

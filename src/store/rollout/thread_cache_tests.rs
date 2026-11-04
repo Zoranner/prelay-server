@@ -2,33 +2,28 @@ use std::io::Write;
 
 use serde_json::json;
 
-use super::{RolloutStore, ThreadSource};
+use super::cache::ThreadSource;
+use super::RolloutStore;
 use crate::domain::activity::rollout::RolloutStatus;
 use crate::domain::activity::{
-    EventPhase, MessageEvent, RolloutEventBody, SessionContext, SessionMetaEvent,
+    ContentDraft, ContentEventBody, ConversationMessage, EventPhase, SessionContext, TurnContext,
 };
 
-fn test_meta(activity_id: &str, session_id: &str) -> SessionMetaEvent {
-    SessionMetaEvent {
+fn test_meta(activity_id: &str, _session_id: &str) -> TurnContext {
+    TurnContext {
         activity_id: activity_id.to_string(),
-        session_id: session_id.to_string(),
-        identity_id: "identity-1".to_string(),
-        protocol_in: "responses".to_string(),
-        protocol_out: "responses".to_string(),
-        protocol_upstream: Some("responses".to_string()),
-        endpoint_name: "Codex".to_string(),
         model_requested: "deepseek-flash".to_string(),
         model_upstream: "deepseek/deepseek-v4.1-flash".to_string(),
-        started_at: "2026-10-22T20:20:10Z".to_string(),
     }
 }
 
-fn message(phase: EventPhase, content: serde_json::Value) -> RolloutEventBody {
-    RolloutEventBody::Message(MessageEvent {
+fn message(phase: EventPhase, content: serde_json::Value) -> ContentDraft {
+    ContentDraft::new(ContentEventBody::Message(ConversationMessage {
         phase,
         role: "user".to_string(),
+        message_phase: None,
         content,
-    })
+    }))
 }
 
 fn session(thread_id: &str) -> SessionContext {
@@ -94,8 +89,8 @@ async fn reuses_a_persisted_thread_index_after_restart() {
         panic!("expected the persisted index to be reused");
     };
     assert_eq!(state.relative_path, "identity-1/thread-persisted.jsonl");
-    assert_eq!(state.line_count, 3);
-    assert_eq!(state.event_counts.values().sum::<u64>(), 1);
+    assert_eq!(state.line_count, 6);
+    assert_eq!(state.event_refs.values().map(Vec::len).sum::<usize>(), 1);
 
     let mut resumed = restarted
         .begin(
@@ -362,7 +357,7 @@ async fn falls_back_to_a_full_read_when_the_cached_history_does_not_match() {
         .await
         .expect("begin first activity");
     first
-        .append(message(EventPhase::Response, json!("first answer")))
+        .append_content(message(EventPhase::Response, json!("first answer")))
         .expect("append first answer");
     first
         .finish(RolloutStatus::Completed)

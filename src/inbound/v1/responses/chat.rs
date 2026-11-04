@@ -7,7 +7,7 @@ use axum::{
 use serde_json::Value;
 
 use crate::{
-    codec::activity::{events_from_internal_request, events_from_internal_response},
+    codec::activity::conversation_events_from_chat_response,
     codec::providers::{
         chat_completions::{decode_chat_response, encode_chat_request},
         spec::{
@@ -56,6 +56,7 @@ pub(super) async fn create_chat_response(
         conversation_id,
         session_id,
         session,
+        request_events,
         started_at,
     } = context;
     let failure_context = ResponseBridgeContext {
@@ -67,6 +68,7 @@ pub(super) async fn create_chat_response(
         conversation_id: conversation_id.clone(),
         session_id: session_id.clone(),
         session: session.clone(),
+        request_events: request_events.clone(),
         started_at,
     };
     validate_internal_request_for_bridge(&request)?;
@@ -107,7 +109,7 @@ pub(super) async fn create_chat_response(
                     error_code,
                     error_message: message,
                     upstream_latency_ms: Some(upstream_started_at.elapsed().as_millis() as i64),
-                    request_events: events_from_internal_request(&request),
+                    request_events: request_events.clone(),
                 },
             )
             .await;
@@ -151,7 +153,7 @@ pub(super) async fn create_chat_response(
                     upstream_request_id: None,
                 },
                 &session,
-                events_from_internal_request(&request),
+                request_events.clone(),
                 Vec::new(),
             )
             .await?;
@@ -182,7 +184,7 @@ pub(super) async fn create_chat_response(
                         error_code,
                         error_message: message,
                         upstream_latency_ms: Some(upstream_latency_ms),
-                        request_events: events_from_internal_request(&request),
+                        request_events: request_events.clone(),
                     },
                 )
                 .await;
@@ -234,7 +236,7 @@ pub(super) async fn create_chat_response(
                 StreamRecording {
                     stats: stream_stats,
                     rollout: StreamRollout {
-                        request_events: events_from_internal_request(&request),
+                        request_events: request_events.clone(),
                         session: session.clone(),
                     },
                     session: response_session,
@@ -267,13 +269,14 @@ pub(super) async fn create_chat_response(
                     error_code,
                     error_message: message,
                     upstream_latency_ms: Some(upstream_latency_ms),
-                    request_events: events_from_internal_request(&request),
+                    request_events: request_events.clone(),
                 },
             )
             .await;
             return Err(error);
         }
     };
+    let response_events = conversation_events_from_chat_response(&upstream_json);
     let mut response = match decode_chat_response(upstream_json) {
         Ok(response) => response,
         Err(error) => {
@@ -289,7 +292,7 @@ pub(super) async fn create_chat_response(
                     error_code,
                     error_message: message,
                     upstream_latency_ms: Some(upstream_latency_ms),
-                    request_events: events_from_internal_request(&request),
+                    request_events: request_events.clone(),
                 },
             )
             .await;
@@ -366,8 +369,8 @@ pub(super) async fn create_chat_response(
                 upstream_request_id: None,
             },
             &session,
-            events_from_internal_request(&request),
-            events_from_internal_response(&response),
+            request_events.clone(),
+            response_events,
         )
         .await?;
 

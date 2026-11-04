@@ -3,34 +3,28 @@ use std::time::Instant;
 use serde_json::json;
 
 use super::RolloutStore;
-use crate::domain::activity::rollout::{RolloutStatus, SessionContext, SessionMetaEvent};
-use crate::domain::activity::{EventPhase, MessageEvent, RolloutEventBody};
+use crate::domain::activity::rollout::{RolloutStatus, SessionContext, TurnContext};
+use crate::domain::activity::{ContentDraft, ContentEventBody, ConversationMessage, EventPhase};
 
 const HISTORY_EVENTS: usize = 20_000;
 
-fn test_meta() -> SessionMetaEvent {
-    SessionMetaEvent {
+fn test_meta() -> TurnContext {
+    TurnContext {
         activity_id: "activity-benchmark".to_string(),
-        session_id: "thread-benchmark".to_string(),
-        identity_id: "identity-1".to_string(),
-        protocol_in: "responses".to_string(),
-        protocol_out: "responses".to_string(),
-        protocol_upstream: Some("responses".to_string()),
-        endpoint_name: "Codex".to_string(),
         model_requested: "deepseek-flash".to_string(),
         model_upstream: "deepseek/deepseek-v4.1-flash".to_string(),
-        started_at: "2026-10-22T20:20:10Z".to_string(),
     }
 }
 
-fn history() -> Vec<RolloutEventBody> {
+fn history() -> Vec<ContentDraft> {
     (0..HISTORY_EVENTS)
         .map(|index| {
-            RolloutEventBody::Message(MessageEvent {
+            ContentDraft::new(ContentEventBody::Message(ConversationMessage {
                 phase: EventPhase::Request,
                 role: "user".to_string(),
+                message_phase: None,
                 content: json!(format!("history-{index}")),
-            })
+            }))
         })
         .collect()
 }
@@ -75,11 +69,14 @@ async fn benchmark_long_thread_cache_hit() {
     let indexed_elapsed = indexed_started.elapsed();
 
     let mut warm_history = history;
-    warm_history.push(RolloutEventBody::Message(MessageEvent {
-        phase: EventPhase::Request,
-        role: "user".to_string(),
-        content: json!("new tail"),
-    }));
+    warm_history.push(ContentDraft::new(ContentEventBody::Message(
+        ConversationMessage {
+            phase: EventPhase::Request,
+            role: "user".to_string(),
+            message_phase: None,
+            content: json!("new tail"),
+        },
+    )));
     let warm_started = Instant::now();
     let mut warm = store
         .begin("identity-1", &session, test_meta(), warm_history)

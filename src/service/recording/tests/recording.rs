@@ -53,7 +53,7 @@ async fn first_chunk_recording_finalizes_a_rollout_on_eof() {
         .rollouts()
         .read_events(&rollout.rollout_path)
         .expect("read rollout events");
-    assert_eq!(events[0].event_type, "session_meta");
+    assert_eq!(events[0].event_type, "window");
     assert!(events.iter().any(|event| {
         event.event_type == "message"
             && event.payload["phase"] == json!("request")
@@ -62,7 +62,7 @@ async fn first_chunk_recording_finalizes_a_rollout_on_eof() {
     assert!(events
         .iter()
         .any(|event| event.event_type == "message" && event.payload["content"] == json!("hello")));
-    assert!(!events.iter().any(|event| event.event_type == "session_end"));
+    assert!(events.iter().any(|event| event.event_type == "turn_end"));
 }
 
 #[tokio::test]

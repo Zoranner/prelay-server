@@ -1,14 +1,14 @@
 use std::{fmt, io};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 mod event;
 
 pub use event::{
-    ContentDraft, ContentEventBody, ConversationError, ConversationMessage, ConversationReasoning,
-    ConversationToolCall, ConversationToolResult, ConversationUsage, ErrorEvent, EventPhase,
-    MediaEvent, MessageEvent, ReasoningEvent, RolloutEvent, RolloutEventBody, SessionEndEvent,
-    SessionMetaEvent, ToolCallEvent, ToolResultEvent, UsageEvent, WindowStartEvent,
+    ContentDraft, ContentEvent, ContentEventBody, ContextEvent, ConversationError,
+    ConversationEvent, ConversationEventBody, ConversationFormat, ConversationMessage,
+    ConversationMeta, ConversationReasoning, ConversationToolCall, ConversationToolResult,
+    ConversationUsage, EventPhase, TurnEndEvent, TurnEvent, WindowEvent,
 };
 
 pub const DEFAULT_ACTIVITY_ROLLOUT_DIR: &str = "data/sessions";
@@ -18,12 +18,13 @@ pub struct SessionContext {
     pub thread_id: String,
     pub window_id: Option<String>,
     pub generation: u64,
-    /// Whether `input` is expected to replay the stored conversation history.
-    ///
-    /// Native Responses requests with `previous_response_id` only carry the
-    /// current turn, so their events must be appended even when they match
-    /// stored content. Bridge paths rebuild the full input before recording.
-    pub replay_history: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnContext {
+    pub activity_id: String,
+    pub model_requested: String,
+    pub model_upstream: String,
 }
 
 impl SessionContext {
@@ -32,7 +33,6 @@ impl SessionContext {
             thread_id: thread_id.into(),
             window_id: None,
             generation: 0,
-            replay_history: true,
         }
     }
 
@@ -45,13 +45,7 @@ impl SessionContext {
             thread_id: thread_id.into(),
             window_id,
             generation,
-            replay_history: true,
         }
-    }
-
-    pub fn with_replay_history(mut self, replay_history: bool) -> Self {
-        self.replay_history = replay_history;
-        self
     }
 }
 
@@ -103,7 +97,7 @@ impl From<serde_json::Error> for RolloutError {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RolloutStatus {
     Writing,

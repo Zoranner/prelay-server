@@ -7,9 +7,7 @@ use serde_json::json;
 use super::support::{latest_activity, request_events, test_log, test_storage};
 use crate::{
     codec::bridge::stream::{InternalStreamEvent, StreamStatsSnapshot},
-    domain::activity::{
-        RawStreamContentCapture, RawStreamProtocol, SessionContext, SessionMetaEvent,
-    },
+    domain::activity::{RawStreamContentCapture, RawStreamProtocol, SessionContext, TurnContext},
     service::recording::{
         options::{RecordingMode, StreamRecordOptions},
         record_first_chunk_with_rollout, record_stream_with_rollout,
@@ -218,17 +216,10 @@ async fn stream_insert_failure_does_not_update_existing_activity() {
         .begin(
             &identity_id,
             &SessionContext::new("duplicate-stream-log"),
-            SessionMetaEvent {
+            TurnContext {
                 activity_id: "duplicate-stream-log".to_string(),
-                session_id: "duplicate-stream-log".to_string(),
-                identity_id: identity_id.clone(),
-                protocol_in: "responses".to_string(),
-                protocol_out: "responses".to_string(),
-                protocol_upstream: Some("chat_completions".to_string()),
-                endpoint_name: String::new(),
                 model_requested: "coder".to_string(),
                 model_upstream: "deepseek-chat".to_string(),
-                started_at: "2026-10-22T00:00:00Z".to_string(),
             },
             Vec::new(),
         )

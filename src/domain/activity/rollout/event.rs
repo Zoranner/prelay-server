@@ -3,116 +3,119 @@ use serde_json::Value;
 
 use super::RolloutStatus;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationFormat {
+    V1,
+    Legacy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConversationMeta {
+    pub v: u8,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub thread_id: String,
+    pub created_at: String,
+}
+
+impl ConversationMeta {
+    pub fn new(thread_id: String, created_at: String) -> Self {
+        Self {
+            v: 1,
+            kind: "meta".to_string(),
+            thread_id,
+            created_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WindowEvent {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<String>,
+    pub generation: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TurnEvent {
+    pub turn_id: String,
+    pub activity_id: String,
+    pub model: String,
+    pub upstream_model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ContextEvent {
+    pub refs: Vec<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TurnEndEvent {
+    pub status: RolloutStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", content = "payload", rename_all = "snake_case")]
+pub enum ConversationEventBody {
+    Window(WindowEvent),
+    Turn(TurnEvent),
+    Message(ConversationMessage),
+    Reasoning(ConversationReasoning),
+    ToolCall(ConversationToolCall),
+    ToolResult(ConversationToolResult),
+    Usage(ConversationUsage),
+    Error(ConversationError),
+    TurnEnd(TurnEndEvent),
+    Context(ContextEvent),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConversationEvent {
+    pub seq: u64,
+    pub time: String,
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub payload: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContentEvent {
+    pub seq: u64,
+    pub time: String,
+    pub body: ContentEventBody,
+}
+
+impl ConversationEvent {
+    pub fn content_event(&self) -> Option<ContentEvent> {
+        if !matches!(
+            self.event_type.as_str(),
+            "message" | "reasoning" | "tool_call" | "tool_result" | "error"
+        ) {
+            return None;
+        }
+        let body = serde_json::from_value::<ContentEventBody>(serde_json::json!({
+            "type": self.event_type,
+            "payload": self.payload,
+        }))
+        .ok()?;
+        Some(ContentEvent {
+            seq: self.seq,
+            time: self.time.clone(),
+            body,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum EventPhase {
     Request,
     Response,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct SessionMetaEvent {
-    pub activity_id: String,
-    pub session_id: String,
-    pub identity_id: String,
-    pub protocol_in: String,
-    pub protocol_out: String,
-    pub protocol_upstream: Option<String>,
-    pub endpoint_name: String,
-    pub model_requested: String,
-    pub model_upstream: String,
-    pub started_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct WindowStartEvent {
-    pub window_id: Option<String>,
-    pub generation: u64,
-    pub started_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct MessageEvent {
-    pub phase: EventPhase,
-    pub role: String,
-    pub content: Value,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct ToolCallEvent {
-    pub phase: EventPhase,
-    pub tool_call_id: String,
-    pub name: String,
-    pub arguments: String,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct ToolResultEvent {
-    pub phase: EventPhase,
-    pub tool_call_id: String,
-    pub content: Value,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct ReasoningEvent {
-    pub phase: EventPhase,
-    pub content: String,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct MediaEvent {
-    pub phase: EventPhase,
-    pub media_type: String,
-    pub size_bytes: u64,
-    pub sha256: String,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct UsageEvent {
-    pub input_tokens: Option<i64>,
-    pub output_tokens: Option<i64>,
-    pub reasoning_tokens: Option<i64>,
-    pub cache_read_tokens: Option<i64>,
-    pub cache_write_tokens: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct ErrorEvent {
-    pub code: Option<String>,
-    pub message: String,
-    pub http_status: Option<u16>,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct SessionEndEvent {
-    pub status: RolloutStatus,
-    pub http_status: Option<u16>,
-    pub error_code: Option<String>,
-    pub error_message: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(tag = "type", content = "payload", rename_all = "snake_case")]
-pub enum RolloutEventBody {
-    SessionMeta(SessionMetaEvent),
-    WindowStart(WindowStartEvent),
-    Message(MessageEvent),
-    ToolCall(ToolCallEvent),
-    ToolResult(ToolResultEvent),
-    Reasoning(ReasoningEvent),
-    Media(MediaEvent),
-    Usage(UsageEvent),
-    Error(ErrorEvent),
-    SessionEnd(SessionEndEvent),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RolloutEvent {
-    pub seq: u64,
-    pub timestamp: String,
-    #[serde(rename = "type")]
-    pub event_type: String,
-    pub payload: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

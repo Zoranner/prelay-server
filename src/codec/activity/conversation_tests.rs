@@ -276,6 +276,7 @@ fn tool_arguments_drop_secrets_media_metadata_and_inline_binary() {
                     "sha256": "abc123"
                 },
                 "file_id": "file_private",
+                "data": "a".repeat(512),
                 "path": "Cargo.toml"
             }
         }]
@@ -290,6 +291,7 @@ fn tool_arguments_drop_secrets_media_metadata_and_inline_binary() {
         tool_call.arguments,
         json!({
             "image": { "type": "input_image", "omitted": true },
+            "data": { "type": "binary", "omitted": true },
             "path": "Cargo.toml"
         })
     );

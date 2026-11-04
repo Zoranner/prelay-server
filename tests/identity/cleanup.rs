@@ -4,7 +4,9 @@ use prelay_server::{
     codec::internal::{
         InternalContentPart, InternalMessage, InternalOutputItem, InternalResponse, InternalRole,
     },
-    domain::activity::{EventPhase, MessageEvent, RolloutEventBody, SessionContext},
+    domain::activity::{
+        ContentDraft, ContentEventBody, ConversationMessage, EventPhase, SessionContext,
+    },
     domain::identity::credential::generate_credential,
     domain::stats::ActivityInsert,
     service::activity::ActivityStore,
@@ -46,13 +48,14 @@ async fn cleanup_removes_an_inactive_identity_and_all_accessible_owned_resources
                 ..Default::default()
             },
             &SessionContext::new("thread-inactive"),
-            vec![prelay_server::domain::activity::RolloutEventBody::Message(
-                prelay_server::domain::activity::MessageEvent {
+            vec![ContentDraft::new(ContentEventBody::Message(
+                ConversationMessage {
                     phase: prelay_server::domain::activity::EventPhase::Request,
                     role: "user".to_string(),
+                    message_phase: None,
                     content: serde_json::json!("short-lived body"),
                 },
-            )],
+            ))],
             Vec::new(),
         )
         .await
@@ -153,11 +156,14 @@ async fn cleanup_removes_one_shared_thread_file_for_multiple_activities() {
                     ..Default::default()
                 },
                 &session,
-                vec![RolloutEventBody::Message(MessageEvent {
-                    phase: EventPhase::Request,
-                    role: "user".to_string(),
-                    content: serde_json::json!(content),
-                })],
+                vec![ContentDraft::new(ContentEventBody::Message(
+                    ConversationMessage {
+                        phase: EventPhase::Request,
+                        role: "user".to_string(),
+                        message_phase: None,
+                        content: serde_json::json!(content),
+                    },
+                ))],
                 Vec::new(),
             )
             .await

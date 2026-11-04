@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use crate::{
-    domain::activity::{EventPhase, MessageEvent, RolloutEventBody},
+    domain::activity::{ContentDraft, ContentEventBody, ConversationMessage, EventPhase},
     domain::stats::ActivityInsert,
     store::storage::Storage,
 };
@@ -32,12 +32,15 @@ pub(super) async fn latest_activity(
         .expect("stored activity")
 }
 
-pub(super) fn request_events(content: &str) -> Vec<RolloutEventBody> {
-    vec![RolloutEventBody::Message(MessageEvent {
-        phase: EventPhase::Request,
-        role: "user".to_string(),
-        content: json!(content),
-    })]
+pub(super) fn request_events(content: &str) -> Vec<ContentDraft> {
+    vec![ContentDraft::new(ContentEventBody::Message(
+        ConversationMessage {
+            phase: EventPhase::Request,
+            role: "user".to_string(),
+            message_phase: None,
+            content: json!(content),
+        },
+    ))]
 }
 
 pub(super) fn test_log() -> ActivityInsert {

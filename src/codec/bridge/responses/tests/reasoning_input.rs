@@ -3,15 +3,15 @@ use serde_json::json;
 use super::decode_responses_request;
 use crate::{
     codec::{
-        activity::events_from_internal_request,
+        activity::conversation_events_from_responses_request,
         internal::{InternalContentPart, InternalRole},
     },
-    domain::activity::rollout::RolloutEventBody,
+    domain::activity::ContentEventBody,
 };
 
 #[test]
 fn decodes_reasoning_items_as_reasoning_not_user_text() {
-    let request = decode_responses_request(&json!({
+    let payload = json!({
         "model": "deepseek-flash",
         "input": [
             {
@@ -27,8 +27,8 @@ fn decodes_reasoning_items_as_reasoning_not_user_text() {
                 "content": "hello"
             }
         ]
-    }))
-    .expect("decode reasoning input");
+    });
+    let request = decode_responses_request(&payload).expect("decode reasoning input");
 
     assert_eq!(request.messages.len(), 2);
     assert_eq!(request.messages[0].role, InternalRole::Assistant);
@@ -43,15 +43,16 @@ fn decodes_reasoning_items_as_reasoning_not_user_text() {
         vec![InternalContentPart::Text("hello".to_string())]
     );
 
-    let events = events_from_internal_request(&request);
+    let input_items = payload["input"].as_array().expect("input items");
+    let events = conversation_events_from_responses_request(&payload, input_items);
     assert!(events.iter().any(|event| matches!(
-        event,
-        RolloutEventBody::Reasoning(reasoning)
-            if reasoning.content == "inspect the protocol\nthen patch it"
+        &event.body,
+        ContentEventBody::Reasoning(reasoning)
+            if reasoning.summary.as_deref() == Some("inspect the protocol\nthen patch it")
     )));
     assert!(!events.iter().any(|event| matches!(
-        event,
-        RolloutEventBody::Message(message)
+        &event.body,
+        ContentEventBody::Message(message)
             if message.role == "user"
                 && message.content.as_str()
                     == Some("inspect the protocol\nthen patch it")

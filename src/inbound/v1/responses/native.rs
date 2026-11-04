@@ -9,7 +9,7 @@ use axum::{
 use serde_json::{json, Value};
 
 use crate::{
-    codec::activity::{events_from_internal_request, events_from_internal_response},
+    codec::activity::conversation_events_from_responses_output,
     codec::providers::spec::{
         provider_upstream_base_url, with_provider_headers, RequestHeaderContext, UpstreamProtocol,
     },
@@ -99,7 +99,7 @@ pub(super) async fn create_native_response(
                     error_code,
                     error_message: message,
                     upstream_latency_ms: Some(upstream_started_at.elapsed().as_millis() as i64),
-                    request_events: events_from_internal_request(request),
+                    request_events: context.request_events.clone(),
                 },
             )
             .await;
@@ -143,7 +143,7 @@ pub(super) async fn create_native_response(
                     upstream_request_id: None,
                 },
                 &context.session,
-                events_from_internal_request(request),
+                context.request_events.clone(),
                 Vec::new(),
             )
             .await?;
@@ -170,7 +170,7 @@ pub(super) async fn create_native_response(
                         error_code,
                         error_message: message,
                         upstream_latency_ms: Some(upstream_latency_ms),
-                        request_events: events_from_internal_request(request),
+                        request_events: context.request_events.clone(),
                     },
                 )
                 .await;
@@ -223,7 +223,7 @@ pub(super) async fn create_native_response(
                 StreamRecording {
                     stats: stream_stats,
                     rollout: StreamRollout {
-                        request_events: events_from_internal_request(request),
+                        request_events: context.request_events.clone(),
                         session: context.session.clone(),
                     },
                     session,
@@ -256,7 +256,7 @@ pub(super) async fn create_native_response(
                     error_code,
                     error_message: message,
                     upstream_latency_ms: Some(upstream_latency_ms),
-                    request_events: events_from_internal_request(request),
+                    request_events: context.request_events.clone(),
                 },
             )
             .await;
@@ -289,7 +289,7 @@ pub(super) async fn create_native_response(
                         error_code,
                         error_message: message,
                         upstream_latency_ms: Some(upstream_latency_ms),
-                        request_events: events_from_internal_request(request),
+                        request_events: context.request_events.clone(),
                     },
                 )
                 .await;
@@ -319,6 +319,10 @@ pub(super) async fn create_native_response(
             })
             .await?;
     }
+    let response_output = response
+        .get("output")
+        .cloned()
+        .unwrap_or_else(|| Value::Array(Vec::new()));
     state
         .activity_store
         .record_completed(
@@ -376,8 +380,8 @@ pub(super) async fn create_native_response(
                 upstream_request_id: None,
             },
             &context.session,
-            events_from_internal_request(request),
-            events_from_internal_response(&decoded_response),
+            context.request_events.clone(),
+            conversation_events_from_responses_output(&response_output, response.get("usage")),
         )
         .await?;
 

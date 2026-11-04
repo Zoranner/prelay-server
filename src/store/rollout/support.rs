@@ -1,12 +1,11 @@
-use std::collections::HashMap;
-
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::domain::activity::rollout::RolloutEvent;
 use crate::domain::activity::{
     redaction::redact_json_value,
-    rollout::{RolloutError, RolloutEventBody},
+    rollout::{
+        ContentDraft, ContentEventBody, ConversationEvent, ConversationEventBody, RolloutError,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -30,7 +29,7 @@ impl ContentHash {
         self.digest
     }
 
-    pub(super) fn from_events(events: &[RolloutEvent]) -> Result<Self, RolloutError> {
+    pub(super) fn from_events(events: &[ConversationEvent]) -> Result<Self, RolloutError> {
         let mut chain = Self::default();
         for event in events
             .iter()
@@ -73,28 +72,6 @@ pub(super) fn event_identity(event_type: &str, payload: &Value) -> Result<[u8; 3
     Ok(Sha256::digest(canonical_event(event_type, payload)?).into())
 }
 
-pub(super) fn new_request_events(
-    request: Vec<RolloutEventBody>,
-    stored_counts: &HashMap<[u8; 32], u64>,
-) -> Result<Vec<RolloutEventBody>, RolloutError> {
-    let mut request_counts = HashMap::<[u8; 32], u64>::new();
-    let mut events = Vec::new();
-    for body in request {
-        let (event_type, payload) = event_parts(&body)?;
-        if !is_content_event(&event_type) {
-            events.push(body);
-            continue;
-        }
-        let identity = event_identity(&event_type, &payload)?;
-        let occurrence = request_counts.entry(identity).or_default();
-        *occurrence += 1;
-        if *occurrence > stored_counts.get(&identity).copied().unwrap_or(0) {
-            events.push(body);
-        }
-    }
-    Ok(events)
-}
-
 pub(super) fn is_safe_path_segment(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
@@ -103,18 +80,10 @@ pub(super) fn is_safe_path_segment(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
 }
 
-pub(super) fn last_window_generation(events: &[RolloutEvent]) -> Option<u64> {
-    events.iter().rev().find_map(|event| {
-        (event.event_type == "window_start")
-            .then(|| event.payload.get("generation").and_then(Value::as_u64))
-            .flatten()
-    })
-}
-
 pub(super) fn is_content_event(event_type: &str) -> bool {
-    !matches!(
+    matches!(
         event_type,
-        "session_meta" | "window_start" | "media" | "usage" | "error" | "session_end"
+        "message" | "reasoning" | "tool_call" | "tool_result"
     )
 }
 
@@ -126,8 +95,17 @@ fn comparison_payload(payload: &Value) -> Value {
     payload
 }
 
-pub(super) fn event_parts(body: &RolloutEventBody) -> Result<(String, Value), RolloutError> {
-    let body_value = serde_json::to_value(body)?;
+pub(super) fn content_event_parts(
+    body: &ContentEventBody,
+) -> Result<(String, Value), RolloutError> {
+    body_parts(&serde_json::to_value(body)?)
+}
+
+pub(super) fn event_parts(body: &ConversationEventBody) -> Result<(String, Value), RolloutError> {
+    body_parts(&serde_json::to_value(body)?)
+}
+
+fn body_parts(body_value: &Value) -> Result<(String, Value), RolloutError> {
     let object = body_value
         .as_object()
         .ok_or_else(|| RolloutError::InvalidPath("event body is not an object".to_string()))?;
@@ -138,6 +116,22 @@ pub(super) fn event_parts(body: &RolloutEventBody) -> Result<(String, Value), Ro
         .to_string();
     let payload = redact_json_value(&object.get("payload").cloned().unwrap_or(Value::Null));
     Ok((event_type, payload))
+}
+
+pub(super) fn item_id(body: &ContentEventBody) -> Option<String> {
+    match body {
+        ContentEventBody::ToolCall(tool_call) => Some(tool_call.tool_call_id.clone()),
+        ContentEventBody::ToolResult(tool_result) => Some(tool_result.tool_call_id.clone()),
+        _ => None,
+    }
+}
+
+pub(super) fn item_ref_key(event_type: &str, id: &str) -> String {
+    format!("{event_type}:{id}")
+}
+
+pub(super) fn draft_event_parts(draft: &ContentDraft) -> Result<(String, Value), RolloutError> {
+    content_event_parts(&draft.body)
 }
 
 #[cfg(test)]

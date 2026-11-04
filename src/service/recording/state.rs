@@ -5,10 +5,14 @@ use futures::Stream;
 
 use crate::{
     codec::{
-        activity::{events_from_stream_capture, events_from_stream_snapshot},
+        activity::{
+            conversation_events_from_stream_capture, conversation_events_from_stream_snapshot,
+        },
         bridge::stream::{SharedStreamStats, StreamStatsSnapshot},
     },
-    domain::activity::{ErrorEvent, RawStreamContentCapture, RolloutEventBody, RolloutStatus},
+    domain::activity::{
+        ContentDraft, ContentEventBody, ConversationError, RawStreamContentCapture, RolloutStatus,
+    },
     domain::stats::{ActivityInsert, StreamActivityUpdate},
     service::activity::ActivityStore,
     store::rollout::RolloutWriter,
@@ -224,11 +228,13 @@ impl StreamRecordState {
                 RecordingMode::BestEffort => Ok(()),
             };
         };
-        if let Err(error) = rollout.append(RolloutEventBody::Error(ErrorEvent {
-            code: Some("empty_stream".to_string()),
-            message: "upstream stream finished without chunks".to_string(),
-            http_status: Some(502),
-        })) {
+        if let Err(error) = rollout.append_content(ContentDraft::new(ContentEventBody::Error(
+            ConversationError {
+                code: Some("empty_stream".to_string()),
+                message: "upstream stream finished without chunks".to_string(),
+                http_status: Some(502),
+            },
+        ))) {
             log_stream_storage_failure(
                 "append-empty-rollout",
                 &StorageError::Rollout(error.to_string()),
@@ -353,20 +359,22 @@ impl StreamRecordState {
         };
         let mut events = if let Some(content_capture) = self.content_capture.as_mut() {
             content_capture.finish();
-            events_from_stream_capture(content_capture)
+            conversation_events_from_stream_capture(content_capture)
         } else {
-            events_from_stream_snapshot(&snapshot)
+            conversation_events_from_stream_snapshot(&snapshot)
         };
         if let Some(message) = error_message.as_deref() {
-            events.push(RolloutEventBody::Error(ErrorEvent {
-                code: error_code.clone(),
-                message: message.to_string(),
-                http_status,
-            }));
+            events.push(ContentDraft::new(ContentEventBody::Error(
+                ConversationError {
+                    code: error_code.clone(),
+                    message: message.to_string(),
+                    http_status,
+                },
+            )));
         }
         let mut append_failed = false;
         for event in events {
-            if let Err(error) = rollout.append(event) {
+            if let Err(error) = rollout.append_content(event) {
                 log_stream_storage_failure(
                     "append-rollout",
                     &StorageError::Rollout(error.to_string()),

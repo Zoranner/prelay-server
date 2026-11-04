@@ -299,7 +299,13 @@ pub(super) fn omitted_media(part_type: &str) -> Value {
 }
 
 fn looks_like_binary(value: &str) -> bool {
-    value.starts_with("data:") && value.contains(";base64,")
+    if value.starts_with("data:") && value.contains(";base64,") {
+        return true;
+    }
+    value.len() >= 256
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'_' | b'-' | b'=')
+        })
 }
 
 pub(super) fn usage_event(usage: Option<&Value>) -> Option<ContentDraft> {

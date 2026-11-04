@@ -7,7 +7,9 @@ use axum::{
 use serde_json::Value;
 
 use crate::{
-    codec::activity::{events_from_chat_request, events_from_chat_response},
+    codec::activity::{
+        conversation_events_from_chat_request, conversation_events_from_chat_response,
+    },
     codec::bridge::stream::{native_chat_sse_with_stats, with_sse_keepalive},
     codec::providers::spec::{
         provider_upstream_base_url, with_provider_headers, RequestHeaderContext,
@@ -109,7 +111,7 @@ pub(super) async fn create_chat_completion_with_candidate(
                     upstream_request_id: observability.request_id,
                 },
                 &session,
-                events_from_chat_request(&payload),
+                conversation_events_from_chat_request(&payload),
                 Vec::new(),
             )
             .await?;
@@ -159,7 +161,7 @@ pub(super) async fn create_chat_completion_with_candidate(
                 StreamRecording {
                     stats: stream_stats,
                     rollout: StreamRollout {
-                        request_events: events_from_chat_request(&payload),
+                        request_events: conversation_events_from_chat_request(&payload),
                         session: session.clone(),
                     },
                     session: None,
@@ -226,8 +228,8 @@ pub(super) async fn create_chat_completion_with_candidate(
                 upstream_request_id,
             },
             &session,
-            events_from_chat_request(&payload),
-            events_from_chat_response(&response),
+            conversation_events_from_chat_request(&payload),
+            conversation_events_from_chat_response(&response),
         )
         .await?;
 

@@ -6,10 +6,13 @@ use std::{
 };
 
 use super::{
-    support::{event_identity, is_content_event, last_window_generation, ContentHash},
+    support::{event_identity, is_content_event, item_id, item_ref_key, ContentHash},
     RolloutStore,
 };
-use crate::domain::activity::rollout::{RolloutError, RolloutEvent, SessionContext};
+use crate::domain::activity::rollout::{
+    ContentEventBody, ConversationEvent, ConversationFormat, RolloutError, SessionContext,
+    WindowEvent,
+};
 
 const MAX_CACHED_THREADS: usize = 65_536;
 
@@ -30,55 +33,94 @@ impl FileStamp {
 
 pub(super) enum ThreadSource {
     Cached(ThreadState),
-    Loaded(ThreadState, Vec<RolloutEvent>),
+    Loaded(ThreadState, Vec<ConversationEvent>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct WindowState {
+    pub(super) window_id: Option<String>,
+    pub(super) generation: u64,
 }
 
 #[derive(Debug, Clone)]
 pub(super) struct ThreadState {
     pub(super) relative_path: String,
+    pub(super) format: ConversationFormat,
     pub(super) stamp: FileStamp,
     pub(super) line_count: u64,
     pub(super) seq: u64,
-    pub(super) generation: Option<u64>,
+    pub(super) window: Option<WindowState>,
     pub(super) content: ContentHash,
-    pub(super) event_counts: HashMap<[u8; 32], u64>,
+    pub(super) event_refs: HashMap<[u8; 32], Vec<u64>>,
+    pub(super) item_refs: HashMap<String, u64>,
+    pub(super) content_event_count: u64,
 }
 
 impl ThreadState {
     pub(super) fn empty(relative_path: String) -> Self {
         Self {
             relative_path,
+            format: ConversationFormat::V1,
             stamp: FileStamp::default(),
             line_count: 0,
             seq: 0,
-            generation: None,
+            window: None,
             content: ContentHash::default(),
-            event_counts: HashMap::new(),
+            event_refs: HashMap::new(),
+            item_refs: HashMap::new(),
+            content_event_count: 0,
         }
     }
 
     pub(super) fn from_events(
         relative_path: String,
         stamp: FileStamp,
-        events: &[RolloutEvent],
+        format: ConversationFormat,
+        events: &[ConversationEvent],
+        line_count: u64,
+        seq: u64,
     ) -> Result<Self, RolloutError> {
-        let mut event_counts = HashMap::new();
+        let mut event_refs = HashMap::new();
+        let mut item_refs = HashMap::new();
+        let mut window = None;
+        let mut content_event_count = 0;
         for event in events {
-            if event.event_type == "window_start" {
-                event_counts.clear();
+            if event.event_type == "window" {
+                window = serde_json::from_value::<WindowEvent>(event.payload.clone())
+                    .ok()
+                    .map(|window| WindowState {
+                        window_id: window.window_id,
+                        generation: window.generation,
+                    });
+                event_refs.clear();
             } else if is_content_event(&event.event_type) {
                 let identity = event_identity(&event.event_type, &event.payload)?;
-                *event_counts.entry(identity).or_default() += 1;
+                event_refs
+                    .entry(identity)
+                    .or_insert_with(Vec::new)
+                    .push(event.seq);
+                content_event_count += 1;
+                if let Ok(body) = serde_json::from_value::<ContentEventBody>(serde_json::json!({
+                    "type": event.event_type,
+                    "payload": event.payload,
+                })) {
+                    if let Some(id) = item_id(&body) {
+                        item_refs.insert(item_ref_key(&event.event_type, &id), event.seq);
+                    }
+                }
             }
         }
         Ok(Self {
             relative_path,
+            format,
             stamp,
-            line_count: events.len() as u64,
-            seq: events.last().map_or(0, |event| event.seq),
-            generation: last_window_generation(events),
+            line_count,
+            seq,
+            window,
             content: ContentHash::from_events(events)?,
-            event_counts,
+            event_refs,
+            item_refs,
+            content_event_count,
         })
     }
 
@@ -87,9 +129,11 @@ impl ThreadState {
     }
 
     pub(super) fn window_changed(&self, session: &SessionContext) -> bool {
-        match self.generation {
-            Some(generation) => generation != session.generation,
-            None => !self.is_empty() && session.generation > 0,
+        match &self.window {
+            Some(window) => {
+                window.generation != session.generation || window.window_id != session.window_id
+            }
+            None => !self.is_empty() && (session.generation > 0 || session.window_id.is_some()),
         }
     }
 }

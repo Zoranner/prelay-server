@@ -3,30 +3,24 @@ use serde_json::json;
 use super::RolloutStore;
 use crate::domain::activity::rollout::{RolloutError, RolloutStatus};
 use crate::domain::activity::{
-    EventPhase, MessageEvent, RolloutEventBody, SessionContext, SessionMetaEvent,
+    ContentDraft, ContentEventBody, ConversationMessage, EventPhase, SessionContext, TurnContext,
 };
 
-fn test_meta(activity_id: &str, session_id: &str) -> SessionMetaEvent {
-    SessionMetaEvent {
+fn test_meta(activity_id: &str, _session_id: &str) -> TurnContext {
+    TurnContext {
         activity_id: activity_id.to_string(),
-        session_id: session_id.to_string(),
-        identity_id: "identity-1".to_string(),
-        protocol_in: "responses".to_string(),
-        protocol_out: "responses".to_string(),
-        protocol_upstream: Some("responses".to_string()),
-        endpoint_name: "Codex".to_string(),
         model_requested: "deepseek-flash".to_string(),
         model_upstream: "deepseek/deepseek-v4.1-flash".to_string(),
-        started_at: "2026-10-22T20:20:10Z".to_string(),
     }
 }
 
-fn message(phase: EventPhase, content: serde_json::Value) -> RolloutEventBody {
-    RolloutEventBody::Message(MessageEvent {
+fn message(phase: EventPhase, content: serde_json::Value) -> ContentDraft {
+    ContentDraft::new(ContentEventBody::Message(ConversationMessage {
         phase,
         role: "user".to_string(),
+        message_phase: None,
         content,
-    })
+    }))
 }
 
 fn session(thread_id: &str) -> SessionContext {
@@ -34,7 +28,7 @@ fn session(thread_id: &str) -> SessionContext {
 }
 
 #[tokio::test]
-async fn appends_events_to_one_thread_file_without_session_end() {
+async fn appends_events_to_one_thread_file_with_turn_end() {
     let root = tempfile::tempdir().expect("temp rollout root");
     let store = RolloutStore::new(root.path().to_path_buf());
     let session = session("thread-1");
@@ -49,7 +43,7 @@ async fn appends_events_to_one_thread_file_without_session_end() {
         .expect("begin rollout");
 
     writer
-        .append(message(EventPhase::Response, json!("answer")))
+        .append_content(message(EventPhase::Response, json!("answer")))
         .expect("append response");
     let summary = writer
         .finish(RolloutStatus::Completed)
@@ -58,7 +52,7 @@ async fn appends_events_to_one_thread_file_without_session_end() {
     assert_eq!(summary.relative_path, "identity-1/thread-1.jsonl");
     assert_eq!(summary.thread_id, "thread-1");
     assert_eq!(summary.start_line, 1);
-    assert_eq!(summary.end_line, 4);
+    assert_eq!(summary.end_line, 7);
     assert!(root.path().join(&summary.relative_path).exists());
     assert!(!root
         .path()
@@ -68,12 +62,13 @@ async fn appends_events_to_one_thread_file_without_session_end() {
     let events = store
         .read_events(&summary.relative_path)
         .expect("read events");
-    assert_eq!(events.len(), 4);
-    assert_eq!(events[0].event_type, "session_meta");
-    assert_eq!(events[1].event_type, "window_start");
+    assert_eq!(events.len(), 6);
+    assert_eq!(events[0].event_type, "window");
+    assert_eq!(events[1].event_type, "turn");
     assert_eq!(events[2].payload["content"], json!("hello"));
-    assert_eq!(events[3].payload["content"], json!("answer"));
-    assert!(!events.iter().any(|event| event.event_type == "session_end"));
+    assert_eq!(events[3].event_type, "context");
+    assert_eq!(events[4].payload["content"], json!("answer"));
+    assert_eq!(events[5].event_type, "turn_end");
 }
 
 #[tokio::test]
@@ -103,7 +98,7 @@ async fn preserves_content_larger_than_the_old_64k_limit() {
         .expect("request message");
     assert_eq!(message.payload["content"], json!(large));
     assert!(summary.byte_size > 1024 * 1024);
-    assert_eq!(summary.event_count, 3);
+    assert_eq!(summary.event_count, 6);
 }
 
 #[tokio::test]

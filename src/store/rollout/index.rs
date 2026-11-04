@@ -9,14 +9,14 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use super::{
-    cache::{FileStamp, ThreadState},
+    cache::{FileStamp, ThreadState, WindowState},
     read::thread_candidate_paths,
     support::ContentHash,
     RolloutStore, RolloutWriter,
 };
-use crate::domain::activity::rollout::RolloutError;
+use crate::domain::activity::rollout::{ConversationFormat, RolloutError};
 
-const THREAD_INDEX_VERSION: u8 = 2;
+const THREAD_INDEX_VERSION: u8 = 3;
 
 #[derive(Clone, Copy, Deserialize, PartialEq, Eq, Serialize)]
 struct PersistedStamp {
@@ -45,14 +45,18 @@ struct PersistedThreadIndex {
     version: u8,
     thread_path: String,
     relative_path: String,
+    format: ConversationFormat,
     source_stamp: PersistedStamp,
     base_stamp: Option<PersistedStamp>,
     line_count: u64,
     seq: u64,
+    window_id: Option<String>,
     generation: Option<u64>,
     content_count: u64,
     content_sha256: String,
-    event_counts: BTreeMap<String, u64>,
+    content_event_count: u64,
+    event_refs: BTreeMap<String, Vec<u64>>,
+    item_refs: BTreeMap<String, u64>,
 }
 
 impl RolloutStore {
@@ -103,24 +107,46 @@ impl RolloutStore {
         let Some(digest) = decode_digest(&index.content_sha256) else {
             return Ok(None);
         };
-        let mut event_counts = HashMap::new();
-        for (identity, count) in index.event_counts {
+        let mut event_refs = HashMap::new();
+        for (identity, refs) in index.event_refs {
             let Some(identity) = decode_digest(&identity) else {
                 return Ok(None);
             };
-            if count == 0 {
+            if refs.is_empty() || refs.iter().any(|seq| *seq == 0 || *seq > index.seq) {
                 return Ok(None);
             }
-            event_counts.insert(identity, count);
+            event_refs.insert(identity, refs);
         }
+        if index
+            .item_refs
+            .values()
+            .any(|seq| *seq == 0 || *seq > index.seq)
+        {
+            return Ok(None);
+        }
+        let window = match (index.window_id, index.generation) {
+            (Some(window_id), Some(generation)) => Some(WindowState {
+                window_id: Some(window_id),
+                generation,
+            }),
+            (None, Some(generation)) => Some(WindowState {
+                window_id: None,
+                generation,
+            }),
+            (None, None) => None,
+            (Some(_), None) => return Ok(None),
+        };
         Ok(Some(ThreadState {
             relative_path: index.relative_path,
+            format: index.format,
             stamp: source_stamp,
             line_count: index.line_count,
             seq: index.seq,
-            generation: index.generation,
+            window,
             content: ContentHash::from_parts(index.content_count, digest),
-            event_counts,
+            event_refs,
+            item_refs: index.item_refs.into_iter().collect(),
+            content_event_count: index.content_event_count,
         }))
     }
 
@@ -239,17 +265,28 @@ pub(super) fn write_thread_index(
         version: THREAD_INDEX_VERSION,
         thread_path: thread_relative.to_string(),
         relative_path: state.relative_path.clone(),
+        format: state.format,
         source_stamp: PersistedStamp::from_file_stamp(source_stamp),
         base_stamp: base_stamp.map(PersistedStamp::from_file_stamp),
         line_count: state.line_count,
         seq: state.seq,
-        generation: state.generation,
+        window_id: state
+            .window
+            .as_ref()
+            .and_then(|window| window.window_id.clone()),
+        generation: state.window.as_ref().map(|window| window.generation),
         content_count: state.content.count,
         content_sha256: encode_digest(&state.content.digest_bytes()),
-        event_counts: state
-            .event_counts
+        content_event_count: state.content_event_count,
+        event_refs: state
+            .event_refs
             .iter()
-            .map(|(identity, count)| (encode_digest(identity), *count))
+            .map(|(identity, refs)| (encode_digest(identity), refs.clone()))
+            .collect(),
+        item_refs: state
+            .item_refs
+            .iter()
+            .map(|(id, seq)| (id.clone(), *seq))
             .collect(),
     };
     let bytes = serde_json::to_vec(&index)?;

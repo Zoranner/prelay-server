@@ -62,11 +62,17 @@ async fn reuses_one_thread_file_across_response_activities() {
     assert_eq!(rollouts[0].thread_id, "thread-shared");
     assert_ne!(rollouts[0].start_line, rollouts[1].start_line);
 
-    let events = state
+    let file = state
         .activity_store
         .rollouts()
-        .read_events(&rollouts[0].rollout_path)
+        .read_verified(&rollouts[0].rollout_path)
         .expect("read shared thread");
+    assert_eq!(file.format, crate::domain::activity::ConversationFormat::V1);
+    assert_eq!(
+        file.meta.as_ref().map(|meta| meta.thread_id.as_str()),
+        Some("thread-shared")
+    );
+    let events = &file.events;
     for content in [
         "first user",
         "first assistant",
@@ -84,6 +90,24 @@ async fn reuses_one_thread_file_across_response_activities() {
             "expected exactly one event for {content}"
         );
     }
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.event_type == "turn")
+            .count(),
+        2
+    );
+    let contexts = events
+        .iter()
+        .filter(|event| event.event_type == "context")
+        .map(|event| {
+            event.payload["refs"]
+                .as_array()
+                .expect("context refs")
+                .len()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(contexts, vec![1, 3]);
 }
 
 #[tokio::test]
@@ -138,6 +162,8 @@ async fn records_successful_response_activity() {
             && event.payload["phase"] == json!("request")
             && event.payload["content"] == json!("hello")
     }));
+    assert!(events.iter().any(|event| event.event_type == "context"));
+    assert!(events.iter().any(|event| event.event_type == "turn_end"));
     assert!(events.iter().any(|event| {
         event.event_type == "message"
             && event.payload["phase"] == json!("response")
@@ -199,4 +225,7 @@ async fn records_failed_response_activity_when_upstream_fails() {
         .read_events(&rollout.rollout_path)
         .expect("read failed response rollout");
     assert!(events.iter().any(|event| event.event_type == "error"));
+    assert!(events.iter().any(|event| {
+        event.event_type == "turn_end" && event.payload["status"] == json!("failed")
+    }));
 }

@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use crate::{
     domain::activity::{
-        rollout::{RolloutStatus, SessionContext, SessionMetaEvent},
-        ErrorEvent, RolloutEventBody,
+        rollout::{RolloutStatus, SessionContext, TurnContext},
+        ContentDraft, ContentEventBody, ConversationError,
     },
     domain::stats::ActivityInsert,
     store::{
@@ -82,8 +82,8 @@ impl ActivityStore {
         identity_id: &str,
         activity: ActivityInsert,
         session: &SessionContext,
-        request_events: Vec<RolloutEventBody>,
-        response_events: Vec<RolloutEventBody>,
+        request_events: Vec<ContentDraft>,
+        response_events: Vec<ContentDraft>,
     ) -> Result<(), StorageError> {
         let activity_id = Uuid::new_v4().to_string();
         let mut writer = self
@@ -97,16 +97,18 @@ impl ActivityStore {
             .await?;
         for event in response_events {
             writer
-                .append(event)
+                .append_content(event)
                 .map_err(|error| StorageError::Rollout(error.to_string()))?;
         }
         if let Some(message) = activity.error_message.as_deref() {
             writer
-                .append(RolloutEventBody::Error(ErrorEvent {
-                    code: activity.error_code.clone(),
-                    message: message.to_string(),
-                    http_status: u16::try_from(activity.http_status).ok(),
-                }))
+                .append_content(ContentDraft::new(ContentEventBody::Error(
+                    ConversationError {
+                        code: activity.error_code.clone(),
+                        message: message.to_string(),
+                        http_status: u16::try_from(activity.http_status).ok(),
+                    },
+                )))
                 .map_err(|error| StorageError::Rollout(error.to_string()))?;
         }
         let status = if activity.status == "failed" {
@@ -132,7 +134,7 @@ impl ActivityStore {
         identity_id: &str,
         activity: &ActivityInsert,
         session: &SessionContext,
-        request_events: Vec<RolloutEventBody>,
+        request_events: Vec<ContentDraft>,
     ) -> Result<(String, RolloutWriter), StorageError> {
         let activity_id = Uuid::new_v4().to_string();
         let writer = self
@@ -199,22 +201,15 @@ impl ActivityStore {
         identity_id: &str,
         activity: &ActivityInsert,
         session: &SessionContext,
-        request_events: Vec<RolloutEventBody>,
+        request_events: Vec<ContentDraft>,
     ) -> Result<RolloutWriter, StorageError> {
-        let meta = SessionMetaEvent {
+        let turn = TurnContext {
             activity_id: activity_id.to_string(),
-            session_id: session.thread_id.clone(),
-            identity_id: identity_id.to_string(),
-            protocol_in: activity.protocol_in.clone(),
-            protocol_out: activity.protocol_out.clone(),
-            protocol_upstream: Some(activity.protocol_upstream.clone()),
-            endpoint_name: activity.endpoint_name.clone(),
             model_requested: activity.model_requested.clone(),
             model_upstream: activity.model_upstream.clone(),
-            started_at: chrono::Utc::now().to_rfc3339(),
         };
         self.rollouts
-            .begin(identity_id, session, meta, request_events)
+            .begin(identity_id, session, turn, request_events)
             .await
             .map_err(|error| StorageError::Rollout(error.to_string()))
     }

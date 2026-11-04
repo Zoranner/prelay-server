@@ -5,7 +5,7 @@ use futures::Stream;
 
 use crate::{
     codec::bridge::stream::SharedStreamStats,
-    domain::activity::{RawStreamContentCapture, RolloutEventBody, SessionContext},
+    domain::activity::{ContentDraft, RawStreamContentCapture, SessionContext},
     domain::stats::ActivityInsert,
     service::activity::ActivityStore,
     store::storage::StorageError,
@@ -17,7 +17,7 @@ use super::{
 };
 
 pub struct StreamRollout {
-    pub request_events: Vec<RolloutEventBody>,
+    pub request_events: Vec<ContentDraft>,
     pub session: SessionContext,
 }
 

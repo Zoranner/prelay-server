@@ -1,14 +1,11 @@
 use std::{
     collections::HashMap,
     fs::{self, OpenOptions},
-    io::{self, BufWriter, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, Weak},
+    sync::{Arc, Mutex},
 };
 
-use chrono::{SecondsFormat, Utc};
-use sha2::{Digest, Sha256};
-use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
+use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
 mod cache;
@@ -16,27 +13,26 @@ mod index;
 mod read;
 mod scan;
 mod support;
+mod writer;
 
-use self::cache::{FileStamp, ThreadIndex, ThreadSource, ThreadState};
-use self::support::{
-    event_identity, event_parts, is_content_event, is_safe_path_segment, new_request_events,
-    ContentHash,
-};
+use self::cache::ThreadIndex;
 use crate::domain::activity::rollout::{
-    RolloutError, RolloutEvent, RolloutEventBody, RolloutStatus, RolloutSummary, SessionContext,
-    SessionMetaEvent, WindowStartEvent, DEFAULT_ACTIVITY_ROLLOUT_DIR,
+    ContentEvent, ContentEventBody, ConversationEvent, ConversationFormat, ConversationMeta,
+    RolloutError, DEFAULT_ACTIVITY_ROLLOUT_DIR,
 };
 
 #[derive(Debug, Clone)]
 pub struct RolloutStore {
     root: PathBuf,
-    locks: Arc<Mutex<HashMap<PathBuf, Weak<AsyncMutex<()>>>>>,
+    locks: Arc<Mutex<HashMap<PathBuf, std::sync::Weak<AsyncMutex<()>>>>>,
     cache: Arc<Mutex<ThreadIndex>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RolloutFile {
-    pub events: Vec<RolloutEvent>,
+    pub format: ConversationFormat,
+    pub meta: Option<ConversationMeta>,
+    pub events: Vec<ConversationEvent>,
     pub event_count: u64,
     pub byte_size: u64,
     pub sha256: String,
@@ -44,10 +40,63 @@ pub struct RolloutFile {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RolloutSlice {
-    pub events: Vec<RolloutEvent>,
+    pub events: Vec<ConversationEvent>,
     pub event_count: u64,
     pub byte_size: u64,
     pub sha256: String,
+}
+
+impl RolloutFile {
+    pub fn content_events(&self) -> Vec<ContentEvent> {
+        self.events
+            .iter()
+            .filter_map(ConversationEvent::content_event)
+            .collect()
+    }
+
+    pub fn memory_events(&self) -> Vec<ContentEvent> {
+        self.content_events()
+            .into_iter()
+            .filter(|event| {
+                !matches!(
+                    &event.body,
+                    ContentEventBody::Error(_) | ContentEventBody::Usage(_)
+                )
+            })
+            .collect()
+    }
+
+    pub fn resolve_refs(&self, refs: &[u64]) -> Vec<&ConversationEvent> {
+        refs.iter()
+            .filter_map(|seq| self.events.iter().find(|event| event.seq == *seq))
+            .collect()
+    }
+
+    pub fn context_refs_for_turn(&self, turn_id: &str) -> Option<Vec<u64>> {
+        let mut matched = false;
+        for event in &self.events {
+            if event.event_type == "turn"
+                && event
+                    .payload
+                    .get("turn_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(turn_id)
+            {
+                matched = true;
+            } else if matched && event.event_type == "context" {
+                return event
+                    .payload
+                    .get("refs")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|refs| {
+                        refs.iter()
+                            .filter_map(serde_json::Value::as_u64)
+                            .collect::<Vec<_>>()
+                    });
+            }
+        }
+        None
+    }
 }
 
 impl RolloutStore {
@@ -71,8 +120,6 @@ impl RolloutStore {
         Ok(Self::new(root))
     }
 
-    /// Ensure the configured root exists and is writable before the service starts accepting
-    /// traffic. A read-only bind mount must fail at startup, not on the first streamed request.
     pub fn validate(&self) -> Result<(), RolloutError> {
         fs::create_dir_all(&self.root)?;
         let probe = self
@@ -111,127 +158,13 @@ impl RolloutStore {
         Ok(self.absolute_path(relative))
     }
 
-    pub async fn begin(
-        &self,
-        identity_id: &str,
-        session: &SessionContext,
-        meta: SessionMetaEvent,
-        request_events: Vec<RolloutEventBody>,
-    ) -> Result<RolloutWriter, RolloutError> {
-        if !is_safe_path_segment(identity_id) {
-            return Err(RolloutError::InvalidPath(format!(
-                "identity id is not a safe path segment: {identity_id}"
-            )));
-        }
-        if !is_safe_path_segment(&session.thread_id) {
-            return Err(RolloutError::InvalidPath(format!(
-                "thread id is not a safe path segment: {}",
-                session.thread_id
-            )));
-        }
-
-        let cache_key = PathBuf::from(format!("{identity_id}/{}", session.thread_id));
-        let lock = self.lock_for(&cache_key);
-        let guard = lock.lock_owned().await;
-        let store = self.clone();
-        let identity = identity_id.to_string();
-        let thread = session.thread_id.clone();
-        let source =
-            tokio::task::spawn_blocking(move || store.resolve_thread_source(&identity, &thread))
-                .await
-                .map_err(|error| {
-                    RolloutError::Io(io::Error::other(format!(
-                        "rollout read task failed: {error}"
-                    )))
-                })??;
-        let (state, _events) = match source {
-            ThreadSource::Cached(state) => (state, None),
-            ThreadSource::Loaded(state, events) => (state, Some(events)),
-        };
-        let window_changed = state.window_changed(session);
-        let is_empty = state.is_empty();
-        let request_events = if window_changed || is_empty || !session.replay_history {
-            request_events
-        } else {
-            new_request_events(request_events, &state.event_counts)?
-        };
-        let relative_path = state.relative_path.clone();
-        let final_path = self.checked_absolute_path(&relative_path)?;
-        let parent = final_path
-            .parent()
-            .ok_or_else(|| RolloutError::InvalidPath(relative_path.clone()))?;
-        fs::create_dir_all(parent)?;
-        let prior_generation = state.generation;
-        let prior_seq = state.seq;
-        let prior_line_count = state.line_count;
-        let prior_len = state.stamp.len;
-        let prior_content = state.content;
-        let prior_event_counts = state.event_counts.clone();
-        let thread_relative = format!("{identity_id}/{}.jsonl", session.thread_id);
-        let thread_path = self.checked_absolute_path(&thread_relative)?;
-        let index_relative = format!("{thread_relative}.index");
-        let index_path = self.checked_absolute_path(&index_relative)?;
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&final_path)?;
-        let mut writer = RolloutWriter {
-            activity_id: meta.activity_id.clone(),
-            thread_id: session.thread_id.clone(),
-            window_id: session.window_id.clone(),
-            generation: session.generation,
-            thread_generation: prior_generation,
-            relative_path,
-            final_path,
-            thread_relative,
-            thread_path,
-            index_path,
-            file: Some(BufWriter::new(file)),
-            _lock: Some(guard),
-            hasher: Sha256::new(),
-            seq: prior_seq,
-            line_count: prior_line_count,
-            start_line: prior_line_count + 1,
-            end_line: prior_line_count,
-            byte_size: 0,
-            expected_len: prior_len,
-            event_count: 0,
-            content: prior_content,
-            event_counts: prior_event_counts,
-            cache_key,
-            cache: Arc::clone(&self.cache),
-            status: RolloutStatus::Writing,
-            finished: false,
-        };
-
-        if is_empty {
-            writer.append(RolloutEventBody::SessionMeta(meta))?;
-            writer.append(RolloutEventBody::WindowStart(WindowStartEvent {
-                window_id: session.window_id.clone(),
-                generation: session.generation,
-                started_at: Utc::now().to_rfc3339(),
-            }))?;
-        } else if window_changed {
-            writer.append(RolloutEventBody::WindowStart(WindowStartEvent {
-                window_id: session.window_id.clone(),
-                generation: session.generation,
-                started_at: Utc::now().to_rfc3339(),
-            }))?;
-        }
-
-        for event in request_events {
-            writer.append(event)?;
-        }
-        Ok(writer)
-    }
-
-    fn lock_for(&self, path: &Path) -> Arc<AsyncMutex<()>> {
+    pub(super) fn lock_for(&self, path: &Path) -> Arc<AsyncMutex<()>> {
         let mut locks = self
             .locks
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         locks.retain(|_, lock| lock.strong_count() > 0);
-        if let Some(lock) = locks.get(path).and_then(Weak::upgrade) {
+        if let Some(lock) = locks.get(path).and_then(std::sync::Weak::upgrade) {
             return lock;
         }
         let lock = Arc::new(AsyncMutex::new(()));
@@ -240,179 +173,7 @@ impl RolloutStore {
     }
 }
 
-pub struct RolloutWriter {
-    activity_id: String,
-    thread_id: String,
-    window_id: Option<String>,
-    generation: u64,
-    thread_generation: Option<u64>,
-    relative_path: String,
-    final_path: PathBuf,
-    thread_relative: String,
-    thread_path: PathBuf,
-    index_path: PathBuf,
-    file: Option<BufWriter<std::fs::File>>,
-    _lock: Option<OwnedMutexGuard<()>>,
-    hasher: Sha256,
-    seq: u64,
-    line_count: u64,
-    start_line: u64,
-    end_line: u64,
-    byte_size: u64,
-    expected_len: u64,
-    event_count: u64,
-    content: ContentHash,
-    event_counts: HashMap<[u8; 32], u64>,
-    cache_key: PathBuf,
-    cache: Arc<Mutex<ThreadIndex>>,
-    status: RolloutStatus,
-    finished: bool,
-}
-
-impl RolloutWriter {
-    pub fn append(&mut self, body: RolloutEventBody) -> Result<(), RolloutError> {
-        if self.finished {
-            return Err(RolloutError::InvalidPath(
-                "rollout is already finished".to_string(),
-            ));
-        }
-        let (event_type, payload) = event_parts(&body)?;
-        let mut content = self.content.clone();
-        let content_event = is_content_event(&event_type);
-        if content_event {
-            content.append(&event_type, &payload)?;
-        }
-        let identity = content_event
-            .then(|| event_identity(&event_type, &payload))
-            .transpose()?;
-        let window_generation = if event_type == "window_start" {
-            payload
-                .get("generation")
-                .and_then(serde_json::Value::as_u64)
-        } else {
-            None
-        };
-        let is_window_start = event_type == "window_start";
-        self.seq += 1;
-        let event = RolloutEvent {
-            seq: self.seq,
-            timestamp: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
-            event_type,
-            payload,
-        };
-        let mut line = serde_json::to_vec(&event)?;
-        line.push(b'\n');
-        let file = self
-            .file
-            .as_mut()
-            .ok_or_else(|| RolloutError::InvalidPath("rollout file is closed".to_string()))?;
-        file.write_all(&line)?;
-        file.flush()?;
-        self.hasher.update(&line);
-        self.byte_size += line.len() as u64;
-        self.event_count += 1;
-        self.line_count += 1;
-        self.end_line = self.line_count;
-        if let Some(generation) = window_generation {
-            self.thread_generation = Some(generation);
-        }
-        if is_window_start {
-            self.event_counts.clear();
-        } else if let Some(identity) = identity {
-            *self.event_counts.entry(identity).or_default() += 1;
-        }
-        if content_event {
-            self.content = content;
-        }
-        Ok(())
-    }
-
-    pub fn summary(&self) -> RolloutSummary {
-        self.summary_with_status(self.status)
-    }
-
-    pub fn finish(&mut self, status: RolloutStatus) -> Result<RolloutSummary, RolloutError> {
-        self.finish_with(status, None, None, None)
-    }
-
-    pub fn finish_with(
-        &mut self,
-        status: RolloutStatus,
-        _http_status: Option<u16>,
-        _error_code: Option<String>,
-        _error_message: Option<String>,
-    ) -> Result<RolloutSummary, RolloutError> {
-        if self.finished {
-            return Ok(self.summary_with_status(self.status));
-        }
-        if let Some(mut file) = self.file.take() {
-            file.flush()?;
-            file.get_ref().sync_all()?;
-        }
-        let expected_len = self.expected_len + self.byte_size;
-        match fs::metadata(&self.final_path) {
-            Ok(metadata) if metadata.len() != expected_len => {
-                tracing::warn!(
-                    rollout_path = %self.final_path.display(),
-                    expected_len,
-                    actual_len = metadata.len(),
-                    "rollout file length changed outside the writer; skipping cache update"
-                );
-            }
-            Ok(metadata) => {
-                let state = ThreadState {
-                    relative_path: self.relative_path.clone(),
-                    stamp: FileStamp::from_metadata(&metadata),
-                    line_count: self.line_count,
-                    seq: self.seq,
-                    generation: self.thread_generation,
-                    content: self.content.clone(),
-                    event_counts: self.event_counts.clone(),
-                };
-                self.cache
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .insert(self.cache_key.clone(), state.clone());
-                self.persist_index(&state);
-            }
-            Err(error) => {
-                tracing::warn!(
-                    rollout_path = %self.final_path.display(),
-                    error = %error,
-                    "failed to read rollout metadata after finish; skipping cache update"
-                );
-            }
-        }
-        self._lock.take();
-        self.status = status;
-        self.finished = true;
-        Ok(self.summary_with_status(self.status))
-    }
-
-    pub fn relative_path(&self) -> &str {
-        &self.relative_path
-    }
-
-    pub fn final_path(&self) -> &Path {
-        &self.final_path
-    }
-
-    fn summary_with_status(&self, status: RolloutStatus) -> RolloutSummary {
-        RolloutSummary {
-            activity_id: self.activity_id.clone(),
-            thread_id: self.thread_id.clone(),
-            window_id: self.window_id.clone(),
-            generation: self.generation,
-            relative_path: self.relative_path.clone(),
-            status,
-            start_line: self.start_line,
-            end_line: self.end_line,
-            event_count: self.event_count,
-            byte_size: self.byte_size,
-            sha256: format!("{:x}", self.hasher.clone().finalize()),
-        }
-    }
-}
+pub use writer::RolloutWriter;
 
 #[cfg(test)]
 mod tests;
@@ -424,7 +185,7 @@ mod thread_tests;
 mod thread_cache_tests;
 
 #[cfg(test)]
-mod thread_dedupe_tests;
+mod conversation_tests;
 
 #[cfg(test)]
 mod benchmark_tests;

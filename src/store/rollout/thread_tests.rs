@@ -4,30 +4,24 @@ use std::io::Write;
 use super::RolloutStore;
 use crate::domain::activity::rollout::RolloutStatus;
 use crate::domain::activity::{
-    EventPhase, MessageEvent, RolloutEventBody, SessionContext, SessionMetaEvent,
+    ContentDraft, ContentEventBody, ConversationMessage, EventPhase, SessionContext, TurnContext,
 };
 
-fn test_meta(activity_id: &str, session_id: &str) -> SessionMetaEvent {
-    SessionMetaEvent {
+fn test_meta(activity_id: &str, _session_id: &str) -> TurnContext {
+    TurnContext {
         activity_id: activity_id.to_string(),
-        session_id: session_id.to_string(),
-        identity_id: "identity-1".to_string(),
-        protocol_in: "responses".to_string(),
-        protocol_out: "responses".to_string(),
-        protocol_upstream: Some("responses".to_string()),
-        endpoint_name: "Codex".to_string(),
         model_requested: "deepseek-flash".to_string(),
         model_upstream: "deepseek/deepseek-v4.1-flash".to_string(),
-        started_at: "2026-10-22T20:20:10Z".to_string(),
     }
 }
 
-fn message(phase: EventPhase, content: serde_json::Value) -> RolloutEventBody {
-    RolloutEventBody::Message(MessageEvent {
+fn message(phase: EventPhase, content: serde_json::Value) -> ContentDraft {
+    ContentDraft::new(ContentEventBody::Message(ConversationMessage {
         phase,
         role: "user".to_string(),
+        message_phase: None,
         content,
-    })
+    }))
 }
 
 fn session(thread_id: &str) -> SessionContext {
@@ -49,7 +43,7 @@ async fn only_appends_the_new_tail_of_a_thread_history() {
         .await
         .expect("begin first activity");
     first
-        .append(message(EventPhase::Response, json!("first answer")))
+        .append_content(message(EventPhase::Response, json!("first answer")))
         .expect("append first answer");
     first
         .finish(RolloutStatus::Completed)
@@ -89,13 +83,13 @@ async fn only_appends_the_new_tail_of_a_thread_history() {
             json!("second user")
         ]
     );
-    assert_eq!(summary.event_count, 1);
-    assert_eq!(summary.start_line, 5);
-    assert_eq!(summary.end_line, 5);
+    assert_eq!(summary.event_count, 4);
+    assert_eq!(summary.start_line, 8);
+    assert_eq!(summary.end_line, 11);
 }
 
 #[tokio::test]
-async fn generation_change_starts_a_new_window_without_prefix_matching() {
+async fn generation_change_writes_a_new_window_and_keeps_content() {
     let root = tempfile::tempdir().expect("temp rollout root");
     let store = RolloutStore::new(root.path().to_path_buf());
     let first_session = session("thread-compact");
@@ -109,7 +103,7 @@ async fn generation_change_starts_a_new_window_without_prefix_matching() {
         .await
         .expect("begin first window");
     first
-        .append(message(EventPhase::Response, json!("old answer")))
+        .append_content(message(EventPhase::Response, json!("old answer")))
         .expect("append old answer");
     first
         .finish(RolloutStatus::Completed)
@@ -135,7 +129,7 @@ async fn generation_change_starts_a_new_window_without_prefix_matching() {
         .expect("read compacted thread");
     let windows = events
         .iter()
-        .filter(|event| event.event_type == "window_start")
+        .filter(|event| event.event_type == "window")
         .map(|event| event.payload["generation"].clone())
         .collect::<Vec<_>>();
     assert_eq!(windows, vec![json!(0), json!(1)]);

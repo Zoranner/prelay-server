@@ -290,17 +290,14 @@ async fn image_generation_endpoint_token_uses_only_its_identity_mapping() {
         event.event_type == "message"
             && event.payload["content"] == serde_json::json!("private prompt")
     }));
-    let media = events
-        .iter()
-        .find(|event| event.event_type == "media")
-        .map(|event| &event.payload)
-        .expect("image media event");
-    assert_eq!(media["media_type"], "application/json");
-    assert!(media["size_bytes"].as_u64().is_some());
-    assert_eq!(media["sha256"].as_str().expect("media hash").len(), 64);
-    assert!(!serde_json::to_string(&events)
-        .expect("serialize image rollout")
-        .contains("result"));
+    assert!(events.iter().any(|event| {
+        event.event_type == "message"
+            && event.payload["content"]
+                == serde_json::json!([{ "type": "output_image", "omitted": true }])
+    }));
+    let serialized = serde_json::to_string(&events).expect("serialize image rollout");
+    assert!(!serialized.contains("result"));
+    assert!(!serialized.contains("sha256"));
 }
 
 #[tokio::test]
