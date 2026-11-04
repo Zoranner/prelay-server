@@ -85,9 +85,15 @@ async fn benchmark_long_thread_cache_hit() {
     warm.finish(RolloutStatus::Completed)
         .expect("finish warm load");
     let warm_elapsed = warm_started.elapsed();
+    let index_bytes = std::fs::metadata(
+        cold.final_path()
+            .with_file_name("thread-benchmark.jsonl.index"),
+    )
+    .expect("benchmark index metadata")
+    .len();
 
     println!(
-        "history_events={HISTORY_EVENTS} cold={cold_elapsed:?} indexed={indexed_elapsed:?} warm={warm_elapsed:?} file_bytes={}",
+        "history_events={HISTORY_EVENTS} cold={cold_elapsed:?} indexed={indexed_elapsed:?} warm={warm_elapsed:?} file_bytes={} index_bytes={index_bytes}",
         std::fs::metadata(cold.final_path())
             .expect("benchmark file metadata")
             .len()
