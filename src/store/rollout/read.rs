@@ -58,7 +58,8 @@ impl RolloutStore {
         Ok(RolloutFile {
             format: parsed.format,
             meta: parsed.meta,
-            event_count: parsed.line_count,
+            line_count: parsed.line_count,
+            event_count: parsed.events.len() as u64,
             byte_size: contents.len() as u64,
             sha256: format!("{:x}", Sha256::digest(contents.as_bytes())),
             events: parsed.events,
@@ -112,7 +113,7 @@ impl RolloutStore {
             }
         }
         Ok(RolloutSlice {
-            event_count: selected.len() as u64,
+            event_count: events.len() as u64,
             byte_size: bytes.len() as u64,
             sha256: format!("{:x}", Sha256::digest(&bytes)),
             events,

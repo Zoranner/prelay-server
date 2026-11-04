@@ -114,6 +114,13 @@ async fn writes_v1_header_turn_context_and_turn_end_once() {
         .find(|line| line["type"] == json!("turn_end"))
         .expect("turn end");
     assert_eq!(turn_end["payload"]["status"], json!("completed"));
+
+    let file = store
+        .read_verified(&summary.relative_path)
+        .expect("read v1 thread");
+    assert_eq!(file.line_count, lines.len() as u64);
+    assert_eq!(file.event_count as usize, file.events.len());
+    assert_eq!(summary.event_count, file.event_count);
 }
 
 #[tokio::test]

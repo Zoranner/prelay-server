@@ -30,9 +30,11 @@ pub struct RolloutStore {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RolloutFile {
+    /// 文件头格式。混合文件表示没有 v1 头，但尾部可能已有 v1 事件。
     pub format: ConversationFormat,
     pub meta: Option<ConversationMeta>,
     pub events: Vec<ConversationEvent>,
+    pub line_count: u64,
     pub event_count: u64,
     pub byte_size: u64,
     pub sha256: String,
@@ -41,6 +43,7 @@ pub struct RolloutFile {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RolloutSlice {
     pub events: Vec<ConversationEvent>,
+    /// 解析出的事件数，不包含文件头或被忽略的 legacy 控制行。
     pub event_count: u64,
     pub byte_size: u64,
     pub sha256: String,

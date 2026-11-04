@@ -98,7 +98,7 @@ async fn preserves_content_larger_than_the_old_64k_limit() {
         .expect("request message");
     assert_eq!(message.payload["content"], json!(large));
     assert!(summary.byte_size > 1024 * 1024);
-    assert_eq!(summary.event_count, 6);
+    assert_eq!(summary.event_count, 5);
 }
 
 #[tokio::test]

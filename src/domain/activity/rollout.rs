@@ -127,6 +127,7 @@ pub struct RolloutSummary {
     pub status: RolloutStatus,
     pub start_line: u64,
     pub end_line: u64,
+    /// 本次活动写入的事件行数，不包含线程文件头。
     pub event_count: u64,
     pub byte_size: u64,
     pub sha256: String,

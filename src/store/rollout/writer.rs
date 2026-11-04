@@ -330,6 +330,7 @@ impl RolloutWriter {
         let mut line = serde_json::to_vec(&event)?;
         line.push(b'\n');
         self.write_line(&line)?;
+        self.event_count += 1;
         if content && is_content_event(&event.event_type) {
             let identity = event_identity(&event.event_type, &event.payload)?;
             self.event_refs.entry(identity).or_default().push(event.seq);
@@ -354,7 +355,6 @@ impl RolloutWriter {
         file.flush()?;
         self.hasher.update(line);
         self.byte_size += line.len() as u64;
-        self.event_count += 1;
         self.line_count += 1;
         self.end_line = self.line_count;
         Ok(())
