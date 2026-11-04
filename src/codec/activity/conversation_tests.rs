@@ -261,7 +261,7 @@ fn internal_response_keeps_message_tool_reasoning_and_usage() {
 }
 
 #[test]
-fn tool_arguments_drop_secrets_media_metadata_and_inline_binary() {
+fn tool_arguments_drop_secrets_and_omit_attachment_payloads() {
     let payload = json!({
         "input": [{
             "type": "function_call",
@@ -276,7 +276,7 @@ fn tool_arguments_drop_secrets_media_metadata_and_inline_binary() {
                     "sha256": "abc123"
                 },
                 "file_id": "file_private",
-                "data": "a".repeat(512),
+                "data": "data:application/octet-stream;base64,YWJj",
                 "path": "Cargo.toml"
             }
         }]
@@ -291,8 +291,75 @@ fn tool_arguments_drop_secrets_media_metadata_and_inline_binary() {
         tool_call.arguments,
         json!({
             "image": { "type": "input_image", "omitted": true },
+            "file_id": "file_private",
             "data": { "type": "binary", "omitted": true },
             "path": "Cargo.toml"
         })
     );
+}
+
+#[test]
+fn tool_arguments_keep_non_attachment_metadata_and_long_text() {
+    let long_text = "a".repeat(512);
+    let payload = json!({
+        "input": [{
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "read_file",
+            "arguments": {
+                "filename": "Cargo.toml",
+                "hash": "sha256-placeholder",
+                "size_bytes": 42,
+                "note": long_text,
+                "authorization": "Bearer sk-live-secret"
+            }
+        }]
+    });
+    let input_items = payload["input"].as_array().expect("input items");
+
+    let events = conversation_events_from_responses_request(&payload, input_items);
+    let ContentEventBody::ToolCall(tool_call) = &events[0].body else {
+        panic!("expected tool call");
+    };
+    assert_eq!(tool_call.arguments["filename"], json!("Cargo.toml"));
+    assert_eq!(tool_call.arguments["hash"], json!("sha256-placeholder"));
+    assert_eq!(tool_call.arguments["size_bytes"], json!(42));
+    assert_eq!(tool_call.arguments["note"], json!(long_text));
+    assert!(tool_call.arguments.get("authorization").is_none());
+}
+
+#[test]
+fn tool_arguments_omit_attachment_payloads_by_field() {
+    let payload = json!({
+        "input": [{
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "read_file",
+            "arguments": {
+                "file_data": "raw file bytes",
+                "b64_json": "QUJD",
+                "url": "data:image/png;base64,c2VjcmV0",
+                "path": "Cargo.toml"
+            }
+        }]
+    });
+    let input_items = payload["input"].as_array().expect("input items");
+
+    let events = conversation_events_from_responses_request(&payload, input_items);
+    let ContentEventBody::ToolCall(tool_call) = &events[0].body else {
+        panic!("expected tool call");
+    };
+    assert_eq!(
+        tool_call.arguments["file_data"],
+        json!({ "type": "binary", "omitted": true })
+    );
+    assert_eq!(
+        tool_call.arguments["b64_json"],
+        json!({ "type": "binary", "omitted": true })
+    );
+    assert_eq!(
+        tool_call.arguments["url"],
+        json!({ "type": "binary", "omitted": true })
+    );
+    assert_eq!(tool_call.arguments["path"], json!("Cargo.toml"));
 }

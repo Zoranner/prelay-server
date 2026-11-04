@@ -20,17 +20,14 @@ const OMITTED_MEDIA_TYPES: [&str; 11] = [
     "video",
 ];
 
-const OMITTED_MEDIA_KEYS: [&str; 10] = [
+const OMITTED_MEDIA_KEYS: [&str; 7] = [
     "audio_data",
     "b64_json",
     "base64",
     "file_data",
-    "file_id",
-    "filename",
     "image_url",
     "input_audio",
     "input_image",
-    "sha256",
 ];
 
 pub fn responses_request(payload: &Value, input_items: &[Value]) -> Vec<ContentDraft> {
@@ -272,8 +269,14 @@ pub(super) fn sanitize_json(value: &Value) -> Value {
             }
             let sanitized = object
                 .iter()
-                .filter(|(key, _)| !is_omitted_key(key))
-                .map(|(key, value)| (key.clone(), sanitize_json(value)))
+                .filter(|(key, _)| !is_secret_key(key))
+                .map(|(key, value)| {
+                    if is_omitted_media_key(key) {
+                        (key.clone(), omitted_media("binary"))
+                    } else {
+                        (key.clone(), sanitize_json(value))
+                    }
+                })
                 .collect::<Map<_, _>>();
             redact_json_value(&Value::Object(sanitized))
         }
@@ -285,13 +288,27 @@ fn is_media_type(value: &str) -> bool {
     OMITTED_MEDIA_TYPES.contains(&value)
 }
 
-fn is_omitted_key(key: &str) -> bool {
+fn is_omitted_media_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
     OMITTED_MEDIA_KEYS.contains(&key.as_str())
-        || matches!(
-            key.as_str(),
-            "hash" | "size_bytes" | "file_name" | "authorization" | "cookie" | "api_key"
-        )
+}
+
+fn is_secret_key(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "authorization"
+            | "cookie"
+            | "set_cookie"
+            | "api_key"
+            | "endpoint_token"
+            | "device_credential"
+            | "access_token"
+            | "refresh_token"
+            | "id_token"
+            | "client_secret"
+            | "private_key"
+            | "password"
+    )
 }
 
 pub(super) fn omitted_media(part_type: &str) -> Value {
@@ -299,13 +316,11 @@ pub(super) fn omitted_media(part_type: &str) -> Value {
 }
 
 fn looks_like_binary(value: &str) -> bool {
-    if value.starts_with("data:") && value.contains(";base64,") {
-        return true;
-    }
-    value.len() >= 256
-        && value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'_' | b'-' | b'=')
-        })
+    let value = value.trim_start();
+    value
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"))
+        && value.contains(";base64,")
 }
 
 pub(super) fn usage_event(usage: Option<&Value>) -> Option<ContentDraft> {
