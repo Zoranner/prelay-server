@@ -62,6 +62,7 @@ pub(super) fn load_language_models(
                 default_verbosity: model.default_verbosity,
                 apply_patch_tool_type: model.apply_patch_tool_type,
                 web_search_tool_type: model.web_search_tool_type,
+                supports_search_tool: model.supports_search_tool,
                 truncation_policy: model.truncation_policy,
                 reasoning_summary_format: model.reasoning_summary_format,
                 default_reasoning_summary: model.default_reasoning_summary,

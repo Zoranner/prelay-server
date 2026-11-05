@@ -17,6 +17,7 @@
 # default_verbosity = "low" # 默认详细程度
 # apply_patch_tool_type = "freeform" # 补丁工具类型
 # web_search_tool_type = "text" # 网页搜索工具类型
+# supports_search_tool = false # Codex tool_search 能力；与 web_search_tool_type 无关，缺省为 false
 # truncation_policy = { mode = "tokens", limit = 10000 } # 截断策略
 # reasoning_summary_format = "experimental" # 思考摘要格式
 # default_reasoning_summary = "none" # 默认思考摘要

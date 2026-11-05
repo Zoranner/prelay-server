@@ -44,6 +44,7 @@ support_verbosity = true
 default_verbosity = "low"
 apply_patch_tool_type = "freeform"
 web_search_tool_type = "text"
+supports_search_tool = false
 truncation_policy = { mode = "tokens", limit = 10000 }
 reasoning_summary_format = "experimental"
 default_reasoning_summary = "none"
@@ -59,6 +60,8 @@ minimal_client_version = "0.144.0"
 官方资料未明确的字段以英文键名注释保留；缺省表示能力未知，不由客户端推断为具体能力。`reasoning_efforts` 只能使用 `none`、`minimal`、`low`、`medium`、`high`、`xhigh` 或 `max`；配置默认思考强度时必须同时给出非空档位列表，且 `default_reasoning_effort` 必须包含在该列表中。默认思考强度由服务端目录维护，客户端用户设置可以覆盖它。目录约定：可选档位超过三档时默认使用 `high`，三档或更少时使用列表中的最高档。`effective_context_window_percent` 是模型仍能稳定产出的上下文比例：客户端按 `context_window × 比例` 计算 Codex 的自动压缩触发点，未声明时按 90% 处理；调低该值等于让该模型提前压缩。百万级窗口的非 GPT 模型当前统一声明 60%（DeepSeek 有本地实测依据，其余是同一策略下的取值），GPT 系列不声明该值、按 90% 处理。`support_verbosity` 与 `truncation_policy` 是 Codex 模型档案的必填字段：任何条目缺其一，客户端写出的 `model_catalog_json` 会被 Codex 整体拒绝解析；其余字段缺省表示能力未知，由 Codex 按内置默认值处理。
 
 目录条目默认不配置 `base_instructions`：缺省或为空白时，加载器依次使用 `models/instructions/<id>.md` 与 `models/instructions/_default.md`；条目显式填写的值优先于这两份模板，均为空时保持空。
+
+`supports_search_tool` 是独立于 `web_search_tool_type` 的模型能力：前者决定 Codex 是否启用 `tool_search`、MCP 工具是否延迟加载，后者只描述托管网页搜索回传的内容类型。缺省按 `false` 处理，只有确实实现 Codex `tool_search` 语义的上游才声明 `true`。
 
 ### 图像生成模型
 

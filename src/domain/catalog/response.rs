@@ -25,6 +25,7 @@ pub(super) fn language_model_response(
         default_verbosity: model.default_verbosity.clone(),
         apply_patch_tool_type: model.apply_patch_tool_type.clone(),
         web_search_tool_type: model.web_search_tool_type.clone(),
+        supports_search_tool: model.supports_search_tool,
         truncation_policy: model.truncation_policy.as_ref().map(|policy| {
             CatalogTruncationPolicyResponse {
                 mode: policy.mode.clone(),
