@@ -20,7 +20,6 @@ pub(crate) fn target_provider_id(provider_type: &str) -> Option<&'static str> {
         "kimi" | "kimi_coding" | "kimi_coding_anthropic" => Some("kimi"),
         "zhipu_coding" | "zhipu_coding_openai" => Some("bigmodel_coding_plan"),
         "bigmodel_coding_plan" => Some("bigmodel_coding_plan"),
-        "qwen" | "qwen_token_plan" => Some("qwen_token_plan"),
         "minimax" | "minimax_token" | "minimax_token_openai" | "minimax_token_plan" => {
             Some("minimax")
         }
@@ -360,11 +359,12 @@ mod tests {
             Some("bigmodel_coding_plan")
         );
         assert_eq!(target_provider_id("minimax_token"), Some("minimax"));
-        assert_eq!(target_provider_id("qwen"), Some("qwen_token_plan"));
     }
 
     #[test]
     fn rejects_provider_types_without_an_unambiguous_catalog_mapping() {
+        assert_eq!(target_provider_id("qwen"), None);
+        assert_eq!(target_provider_id("qwen_token_plan"), None);
         assert_eq!(target_provider_id("zhipu"), None);
         assert_eq!(target_provider_id("custom_provider"), None);
     }

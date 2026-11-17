@@ -44,17 +44,6 @@ protocols = ["chat_completions", "responses"]
 language_models = ["glm-5.3", "glm-5.3-flash"]
 
 [[providers]]
-id = "qwen_token_plan"
-name = "千问 Token Plan"
-auth_scheme = "bearer"
-base_url = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
-protocols = ["chat_completions", "responses"]
-language_models = [
-  "qwen3.8-max",
-  "qwen3.8-flash",
-]
-
-[[providers]]
 id = "kimi"
 name = "Kimi Code"
 auth_scheme = "bearer"

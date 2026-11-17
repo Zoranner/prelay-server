@@ -68,6 +68,14 @@ fn deployment_catalog_excludes_retired_supergpt_provider() {
 }
 
 #[test]
+fn deployment_catalog_excludes_retired_qwen_token_plan_provider() {
+    let catalog =
+        ProviderCatalog::load(Path::new("config/catalog")).expect("load deployment catalog");
+
+    assert!(catalog.provider("qwen_token_plan").is_none());
+}
+
+#[test]
 fn deployment_catalog_excludes_retired_claude_models() {
     let catalog =
         ProviderCatalog::load(Path::new("config/catalog")).expect("load deployment catalog");
