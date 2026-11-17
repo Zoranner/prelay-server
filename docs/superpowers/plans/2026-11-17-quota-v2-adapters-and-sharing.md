@@ -33,9 +33,20 @@
 - [x] Task 2：目录 `[providers.quota]` 与适配器注册（`7d0b07e`）
 - [x] Task 3：GLM、Kimi、Command Code、OpenCode Go 适配器（`7d0b07e`）
 - [x] Task 4：并发取数、缓存与错误状态（`e76cb0d`）
-- [ ] Task 5：共享额度预留
-- [ ] Task 6：客户端新模型收尾
-- [ ] Task 7：全量收口
+- [x] Task 5：共享额度预留（`06389e6`）
+- [x] Task 6：客户端新模型收尾（`d22297d`）
+- [x] Task 7：全量收口（合并分支 `e1ee03d`）
+
+## 评审结果
+
+- 服务端 `cargo clippy --all-targets` 无告警
+- 服务端 lib 测试 359 通过、1 忽略
+- 服务端 management 测试 42 通过
+- 服务端 schema 测试 22 通过
+- 供应商目录测试 23 通过
+- 协议测试 33 通过
+- 客户端 typecheck、40 项测试和格式检查通过
+- 未覆盖：真实上游密钥、GoToken 额度、`master` 合并（被记录日志的未提交改动阻塞）
 
 ---
 
