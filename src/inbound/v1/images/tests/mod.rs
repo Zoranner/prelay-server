@@ -76,6 +76,7 @@ async fn test_state_with_connection() -> (AppState, DatabaseConnection) {
             reqwest::Client::new(),
         ),
         failover: Default::default(),
+        quota: crate::service::quota::QuotaService::new(reqwest::Client::new()),
     };
     (state, connection)
 }
