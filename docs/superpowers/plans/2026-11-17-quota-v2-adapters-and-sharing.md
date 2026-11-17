@@ -30,9 +30,9 @@
 
 - [x] Task 0：额度 v1 与千问退役已提交；记录日志改动仍留在 `master` 工作树；额度 v2 使用独立 worktree `prelay-server-quota-v2`
 - [x] Task 1：协议卡片模型 `057d877`、服务端 `5403f3d`、客户端 `d22297d`
-- [ ] Task 2：目录 `[providers.quota]` 与适配器注册
-- [ ] Task 3：GLM、Kimi、Command Code、OpenCode Go 适配器
-- [ ] Task 4：并发取数、缓存与错误状态
+- [x] Task 2：目录 `[providers.quota]` 与适配器注册（`7d0b07e`）
+- [x] Task 3：GLM、Kimi、Command Code、OpenCode Go 适配器（`7d0b07e`）
+- [x] Task 4：并发取数、缓存与错误状态（`e76cb0d`）
 - [ ] Task 5：共享额度预留
 - [ ] Task 6：客户端新模型收尾
 - [ ] Task 7：全量收口
