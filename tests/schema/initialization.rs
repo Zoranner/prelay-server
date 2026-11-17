@@ -116,6 +116,7 @@ async fn initializes_provider_sharing_structures_in_an_empty_database() {
         ("identity_provider_shares", "provider_id"),
         ("identity_provider_shares", "grantee_identity_id"),
         ("identity_provider_shares", "created_at"),
+        ("identity_provider_shares", "quota_json"),
     ] {
         assert!(
             column_exists(&db, table, column).await,

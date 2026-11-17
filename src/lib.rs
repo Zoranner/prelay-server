@@ -19,6 +19,7 @@ pub struct AppState {
     pub client_update: outbound::integrations::client_update::ClientUpdateCache,
     pub extensions: outbound::integrations::extensions::ExtensionCatalog,
     pub failover: service::failover::FailoverRegistry,
+    pub quota: service::quota::QuotaService,
 }
 
 impl AppState {

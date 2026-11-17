@@ -137,11 +137,11 @@ fn usage_query(
     query
 }
 
-fn integer_sum(expr: Expr) -> Expr {
+pub(super) fn integer_sum(expr: Expr) -> Expr {
     expr.cast_as("bigint")
 }
 
-fn token_total_expr() -> Expr {
+pub(super) fn token_total_expr() -> Expr {
     Expr::col(identity_activities::Column::InputTokens)
         .if_null(0)
         .add(Expr::col(identity_activities::Column::OutputTokens).if_null(0))

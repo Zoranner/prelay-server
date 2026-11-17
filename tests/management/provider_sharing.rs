@@ -87,17 +87,16 @@ async fn provider_visibility_controls_lists_and_replaces_selected_grantees() {
         &format!("/api/providers/{provider_id}/sharing"),
         Some(owner_credential),
         Some(serde_json::json!({
-            "visibility": "selected",
-            "identity_ids": [grantee["identity_id"]]
+            "shares": [{
+                "identity_id": grantee["identity_id"],
+                "quota": null
+            }]
         })),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(sharing["visibility"], "selected");
-    assert_eq!(
-        sharing["selected_identity_ids"],
-        serde_json::json!([grantee["identity_id"]])
-    );
+    assert_eq!(sharing["shares"][0]["identity_id"], grantee["identity_id"]);
+    assert!(sharing["shares"][0]["quota"].is_null());
 
     let (status, providers): (StatusCode, Vec<serde_json::Value>) = request_json(
         &app,
@@ -136,8 +135,7 @@ async fn provider_visibility_controls_lists_and_replaces_selected_grantees() {
         &format!("/api/providers/{provider_id}/sharing"),
         Some(grantee_credential),
         Some(serde_json::json!({
-            "visibility": "private",
-            "identity_ids": []
+            "shares": []
         })),
     )
     .await;
@@ -149,8 +147,10 @@ async fn provider_visibility_controls_lists_and_replaces_selected_grantees() {
         &format!("/api/providers/{provider_id}/sharing"),
         Some(owner_credential),
         Some(serde_json::json!({
-            "visibility": "selected",
-            "identity_ids": [replacement["identity_id"]]
+            "shares": [{
+                "identity_id": replacement["identity_id"],
+                "quota": null
+            }]
         })),
     )
     .await;
@@ -188,13 +188,12 @@ async fn provider_visibility_controls_lists_and_replaces_selected_grantees() {
         &format!("/api/providers/{provider_id}/sharing"),
         Some(owner_credential),
         Some(serde_json::json!({
-            "visibility": "all",
-            "identity_ids": []
+            "shares": []
         })),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(sharing["visibility"], "all");
+    assert!(sharing["shares"].as_array().expect("shares").is_empty());
 
     let (status, providers): (StatusCode, Vec<serde_json::Value>) = request_json(
         &app,
@@ -205,8 +204,7 @@ async fn provider_visibility_controls_lists_and_replaces_selected_grantees() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(providers.len(), 1);
-    assert_eq!(providers[0]["selected_identity_ids"], serde_json::json!([]));
+    assert!(providers.is_empty());
 }
 
 #[tokio::test]
@@ -239,8 +237,10 @@ async fn shared_provider_can_back_endpoint_until_revoked_and_deleted() {
         &format!("/api/providers/{provider_id}/sharing"),
         Some(owner_credential),
         Some(serde_json::json!({
-            "visibility": "selected",
-            "identity_ids": [grantee["identity_id"]]
+            "shares": [{
+                "identity_id": grantee["identity_id"],
+                "quota": null
+            }]
         })),
     )
     .await;
@@ -275,8 +275,7 @@ async fn shared_provider_can_back_endpoint_until_revoked_and_deleted() {
         &format!("/api/providers/{provider_id}/sharing"),
         Some(owner_credential),
         Some(serde_json::json!({
-            "visibility": "private",
-            "identity_ids": []
+            "shares": []
         })),
     )
     .await;
@@ -359,8 +358,10 @@ async fn non_owner_can_ping_a_shared_provider_but_cannot_test_its_protocols() {
         &format!("/api/providers/{provider_id}/sharing"),
         Some(owner_credential),
         Some(serde_json::json!({
-            "visibility": "all",
-            "identity_ids": []
+            "shares": [{
+                "identity_id": grantee["identity_id"],
+                "quota": null
+            }]
         })),
     )
     .await;
@@ -391,4 +392,86 @@ async fn non_owner_can_ping_a_shared_provider_but_cannot_test_its_protocols() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(error["error"]["code"], "provider_sharing_not_allowed");
+}
+
+#[tokio::test]
+async fn limited_share_reports_the_shared_quota_windows() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let owner = register_named(&app, "quota-owner", "S-1-5-21-quota-owner", "Quota Owner").await;
+    let owner_credential = owner["credential"].as_str().expect("owner credential");
+    let grantee = register_named(
+        &app,
+        "quota-grantee",
+        "S-1-5-21-quota-grantee",
+        "Quota Grantee",
+    )
+    .await;
+    let grantee_credential = grantee["credential"].as_str().expect("grantee credential");
+
+    let (status, provider): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers",
+        Some(owner_credential),
+        Some(serde_json::json!({
+            "name": "Quota Provider",
+            "provider_type": "gotoken",
+            "base_url": "https://gotoken.cc",
+            "api_key": "sk-quota-secret"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let provider_id = provider["id"].as_str().expect("provider id");
+
+    let (status, sharing): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "PATCH",
+        &format!("/api/providers/{provider_id}/sharing"),
+        Some(owner_credential),
+        Some(serde_json::json!({
+            "shares": [{
+                "identity_id": grantee["identity_id"],
+                "quota": [{
+                    "window": "day",
+                    "limit": 1000,
+                    "accumulate": true,
+                    "reset_time": "00:00",
+                    "reset_weekday": null,
+                    "reset_day": null
+                }]
+            }]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(sharing["shares"][0]["quota"][0]["window"], "day");
+    assert_eq!(sharing["shares"][0]["quota"][0]["limit"], 1000);
+
+    let (status, quotas): (StatusCode, Vec<serde_json::Value>) = request_json(
+        &app,
+        "GET",
+        "/api/providers/quotas",
+        Some(grantee_credential),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(quotas.len(), 1);
+    assert_eq!(quotas[0]["mode"], "shared_limited");
+    assert_eq!(quotas[0]["quota"]["kind"], "shared");
+    assert_eq!(quotas[0]["quota"]["windows"][0]["window"], "day");
+    assert_eq!(quotas[0]["quota"]["windows"][0]["limit"], 1000);
+    assert_eq!(quotas[0]["quota"]["windows"][0]["remaining"], 1000);
+
+    let (status, owner_quotas): (StatusCode, Vec<serde_json::Value>) = request_json(
+        &app,
+        "GET",
+        "/api/providers/quotas",
+        Some(owner_credential),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(owner_quotas[0]["quota"]["kind"], "unsupported");
 }

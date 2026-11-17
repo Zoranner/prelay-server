@@ -157,7 +157,12 @@ pub(super) async fn provider_sharing_schema_exists<C: ConnectionTrait>(
     if !column_exists(db, "identity_provider_configs", "visibility").await? {
         return Ok(false);
     }
-    for column in ["provider_id", "grantee_identity_id", "created_at"] {
+    for column in [
+        "provider_id",
+        "grantee_identity_id",
+        "created_at",
+        "quota_json",
+    ] {
         if !column_exists(db, "identity_provider_shares", column).await? {
             return Ok(false);
         }

@@ -1,9 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
 use prelay_protocol::{
-    ProviderListItemResponse, ProviderSharingResponse, ProviderVisibility,
-    UpdateProviderSharingRequest,
+    ProviderListItemResponse, ProviderShareResponse, ProviderSharingResponse, ProviderVisibility,
+    QuotaWindowKind, ShareQuotaWindow, UpdateProviderSharingRequest,
 };
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
@@ -30,6 +30,23 @@ pub(crate) struct VisibleProvider {
 }
 
 impl Storage {
+    pub(crate) async fn list_visible_provider_records(
+        &self,
+        identity_id: &str,
+    ) -> Result<Vec<VisibleProvider>, StorageError> {
+        let providers = identity_provider_configs::Entity::find()
+            .order_by_asc(identity_provider_configs::Column::CreatedAt)
+            .all(&self.db)
+            .await?;
+        let mut visible = Vec::new();
+        for provider in providers {
+            if let Some(provider) = visible_provider(&self.db, identity_id, provider).await? {
+                visible.push(provider);
+            }
+        }
+        Ok(visible)
+    }
+
     pub async fn list_visible_providers(
         &self,
         identity_id: &str,
@@ -98,10 +115,8 @@ impl Storage {
         provider_id: &str,
     ) -> Result<ProviderSharingResponse, StorageError> {
         let provider = self.get_visible_provider(identity_id, provider_id).await?;
-        let selected_identity_ids = selected_identity_ids(&self.db, provider_id).await?;
         Ok(ProviderSharingResponse {
-            visibility: provider.visibility,
-            selected_identity_ids,
+            shares: provider_shares(&self.db, provider_id).await?,
             can_manage: provider.can_manage,
         })
     }
@@ -117,24 +132,49 @@ impl Storage {
         validate_sharing_input(&transaction, identity_id, &input).await?;
 
         let mut provider = provider.into_active_model();
-        provider.visibility = Set(visibility_value(input.visibility).to_string());
+        let visibility = if input.shares.is_empty() {
+            ProviderVisibility::Private
+        } else {
+            ProviderVisibility::Selected
+        };
+        provider.visibility = Set(visibility_value(visibility).to_string());
         provider.update(&transaction).await?;
 
+        let existing_created_at = identity_provider_shares::Entity::find()
+            .filter(identity_provider_shares::Column::ProviderId.eq(provider_id))
+            .all(&transaction)
+            .await?
+            .into_iter()
+            .map(|share| (share.grantee_identity_id, share.created_at))
+            .collect::<HashMap<_, _>>();
         identity_provider_shares::Entity::delete_many()
             .filter(identity_provider_shares::Column::ProviderId.eq(provider_id))
             .exec(&transaction)
             .await?;
-        if input.visibility == ProviderVisibility::Selected {
-            let created_at = Utc::now().to_rfc3339();
-            for grantee_identity_id in input.identity_ids {
-                identity_provider_shares::ActiveModel {
-                    provider_id: Set(provider_id.to_string()),
-                    grantee_identity_id: Set(grantee_identity_id),
-                    created_at: Set(created_at.clone()),
-                }
-                .insert(&transaction)
-                .await?;
+        let now = Utc::now().to_rfc3339();
+        for share in input.shares {
+            let quota_json = share
+                .quota
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|error| {
+                    StorageError::InvalidProviderSharing(format!(
+                        "could not serialize share quota: {error}"
+                    ))
+                })?;
+            let created_at = existing_created_at
+                .get(&share.identity_id)
+                .cloned()
+                .unwrap_or_else(|| now.clone());
+            identity_provider_shares::ActiveModel {
+                provider_id: Set(provider_id.to_string()),
+                grantee_identity_id: Set(share.identity_id),
+                created_at: Set(created_at),
+                quota_json: Set(quota_json),
             }
+            .insert(&transaction)
+            .await?;
         }
         transaction.commit().await?;
         self.get_provider_sharing(identity_id, provider_id).await
@@ -179,7 +219,7 @@ where
     Err(StorageError::ProviderNotFound)
 }
 
-async fn visible_provider<C>(
+pub(crate) async fn visible_provider<C>(
     db: &C,
     identity_id: &str,
     provider: identity_provider_configs::Model,
@@ -233,6 +273,52 @@ async fn selected_identity_ids(
         .collect())
 }
 
+async fn provider_shares(
+    db: &DatabaseConnection,
+    provider_id: &str,
+) -> Result<Vec<ProviderShareResponse>, StorageError> {
+    let shares = identity_provider_shares::Entity::find()
+        .filter(identity_provider_shares::Column::ProviderId.eq(provider_id))
+        .order_by_asc(identity_provider_shares::Column::GranteeIdentityId)
+        .all(db)
+        .await?;
+    let identity_ids = shares
+        .iter()
+        .map(|share| share.grantee_identity_id.clone())
+        .collect::<Vec<_>>();
+    let display_names = identities::Entity::find()
+        .filter(identities::Column::Id.is_in(identity_ids))
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|identity| (identity.id, identity.display_name))
+        .collect::<std::collections::HashMap<_, _>>();
+    shares
+        .into_iter()
+        .map(|share| {
+            let display_name = display_names
+                .get(&share.grantee_identity_id)
+                .cloned()
+                .ok_or(StorageError::IdentityNotFound)?;
+            let quota = share
+                .quota_json
+                .as_deref()
+                .map(serde_json::from_str::<Vec<ShareQuotaWindow>>)
+                .transpose()
+                .map_err(|error| {
+                    StorageError::InvalidProviderSharing(format!(
+                        "stored share quota is invalid: {error}"
+                    ))
+                })?;
+            Ok(ProviderShareResponse {
+                identity_id: share.grantee_identity_id,
+                display_name,
+                quota,
+            })
+        })
+        .collect()
+}
+
 async fn validate_sharing_input<C>(
     db: &C,
     owner_identity_id: &str,
@@ -241,32 +327,107 @@ async fn validate_sharing_input<C>(
 where
     C: ConnectionTrait,
 {
-    let identities = input.identity_ids.iter().collect::<HashSet<_>>();
-    if identities.len() != input.identity_ids.len() {
-        return Err(StorageError::InvalidProviderSharing(
-            "selected identities must be unique".to_string(),
-        ));
+    let mut identities = HashSet::new();
+    for share in &input.shares {
+        if share.identity_id == owner_identity_id {
+            return Err(StorageError::InvalidProviderSharing(
+                "provider owner cannot be a selected grantee".to_string(),
+            ));
+        }
+        if !identities.insert(share.identity_id.as_str()) {
+            return Err(StorageError::InvalidProviderSharing(
+                "selected identities must be unique".to_string(),
+            ));
+        }
+        if let Some(quota) = &share.quota {
+            validate_share_quota(quota)?;
+        }
     }
-    if input.visibility != ProviderVisibility::Selected && !input.identity_ids.is_empty() {
-        return Err(StorageError::InvalidProviderSharing(
-            "private and all visibility must not include selected identities".to_string(),
-        ));
-    }
-    if input.visibility != ProviderVisibility::Selected {
+    let identity_ids = input
+        .shares
+        .iter()
+        .map(|share| share.identity_id.clone())
+        .collect::<Vec<_>>();
+    if identity_ids.is_empty() {
         return Ok(());
     }
-    if input.identity_ids.iter().any(|id| id == owner_identity_id) {
-        return Err(StorageError::InvalidProviderSharing(
-            "provider owner cannot be a selected grantee".to_string(),
-        ));
-    }
     let existing = identities::Entity::find()
-        .filter(identities::Column::Id.is_in(input.identity_ids.clone()))
+        .filter(identities::Column::Id.is_in(identity_ids.clone()))
         .all(db)
         .await?;
-    if existing.len() != input.identity_ids.len() {
+    if existing.len() != identity_ids.len() {
         return Err(StorageError::InvalidProviderSharing(
             "selected identity does not exist".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_share_quota(quota: &[ShareQuotaWindow]) -> Result<(), StorageError> {
+    if quota.is_empty() {
+        return Err(StorageError::InvalidProviderSharing(
+            "limited sharing requires at least one quota window".to_string(),
+        ));
+    }
+    let mut windows = HashSet::new();
+    for rule in quota {
+        if !windows.insert(rule.window) {
+            return Err(StorageError::InvalidProviderSharing(
+                "quota windows must be unique".to_string(),
+            ));
+        }
+        if rule.limit <= 0 {
+            return Err(StorageError::InvalidProviderSharing(
+                "quota limit must be positive".to_string(),
+            ));
+        }
+        if rule.window == QuotaWindowKind::FiveHour {
+            return Err(StorageError::InvalidProviderSharing(
+                "shared quota supports day, week, and month windows".to_string(),
+            ));
+        }
+        parse_reset_time(&rule.reset_time)?;
+        match rule.window {
+            QuotaWindowKind::Day => {
+                if rule.reset_weekday.is_some() || rule.reset_day.is_some() {
+                    return Err(StorageError::InvalidProviderSharing(
+                        "day quota must not set weekday or month day".to_string(),
+                    ));
+                }
+            }
+            QuotaWindowKind::Week => {
+                if !matches!(rule.reset_weekday, Some(1..=7)) || rule.reset_day.is_some() {
+                    return Err(StorageError::InvalidProviderSharing(
+                        "week quota requires a weekday from 1 to 7".to_string(),
+                    ));
+                }
+            }
+            QuotaWindowKind::Month => {
+                if !matches!(rule.reset_day, Some(1..=28)) || rule.reset_weekday.is_some() {
+                    return Err(StorageError::InvalidProviderSharing(
+                        "month quota requires a day from 1 to 28".to_string(),
+                    ));
+                }
+            }
+            QuotaWindowKind::FiveHour => unreachable!(),
+        }
+    }
+    Ok(())
+}
+
+fn parse_reset_time(value: &str) -> Result<(), StorageError> {
+    let (hour, minute) = value.split_once(':').ok_or_else(|| {
+        StorageError::InvalidProviderSharing("reset time must use HH:MM".to_string())
+    })?;
+    let hour = hour.parse::<u8>().map_err(|_| {
+        StorageError::InvalidProviderSharing("reset time must use HH:MM".to_string())
+    })?;
+    let minute = minute.parse::<u8>().map_err(|_| {
+        StorageError::InvalidProviderSharing("reset time must use HH:MM".to_string())
+    })?;
+    if hour > 23 || minute > 59 {
+        return Err(StorageError::InvalidProviderSharing(
+            "reset time must use HH:MM".to_string(),
         ));
     }
     Ok(())

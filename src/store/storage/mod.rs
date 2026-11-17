@@ -6,6 +6,7 @@ mod error;
 mod identities;
 mod leaderboard;
 mod memories;
+mod provider_quota;
 mod provider_usage;
 mod provider_validation;
 mod provider_views;

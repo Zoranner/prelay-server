@@ -107,6 +107,7 @@ pub async fn serve() -> anyhow::Result<()> {
     spawn_client_update_refresh(client_update.clone());
     let extensions = ExtensionCatalog::from_environment(client.clone())?;
     extensions.warm();
+    let quota = crate::service::quota::QuotaService::new(client.clone());
 
     let state = AppState {
         provider_catalog,
@@ -117,6 +118,7 @@ pub async fn serve() -> anyhow::Result<()> {
         client_update,
         extensions,
         failover: Default::default(),
+        quota,
     };
     let app = router(state).await?;
 

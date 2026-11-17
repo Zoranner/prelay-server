@@ -111,6 +111,7 @@ pub async fn test_state() -> AppState {
         client_update: ClientUpdateCache::unavailable(reqwest::Client::new()),
         extensions: ExtensionCatalog::unavailable(reqwest::Client::new()),
         failover: Default::default(),
+        quota: crate::service::quota::QuotaService::new(reqwest::Client::new()),
     }
 }
 

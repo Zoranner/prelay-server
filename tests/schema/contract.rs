@@ -108,7 +108,12 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
         assert!(table_exists(db, table).await, "missing table: {table}");
     }
     assert_string_column(db, "identity_provider_configs", "visibility").await;
-    for column in ["provider_id", "grantee_identity_id", "created_at"] {
+    for column in [
+        "provider_id",
+        "grantee_identity_id",
+        "created_at",
+        "quota_json",
+    ] {
         assert_string_column(db, "identity_provider_shares", column).await;
     }
     for column in ["api_key", "api_key_ciphertext", "credential", "token"] {

@@ -23,6 +23,7 @@ pub(in crate::store::schema) fn statement() -> TableCreateStatement {
                 .string()
                 .not_null(),
         )
+        .col(ColumnDef::new(ProviderShares::QuotaJson).text())
         .primary_key(
             &mut Index::create()
                 .col(ProviderShares::ProviderId)
@@ -51,4 +52,5 @@ pub(in crate::store::schema) enum ProviderShares {
     ProviderId,
     GranteeIdentityId,
     CreatedAt,
+    QuotaJson,
 }

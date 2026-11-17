@@ -6,8 +6,9 @@ use axum::{
 };
 use prelay_protocol::{
     CreateProviderRequest, ProviderListItemResponse, ProviderOperationRequest,
-    ProviderOperationResponse, ProviderResponse, ProviderUsageResponse,
-    TestProviderProtocolRequest, UpdateProviderRequest,
+    ProviderOperationResponse, ProviderQuotaResponse, ProviderResponse, ProviderSharingResponse,
+    ProviderUsageResponse, TestProviderProtocolRequest, UpdateProviderRequest,
+    UpdateProviderSharingRequest,
 };
 use serde::Deserialize;
 
@@ -20,6 +21,7 @@ use crate::service::provider_check::run_protocol_test;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/providers", get(list).post(create))
+        .route("/providers/quotas", get(list_quotas))
         .route("/providers/discover-models", post(discover_models))
         .route("/providers/test-protocol", post(test_protocol))
         .route("/providers/:provider_id/ping", post(ping))
@@ -52,6 +54,18 @@ async fn list(
         .list_visible_providers(&identity.id, Some(&state.provider_catalog))
         .await?;
     Ok(Json(providers))
+}
+
+async fn list_quotas(
+    State(state): State<AppState>,
+    Extension(identity): Extension<CurrentIdentity>,
+) -> Result<Json<Vec<ProviderQuotaResponse>>, ApiError> {
+    Ok(Json(
+        state
+            .quota
+            .list_for_identity(&state.storage, &identity.id)
+            .await?,
+    ))
 }
 
 async fn create(
@@ -163,7 +177,7 @@ async fn get_sharing(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Path(provider_id): Path<String>,
-) -> Result<Json<prelay_protocol::ProviderSharingResponse>, ApiError> {
+) -> Result<Json<ProviderSharingResponse>, ApiError> {
     Ok(Json(
         state
             .storage
@@ -176,8 +190,8 @@ async fn update_sharing(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
     Path(provider_id): Path<String>,
-    ApiJson(input): ApiJson<prelay_protocol::UpdateProviderSharingRequest>,
-) -> Result<Json<prelay_protocol::ProviderSharingResponse>, ApiError> {
+    ApiJson(input): ApiJson<UpdateProviderSharingRequest>,
+) -> Result<Json<ProviderSharingResponse>, ApiError> {
     Ok(Json(
         state
             .storage

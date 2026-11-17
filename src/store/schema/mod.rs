@@ -197,6 +197,13 @@ impl<C: ConnectionTrait> SchemaInitializer<'_, C> {
             self.create_index(indexes::provider_shares_provider_grantee())
                 .await?;
         }
+        if !column_exists(self.db, "identity_provider_shares", "quota_json").await? {
+            self.db
+                .execute_unprepared(
+                    "ALTER TABLE identity_provider_shares ADD COLUMN quota_json TEXT",
+                )
+                .await?;
+        }
         self.strip_legacy_protocol_overrides().await?;
         Ok(())
     }
