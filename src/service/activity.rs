@@ -1,5 +1,6 @@
 use chrono::{Duration, Utc};
 use std::collections::HashSet;
+use std::time::Instant;
 use uuid::Uuid;
 
 use crate::{
@@ -9,12 +10,13 @@ use crate::{
     },
     domain::stats::ActivityInsert,
     store::{
+        recording_timing::log_elapsed,
         rollout::{RolloutStore, RolloutWriter},
-        storage::{
-            InterruptedRollout, RecoveredRollout, ResponseStateInsert, Storage, StorageError,
-        },
+        storage::{ResponseStateInsert, Storage, StorageError},
     },
 };
+
+mod recovery;
 
 #[derive(Clone)]
 pub struct ActivityStore {
@@ -35,16 +37,6 @@ impl ActivityStore {
 
     pub fn rollouts(&self) -> &RolloutStore {
         &self.rollouts
-    }
-
-    pub async fn recover_interrupted(&self) -> Result<u64, StorageError> {
-        let interrupted = self.storage.list_writing_rollouts().await?;
-        let recovered = interrupted.len() as u64;
-        for rollout in interrupted {
-            let update = self.recovered_rollout_status(&rollout);
-            self.storage.recover_rollout_status(update).await?;
-        }
-        Ok(recovered)
     }
 
     pub async fn orphan_rollout_files(&self) -> Result<Vec<String>, StorageError> {
@@ -85,7 +77,9 @@ impl ActivityStore {
         request_events: Vec<ContentDraft>,
         response_events: Vec<ContentDraft>,
     ) -> Result<(), StorageError> {
+        let started_at = Instant::now();
         let activity_id = Uuid::new_v4().to_string();
+        let begin_started_at = Instant::now();
         let mut writer = self
             .begin_rollout(
                 &activity_id,
@@ -95,6 +89,11 @@ impl ActivityStore {
                 request_events,
             )
             .await?;
+        log_elapsed(
+            "activity.record_completed.begin_rollout",
+            begin_started_at,
+            Some(&activity_id),
+        );
         for event in response_events {
             writer
                 .append_content(event)
@@ -116,6 +115,7 @@ impl ActivityStore {
         } else {
             RolloutStatus::Completed
         };
+        let finish_started_at = Instant::now();
         let summary = writer
             .finish_with(
                 status,
@@ -124,9 +124,29 @@ impl ActivityStore {
                 activity.error_message.clone(),
             )
             .map_err(|error| StorageError::Rollout(error.to_string()))?;
-        self.storage
-            .insert_activity_with_rollout(identity_id, activity_id, activity, summary)
-            .await
+        log_elapsed(
+            "activity.record_completed.finish_rollout",
+            finish_started_at,
+            Some(&activity_id),
+        );
+        let db_started_at = Instant::now();
+        let result = self
+            .storage
+            .insert_activity_with_rollout(identity_id, activity_id.clone(), activity, summary)
+            .await;
+        if result.is_ok() {
+            log_elapsed(
+                "activity.record_completed.db_insert",
+                db_started_at,
+                Some(&activity_id),
+            );
+            log_elapsed(
+                "activity.record_completed.total",
+                started_at,
+                Some(&activity_id),
+            );
+        }
+        result
     }
 
     pub async fn begin_stream(
@@ -136,10 +156,12 @@ impl ActivityStore {
         session: &SessionContext,
         request_events: Vec<ContentDraft>,
     ) -> Result<(String, RolloutWriter), StorageError> {
+        let started_at = Instant::now();
         let activity_id = Uuid::new_v4().to_string();
         let writer = self
             .begin_rollout(&activity_id, identity_id, activity, session, request_events)
             .await?;
+        log_elapsed("activity.begin_stream", started_at, Some(&activity_id));
         Ok((activity_id, writer))
     }
 
@@ -150,9 +172,19 @@ impl ActivityStore {
         activity: ActivityInsert,
         summary: crate::domain::activity::rollout::RolloutSummary,
     ) -> Result<(), StorageError> {
-        self.storage
+        let started_at = Instant::now();
+        let result = self
+            .storage
             .start_stream_activity_with_rollout(identity_id, activity_id, activity, summary)
-            .await
+            .await;
+        if result.is_ok() {
+            log_elapsed(
+                "activity.start_stream.db_insert",
+                started_at,
+                Some(activity_id),
+            );
+        }
+        result
     }
 
     pub async fn insert_stream_result(
@@ -162,9 +194,15 @@ impl ActivityStore {
         activity: ActivityInsert,
         summary: crate::domain::activity::rollout::RolloutSummary,
     ) -> Result<(), StorageError> {
-        self.storage
+        let started_at = Instant::now();
+        let result = self
+            .storage
             .insert_activity_with_rollout(identity_id, activity_id, activity, summary)
-            .await
+            .await;
+        if result.is_ok() {
+            log_elapsed("activity.insert_stream_result.db_insert", started_at, None);
+        }
+        result
     }
 
     pub async fn complete_stream(
@@ -172,9 +210,19 @@ impl ActivityStore {
         activity_id: &str,
         summary: crate::domain::activity::rollout::RolloutSummary,
     ) -> Result<(), StorageError> {
-        self.storage
+        let started_at = Instant::now();
+        let result = self
+            .storage
             .complete_activity_rollout(activity_id, summary)
-            .await
+            .await;
+        if result.is_ok() {
+            log_elapsed(
+                "activity.complete_stream.db_update",
+                started_at,
+                Some(activity_id),
+            );
+        }
+        result
     }
 
     pub async fn update_stream_activity(
@@ -183,16 +231,36 @@ impl ActivityStore {
         activity_id: &str,
         update: crate::domain::stats::StreamActivityUpdate,
     ) -> Result<(), StorageError> {
-        self.storage
+        let started_at = Instant::now();
+        let result = self
+            .storage
             .update_stream_activity(identity_id, activity_id, update)
-            .await
+            .await;
+        if result.is_ok() {
+            log_elapsed(
+                "activity.update_stream_activity.db_update",
+                started_at,
+                Some(activity_id),
+            );
+        }
+        result
     }
 
     pub async fn save_response_state(
         &self,
         insert: ResponseStateInsert<'_>,
     ) -> Result<(), StorageError> {
-        self.storage.save_response_state(insert).await
+        let response_id = insert.response_id.to_string();
+        let started_at = Instant::now();
+        let result = self.storage.save_response_state(insert).await;
+        if result.is_ok() {
+            log_elapsed(
+                "activity.save_response_state.db_insert",
+                started_at,
+                Some(&response_id),
+            );
+        }
+        result
     }
 
     async fn begin_rollout(
@@ -256,45 +324,5 @@ impl ActivityStore {
             }
         }
         self.rollouts.forget_relative_paths(relative_paths);
-    }
-
-    fn recovered_rollout_status(&self, rollout: &InterruptedRollout) -> RecoveredRollout {
-        match self
-            .rollouts
-            .read_slice(&rollout.rollout_path, rollout.start_line, rollout.end_line)
-        {
-            Ok(file) => RecoveredRollout {
-                activity_id: rollout.activity_id.clone(),
-                status: RolloutStatus::Partial,
-                http_status: None,
-                error_code: Some("activity_interrupted".to_string()),
-                error_message: Some(
-                    "process interrupted before activity rollout completion".to_string(),
-                ),
-                event_count: Some(file.event_count),
-                byte_size: Some(file.byte_size),
-                sha256: Some(file.sha256),
-            },
-            Err(error) => {
-                tracing::warn!(
-                    activity_id = %rollout.activity_id,
-                    rollout_path = %rollout.rollout_path,
-                    error = %error,
-                    "could not verify interrupted rollout; marking it partial"
-                );
-                RecoveredRollout {
-                    activity_id: rollout.activity_id.clone(),
-                    status: RolloutStatus::Partial,
-                    http_status: None,
-                    error_code: Some("activity_interrupted".to_string()),
-                    error_message: Some(
-                        "process interrupted before activity rollout completion".to_string(),
-                    ),
-                    event_count: None,
-                    byte_size: None,
-                    sha256: None,
-                }
-            }
-        }
     }
 }

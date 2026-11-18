@@ -1,5 +1,5 @@
 use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub use prelay_protocol::{
     stats::{LeaderboardMetric, UserLeaderboardEntry},
@@ -7,7 +7,7 @@ pub use prelay_protocol::{
     TokenUsageTimelinePoint,
 };
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActivityInsert {
     pub protocol_in: String,
     pub protocol_out: String,
@@ -35,7 +35,7 @@ pub struct ActivityInsert {
     pub upstream_request_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StreamActivityUpdate {
     pub status: String,
     pub http_status: i64,

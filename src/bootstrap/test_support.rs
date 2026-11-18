@@ -113,6 +113,7 @@ pub async fn test_state() -> AppState {
         extensions: ExtensionCatalog::unavailable(reqwest::Client::new()),
         failover: Default::default(),
         quota: crate::service::quota::QuotaService::new(reqwest::Client::new(), provider_catalog),
+        recording: None,
     }
 }
 

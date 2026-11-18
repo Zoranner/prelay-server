@@ -10,7 +10,11 @@ use crate::{
             extensions::ExtensionCatalog,
         },
     },
-    service::{activity::ActivityStore, cleanup::delete_expired_identities},
+    service::{
+        activity::ActivityStore,
+        cleanup::delete_expired_identities,
+        recording::{RecordingRuntime, RecordingRuntimeConfig},
+    },
     store::{
         connect::{connect, DatabaseConfig},
         rollout::RolloutStore,
@@ -46,7 +50,8 @@ pub async fn serve() -> anyhow::Result<()> {
     let database_config = DatabaseConfig::from_environment()?;
     let db = connect(&database_config).await?;
     initialize_with_catalog(&db, &provider_catalog).await?;
-    let storage = Storage::from_connection(db, MasterKey::from_environment()?);
+    let master_key = MasterKey::from_environment()?;
+    let storage = Storage::from_connection(db, master_key.clone());
     let encrypted = storage
         .encrypt_legacy_response_sessions()
         .await
@@ -58,6 +63,18 @@ pub async fn serve() -> anyhow::Result<()> {
         );
     }
     let rollout_store = RolloutStore::from_environment().map_err(anyhow::Error::msg)?;
+    rollout_store
+        .validate()
+        .map_err(|error| anyhow::anyhow!("activity rollout directory is not writable: {error}"))?;
+    let recording = RecordingRuntime::start(
+        RecordingRuntimeConfig::from_environment()
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
+        &master_key,
+        storage.clone(),
+        rollout_store.clone(),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     let activity_store = ActivityStore::new(storage.clone(), rollout_store);
     activity_store
         .validate()
@@ -66,19 +83,21 @@ pub async fn serve() -> anyhow::Result<()> {
         Ok(recovered) if recovered > 0 => {
             tracing::warn!(
                 recovered,
-                "marked interrupted activity rollouts as partial at startup"
+                "reconciled interrupted activity rollouts at startup"
             );
         }
         Ok(_) => {}
         Err(error) => {
-            tracing::error!(
-                error_code = error.code().as_str(),
-                "failed to mark interrupted activity rollouts as partial"
-            );
+            return Err(anyhow::anyhow!(
+                "failed to recover interrupted activity rollouts: {} ({})",
+                error.code().as_str(),
+                error
+            ));
         }
     }
     warn_incomplete_rollout_files(activity_store.rollouts()).await;
     warn_orphan_rollout_files(&activity_store).await;
+    recording.start_materialization();
     let deleted = delete_expired_identities(&activity_store)
         .await
         .map_err(handle_startup_cleanup_failure)?;
@@ -109,6 +128,7 @@ pub async fn serve() -> anyhow::Result<()> {
     extensions.warm();
     let quota = crate::service::quota::QuotaService::new(client.clone(), provider_catalog.clone());
 
+    let recording_for_shutdown = recording.clone();
     let state = AppState {
         provider_catalog,
         storage,
@@ -119,6 +139,7 @@ pub async fn serve() -> anyhow::Result<()> {
         extensions,
         failover: Default::default(),
         quota,
+        recording: Some(recording),
     };
     let app = router(state).await?;
 
@@ -127,7 +148,31 @@ pub async fn serve() -> anyhow::Result<()> {
 
     tracing::info!(%addr, "Prelay server listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    let serve_result = axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await;
+    recording_for_shutdown.shutdown().await;
+    serve_result?;
 
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        if let Ok(mut signal) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
+            signal.recv().await;
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = terminate => {}
+    }
 }

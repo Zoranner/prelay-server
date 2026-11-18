@@ -18,13 +18,13 @@ use crate::{
     error::AppError,
     inbound::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
     service::{
-        recording::{record_first_chunk_with_rollout_best_effort, StreamRollout},
+        recording::{record_image_stream_with_journal, ImageStreamRecording, StreamRollout},
         upstream_errors::upstream_observability,
     },
     AppState,
 };
 
-use super::activity::{image_activity, record_image_activity_best_effort, ImageActivityParams};
+use super::activity::{image_activity, record_image_activity, ImageActivityParams};
 
 #[derive(Clone)]
 pub(super) struct ImageCandidateRequest {
@@ -33,6 +33,7 @@ pub(super) struct ImageCandidateRequest {
     pub(super) model: String,
     pub(super) is_streaming: bool,
     pub(super) started_at: std::time::Instant,
+    pub(super) started_at_wall: chrono::DateTime<chrono::Utc>,
 }
 
 pub(super) async fn create_image_generation_with_candidate(
@@ -48,6 +49,7 @@ pub(super) async fn create_image_generation_with_candidate(
         model,
         is_streaming,
         started_at,
+        started_at_wall,
     } = candidate;
     let provider = resolved.provider;
     let model_upstream = resolved.model_upstream;
@@ -89,10 +91,11 @@ pub(super) async fn create_image_generation_with_candidate(
                 ),
                 _ => (None, "upstream_connection", "上游连接失败"),
             };
-            record_image_activity_best_effort(
+            record_image_activity(
                 state,
                 access,
                 &session,
+                started_at_wall,
                 image_activity(ImageActivityParams {
                     access,
                     provider: &provider,
@@ -110,7 +113,7 @@ pub(super) async fn create_image_generation_with_candidate(
                 conversation_events_from_image_request(&payload),
                 Vec::new(),
             )
-            .await;
+            .await?;
             return Err(AppError::Upstream {
                 status,
                 message: safe_error_message.to_string(),
@@ -123,10 +126,11 @@ pub(super) async fn create_image_generation_with_candidate(
     if !upstream_status.is_success() {
         let observability = upstream_observability(upstream_response.headers(), None);
         let safe_error_message = format!("上游请求失败: {upstream_status}");
-        record_image_activity_best_effort(
+        record_image_activity(
             state,
             access,
             &session,
+            started_at_wall,
             image_activity(ImageActivityParams {
                 access,
                 provider: &provider,
@@ -144,7 +148,7 @@ pub(super) async fn create_image_generation_with_candidate(
             conversation_events_from_image_request(&payload),
             Vec::new(),
         )
-        .await;
+        .await?;
         return Err(AppError::Upstream {
             status: Some(upstream_status),
             message: safe_error_message,
@@ -175,19 +179,24 @@ pub(super) async fn create_image_generation_with_candidate(
         let head = verify_upstream_sse_head(&mut upstream_response).await?;
         let stream = upstream_bytes_stream(upstream_response, head).map_err(std::io::Error::other);
         let body = Body::from_stream(with_sse_keepalive(
-            record_first_chunk_with_rollout_best_effort(
-                state.activity_store.clone(),
+            record_image_stream_with_journal(
+                state,
                 access.identity_id.clone(),
                 stream,
                 log,
                 started_at,
-                RawStreamContentCapture::new(RawStreamProtocol::ImageGeneration),
-                StreamRollout {
-                    request_events: conversation_events_from_image_request(&payload),
-                    session: session.clone(),
+                started_at_wall,
+                ImageStreamRecording {
+                    content_capture: RawStreamContentCapture::new(
+                        RawStreamProtocol::ImageGeneration,
+                    ),
+                    rollout: StreamRollout {
+                        request_events: conversation_events_from_image_request(&payload),
+                        session: session.clone(),
+                    },
                 },
             )
-            .await,
+            .await?,
         ));
         return Ok(upstream_response_with_body(
             upstream_status,
@@ -200,10 +209,11 @@ pub(super) async fn create_image_generation_with_candidate(
         Ok(response_bytes) => response_bytes,
         Err(_) => {
             let safe_error_message = "读取上游响应失败".to_string();
-            record_image_activity_best_effort(
+            record_image_activity(
                 state,
                 access,
                 &session,
+                started_at_wall,
                 image_activity(ImageActivityParams {
                     access,
                     provider: &provider,
@@ -221,17 +231,18 @@ pub(super) async fn create_image_generation_with_candidate(
                 conversation_events_from_image_request(&payload),
                 Vec::new(),
             )
-            .await;
+            .await?;
             return Err(AppError::Upstream {
                 status: None,
                 message: safe_error_message,
             });
         }
     };
-    record_image_activity_best_effort(
+    record_image_activity(
         state,
         access,
         &session,
+        started_at_wall,
         image_activity(ImageActivityParams {
             access,
             provider: &provider,
@@ -249,7 +260,7 @@ pub(super) async fn create_image_generation_with_candidate(
         conversation_events_from_image_request(&payload),
         conversation_events_from_image_response(),
     )
-    .await;
+    .await?;
 
     Ok(upstream_response_with_body(
         upstream_status,

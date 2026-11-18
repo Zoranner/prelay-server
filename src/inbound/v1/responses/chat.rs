@@ -4,6 +4,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use chrono::Utc;
 use serde_json::Value;
 
 use crate::{
@@ -26,10 +27,13 @@ use crate::{
     domain::stats::ActivityInsert,
     error::AppError,
     service::{
-        recording::{record_stream_with_rollout, StreamRecording, StreamRollout, StreamSession},
+        recording::{
+            record_completed_turn, record_stream_with_journal, CompletedTurnRecord,
+            StreamRecording, StreamRollout, StreamSession,
+        },
         upstream_errors::upstream_failure_message,
     },
-    store::storage::ResponseStateInsert,
+    store::{recording_journal::ResponseStateRecord, storage::ResponseStateInsert},
     AppState,
 };
 
@@ -67,6 +71,7 @@ pub(super) async fn create_chat_response(
         session_id,
         session,
         started_at,
+        started_at_wall,
     } = context;
     let failure_context = ResponseBridgeContext {
         identity_id: identity_id.clone(),
@@ -78,6 +83,7 @@ pub(super) async fn create_chat_response(
         session_id: session_id.clone(),
         session: session.clone(),
         started_at,
+        started_at_wall,
     };
     validate_internal_request_for_bridge(&request)?;
     let upstream_base_url = provider_upstream_base_url(&provider, upstream_protocol);
@@ -120,7 +126,7 @@ pub(super) async fn create_chat_response(
                     request_events: request_events.clone(),
                 },
             )
-            .await;
+            .await?;
             return Err(error);
         }
     };
@@ -130,11 +136,11 @@ pub(super) async fn create_chat_response(
         let status = upstream_response.status();
         let upstream_body = upstream_response.text().await.unwrap_or_default();
         let error_message = upstream_failure_message(status, &upstream_body);
-        state
-            .activity_store
-            .record_completed(
-                &identity_id,
-                ActivityInsert {
+        record_completed_turn(
+            state,
+            CompletedTurnRecord {
+                identity_id: identity_id.clone(),
+                activity: ActivityInsert {
                     protocol_in: "responses".to_string(),
                     protocol_out: "responses".to_string(),
                     protocol_upstream: "chat_completions".to_string(),
@@ -160,11 +166,15 @@ pub(super) async fn create_chat_response(
                     tool_call_count: None,
                     upstream_request_id: None,
                 },
-                &session,
-                request_events.clone(),
-                Vec::new(),
-            )
-            .await?;
+                session: session.clone(),
+                request_events: request_events.clone(),
+                response_events: Vec::new(),
+                response_state: None,
+                started_at: started_at_wall,
+                finished_at: Utc::now(),
+            },
+        )
+        .await?;
         return Err(AppError::Upstream {
             status: Some(status),
             message: error_message,
@@ -195,7 +205,7 @@ pub(super) async fn create_chat_response(
                         request_events: request_events.clone(),
                     },
                 )
-                .await;
+                .await?;
                 return Err(error);
             }
         };
@@ -235,12 +245,13 @@ pub(super) async fn create_chat_response(
             upstream_request_id: None,
         };
         let body = Body::from_stream(with_sse_keepalive(
-            record_stream_with_rollout(
-                state.activity_store.clone(),
+            record_stream_with_journal(
+                state,
                 identity_id.clone(),
                 stream,
                 log,
                 started_at,
+                started_at_wall,
                 StreamRecording {
                     stats: stream_stats,
                     rollout: StreamRollout {
@@ -280,7 +291,7 @@ pub(super) async fn create_chat_response(
                     request_events: request_events.clone(),
                 },
             )
-            .await;
+            .await?;
             return Err(error);
         }
     };
@@ -303,7 +314,7 @@ pub(super) async fn create_chat_response(
                     request_events: request_events.clone(),
                 },
             )
-            .await;
+            .await?;
             return Err(error);
         }
     };
@@ -314,34 +325,31 @@ pub(super) async fn create_chat_response(
         .as_ref()
         .and_then(|usage| usage.reasoning_tokens);
     let tool_call_count = count_tool_calls(&response);
-    if request.store {
+    let response_state = request.store.then(|| {
         let request_items = Value::Array(input_items.to_vec());
         let response_items = encoded_response
             .get("output")
             .cloned()
             .unwrap_or_else(|| Value::Array(Vec::new()));
-        state
-            .storage
-            .save_response_state(ResponseStateInsert {
-                identity_id: &identity_id,
-                response_id: &response.id,
-                previous_response_id: previous_response_id.as_deref(),
-                conversation_id: &conversation_id,
-                provider_id: &provider.id,
-                model: &response.model,
-                upstream_response_id: None,
-                request_items: &request_items,
-                response_items: &response_items,
-                input_messages: &request.messages,
-                response: &response,
-            })
-            .await?;
-    }
-    state
-        .activity_store
-        .record_completed(
-            &identity_id,
-            ActivityInsert {
+        ResponseStateRecord::from_insert(ResponseStateInsert {
+            identity_id: &identity_id,
+            response_id: &response.id,
+            previous_response_id: previous_response_id.as_deref(),
+            conversation_id: &conversation_id,
+            provider_id: &provider.id,
+            model: &response.model,
+            upstream_response_id: None,
+            request_items: &request_items,
+            response_items: &response_items,
+            input_messages: &request.messages,
+            response: &response,
+        })
+    });
+    record_completed_turn(
+        state,
+        CompletedTurnRecord {
+            identity_id: identity_id.clone(),
+            activity: ActivityInsert {
                 protocol_in: "responses".to_string(),
                 protocol_out: "responses".to_string(),
                 protocol_upstream: "chat_completions".to_string(),
@@ -376,11 +384,15 @@ pub(super) async fn create_chat_response(
                 tool_call_count: Some(tool_call_count),
                 upstream_request_id: None,
             },
-            &session,
-            request_events.clone(),
+            session: session.clone(),
+            request_events: request_events.clone(),
             response_events,
-        )
-        .await?;
+            response_state,
+            started_at: started_at_wall,
+            finished_at: Utc::now(),
+        },
+    )
+    .await?;
 
     Ok(Json(encoded_response).into_response())
 }

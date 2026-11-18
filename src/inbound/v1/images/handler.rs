@@ -12,6 +12,8 @@ use crate::{
         candidates::{hold_reservation, run_endpoint_model_candidates},
         endpoint_resolver::resolve_endpoint_model_candidates,
     },
+    service::recording::record_provider_observation_best_effort,
+    store::storage::ProtocolAccess,
     AppState,
 };
 
@@ -26,6 +28,7 @@ pub(super) async fn create_image_generation(
     Json(payload): Json<Value>,
 ) -> Result<Response, AppError> {
     let started_at = std::time::Instant::now();
+    let started_at_wall = chrono::Utc::now();
     let model = payload
         .get("model")
         .and_then(Value::as_str)
@@ -46,6 +49,7 @@ pub(super) async fn create_image_generation(
         model: model.clone(),
         is_streaming,
         started_at,
+        started_at_wall,
     };
     let candidates =
         resolve_endpoint_model_candidates(&state, &access, &model, IMAGE_GENERATIONS_PROTOCOL)
@@ -80,23 +84,16 @@ pub(super) async fn create_image_generation(
         },
     )
     .await?;
-    if let Err(error) = state
-        .storage
-        .remember_protocol_model_provider(
-            &crate::store::storage::ProtocolAccess {
-                identity_id: access.identity_id.clone(),
-                endpoint_id: access.endpoint_id.clone(),
-                endpoint_name: access.endpoint_name.clone(),
-            },
-            &model,
-            &provider_id,
-        )
-        .await
-    {
-        tracing::warn!(
-            error_code = error.code().as_str(),
-            "failed to remember active endpoint model provider"
-        );
-    }
+    record_provider_observation_best_effort(
+        &state,
+        &ProtocolAccess {
+            identity_id: access.identity_id.clone(),
+            endpoint_id: access.endpoint_id.clone(),
+            endpoint_name: access.endpoint_name.clone(),
+        },
+        &model,
+        &provider_id,
+    )
+    .await;
     Ok(hold_reservation(response, reservation))
 }

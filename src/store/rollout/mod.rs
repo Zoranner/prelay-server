@@ -8,6 +8,7 @@ use std::{
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
+mod activity;
 mod cache;
 mod index;
 mod read;
@@ -20,6 +21,92 @@ use crate::domain::activity::rollout::{
     ContentEvent, ContentEventBody, ConversationEvent, ConversationFormat, ConversationMeta,
     RolloutError, DEFAULT_ACTIVITY_ROLLOUT_DIR,
 };
+use crate::domain::activity::rollout::{
+    RolloutStatus, RolloutSummary, SessionContext, TurnContext,
+};
+use crate::domain::activity::ContentDraft;
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TimedContentDraft {
+    pub(crate) observed_at: String,
+    pub(crate) draft: ContentDraft,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ActivityTurn {
+    pub(crate) relative_path: String,
+    pub(crate) thread_id: String,
+    pub(crate) window_id: Option<String>,
+    pub(crate) generation: u64,
+    pub(crate) status: RolloutStatus,
+    pub(crate) start_line: u64,
+    pub(crate) end_line: u64,
+    pub(crate) event_count: u64,
+    pub(crate) byte_size: u64,
+    pub(crate) sha256: String,
+    pub(crate) complete: bool,
+}
+
+impl ActivityTurn {
+    pub(crate) fn summary(&self, activity_id: impl Into<String>) -> RolloutSummary {
+        RolloutSummary {
+            activity_id: activity_id.into(),
+            thread_id: self.thread_id.clone(),
+            window_id: self.window_id.clone(),
+            generation: self.generation,
+            relative_path: self.relative_path.clone(),
+            status: self.status,
+            start_line: self.start_line,
+            end_line: self.end_line,
+            event_count: self.event_count,
+            byte_size: self.byte_size,
+            sha256: self.sha256.clone(),
+        }
+    }
+}
+
+impl TimedContentDraft {
+    pub(crate) fn new(observed_at: impl Into<String>, draft: ContentDraft) -> Self {
+        Self {
+            observed_at: observed_at.into(),
+            draft,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CompletedTurnMaterialization {
+    pub(crate) session: SessionContext,
+    pub(crate) turn: TurnContext,
+    pub(crate) created_at: String,
+    pub(crate) request_events: Vec<TimedContentDraft>,
+    pub(crate) response_events: Vec<TimedContentDraft>,
+    pub(crate) status: RolloutStatus,
+    pub(crate) http_status: Option<u16>,
+    pub(crate) error_code: Option<String>,
+    pub(crate) error_message: Option<String>,
+    pub(crate) finished_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct StartedTurnMaterialization {
+    pub(crate) session: SessionContext,
+    pub(crate) turn: TurnContext,
+    pub(crate) created_at: String,
+    pub(crate) request_events: Vec<TimedContentDraft>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct FinishedTurnMaterialization {
+    pub(crate) session: SessionContext,
+    pub(crate) activity_id: String,
+    pub(crate) response_events: Vec<TimedContentDraft>,
+    pub(crate) status: RolloutStatus,
+    pub(crate) http_status: Option<u16>,
+    pub(crate) error_code: Option<String>,
+    pub(crate) error_message: Option<String>,
+    pub(crate) finished_at: String,
+}
 
 #[derive(Debug, Clone)]
 pub struct RolloutStore {
@@ -192,3 +279,6 @@ mod conversation_tests;
 
 #[cfg(test)]
 mod benchmark_tests;
+
+#[cfg(test)]
+mod activity_tests;

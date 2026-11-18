@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::RolloutStore;
+use super::{RolloutStore, TimedContentDraft};
 use crate::domain::activity::rollout::{RolloutError, RolloutStatus};
 use crate::domain::activity::{
     ContentDraft, ContentEventBody, ConversationMessage, EventPhase, SessionContext, TurnContext,
@@ -25,6 +25,47 @@ fn message(phase: EventPhase, content: serde_json::Value) -> ContentDraft {
 
 fn session(thread_id: &str) -> SessionContext {
     SessionContext::new(thread_id)
+}
+
+#[tokio::test]
+async fn writes_explicit_wal_event_times() {
+    let root = tempfile::tempdir().expect("temp rollout root");
+    let store = RolloutStore::new(root.path().to_path_buf());
+    let session = session("thread-explicit");
+    let created_at = "2026-11-17T12:00:00.000+08:00";
+    let request_at = "2026-11-17T12:00:00.100+08:00";
+    let response_at = "2026-11-17T12:00:00.900+08:00";
+    let finished_at = "2026-11-17T12:00:01.000+08:00";
+    let mut writer = store
+        .begin_at(
+            "identity-1",
+            &session,
+            test_meta("activity-explicit", "thread-explicit"),
+            created_at.to_string(),
+            vec![TimedContentDraft::new(
+                request_at,
+                message(EventPhase::Request, json!("hello")),
+            )],
+        )
+        .await
+        .expect("begin explicit rollout");
+    writer
+        .append_content_at(message(EventPhase::Response, json!("answer")), response_at)
+        .expect("append response at explicit time");
+    let summary = writer
+        .finish_with_at(RolloutStatus::Completed, Some(200), None, None, finished_at)
+        .expect("finish explicit rollout");
+
+    let file = store
+        .read_verified(&summary.relative_path)
+        .expect("read explicit rollout");
+    assert_eq!(file.meta.expect("thread metadata").created_at, created_at);
+    assert_eq!(file.events[0].time, created_at);
+    assert_eq!(file.events[1].time, created_at);
+    assert_eq!(file.events[2].time, request_at);
+    assert_eq!(file.events[3].time, created_at);
+    assert_eq!(file.events[4].time, response_at);
+    assert_eq!(file.events[5].time, finished_at);
 }
 
 #[tokio::test]

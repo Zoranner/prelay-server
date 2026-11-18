@@ -15,7 +15,8 @@ use crate::{
         candidates::{hold_reservation, run_endpoint_model_candidates},
         endpoint_resolver::resolve_language_model_candidates,
     },
-    store::storage::ResponseState,
+    service::recording::record_provider_observation_best_effort,
+    store::storage::{ProtocolAccess, ResponseState},
     AppState,
 };
 
@@ -31,6 +32,7 @@ pub(super) struct ResponseCandidateRequest {
     pub(super) previous_response_id: Option<String>,
     pub(super) conversation_id: String,
     pub(super) started_at: std::time::Instant,
+    pub(super) started_at_wall: chrono::DateTime<chrono::Utc>,
 }
 
 pub(super) async fn create_response(
@@ -39,6 +41,7 @@ pub(super) async fn create_response(
     Json(payload): Json<Value>,
 ) -> Result<Response, AppError> {
     let started_at = std::time::Instant::now();
+    let started_at_wall = chrono::Utc::now();
     let request = Arc::new(decode_responses_request(&payload)?);
     let payload = Arc::new(payload);
     let model_requested = request.model.clone();
@@ -46,11 +49,19 @@ pub(super) async fn create_response(
     let response_id = format!("resp_{}", uuid::Uuid::new_v4().simple());
     let previous_response_id = request.previous_response_id.clone();
     let parent_state = match previous_response_id.as_deref() {
-        Some(response_id) => state
-            .storage
-            .load_response_state(&access.identity_id, response_id)
-            .await?
-            .map(Arc::new),
+        Some(previous_id) => {
+            let pending = state.recording.as_ref().and_then(|recording| {
+                recording.pending_response_state(&access.identity_id, previous_id)
+            });
+            match pending {
+                Some(state) => Some(Arc::new(state)),
+                None => state
+                    .storage
+                    .load_response_state(&access.identity_id, previous_id)
+                    .await?
+                    .map(Arc::new),
+            }
+        }
         None => None,
     };
     if previous_response_id.is_some() && parent_state.is_none() {
@@ -95,29 +106,23 @@ pub(super) async fn create_response(
                     previous_response_id: previous_response_id.clone(),
                     conversation_id: conversation_id.clone(),
                     started_at,
+                    started_at_wall,
                 },
                 resolved.clone(),
             )
         },
     )
     .await?;
-    if let Err(error) = state
-        .storage
-        .remember_protocol_model_provider(
-            &crate::store::storage::ProtocolAccess {
-                identity_id: access.identity_id.clone(),
-                endpoint_id: access.endpoint_id.clone(),
-                endpoint_name: access.endpoint_name.clone(),
-            },
-            &model_requested,
-            &provider_id,
-        )
-        .await
-    {
-        tracing::warn!(
-            error_code = error.code().as_str(),
-            "failed to remember active endpoint model provider"
-        );
-    }
+    record_provider_observation_best_effort(
+        &state,
+        &ProtocolAccess {
+            identity_id: access.identity_id.clone(),
+            endpoint_id: access.endpoint_id.clone(),
+            endpoint_name: access.endpoint_name.clone(),
+        },
+        &model_requested,
+        &provider_id,
+    )
+    .await;
     Ok(hold_reservation(response, reservation))
 }

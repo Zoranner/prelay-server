@@ -2,6 +2,8 @@ use crate::{
     domain::activity::{rollout::SessionContext, ContentDraft},
     domain::stats::ActivityInsert,
     inbound::v1::auth::CurrentProtocolAccess,
+    service::recording::{record_completed_turn, CompletedTurnRecord},
+    store::storage::StorageError,
     AppState,
 };
 
@@ -51,29 +53,27 @@ pub(super) fn image_activity(params: ImageActivityParams<'_>) -> ActivityInsert 
     }
 }
 
-pub(super) async fn record_image_activity_best_effort(
+pub(super) async fn record_image_activity(
     state: &AppState,
     access: &CurrentProtocolAccess,
     session: &SessionContext,
+    started_at_wall: chrono::DateTime<chrono::Utc>,
     log: ActivityInsert,
     request_events: Vec<ContentDraft>,
     response_events: Vec<ContentDraft>,
-) {
-    if state
-        .activity_store
-        .record_completed(
-            &access.identity_id,
-            log,
-            session,
+) -> Result<(), StorageError> {
+    record_completed_turn(
+        state,
+        CompletedTurnRecord {
+            identity_id: access.identity_id.clone(),
+            activity: log,
+            session: session.clone(),
             request_events,
             response_events,
-        )
-        .await
-        .is_err()
-    {
-        tracing::warn!(
-            failure_kind = "image_activity_storage",
-            "failed to persist image activity"
-        );
-    }
+            response_state: None,
+            started_at: started_at_wall,
+            finished_at: chrono::Utc::now(),
+        },
+    )
+    .await
 }

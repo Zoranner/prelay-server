@@ -77,40 +77,14 @@ pub(super) async fn insert_with_id<C>(
 where
     C: ConnectionTrait,
 {
-    activities::ActiveModel {
-        id: Set(id),
-        identity_id: Set(identity_id.to_string()),
-        created_at: Set(Utc::now().to_rfc3339()),
-        protocol_in: Set(Some(log.protocol_in)),
-        protocol_out: Set(Some(log.protocol_out)),
-        protocol_upstream: Set(Some(log.protocol_upstream)),
-        endpoint_name: Set(Some(log.endpoint_name)),
-        provider_id: Set(Some(log.provider_id)),
-        provider_name: Set(Some(log.provider_name)),
-        provider_type: Set(Some(log.provider_type)),
-        model_requested: Set(Some(log.model_requested)),
-        model_upstream: Set(Some(log.model_upstream)),
-        proxy_token_id: Set(None),
-        status: Set(log.status),
-        http_status: Set(Some(log.http_status)),
-        error_code: Set(log.error_code),
-        error_message: Set(log.error_message),
-        is_streaming: Set(Some(log.is_streaming)),
-        input_tokens: Set(log.input_tokens),
-        output_tokens: Set(log.output_tokens),
-        reasoning_tokens: Set(log.reasoning_tokens),
-        cache_read_tokens: Set(log.cache_read_tokens),
-        cache_write_tokens: Set(log.cache_write_tokens),
-        latency_ms: Set(Some(log.latency_ms)),
-        upstream_latency_ms: Set(log.upstream_latency_ms),
-        first_token_ms: Set(log.first_token_ms),
-        tool_call_count: Set(log.tool_call_count),
-        upstream_request_id: Set(log.upstream_request_id),
-        metadata_json: Set(None),
-    }
-    .insert(db)
-    .await?;
-    Ok(())
+    super::activity_materialization::insert_with_id_at(
+        db,
+        identity_id,
+        id,
+        log,
+        Utc::now().to_rfc3339(),
+    )
+    .await
 }
 
 async fn update_stream(
@@ -125,6 +99,15 @@ async fn update_stream(
         .await?
         .ok_or(StorageError::ActivityNotFound)?;
     let mut active: activities::ActiveModel = row.into();
+    apply_stream_update(&mut active, update);
+    active.update(db).await?;
+    Ok(())
+}
+
+pub(super) fn apply_stream_update(
+    active: &mut activities::ActiveModel,
+    update: StreamActivityUpdate,
+) {
     if !update.status.is_empty() {
         active.status = Set(update.status);
     }
@@ -141,8 +124,6 @@ async fn update_stream(
     if update.upstream_request_id.is_some() {
         active.upstream_request_id = Set(update.upstream_request_id);
     }
-    active.update(db).await?;
-    Ok(())
 }
 
 async fn list(

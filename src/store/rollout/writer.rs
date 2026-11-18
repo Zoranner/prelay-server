@@ -6,7 +6,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use chrono::{FixedOffset, SecondsFormat, Utc};
 use sha2::{Digest, Sha256};
 use tokio::sync::OwnedMutexGuard;
 use uuid::Uuid;
@@ -15,10 +14,12 @@ use super::{
     cache::{FileStamp, ThreadIndex, ThreadSource, ThreadState, WindowState},
     support::{
         draft_event_parts, event_identity, event_parts, is_content_event, is_safe_path_segment,
-        item_id, item_ref_key, ContentHash,
+        item_id, item_ref_key, readable_time, ContentHash,
     },
-    RolloutStore,
+    RolloutStore, TimedContentDraft,
 };
+
+mod resume;
 use crate::domain::activity::rollout::{
     ContentDraft, ContextEvent, ConversationEvent, ConversationEventBody, ConversationFormat,
     ConversationMeta, RolloutError, RolloutStatus, RolloutSummary, SessionContext, TurnContext,
@@ -65,6 +66,23 @@ impl RolloutStore {
         session: &SessionContext,
         turn: TurnContext,
         request_events: Vec<ContentDraft>,
+    ) -> Result<RolloutWriter, RolloutError> {
+        let created_at = readable_time();
+        let request_events = request_events
+            .into_iter()
+            .map(|draft| TimedContentDraft::new(readable_time(), draft))
+            .collect();
+        self.begin_at(identity_id, session, turn, created_at, request_events)
+            .await
+    }
+
+    pub(crate) async fn begin_at(
+        &self,
+        identity_id: &str,
+        session: &SessionContext,
+        turn: TurnContext,
+        created_at: String,
+        request_events: Vec<TimedContentDraft>,
     ) -> Result<RolloutWriter, RolloutError> {
         if !is_safe_path_segment(identity_id) {
             return Err(RolloutError::InvalidPath(format!(
@@ -152,32 +170,46 @@ impl RolloutStore {
         };
 
         if is_empty {
-            writer.write_meta()?;
+            writer.write_meta_at(&created_at)?;
         }
         if is_empty || needs_window {
-            writer.append_control(ConversationEventBody::Window(WindowEvent {
-                window_id: session.window_id.clone(),
-                generation: session.generation,
-            }))?;
+            writer.append_control_at(
+                ConversationEventBody::Window(WindowEvent {
+                    window_id: session.window_id.clone(),
+                    generation: session.generation,
+                }),
+                &created_at,
+            )?;
         }
-        writer.append_control(ConversationEventBody::Turn(TurnEvent {
-            turn_id: writer.turn_id.clone(),
-            activity_id: writer.activity_id.clone(),
-            model: turn.model_requested,
-            upstream_model: turn.model_upstream,
-        }))?;
-        writer.append_request_events(request_events)?;
+        writer.append_control_at(
+            ConversationEventBody::Turn(TurnEvent {
+                turn_id: writer.turn_id.clone(),
+                activity_id: writer.activity_id.clone(),
+                model: turn.model_requested,
+                upstream_model: turn.model_upstream,
+            }),
+            &created_at,
+        )?;
+        writer.append_request_events_at(request_events, &created_at)?;
         Ok(writer)
     }
 }
 
 impl RolloutWriter {
     pub fn append_content(&mut self, draft: ContentDraft) -> Result<u64, RolloutError> {
+        self.append_content_at(draft, &readable_time())
+    }
+
+    pub(crate) fn append_content_at(
+        &mut self,
+        draft: ContentDraft,
+        observed_at: &str,
+    ) -> Result<u64, RolloutError> {
         let (event_type, payload) = draft_event_parts(&draft)?;
         let item_key = item_id(&draft.body)
             .or_else(|| draft.item_id.clone())
             .map(|id| item_ref_key(&event_type, &id));
-        let seq = self.write_event(event_type, payload, true)?;
+        let seq = self.write_event(event_type, payload, true, observed_at)?;
         if let Some(item_key) = item_key {
             self.item_refs.insert(item_key, seq);
         }
@@ -193,16 +225,36 @@ impl RolloutWriter {
         status: RolloutStatus,
         http_status: Option<u16>,
         error_code: Option<String>,
+        error_message: Option<String>,
+    ) -> Result<RolloutSummary, RolloutError> {
+        self.finish_with_at(
+            status,
+            http_status,
+            error_code,
+            error_message,
+            &readable_time(),
+        )
+    }
+
+    pub(crate) fn finish_with_at(
+        &mut self,
+        status: RolloutStatus,
+        http_status: Option<u16>,
+        error_code: Option<String>,
         _error_message: Option<String>,
+        finished_at: &str,
     ) -> Result<RolloutSummary, RolloutError> {
         if self.finished {
             return Ok(self.summary_with_status(self.status));
         }
-        self.append_control(ConversationEventBody::TurnEnd(TurnEndEvent {
-            status,
-            http_status,
-            error_code,
-        }))?;
+        self.append_control_at(
+            ConversationEventBody::TurnEnd(TurnEndEvent {
+                status,
+                http_status,
+                error_code,
+            }),
+            finished_at,
+        )?;
         if let Some(mut file) = self.file.take() {
             file.flush()?;
             file.get_ref().sync_all()?;
@@ -262,10 +314,15 @@ impl RolloutWriter {
         &self.final_path
     }
 
-    fn append_request_events(&mut self, drafts: Vec<ContentDraft>) -> Result<(), RolloutError> {
+    fn append_request_events_at(
+        &mut self,
+        drafts: Vec<TimedContentDraft>,
+        fallback_time: &str,
+    ) -> Result<(), RolloutError> {
         let mut refs = Vec::with_capacity(drafts.len());
         let mut occurrences = HashMap::<[u8; 32], usize>::new();
-        for draft in drafts {
+        for timed in drafts {
+            let draft = timed.draft;
             let (event_type, payload) = draft_event_parts(&draft)?;
             let identity = event_identity(&event_type, &payload)?;
             let occurrence = occurrences.entry(identity).or_default();
@@ -282,17 +339,24 @@ impl RolloutWriter {
             *occurrence += 1;
             let seq = match existing {
                 Some(seq) => seq,
-                None => self.write_event(event_type, payload, true)?,
+                None => self.write_event(event_type, payload, true, &timed.observed_at)?,
             };
             if let Some(item_key) = item_key {
                 self.item_refs.insert(item_key, seq);
             }
             refs.push(seq);
         }
-        self.append_control(ConversationEventBody::Context(ContextEvent { refs }))
+        self.append_control_at(
+            ConversationEventBody::Context(ContextEvent { refs }),
+            fallback_time,
+        )
     }
 
-    fn append_control(&mut self, body: ConversationEventBody) -> Result<(), RolloutError> {
+    fn append_control_at(
+        &mut self,
+        body: ConversationEventBody,
+        time: &str,
+    ) -> Result<(), RolloutError> {
         let (event_type, payload) = event_parts(&body)?;
         if event_type == "window" {
             self.window_state = serde_json::from_value::<WindowEvent>(payload.clone())
@@ -303,7 +367,8 @@ impl RolloutWriter {
                 });
             self.event_refs.clear();
         }
-        self.write_event(event_type, payload, false).map(|_| ())
+        self.write_event(event_type, payload, false, time)
+            .map(|_| ())
     }
 
     fn write_event(
@@ -311,6 +376,7 @@ impl RolloutWriter {
         event_type: String,
         payload: serde_json::Value,
         content: bool,
+        time: &str,
     ) -> Result<u64, RolloutError> {
         if self.finished {
             return Err(RolloutError::InvalidPath(
@@ -323,7 +389,7 @@ impl RolloutWriter {
         self.seq += 1;
         let event = ConversationEvent {
             seq: self.seq,
-            time: readable_time(),
+            time: time.to_string(),
             event_type,
             payload,
         };
@@ -339,8 +405,8 @@ impl RolloutWriter {
         Ok(event.seq)
     }
 
-    fn write_meta(&mut self) -> Result<(), RolloutError> {
-        let meta = ConversationMeta::new(self.thread_id.clone(), readable_time());
+    fn write_meta_at(&mut self, created_at: &str) -> Result<(), RolloutError> {
+        let meta = ConversationMeta::new(self.thread_id.clone(), created_at.to_string());
         let mut line = serde_json::to_vec(&meta)?;
         line.push(b'\n');
         self.write_line(&line)
@@ -375,11 +441,4 @@ impl RolloutWriter {
             sha256: format!("{:x}", self.hasher.clone().finalize()),
         }
     }
-}
-
-fn readable_time() -> String {
-    let offset = FixedOffset::east_opt(8 * 60 * 60).expect("valid +08:00 offset");
-    Utc::now()
-        .with_timezone(&offset)
-        .to_rfc3339_opts(SecondsFormat::Millis, false)
 }

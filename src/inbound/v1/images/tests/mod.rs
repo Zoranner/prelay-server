@@ -78,6 +78,7 @@ async fn test_state_with_connection() -> (AppState, DatabaseConnection) {
         ),
         failover: Default::default(),
         quota: crate::service::quota::QuotaService::new(reqwest::Client::new(), provider_catalog),
+        recording: None,
     };
     (state, connection)
 }

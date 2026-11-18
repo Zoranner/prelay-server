@@ -12,7 +12,9 @@ use super::{rollouts::to_i64, Storage, StorageError};
 
 pub struct InterruptedRollout {
     pub activity_id: String,
+    pub identity_id: String,
     pub rollout_path: String,
+    pub thread_id: String,
     pub start_line: u64,
     pub end_line: u64,
 }
@@ -38,7 +40,9 @@ impl Storage {
                 rows.into_iter()
                     .map(|row| InterruptedRollout {
                         activity_id: row.activity_id,
+                        identity_id: row.identity_id,
                         rollout_path: row.rollout_path,
+                        thread_id: row.thread_id,
                         start_line: row.start_line as u64,
                         end_line: row.end_line as u64,
                     })
@@ -86,9 +90,20 @@ impl Storage {
             "failed".to_string()
         });
         active.is_streaming = Set(Some(false));
-        active.http_status = Set(update.http_status);
-        active.error_code = Set(update.error_code);
-        active.error_message = Set(update.error_message);
+        if update.http_status.is_some() || update.status == RolloutStatus::Partial {
+            active.http_status = Set(update.http_status);
+        }
+        if update.status == RolloutStatus::Completed {
+            active.error_code = Set(None);
+            active.error_message = Set(None);
+        } else {
+            if update.error_code.is_some() {
+                active.error_code = Set(update.error_code);
+            }
+            if update.error_message.is_some() {
+                active.error_message = Set(update.error_message);
+            }
+        }
         active.update(&transaction).await?;
         transaction.commit().await?;
         Ok(())

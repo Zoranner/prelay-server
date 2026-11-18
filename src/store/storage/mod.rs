@@ -1,5 +1,6 @@
 mod access;
 mod activities;
+mod activity_materialization;
 mod crypto;
 mod endpoint_validation;
 mod error;
@@ -25,11 +26,35 @@ use std::fmt;
 use prelay_protocol::ProtocolErrorCode;
 use sea_orm::{DatabaseConnection, DbErr};
 
+use crate::domain::{
+    activity::rollout::RolloutSummary,
+    stats::{ActivityInsert, StreamActivityUpdate},
+};
+
 pub use crypto::MasterKey;
 pub use identities::{AuthenticatedIdentity, DeleteInactiveResult};
 pub(crate) use provider_validation::parse_models;
 pub use response_states::{ResponseState, ResponseStateInsert};
 pub use rollout_recovery::{InterruptedRollout, RecoveredRollout};
+
+pub(crate) struct ActivityRolloutMaterialization {
+    pub(crate) identity_id: String,
+    pub(crate) activity_id: String,
+    pub(crate) activity: ActivityInsert,
+    pub(crate) activity_created_at: String,
+    pub(crate) rollout: RolloutSummary,
+    pub(crate) rollout_created_at: String,
+    pub(crate) completed_at: Option<String>,
+}
+
+pub(crate) struct CompletedStreamMaterialization {
+    pub(crate) identity_id: String,
+    pub(crate) activity_id: String,
+    pub(crate) activity: StreamActivityUpdate,
+    pub(crate) rollout: RolloutSummary,
+    pub(crate) rollout_created_at: String,
+    pub(crate) completed_at: String,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProtocolAccess {
@@ -69,6 +94,7 @@ pub enum StorageError {
     InvalidTimestamp(String),
     InvalidMasterKey(String),
     Crypto(String),
+    Recording(String),
     Rollout(String),
     Serialization(serde_json::Error),
     Database(DbErr),
@@ -95,6 +121,7 @@ impl StorageError {
             Self::InvalidTimestamp(_)
             | Self::InvalidStoredState(_)
             | Self::Crypto(_)
+            | Self::Recording(_)
             | Self::Rollout(_)
             | Self::Serialization(_)
             | Self::Database(_) => ProtocolErrorCode::Internal,
@@ -134,6 +161,7 @@ impl fmt::Display for StorageError {
                 formatter.write_str("provider route is no longer available")
             }
             Self::Crypto(message) => write!(formatter, "key encryption failed: {message}"),
+            Self::Recording(message) => write!(formatter, "recording is unavailable: {message}"),
             Self::Rollout(message) => write!(formatter, "rollout storage failed: {message}"),
             Self::Serialization(error) => error.fmt(formatter),
             Self::Database(error) => error.fmt(formatter),

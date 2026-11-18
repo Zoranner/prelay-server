@@ -31,6 +31,7 @@ pub enum AppError {
         param: Option<&'static str>,
         message: String,
     },
+    RecordingUnavailable(String),
     Internal(anyhow::Error),
 }
 
@@ -77,6 +78,21 @@ impl IntoResponse for AppError {
                     "message": message,
                 }),
             ),
+            AppError::RecordingUnavailable(_message) => {
+                tracing::error!(
+                    error_code = "recording_unavailable",
+                    http_status = StatusCode::SERVICE_UNAVAILABLE.as_u16(),
+                    "Recording service is unavailable"
+                );
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    json!({
+                        "type": "server_error",
+                        "code": "recording_unavailable",
+                        "message": "Recording service unavailable",
+                    }),
+                )
+            }
             AppError::Internal(_error) => {
                 tracing::error!(
                     error_code = ProtocolErrorCode::Internal.as_str(),
@@ -171,6 +187,10 @@ impl From<anyhow::Error> for AppError {
         AppError::Internal(e)
     }
 }
+
+#[cfg(test)]
+#[path = "inbound/api/recording_error_tests.rs"]
+mod extra_tests;
 
 #[cfg(test)]
 mod tests {
@@ -356,17 +376,6 @@ mod tests {
             serde_json::from_slice::<serde_json::Value>(&body).expect("error response is JSON"),
             json!({ "error": "图片请求体超过上游预算，请减少图片" })
         );
-    }
-
-    #[tokio::test]
-    async fn unsupported_extension_installation_is_a_bad_request() {
-        let response = AppError::Protocol {
-            code: ProtocolErrorCode::ExtensionInstallUnsupported,
-            message: "扩展类型不支持安装".to_string(),
-        }
-        .into_response();
-
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

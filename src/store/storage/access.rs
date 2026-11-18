@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use chrono::Utc;
 use sea_orm::{
@@ -9,6 +10,7 @@ use super::{identities, ProtocolAccess, ProtocolModel, Storage, StorageError};
 use crate::store::entity::identity::{
     activities, endpoint_configs, endpoint_model_routes, endpoint_models, provider_configs,
 };
+use crate::store::recording_timing::log_elapsed;
 
 use super::provider_visibility::can_use_provider_on;
 
@@ -45,9 +47,19 @@ impl Storage {
         access: &ProtocolAccess,
         model_name: &str,
     ) -> Result<Vec<ProtocolModel>, StorageError> {
+        let started_at = Instant::now();
         let mut candidates = self.resolve_protocol_models(access, model_name).await?;
-        self.select_candidates(access, model_name, &mut candidates)
-            .await
+        let result = self
+            .select_candidates(access, model_name, &mut candidates)
+            .await;
+        if result.is_ok() {
+            log_elapsed(
+                "storage.select_protocol_model_candidates",
+                started_at,
+                Some(model_name),
+            );
+        }
+        result
     }
 
     async fn select_candidates(
@@ -145,11 +157,24 @@ impl Storage {
         model_name: &str,
         provider_id: &str,
     ) -> Result<(), StorageError> {
+        let observed_at = Utc::now().to_rfc3339();
+        self.remember_protocol_model_provider_at(access, model_name, provider_id, &observed_at)
+            .await
+    }
+
+    pub(crate) async fn remember_protocol_model_provider_at(
+        &self,
+        access: &ProtocolAccess,
+        model_name: &str,
+        provider_id: &str,
+        observed_at: &str,
+    ) -> Result<(), StorageError> {
+        let started_at = Instant::now();
         let route = endpoint_model_routes::ActiveModel {
             endpoint_id: Set(access.endpoint_id.clone()),
             model_name: Set(model_name.to_string()),
             provider_id: Set(provider_id.to_string()),
-            updated_at: Set(Utc::now().to_rfc3339()),
+            updated_at: Set(observed_at.to_string()),
         };
         endpoint_model_routes::Entity::insert(route)
             .on_conflict(
@@ -165,6 +190,11 @@ impl Storage {
             )
             .exec(&self.db)
             .await?;
+        log_elapsed(
+            "storage.remember_protocol_model_provider",
+            started_at,
+            Some(model_name),
+        );
         Ok(())
     }
 

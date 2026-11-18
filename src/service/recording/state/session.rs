@@ -70,7 +70,7 @@ pub(super) async fn save_stream_state_if_ready(
     save_stream_response_state(activity_store, identity_id, session, response, snapshot).await;
 }
 
-pub(super) fn response_from_stream_session(
+pub(crate) fn response_from_stream_session(
     session: &StreamSession,
     snapshot: &StreamStatsSnapshot,
 ) -> Option<InternalResponse> {

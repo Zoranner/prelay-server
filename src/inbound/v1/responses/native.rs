@@ -4,6 +4,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use chrono::Utc;
 use serde_json::Value;
 
 use crate::{
@@ -19,10 +20,13 @@ use crate::{
     error::AppError,
     inbound::v1::responses::image_budget,
     service::{
-        recording::{record_stream_with_rollout, StreamRecording, StreamRollout, StreamSession},
+        recording::{
+            record_completed_turn, record_stream_with_journal, CompletedTurnRecord,
+            StreamRecording, StreamRollout, StreamSession,
+        },
         upstream_errors::upstream_failure_message,
     },
-    store::storage::ResponseStateInsert,
+    store::{recording_journal::ResponseStateRecord, storage::ResponseStateInsert},
     AppState,
 };
 
@@ -102,7 +106,7 @@ pub(super) async fn create_native_response(
                     request_events: request_events.clone(),
                 },
             )
-            .await;
+            .await?;
             return Err(error);
         }
     };
@@ -112,11 +116,11 @@ pub(super) async fn create_native_response(
         let status = upstream_response.status();
         let upstream_body = upstream_response.text().await.unwrap_or_default();
         let error_message = upstream_failure_message(status, &upstream_body);
-        state
-            .activity_store
-            .record_completed(
-                &context.identity_id,
-                ActivityInsert {
+        record_completed_turn(
+            state,
+            CompletedTurnRecord {
+                identity_id: context.identity_id.clone(),
+                activity: ActivityInsert {
                     protocol_in: "responses".to_string(),
                     protocol_out: "responses".to_string(),
                     protocol_upstream: "responses".to_string(),
@@ -142,11 +146,15 @@ pub(super) async fn create_native_response(
                     tool_call_count: None,
                     upstream_request_id: None,
                 },
-                &context.session,
-                request_events.clone(),
-                Vec::new(),
-            )
-            .await?;
+                session: context.session.clone(),
+                request_events: request_events.clone(),
+                response_events: Vec::new(),
+                response_state: None,
+                started_at: context.started_at_wall,
+                finished_at: Utc::now(),
+            },
+        )
+        .await?;
         return Err(AppError::Upstream {
             status: Some(status),
             message: error_message,
@@ -173,7 +181,7 @@ pub(super) async fn create_native_response(
                         request_events: request_events.clone(),
                     },
                 )
-                .await;
+                .await?;
                 return Err(error);
             }
         };
@@ -214,12 +222,13 @@ pub(super) async fn create_native_response(
             upstream_request_id: None,
         };
         let body = Body::from_stream(with_sse_keepalive(
-            record_stream_with_rollout(
-                state.activity_store.clone(),
+            record_stream_with_journal(
+                state,
                 context.identity_id.clone(),
                 stream,
                 log,
                 context.started_at,
+                context.started_at_wall,
                 StreamRecording {
                     stats: stream_stats,
                     rollout: StreamRollout {
@@ -259,7 +268,7 @@ pub(super) async fn create_native_response(
                     request_events: request_events.clone(),
                 },
             )
-            .await;
+            .await?;
             return Err(error);
         }
     };
@@ -292,42 +301,39 @@ pub(super) async fn create_native_response(
                         request_events: request_events.clone(),
                     },
                 )
-                .await;
+                .await?;
                 return Err(error);
             }
         };
-    if request.store {
+    let response_state = request.store.then(|| {
         let request_items = Value::Array(input_items.to_vec());
         let response_items = response
             .get("output")
             .cloned()
             .unwrap_or_else(|| Value::Array(Vec::new()));
-        state
-            .storage
-            .save_response_state(ResponseStateInsert {
-                identity_id: &context.identity_id,
-                response_id: &decoded_response.id,
-                previous_response_id: previous_response_id.as_deref(),
-                conversation_id: &context.conversation_id,
-                provider_id: &provider.id,
-                model: &decoded_response.model,
-                upstream_response_id: upstream_response_id.as_deref(),
-                request_items: &request_items,
-                response_items: &response_items,
-                input_messages: &request.messages,
-                response: &decoded_response,
-            })
-            .await?;
-    }
+        ResponseStateRecord::from_insert(ResponseStateInsert {
+            identity_id: &context.identity_id,
+            response_id: &decoded_response.id,
+            previous_response_id: previous_response_id.as_deref(),
+            conversation_id: &context.conversation_id,
+            provider_id: &provider.id,
+            model: &decoded_response.model,
+            upstream_response_id: upstream_response_id.as_deref(),
+            request_items: &request_items,
+            response_items: &response_items,
+            input_messages: &request.messages,
+            response: &decoded_response,
+        })
+    });
     let response_output = response
         .get("output")
         .cloned()
         .unwrap_or_else(|| Value::Array(Vec::new()));
-    state
-        .activity_store
-        .record_completed(
-            &context.identity_id,
-            ActivityInsert {
+    record_completed_turn(
+        state,
+        CompletedTurnRecord {
+            identity_id: context.identity_id.clone(),
+            activity: ActivityInsert {
                 protocol_in: "responses".to_string(),
                 protocol_out: "responses".to_string(),
                 protocol_upstream: "responses".to_string(),
@@ -379,11 +385,18 @@ pub(super) async fn create_native_response(
                 tool_call_count: None,
                 upstream_request_id: None,
             },
-            &context.session,
-            request_events.clone(),
-            conversation_events_from_responses_output(&response_output, response.get("usage")),
-        )
-        .await?;
+            session: context.session.clone(),
+            request_events: request_events.clone(),
+            response_events: conversation_events_from_responses_output(
+                &response_output,
+                response.get("usage"),
+            ),
+            response_state,
+            started_at: context.started_at_wall,
+            finished_at: Utc::now(),
+        },
+    )
+    .await?;
 
     Ok(Json(response).into_response())
 }

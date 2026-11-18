@@ -41,6 +41,7 @@ pub async fn test_context_with_catalog(provider_catalog: ProviderCatalog) -> Tes
             reqwest::Client::new(),
             provider_catalog,
         ),
+        recording: None,
     })
     .await
     .expect("build application router");

@@ -40,6 +40,8 @@ cargo run
 
 默认监听地址为 `0.0.0.0:18080`。`LISTEN_ADDRESS` 可覆盖完整监听地址，例如 `127.0.0.1:18080`，`RUST_LOG` 控制日志过滤。`DATABASE_MAX_CONNECTIONS` 可覆盖默认连接数。
 
+记录路径的基线计时默认不输出。`/v1` 请求的记录已经统一走“WAL 提交 + 后台物化”：非流式在成功返回前等待组提交 `fsync`，流式在首块前提交 `TurnStarted`、在终止事件前提交 `TurnFinished`；活动、线程 JSONL 和 response state 由后台物化器补写，不阻塞请求首字节。采样时把 `RUST_LOG` 设为 `prelay_server=info,prelay_server::recording_timing=debug,tower_http=info`，日志会按 `storage.*`、`activity.*`、`recording.*` 输出 `elapsed_ms`；采样结束后恢复默认过滤，避免长期 debug 日志开销。
+
 启动时及之后每 24 小时会删除连续 90 天未活动身份及其所有配置、会话和日志。
 
 ## 供应商代理
@@ -76,9 +78,9 @@ Copy-Item deploy/.env.example deploy/.env
 docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --pull always
 ```
 
-编排内的 PostgreSQL 数据保存在宿主机 `deploy/data/postgres`，活动 JSONL 保存在 `deploy/data/sessions`。容器内服务以 UID 1000 的 `relay` 用户运行；首次部署前需确保 `deploy/data/sessions` 可由该用户写入，否则服务会在启动阶段明确失败。服务首次连接空数据库时初始化当前 schema；已有当前结构会执行 `activity_rollout_v2` 增量迁移，不完整或结构不兼容的数据库不进行其它修复或升级。
+编排内的 PostgreSQL 数据保存在宿主机 `deploy/data/postgres`，活动 JSONL 保存在 `deploy/data/sessions`，记录 WAL、checkpoint 和 node-id 保存在 `deploy/data/recording`。容器内服务以 UID 1000 的 `relay` 用户运行；首次部署前需确保这两个数据目录可由该用户写入，否则服务会在启动阶段明确失败。服务首次连接空数据库时初始化当前 schema；已有当前结构会执行 `activity_rollout_v2` 增量迁移，不完整或结构不兼容的数据库不进行其它修复或升级。
 
-升级已有部署前必须同时备份 PostgreSQL 数据和 `ACTIVITY_ROLLOUT_DIR`。`activity_rollout_v2` 会补齐 `activity_rollouts` 的线程、窗口和行号字段，移除 `rollout_path` 唯一索引；旧活动行没有线程和行号区间。初始化仍会删除旧 `activity_contents` 表，并在 `anthropic_removal_v1` 中删除 Anthropic 活动及其 `activity_rollouts` 索引；数据库迁移不会迁移或删除旧活动级 JSONL 文件，遗留文件需要按数据保留策略单独处理。
+升级已有部署前必须同时备份 PostgreSQL 数据、`ACTIVITY_ROLLOUT_DIR` 和 `RECORDING_JOURNAL_DIR`。WAL 是物化完成前的权威记录来源，不能在未排空时单独恢复旧备份；`activity_rollout_v2` 会补齐 `activity_rollouts` 的线程、窗口和行号字段，移除 `rollout_path` 唯一索引；旧活动行没有线程和行号区间。初始化仍会删除旧 `activity_contents` 表，并在 `anthropic_removal_v1` 中删除 Anthropic 活动及其 `activity_rollouts` 索引；数据库迁移不会迁移或删除旧活动级 JSONL 文件，遗留文件需要按数据保留策略单独处理。
 
 使用该 Compose 文件时，客户端安装包的容器内目录是 `/app/updates`，对应宿主机的 `deploy/updates`。GitHub 不可用时，可将发布产物原文件直接放入对应目标和版本目录，例如 `deploy/updates/windows/x64/0.2.0/Prelay_0.2.0_x64-setup.exe`。
 
@@ -89,6 +91,7 @@ Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.4.5`，并以只读方式
 ## 服务边界
 
 - 正式调用入口固定为 `/v1/models`、`/v1/responses` 和 `/v1/chat/completions`，由 Endpoint Token 授权。
+- `GET /health` 为无鉴权存活/就绪探针；记录 WAL 处于 `blocked` 时返回 `503`，其余状态返回 `200` 并附带物化进度和积压延迟。
 - 管理 API 位于 `/api/*`，由设备凭据授权；`POST /api/identities` 是唯一匿名入口。
 - 目录查询位于 `/api/catalog/*`，包括供应商目录和语言模型、图像生成模型目录的列表与详情。
 - Provider API Key 只以 `ENCRYPTION_KEY` 加密后保存。数据库、`.env`、加密密钥、设备凭据、Endpoint Token 和真实 Provider API Key 不得提交或记录到日志。
@@ -125,6 +128,15 @@ Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.4.5`，并以只读方式
 旧线程没有 v1 文件头，按 legacy 读取，旧数据中缺失的 refusal、内置工具调用、附件或其他内容不会被伪造；续写时保留原前缀并在尾部追加 v1 事件。线程损坏时继续使用 `.recovered.jsonl` 分段；末尾半行会在后续请求中截断到最后一个完整换行，启动日志报告残留的不完整文件。`activity_rollouts.event_count` 表示该活动写入的事件行数，不包含线程文件头；完整文件的 `RolloutFile.line_count` 单独表示物理行数。正文不设应用层大小上限，也不做自动归档，磁盘容量和文件系统限制仍是物理边界。目录由启动时读取的环境变量控制，修改后需要重启服务：
 
 - `ACTIVITY_ROLLOUT_DIR`：活动 JSONL 的根目录，默认 `data/sessions`，必须非空。
+- `RECORDING_JOURNAL_DIR`：WAL、checkpoint 和 node-id 的根目录，默认 `data/recording`；必须放在持久卷，并与活动 JSONL 一起备份。
+- `RECORDING_JOURNAL_SEGMENT_BYTES`：单个 WAL 段大小，默认 `67108864`。
+- `RECORDING_JOURNAL_CHUNK_BYTES`：单个 WAL 记录分片大小，默认 `1048576`。
+- `RECORDING_JOURNAL_GROUP_COMMIT_MS`：组提交最大等待毫秒数，默认 `2`。
+- `RECORDING_JOURNAL_COMMIT_TIMEOUT_MS`：单次提交等待 `fsync` 的毫秒数，默认 `5000`；超时后进入阻断状态。
+- `RECORDING_JOURNAL_MIN_FREE_BYTES`：WAL 目录最小剩余空间，默认 `1073741824`。
+- `RECORDING_JOURNAL_MAX_PENDING_BYTES`：WAL 目录硬上限，默认 `8589934592`；超过后拒绝新请求。
+- `RECORDING_MATERIALIZE_LAG_SLO_SECONDS`：活动、统计和会话正文可见性 SLO，默认 `5` 秒。
+- `RECORDING_MATERIALIZE_INTERVAL_MS`：后台物化扫描间隔，默认 `100` 毫秒。
 
 `identity_response_sessions` 保存 `store=true` 的精确 Responses 状态：本轮实际发送的 input items、上游返回的 output items、完成状态和过期时间。请求项和输出项使用 `ENCRYPTION_KEY` 加密保存，数据库和备份仍必须按敏感数据处理；它不是活动正文索引或统计来源。旧版本留下的行标记为 `legacy_internal_v1`，不能作为 `previous_response_id` 续接。服务启动时会对这些 legacy 行的明文列执行一次幂等加密迁移，并在之后每日清理过期精确状态；清理不删除 legacy 行。`provider_id` 只是历史元数据，删除供应商不阻断状态读取；`conversation_id` 是内部活动分组，不是协议 `conversation`。
 

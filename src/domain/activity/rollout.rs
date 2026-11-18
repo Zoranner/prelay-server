@@ -13,7 +13,7 @@ pub use event::{
 
 pub const DEFAULT_ACTIVITY_ROLLOUT_DIR: &str = "data/sessions";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionContext {
     pub thread_id: String,
     pub window_id: Option<String>,

@@ -1,8 +1,13 @@
 use axum::http::StatusCode;
+use chrono::Utc;
 
 use crate::{
-    domain::activity::ContentDraft, domain::registry::ProviderConfig,
-    domain::stats::ActivityInsert, error::AppError, AppState,
+    domain::activity::ContentDraft,
+    domain::registry::ProviderConfig,
+    domain::stats::ActivityInsert,
+    error::AppError,
+    service::recording::{record_completed_turn, CompletedTurnRecord},
+    AppState,
 };
 
 use super::candidate::ResponseBridgeContext;
@@ -53,7 +58,7 @@ pub(super) async fn record_upstream_failure(
     context: &ResponseBridgeContext,
     provider: &ProviderConfig,
     failure: UpstreamFailure<'_>,
-) {
+) -> Result<(), crate::store::storage::StorageError> {
     let UpstreamFailure {
         protocol_upstream,
         model_upstream,
@@ -90,22 +95,20 @@ pub(super) async fn record_upstream_failure(
         tool_call_count: None,
         upstream_request_id: None,
     };
-    if let Err(error) = state
-        .activity_store
-        .record_completed(
-            &context.identity_id,
+    record_completed_turn(
+        state,
+        CompletedTurnRecord {
+            identity_id: context.identity_id.clone(),
             activity,
-            &context.session,
+            session: context.session.clone(),
             request_events,
-            Vec::new(),
-        )
-        .await
-    {
-        tracing::error!(
-            error_code = error.code().as_str(),
-            "failed to record upstream failure activity"
-        );
-    }
+            response_events: Vec::new(),
+            response_state: None,
+            started_at: context.started_at_wall,
+            finished_at: Utc::now(),
+        },
+    )
+    .await
 }
 
 #[cfg(test)]

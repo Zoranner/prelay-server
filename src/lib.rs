@@ -20,6 +20,7 @@ pub struct AppState {
     pub extensions: outbound::integrations::extensions::ExtensionCatalog,
     pub failover: service::failover::FailoverRegistry,
     pub quota: service::quota::QuotaService,
+    pub recording: Option<service::recording::RecordingRuntime>,
 }
 
 impl AppState {

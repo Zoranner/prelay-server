@@ -1,4 +1,5 @@
 use chrono::Utc;
+use sea_orm::{sea_query::OnConflict, ConnectionTrait};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, TransactionTrait,
 };
@@ -11,6 +12,11 @@ use crate::{
 
 use super::{activities::insert_with_id, Storage, StorageError};
 
+use super::{
+    activities::apply_stream_update, activity_materialization::upsert_with_id_at,
+    ActivityRolloutMaterialization, CompletedStreamMaterialization,
+};
+
 impl Storage {
     pub async fn insert_activity_with_rollout(
         &self,
@@ -22,6 +28,76 @@ impl Storage {
         let transaction = self.db.begin().await?;
         insert_with_id(&transaction, identity_id, activity_id.clone(), activity).await?;
         insert_rollout(&transaction, identity_id, activity_id, rollout).await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    pub(crate) async fn upsert_activity_with_rollout_at(
+        &self,
+        materialization: ActivityRolloutMaterialization,
+    ) -> Result<(), StorageError> {
+        let ActivityRolloutMaterialization {
+            identity_id,
+            activity_id,
+            activity,
+            activity_created_at,
+            rollout,
+            rollout_created_at,
+            completed_at,
+        } = materialization;
+        let transaction = self.db.begin().await?;
+        upsert_with_id_at(
+            &transaction,
+            &identity_id,
+            activity_id.clone(),
+            activity,
+            activity_created_at,
+        )
+        .await?;
+        upsert_rollout_at(
+            &transaction,
+            &identity_id,
+            activity_id,
+            rollout,
+            rollout_created_at,
+            completed_at,
+        )
+        .await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    pub(crate) async fn complete_stream_activity_with_rollout_at(
+        &self,
+        materialization: CompletedStreamMaterialization,
+    ) -> Result<(), StorageError> {
+        let CompletedStreamMaterialization {
+            identity_id,
+            activity_id,
+            activity,
+            rollout,
+            rollout_created_at,
+            completed_at,
+        } = materialization;
+        let transaction = self.db.begin().await?;
+        let row = activities::Entity::find_by_id(&activity_id)
+            .filter(activities::Column::IdentityId.eq(&identity_id))
+            .one(&transaction)
+            .await?
+            .ok_or(StorageError::ActivityNotFound)?;
+        let mut active: activities::ActiveModel = row.into();
+        apply_stream_update(&mut active, activity);
+        active.is_streaming = Set(Some(false));
+        active.update(&transaction).await?;
+        upsert_rollout_at(
+            &transaction,
+            &identity_id,
+            activity_id,
+            rollout,
+            rollout_created_at,
+            Some(completed_at),
+        )
+        .await?;
         transaction.commit().await?;
         Ok(())
     }
@@ -170,6 +246,66 @@ where
         last_error: Set(None),
     }
     .insert(db)
+    .await?;
+    Ok(())
+}
+
+async fn upsert_rollout_at<C>(
+    db: &C,
+    identity_id: &str,
+    activity_id: String,
+    rollout: RolloutSummary,
+    created_at: String,
+    completed_at: Option<String>,
+) -> Result<(), StorageError>
+where
+    C: ConnectionTrait,
+{
+    if rollout.activity_id != activity_id {
+        return Err(StorageError::Rollout(
+            "rollout activity id does not match activity".to_string(),
+        ));
+    }
+    activity_rollouts::Entity::insert(activity_rollouts::ActiveModel {
+        activity_id: Set(activity_id),
+        identity_id: Set(identity_id.to_string()),
+        session_id: Set(rollout.thread_id.clone()),
+        thread_id: Set(rollout.thread_id),
+        window_id: Set(rollout.window_id),
+        generation: Set(to_i64(rollout.generation)?),
+        rollout_path: Set(rollout.relative_path),
+        status: Set(rollout.status.as_str().to_string()),
+        start_line: Set(to_i64(rollout.start_line)?),
+        end_line: Set(to_i64(rollout.end_line)?),
+        event_count: Set(to_i64(rollout.event_count)?),
+        byte_size: Set(to_i64(rollout.byte_size)?),
+        sha256: Set(Some(rollout.sha256)),
+        created_at: Set(created_at),
+        completed_at: Set(completed_at),
+        last_error: Set(None),
+    })
+    .on_conflict(
+        OnConflict::column(activity_rollouts::Column::ActivityId)
+            .update_columns([
+                activity_rollouts::Column::IdentityId,
+                activity_rollouts::Column::SessionId,
+                activity_rollouts::Column::ThreadId,
+                activity_rollouts::Column::WindowId,
+                activity_rollouts::Column::Generation,
+                activity_rollouts::Column::RolloutPath,
+                activity_rollouts::Column::Status,
+                activity_rollouts::Column::StartLine,
+                activity_rollouts::Column::EndLine,
+                activity_rollouts::Column::EventCount,
+                activity_rollouts::Column::ByteSize,
+                activity_rollouts::Column::Sha256,
+                activity_rollouts::Column::CreatedAt,
+                activity_rollouts::Column::CompletedAt,
+                activity_rollouts::Column::LastError,
+            ])
+            .to_owned(),
+    )
+    .exec(db)
     .await?;
     Ok(())
 }

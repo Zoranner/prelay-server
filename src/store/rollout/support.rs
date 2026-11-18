@@ -1,3 +1,4 @@
+use chrono::{FixedOffset, SecondsFormat, Utc};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -7,6 +8,13 @@ use crate::domain::activity::{
         ContentDraft, ContentEventBody, ConversationEvent, ConversationEventBody, RolloutError,
     },
 };
+
+pub(super) fn readable_time() -> String {
+    let offset = FixedOffset::east_opt(8 * 60 * 60).expect("valid +08:00 offset");
+    Utc::now()
+        .with_timezone(&offset)
+        .to_rfc3339_opts(SecondsFormat::Millis, false)
+}
 
 #[derive(Debug, Clone)]
 pub(super) struct ContentHash {

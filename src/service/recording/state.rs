@@ -28,6 +28,7 @@ mod forwarding;
 mod session;
 
 pub(super) use forwarding::{prepare_stream_with_log_id, RecordedStream};
+pub(super) use session::response_from_stream_session;
 use session::save_stream_state_if_ready;
 
 struct StreamRecordState {

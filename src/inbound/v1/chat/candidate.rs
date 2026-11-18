@@ -4,6 +4,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use chrono::Utc;
 use serde_json::Value;
 
 use crate::{
@@ -19,7 +20,10 @@ use crate::{
     error::AppError,
     inbound::v1::{auth::CurrentProtocolAccess, endpoint_resolver::ResolvedEndpointProvider},
     service::{
-        recording::{record_stream_with_rollout, StreamRecording, StreamRollout},
+        recording::{
+            record_completed_turn, record_stream_with_journal, CompletedTurnRecord,
+            StreamRecording, StreamRollout,
+        },
         upstream_errors::{upstream_failure_message, upstream_observability},
     },
     AppState,
@@ -32,6 +36,7 @@ pub(super) struct ChatCandidateRequest {
     pub(super) model: String,
     pub(super) is_streaming: bool,
     pub(super) started_at: std::time::Instant,
+    pub(super) started_at_wall: chrono::DateTime<chrono::Utc>,
 }
 
 pub(super) async fn create_chat_completion_with_candidate(
@@ -47,6 +52,7 @@ pub(super) async fn create_chat_completion_with_candidate(
         model,
         is_streaming,
         started_at,
+        started_at_wall,
     } = candidate;
     let provider = resolved.provider;
     let model_upstream = resolved.model_upstream;
@@ -80,11 +86,11 @@ pub(super) async fn create_chat_completion_with_candidate(
         let observability_headers = upstream_response.headers().clone();
         let error_body = upstream_response.text().await.ok();
         let observability = upstream_observability(&observability_headers, error_body.as_deref());
-        state
-            .activity_store
-            .record_completed(
-                &access.identity_id,
-                ActivityInsert {
+        record_completed_turn(
+            state,
+            CompletedTurnRecord {
+                identity_id: access.identity_id.clone(),
+                activity: ActivityInsert {
                     protocol_in: "chat_completions".to_string(),
                     protocol_out: "chat_completions".to_string(),
                     protocol_upstream: "chat_completions".to_string(),
@@ -110,11 +116,15 @@ pub(super) async fn create_chat_completion_with_candidate(
                     tool_call_count: None,
                     upstream_request_id: observability.request_id,
                 },
-                &session,
-                conversation_events_from_chat_request(&payload),
-                Vec::new(),
-            )
-            .await?;
+                session: session.clone(),
+                request_events: conversation_events_from_chat_request(&payload),
+                response_events: Vec::new(),
+                response_state: None,
+                started_at: started_at_wall,
+                finished_at: Utc::now(),
+            },
+        )
+        .await?;
         return Err(AppError::Upstream {
             status: Some(status),
             message: upstream_failure_message(status, error_body.as_deref().unwrap_or_default()),
@@ -152,12 +162,13 @@ pub(super) async fn create_chat_completion_with_candidate(
         };
         let (stream, stream_stats) = native_chat_sse_with_stats(upstream_response).await?;
         let body = Body::from_stream(with_sse_keepalive(
-            record_stream_with_rollout(
-                state.activity_store.clone(),
+            record_stream_with_journal(
+                state,
                 access.identity_id.clone(),
                 stream,
                 log,
                 started_at,
+                started_at_wall,
                 StreamRecording {
                     stats: stream_stats,
                     rollout: StreamRollout {
@@ -193,11 +204,11 @@ pub(super) async fn create_chat_completion_with_candidate(
                 .sum::<usize>() as i64
         })
         .unwrap_or_default();
-    state
-        .activity_store
-        .record_completed(
-            &access.identity_id,
-            ActivityInsert {
+    record_completed_turn(
+        state,
+        CompletedTurnRecord {
+            identity_id: access.identity_id.clone(),
+            activity: ActivityInsert {
                 protocol_in: "chat_completions".to_string(),
                 protocol_out: "chat_completions".to_string(),
                 protocol_upstream: "chat_completions".to_string(),
@@ -227,11 +238,15 @@ pub(super) async fn create_chat_completion_with_candidate(
                 tool_call_count: Some(tool_call_count),
                 upstream_request_id,
             },
-            &session,
-            conversation_events_from_chat_request(&payload),
-            conversation_events_from_chat_response(&response),
-        )
-        .await?;
+            session: session.clone(),
+            request_events: conversation_events_from_chat_request(&payload),
+            response_events: conversation_events_from_chat_response(&response),
+            response_state: None,
+            started_at: started_at_wall,
+            finished_at: Utc::now(),
+        },
+    )
+    .await?;
 
     Ok(Json(response).into_response())
 }

@@ -4,12 +4,14 @@ use sea_orm::{
     QueryFilter,
 };
 use serde_json::Value;
+use std::time::Instant;
 
 mod legacy;
 
 use crate::{
     codec::internal::{InternalMessage, InternalResponse},
     store::entity::identity::response_sessions as identity_response_sessions,
+    store::recording_timing::log_elapsed,
     store::storage::{
         crypto::KeyCipher,
         sessions::{decrypt_session_value, encrypt_session_value},
@@ -51,7 +53,24 @@ impl Storage {
         &self,
         insert: ResponseStateInsert<'_>,
     ) -> Result<(), StorageError> {
-        save_response_state(&self.db, &self.crypto, insert).await
+        let now = Utc::now();
+        save_response_state_at(
+            &self.db,
+            &self.crypto,
+            insert,
+            now,
+            now + Duration::days(30),
+        )
+        .await
+    }
+
+    pub(crate) async fn save_response_state_at(
+        &self,
+        insert: ResponseStateInsert<'_>,
+        created_at: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> Result<(), StorageError> {
+        save_response_state_at(&self.db, &self.crypto, insert, created_at, expires_at).await
     }
 
     pub async fn load_response_state(
@@ -59,7 +78,12 @@ impl Storage {
         identity_id: &str,
         response_id: &str,
     ) -> Result<Option<ResponseState>, StorageError> {
-        load_response_state(&self.db, &self.crypto, identity_id, response_id).await
+        let started_at = Instant::now();
+        let result = load_response_state(&self.db, &self.crypto, identity_id, response_id).await;
+        if result.is_ok() {
+            log_elapsed("storage.load_response_state", started_at, Some(response_id));
+        }
+        result
     }
 
     pub async fn delete_expired_response_states(
@@ -74,14 +98,15 @@ impl Storage {
     }
 }
 
-async fn save_response_state(
+async fn save_response_state_at(
     db: &DatabaseConnection,
     crypto: &KeyCipher,
     insert: ResponseStateInsert<'_>,
+    created_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
 ) -> Result<(), StorageError> {
-    let now = Utc::now();
-    let created_at = now.to_rfc3339_opts(SecondsFormat::Secs, true);
-    let expires_at = (now + Duration::days(30)).to_rfc3339_opts(SecondsFormat::Secs, true);
+    let created_at = created_at.to_rfc3339_opts(SecondsFormat::Secs, true);
+    let expires_at = expires_at.to_rfc3339_opts(SecondsFormat::Secs, true);
     let request_items_json =
         encrypt_session_value(crypto, &serde_json::to_string(insert.request_items)?)?;
     let response_items_json =

@@ -21,7 +21,9 @@ base64 = "0.22"
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
+fs2 = "0.4"
 futures = "0.3"
+hkdf = "0.12"
 prelay-protocol = { path = "crates/protocol" }
 rand = "0.8"
 regex = "1"
@@ -33,14 +35,14 @@ sea-orm = { version = "2.0.2", features = ["macros", "runtime-tokio-rustls", "sq
 sea-query = "1.0.2"
 sha2 = "0.10"
 subtle = "2"
+tempfile = "3"
 toml = "0.8"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "v7"] }
 
 [dev-dependencies]
 sea-orm = { version = "2.0.2", features = ["mock"] }
-tempfile = "3"

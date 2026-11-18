@@ -32,6 +32,7 @@ pub(super) struct ResponseBridgeContext {
     pub(super) session_id: String,
     pub(super) session: SessionContext,
     pub(super) started_at: std::time::Instant,
+    pub(super) started_at_wall: chrono::DateTime<chrono::Utc>,
 }
 
 pub(super) async fn create_response_with_candidate(
@@ -50,6 +51,7 @@ pub(super) async fn create_response_with_candidate(
         previous_response_id,
         conversation_id,
         started_at,
+        started_at_wall,
     } = candidate_request;
     let provider = resolved.provider;
     let upstream_protocol = resolved.upstream_protocol;
@@ -74,6 +76,7 @@ pub(super) async fn create_response_with_candidate(
         session_id,
         session,
         started_at,
+        started_at_wall,
     };
 
     if upstream_protocol == UpstreamProtocol::Responses {

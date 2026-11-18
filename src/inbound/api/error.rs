@@ -117,6 +117,11 @@ impl From<AppError> for ApiError {
                 Self::new(ProtocolErrorCode::Internal, message)
                     .with_status(Some(StatusCode::BAD_GATEWAY))
             }
+            AppError::RecordingUnavailable(_) => Self::new(
+                ProtocolErrorCode::Internal,
+                "Recording service unavailable".to_string(),
+            )
+            .with_status(Some(StatusCode::SERVICE_UNAVAILABLE)),
             AppError::Internal(error) => Self::internal(error),
         }
     }
