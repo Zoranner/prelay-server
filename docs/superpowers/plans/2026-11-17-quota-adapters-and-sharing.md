@@ -1,14 +1,14 @@
-# 供应商额度 V2 与共享额度实施计划
+# 供应商额度与共享额度实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把现有额度 v1 重构成统一的额度卡片模型，按供应商目录声明取数方式，补齐 6 家供应商适配器，并为共享额度补上并发预留。
+**Goal:** 把现有额度实现重构成统一的额度卡片模型，按供应商目录声明取数方式，补齐 6 家供应商适配器，并为共享额度补上并发预留。
 
 **Architecture:** 协议定义一张卡（窗口和余额可以同时存在）；服务端按目录的 `[providers.quota]` 选择命名适配器，并发取数并保留上次成功读数；共享额度继续走本地活动记录，但请求前增加预留、结束后结算。
 
 **Tech Stack:** Rust、Axum、SeaORM、PostgreSQL、Vue 3、Nuxt、Tauri、Bun
 
-**Spec:** `docs/superpowers/specs/2026-11-16-quota-sharing-design.md`（v1；Task 1 会替换其中的额度模型）
+**Spec:** `docs/superpowers/specs/2026-11-17-quota-design.md`
 
 **参考实现:** `.refs/magpie` 的 `internal/provider/quotas.go`、`planquota.go`、`balance.go`、`quota_last.go`、`internal/budget/budget.go`
 
@@ -21,54 +21,50 @@
 - 千问 Token Plan 已退役；GoToken 没有公开额度接口，保持未接入
 - `prelay-protocol` 是 DTO 和错误码的唯一来源；不在两个 submodule 各改一份
 - 提交、推送、发布分别授权；本计划不自动授权任何远端操作
-- 当前工作树同时有“额度 v1”和“记录日志/异步物化”两组未提交改动，并行前必须先隔离
+- 记录日志/异步物化改动仍属于 `master` 工作树，不并入本额度分支
 - 同一时间只允许一个会话修改 `prelay-server/src/service/quota/mod.rs`
+
+执行说明：任务步骤保留原拆分，实际完成状态、提交和验证以下方进度与评审结果为准。
 
 ---
 
 ## 进度
 
-- [x] Task 0：额度 v1 与千问退役已提交；记录日志改动仍留在 `master` 工作树；额度 v2 使用独立 worktree `prelay-server-quota-v2`
-- [x] Task 1：协议卡片模型 `057d877`、服务端 `5403f3d`、客户端 `d22297d`
-- [x] Task 2：目录 `[providers.quota]` 与适配器注册（`7d0b07e`）
-- [x] Task 3：GLM、Kimi、Command Code、OpenCode Go 适配器（`7d0b07e`）
-- [x] Task 4：并发取数、缓存与错误状态（`e76cb0d`）
-- [x] Task 5：共享额度预留（`06389e6`）
-- [x] Task 6：客户端新模型收尾（`d22297d`）
-- [x] Task 7：全量收口（合并分支 `e1ee03d`）
+- [x] Task 0：既有额度与千问退役已提交；记录日志改动仍留在 `master` 工作树；额度改造使用独立 worktree，完成后已清理
+- [x] Task 1：协议卡片模型（协议 `057d877`、客户端 `d22297d`）
+- [x] Task 2：目录 `[providers.quota]` 与适配器注册
+- [x] Task 3：六家供应商额度适配器
+- [x] Task 4：并发取数、缓存与错误状态
+- [x] Task 5：共享额度预留
+- [x] Task 6：客户端新模型收尾（`d22297d`、`645fbd3`）
+- [x] Task 7：集成分支线性提交（功能 `dc0bbe1`）
 
 ## 评审结果
 
-- 服务端 `cargo clippy --all-targets` 无告警
-- 服务端 lib 测试 359 通过、1 忽略
-- 服务端 management 测试 42 通过
+- 服务端 `cargo fmt --all -- --check` 通过
+- 服务端 `cargo clippy --all-targets --all-features -- -D warnings` 无告警
+- 服务端 lib 测试 362 通过、1 忽略
+- 服务端 management 测试 45 通过
 - 服务端 schema 测试 22 通过
 - 供应商目录测试 23 通过
 - 协议测试 33 通过
-- 客户端 typecheck、40 项测试和格式检查通过
-- 未覆盖：真实上游密钥、GoToken 额度、`master` 合并（被记录日志的未提交改动阻塞）
+- 客户端 typecheck 通过，额度列测试 3 项通过
+- 客户端全量测试 221 项通过、1 项失败；失败来自并行未提交的扩展安装改动超过源文件行数门禁，不属于额度改动
+- 客户端全量格式检查受并行未提交的扩展文件影响；额度文件单独格式检查通过
+- 正式评审：`docs/reviews/2026-11-17-供应商额度工程评审.md`
+- 未覆盖：真实上游密钥、GoToken 额度、GLM 团队版上下文、跨服务实例共享、`master` 合并（被记录日志的未提交改动阻塞）
 
 ---
 
-## 当前状态
+## 实施结果
 
-已完成但未提交：
-
-- 协议 v1 额度 DTO：`ProviderQuota` 枚举、`QuotaWindowResponse`、共享额度窗口
-- 共享额度存储：`identity_provider_shares.quota_json`
-- 服务端额度服务：DeepSeek 余额、MiniMax 5 小时/周
-- `GET /api/providers/quotas`
-- 客户端额度列、三环、余额、共享进度条、共享抽屉
-- 千问 Token Plan 目录退役（3 个文件，测试已通过）
-
-需要返工或新增：
-
-- 协议从互斥枚举改成一张卡；窗口改成自由形态
-- 目录增加 `[providers.quota]` 和适配器注册表
-- 补齐 GLM、Kimi、Command Code、OpenCode Go；重构 DeepSeek、MiniMax
-- 并发取数、单家超时、缓存、上次成功读数、错误分级
-- 共享额度原子预留
-- 客户端适配新模型和四种状态
+- 协议已改为一卡承载窗口和余额，`prelay-protocol` 及两个 submodule 指针已同步
+- 目录 `[providers.quota]` 已接入六家供应商，GoToken 保持未接入
+- 服务端已并发取数、缓存成功和错误读数、保留上次成功读数
+- 共享额度支持直接共享和日/周/月限额共享，按被共享者单独计算
+- 请求前预留、额度耗尽 429、流式响应持有预留已接入
+- 客户端额度列和共享抽屉已完成，额度列展示套餐、余额、共享限额和状态
+- 千问 Token Plan 已从目录和新建供应商列表退役
 
 明确不做：
 
@@ -76,17 +72,16 @@
 - GoToken 额度查询
 - 手填额度、独立额度页面、趋势图、创建者查看被共享人用量
 
-## 并行边界
+## 实施边界
 
 | 文件或目录 | 归属 |
 | --- | --- |
-| `prelay-protocol/src/providers.rs` 及两个 submodule | 只能 Task 1 所在会话 |
+| `prelay-protocol/src/providers.rs` 及两个 submodule | DTO 唯一来源 |
 | `prelay-server/src/service/quota/mod.rs` | 同一时间只能一个会话 |
-| `prelay-server/src/store/storage/provider_quota.rs` | Task 4 或 Task 5，二选一 |
-| `prelay-server/config/catalog/providers.toml` | Task 2；适配器任务不写这里 |
-| `src/lib.rs`、`store/mod.rs`、`storage/mod.rs`、`bootstrap/serve.rs` | 与记录日志改动重叠，Task 0 先隔离 |
-| `prelay-client/app/pages/providers.vue`、`List.vue` | 只能 Task 6 |
-| `Cargo.toml` / `Cargo.lock` | 本计划不新增依赖 |
+| `prelay-server/src/store/storage/provider_quota.rs` | 共享额度周期和活动查询 |
+| `prelay-server/config/catalog/providers.toml` | 目录额度声明 |
+| `prelay-client/app/pages/providers.vue`、`List.vue` | 额度列和共享入口 |
+| `master` 记录日志改动 | 不属于本分支，合并前单独处理 |
 
 ---
 
@@ -96,7 +91,7 @@
 - 无代码文件；只处理 Git 工作树、提交和 worktree
 
 **Interfaces:**
-- Consumes: 当前 49 个未提交文件
+- Consumes: 当时的现有额度与记录日志两组改动
 - Produces: 一个干净的基线提交或独立 worktree，供后续并行会话使用
 
 - [ ] **Step 1: 确认两组改动**
@@ -109,7 +104,7 @@ git -C prelay-client status --short
 git -C prelay-protocol status --short
 ```
 
-Expected: 额度 v1 与记录日志改动都能从文件清单中分开；`prelay-protocol` 和两个 submodule 都有协议改动。
+Expected: 现有额度与记录日志改动都能从文件清单中分开；`prelay-protocol` 和两个 submodule 都有协议改动。
 
 - [ ] **Step 2: 先提交千问退役**
 
@@ -133,9 +128,9 @@ git -C prelay-server diff --cached --check
 
 Expected: 3 个文件，1 个提交；其他未提交文件保持原状。
 
-- [ ] **Step 3: 决定额度 v1 与记录日志的提交顺序**
+- [ ] **Step 3: 决定现有额度与记录日志的提交顺序**
 
-先跑两组各自的测试，选先完成且测试通过的一组提交。额度 v1 涉及的文件以 `quota`、`provider_shares`、`providers.vue` 为主；记录日志涉及 `recording_journal`、`rollout`、`recording_timing`。
+先跑两组各自的测试，选先完成且测试通过的一组提交。额度涉及的文件以 `quota`、`provider_shares`、`providers.vue` 为主；记录日志涉及 `recording_journal`、`rollout`、`recording_timing`。
 
 Expected: 两组改动分别有清晰的提交边界；不能把两组混进同一个提交。
 
@@ -144,9 +139,9 @@ Expected: 两组改动分别有清晰的提交边界；不能把两组混进同�
 在基线提交之后：
 
 ```powershell
-git -C prelay-server worktree add ..\prelay-server-quota-v2 -b feat/quota-v2
-git -C prelay-client worktree add ..\prelay-client-quota-v2 -b feat/quota-v2
-git -C prelay-protocol worktree add ..\prelay-protocol-quota-v2 -b feat/quota-v2
+git -C prelay-server worktree add ..\prelay-server-quota -b feat/quota
+git -C prelay-client worktree add ..\prelay-client-quota -b feat/quota
+git -C prelay-protocol worktree add ..\prelay-protocol-quota -b feat/quota
 ```
 
 Expected: 每个会话有独立目录；协议会话只在自己的 worktree 改协议。
@@ -262,7 +257,7 @@ Expected: 全部通过。
 
 **Interfaces:**
 - Consumes: `ProviderQuota`、`QuotaWindow`
-- Produces: `CatalogQuota { adapter, url, auth, timeout_secs, requires }` 和 `QuotaAdapterKind`
+- Produces: `CatalogQuota { adapter, url, auth, timeout_secs }` 和 `QuotaAdapterKind`
 
 目录示例：
 
@@ -280,7 +275,6 @@ adapter = "glm_coding_plan"
 url = "https://open.bigmodel.cn/api/monitor/usage/quota/limit"
 auth = "raw"
 timeout_secs = 8
-requires = ["plan_type"]
 ```
 
 - [ ] **Step 1: 写目录校验失败测试**
@@ -394,18 +388,18 @@ Expected: 6 个适配器全部通过。
 
 - [ ] **Step 3: 实现并发取数**
 
-用 `futures::future::join_all`；每家 4 秒超时；整体 6 秒预算；超预算的供应商返回缓存或 `stale`。
+用 `futures::future::join_all`；每家 4 秒超时；超时的供应商返回错误或上次成功读数。
 
 - [ ] **Step 4: 实现缓存键**
 
-键包含 `provider_id`、`adapter`、`url`、API Key 摘要、`requires` 上下文摘要。成功缓存 60 秒，错误缓存 15 秒。
+键包含 `provider_id`、供应商地址、额度地址和 API Key 摘要。成功缓存 60 秒，错误缓存 15 秒。
 
 - [ ] **Step 5: 实现错误分级**
 
 - 401/403：`Unauthorized`
 - 超时、连接失败、5xx：`Unreachable`
 - JSON 或字段不符：`InvalidResponse`
-- 缺 `requires`：`Unconfigured`
+- 无法读取供应商密钥：`Unconfigured`
 - 没有目录声明：`Unsupported`
 
 - [ ] **Step 6: 运行额度服务测试**
