@@ -95,5 +95,9 @@ pub(super) async fn create_image_generation(
         &provider_id,
     )
     .await;
-    Ok(hold_reservation(response, reservation))
+    Ok(hold_reservation(
+        response,
+        reservation,
+        state.recording.is_some(),
+    ))
 }

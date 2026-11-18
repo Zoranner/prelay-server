@@ -61,7 +61,12 @@ where
 }
 
 /// 把预留绑定到响应体生命周期，流式响应结束或断开后才释放。
-pub(crate) fn hold_reservation(response: Response, guard: ReservationGuard) -> Response {
+pub(crate) fn hold_reservation(
+    response: Response,
+    mut guard: ReservationGuard,
+    settle_pending: bool,
+) -> Response {
+    guard.set_settle_on_drop(settle_pending && response.status().is_success());
     let (parts, body) = response.into_parts();
     let body = Body::from_stream(body.into_data_stream().map(move |chunk| {
         let _held = &guard;
@@ -249,6 +254,7 @@ mod tests {
                 Result<bytes::Bytes, std::convert::Infallible>,
             >())),
             guard,
+            false,
         );
         assert_eq!(reservations.held_total("provider", "identity"), 100);
         drop(response);

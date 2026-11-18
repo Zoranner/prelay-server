@@ -10,7 +10,7 @@ pub(crate) use reservation::{estimate_tokens, QuotaReservations, ReservationGuar
 
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{atomic::AtomicU64, Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -73,6 +73,15 @@ impl QuotaService {
         }
     }
 
+    pub(crate) fn track_recording_sequences(
+        &mut self,
+        durable_sequence: Arc<AtomicU64>,
+        applied_sequence: Arc<AtomicU64>,
+    ) {
+        self.reservations
+            .track_sequences(durable_sequence, applied_sequence);
+    }
+
     pub async fn list_for_identity(
         &self,
         storage: &Storage,
@@ -88,7 +97,7 @@ impl QuotaService {
                     let (mode, quota) = if visible.can_manage {
                         (
                             ProviderQuotaMode::Own,
-                            self.external_with_timeout(
+                            self.external_quota(
                                 storage,
                                 &visible.owner_identity_id,
                                 &visible.provider,
@@ -108,7 +117,7 @@ impl QuotaService {
                                                 "stored share quota is invalid: {error}"
                                             ))
                                         })?;
-                                    let windows = storage
+                                    let mut windows = storage
                                         .shared_quota_windows(
                                             &visible.provider.id,
                                             &identity_id,
@@ -117,6 +126,11 @@ impl QuotaService {
                                             now,
                                         )
                                         .await?;
+                                    self.reservations.apply_pending(
+                                        &visible.provider.id,
+                                        &identity_id,
+                                        &mut windows,
+                                    );
                                     (
                                         ProviderQuotaMode::SharedLimited,
                                         ProviderQuota {
@@ -131,7 +145,7 @@ impl QuotaService {
                                 }
                                 None => (
                                     ProviderQuotaMode::SharedUnlimited,
-                                    self.external_with_timeout(
+                                    self.external_quota(
                                         storage,
                                         &visible.owner_identity_id,
                                         &visible.provider,
@@ -141,7 +155,7 @@ impl QuotaService {
                             },
                             None => (
                                 ProviderQuotaMode::SharedUnlimited,
-                                self.external_with_timeout(
+                                self.external_quota(
                                     storage,
                                     &visible.owner_identity_id,
                                     &visible.provider,
@@ -180,23 +194,6 @@ impl QuotaService {
             .await
     }
 
-    async fn external_with_timeout(
-        &self,
-        storage: &Storage,
-        owner_identity_id: &str,
-        provider: &identity_provider_configs::Model,
-    ) -> ProviderQuota {
-        match tokio::time::timeout(
-            PROVIDER_TIMEOUT,
-            self.external_quota(storage, owner_identity_id, provider),
-        )
-        .await
-        {
-            Ok(quota) => quota,
-            Err(_) => quota_with_error(QuotaErrorCode::Unreachable, "额度查询超时"),
-        }
-    }
-
     async fn external_quota(
         &self,
         storage: &Storage,
@@ -231,25 +228,32 @@ impl QuotaService {
         if let Some(cached) = self.cached(&key) {
             return cached;
         }
-        let result = match quota.adapter {
-            QuotaAdapterKind::DeepSeekBalance => {
-                deepseek::fetch(&self.client, &provider.base_url, quota, api_key).await
+        let result = tokio::time::timeout(PROVIDER_TIMEOUT, async {
+            match quota.adapter {
+                QuotaAdapterKind::DeepSeekBalance => {
+                    deepseek::fetch(&self.client, &provider.base_url, quota, api_key).await
+                }
+                QuotaAdapterKind::MiniMaxPlan => {
+                    minimax::fetch(&self.client, &provider.base_url, quota, api_key).await
+                }
+                QuotaAdapterKind::GlmCodingPlan => {
+                    glm::fetch(&self.client, &provider.base_url, quota, api_key).await
+                }
+                QuotaAdapterKind::KimiCodeUsages => {
+                    kimi::fetch(&self.client, &provider.base_url, quota, api_key).await
+                }
+                QuotaAdapterKind::CommandCodeCredits => {
+                    commandcode::fetch(&self.client, &provider.base_url, quota, api_key).await
+                }
+                QuotaAdapterKind::OpenCodeGoUsage => {
+                    opencode::fetch(&self.client, &provider.base_url, quota, api_key).await
+                }
             }
-            QuotaAdapterKind::MiniMaxPlan => {
-                minimax::fetch(&self.client, &provider.base_url, quota, api_key).await
-            }
-            QuotaAdapterKind::GlmCodingPlan => {
-                glm::fetch(&self.client, &provider.base_url, quota, api_key).await
-            }
-            QuotaAdapterKind::KimiCodeUsages => {
-                kimi::fetch(&self.client, &provider.base_url, quota, api_key).await
-            }
-            QuotaAdapterKind::CommandCodeCredits => {
-                commandcode::fetch(&self.client, &provider.base_url, quota, api_key).await
-            }
-            QuotaAdapterKind::OpenCodeGoUsage => {
-                opencode::fetch(&self.client, &provider.base_url, quota, api_key).await
-            }
+        })
+        .await;
+        let result = match result {
+            Ok(result) => result,
+            Err(_) => Err(quota_error(QuotaErrorCode::Unreachable, "额度查询超时")),
         };
         let mut quota = match result {
             Ok(quota) => quota,

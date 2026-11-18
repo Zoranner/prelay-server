@@ -126,7 +126,10 @@ pub async fn serve() -> anyhow::Result<()> {
     spawn_client_update_refresh(client_update.clone());
     let extensions = ExtensionCatalog::from_environment(client.clone())?;
     extensions.warm();
-    let quota = crate::service::quota::QuotaService::new(client.clone(), provider_catalog.clone());
+    let (durable_sequence, applied_sequence) = recording.sequence_handles();
+    let mut quota =
+        crate::service::quota::QuotaService::new(client.clone(), provider_catalog.clone());
+    quota.track_recording_sequences(durable_sequence, applied_sequence);
 
     let recording_for_shutdown = recording.clone();
     let state = AppState {

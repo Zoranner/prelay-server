@@ -1,7 +1,7 @@
 use std::{
     sync::{
         atomic::{AtomicU64, AtomicU8, Ordering},
-        Mutex, RwLock,
+        Arc, Mutex, RwLock,
     },
     time::{Duration, Instant},
 };
@@ -49,8 +49,8 @@ pub(crate) struct RecordingHealthSnapshot {
 pub(super) struct RuntimeHealth {
     pub(super) status: AtomicU8,
     pub(super) reason: RwLock<Option<String>>,
-    pub(super) last_applied_sequence: AtomicU64,
-    pub(super) durable_sequence: AtomicU64,
+    pub(super) last_applied_sequence: Arc<AtomicU64>,
+    pub(super) durable_sequence: Arc<AtomicU64>,
     pub(super) committed_data_sequence: AtomicU64,
     pub(super) journal_bytes: AtomicU64,
     pub(super) pending_since: Mutex<Option<Instant>>,
@@ -61,8 +61,8 @@ impl RuntimeHealth {
         Self {
             status: AtomicU8::new(RecordingHealthStatus::Ready.as_u8()),
             reason: RwLock::new(None),
-            last_applied_sequence: AtomicU64::new(0),
-            durable_sequence: AtomicU64::new(0),
+            last_applied_sequence: Arc::new(AtomicU64::new(0)),
+            durable_sequence: Arc::new(AtomicU64::new(0)),
             committed_data_sequence: AtomicU64::new(0),
             journal_bytes: AtomicU64::new(0),
             pending_since: Mutex::new(None),

@@ -1,7 +1,10 @@
 use std::{
     path::{Path, PathBuf},
-    sync::{atomic::Ordering, Arc, Mutex},
-    time::Duration,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
+    time::{Duration, Instant},
 };
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -19,6 +22,7 @@ use crate::store::{
 
 const RESPONSE_STATE_CACHE_MAX_ENTRIES: usize = 10_000;
 const MATERIALIZER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+const JOURNAL_BYTES_REFRESH: Duration = Duration::from_secs(1);
 
 mod config;
 mod error;
@@ -126,6 +130,7 @@ impl RecordingRuntime {
         let materialize_lag_slo = Duration::from_secs(config.materialize_lag_slo_seconds);
         let task = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
+            let mut last_bytes_refresh = Instant::now();
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             tokio::select! {
                 _ = &mut start_rx => {}
@@ -141,10 +146,21 @@ impl RecordingRuntime {
                                     materializer.last_applied_sequence(),
                                     materialize_lag_slo,
                                 );
-                                task_health.journal_bytes.store(
-                                    directory_bytes(&task_journal_dir).unwrap_or_default(),
-                                    Ordering::Release,
-                                );
+                                if last_bytes_refresh.elapsed() >= JOURNAL_BYTES_REFRESH {
+                                    let path = task_journal_dir.clone();
+                                    let bytes = match tokio::task::spawn_blocking(move || {
+                                        directory_bytes(&path)
+                                    })
+                                    .await
+                                    {
+                                        Ok(Ok(bytes)) => bytes,
+                                        _ => 0,
+                                    };
+                                    task_health
+                                        .journal_bytes
+                                        .store(bytes, Ordering::Release);
+                                    last_bytes_refresh = Instant::now();
+                                }
                             }
                             Err(error) => {
                                 if error.is_blocking() {
@@ -303,6 +319,13 @@ impl RecordingRuntime {
             pending_response_states: self.inner.pending_response_states.len(),
             materialize_lag_slo_seconds: self.inner.materialize_lag_slo_seconds,
         }
+    }
+
+    pub(crate) fn sequence_handles(&self) -> (Arc<AtomicU64>, Arc<AtomicU64>) {
+        (
+            Arc::clone(&self.inner.health.durable_sequence),
+            Arc::clone(&self.inner.health.last_applied_sequence),
+        )
     }
 
     pub(crate) fn start_materialization(&self) {
