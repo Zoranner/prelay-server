@@ -62,7 +62,7 @@ pub(super) async fn record_image_activity(
     request_events: Vec<ContentDraft>,
     response_events: Vec<ContentDraft>,
 ) -> Result<(), StorageError> {
-    record_completed_turn(
+    let result = record_completed_turn(
         state,
         CompletedTurnRecord {
             identity_id: access.identity_id.clone(),
@@ -75,5 +75,15 @@ pub(super) async fn record_image_activity(
             finished_at: chrono::Utc::now(),
         },
     )
-    .await
+    .await;
+    if let Err(error) = &result {
+        if state.recording.is_some() {
+            return result;
+        }
+        tracing::warn!(
+            error_code = error.code().as_str(),
+            "failed to record image activity; keeping the image response"
+        );
+    }
+    Ok(())
 }
