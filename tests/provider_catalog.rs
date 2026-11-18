@@ -6,7 +6,9 @@ use std::{
 };
 
 use prelay_protocol::ProviderProtocol;
-use prelay_server::domain::catalog::{CatalogRequestHeaderValue, ProviderCatalog};
+use prelay_server::domain::catalog::{
+    CatalogRequestHeaderValue, ProviderCatalog, QuotaAdapterKind, QuotaAuth,
+};
 
 #[path = "provider_catalog/headers.rs"]
 mod headers;
@@ -73,6 +75,86 @@ fn deployment_catalog_excludes_retired_qwen_token_plan_provider() {
         ProviderCatalog::load(Path::new("config/catalog")).expect("load deployment catalog");
 
     assert!(catalog.provider("qwen_token_plan").is_none());
+}
+
+#[test]
+fn deployment_catalog_declares_quota_adapters() {
+    let catalog =
+        ProviderCatalog::load(Path::new("config/catalog")).expect("load deployment catalog");
+
+    for (provider_id, adapter) in [
+        ("deepseek", QuotaAdapterKind::DeepSeekBalance),
+        ("bigmodel_coding_plan", QuotaAdapterKind::GlmCodingPlan),
+        ("kimi", QuotaAdapterKind::KimiCodeUsages),
+        ("minimax", QuotaAdapterKind::MiniMaxPlan),
+        ("commandcode", QuotaAdapterKind::CommandCodeCredits),
+        ("opencode_go", QuotaAdapterKind::OpenCodeGoUsage),
+    ] {
+        let provider = catalog.provider(provider_id).expect("provider");
+        assert_eq!(
+            provider.quota.as_ref().map(|quota| quota.adapter),
+            Some(adapter),
+            "{provider_id} quota adapter"
+        );
+    }
+    assert!(catalog
+        .provider("gotoken")
+        .expect("gotoken provider")
+        .quota
+        .is_none());
+}
+
+#[test]
+fn rejects_an_unknown_quota_adapter() {
+    let directory = write_catalog(
+        "",
+        "",
+        r#"
+[[providers]]
+id = "test"
+name = "Test"
+auth_scheme = "bearer"
+base_url = "https://example.test/v1"
+protocols = ["chat_completions"]
+
+[providers.quota]
+adapter = "unknown"
+url = "https://example.test/quota"
+"#,
+    );
+
+    let error = ProviderCatalog::load(&directory).expect_err("unknown adapter is rejected");
+    assert!(error.to_string().contains("额度适配器"));
+}
+
+#[test]
+fn loads_a_raw_quota_declaration() {
+    let directory = write_catalog(
+        "",
+        "",
+        r#"
+[[providers]]
+id = "test"
+name = "Test"
+auth_scheme = "bearer"
+base_url = "https://example.test/v1"
+protocols = ["chat_completions"]
+
+[providers.quota]
+adapter = "glm_coding_plan"
+url = "https://example.test/quota"
+auth = "raw"
+timeout_secs = 6
+"#,
+    );
+
+    let catalog = ProviderCatalog::load(&directory).expect("load raw quota");
+    let quota = catalog
+        .provider("test")
+        .and_then(|provider| provider.quota.as_ref())
+        .expect("quota");
+    assert_eq!(quota.auth, QuotaAuth::Raw);
+    assert_eq!(quota.timeout_secs, 6);
 }
 
 #[test]

@@ -3,9 +3,10 @@ use std::collections::{BTreeMap, HashSet};
 use axum::http::header::{HeaderName, HeaderValue, AUTHORIZATION, PROXY_AUTHORIZATION};
 
 use super::{
-    CatalogRequestHeader, CatalogRequestHeaderValue, ProviderCatalogError, ProviderProtocol,
-    RawImageGenerationModel, RawLanguageModel, RawProvider, RawRequestHeaderValue,
-    INPUT_MODALITIES, OUTPUT_MODALITIES, REASONING_EFFORTS,
+    CatalogQuota, CatalogRequestHeader, CatalogRequestHeaderValue, ProviderCatalogError,
+    ProviderProtocol, QuotaAdapterKind, QuotaAuth, RawImageGenerationModel, RawLanguageModel,
+    RawProvider, RawProviderQuota, RawRequestHeaderValue, INPUT_MODALITIES, OUTPUT_MODALITIES,
+    REASONING_EFFORTS,
 };
 
 pub(super) fn validate_language_model(
@@ -330,6 +331,53 @@ pub(super) fn validate_proxy_url(
         )));
     }
     Ok(Some(value.to_string()))
+}
+
+pub(super) fn validate_provider_quota(
+    provider_id: &str,
+    quota: Option<&RawProviderQuota>,
+) -> Result<Option<CatalogQuota>, ProviderCatalogError> {
+    let Some(quota) = quota else {
+        return Ok(None);
+    };
+    let adapter_name = quota.adapter.trim();
+    let adapter = QuotaAdapterKind::parse(adapter_name).ok_or_else(|| {
+        ProviderCatalogError(format!(
+            "供应商 {provider_id} 的额度适配器 {adapter_name} 未知"
+        ))
+    })?;
+    let url = quota.url.trim();
+    if url.is_empty() {
+        return Err(ProviderCatalogError(format!(
+            "供应商 {provider_id} 的额度地址不能为空"
+        )));
+    }
+    if !url.starts_with("https://") && !url.starts_with("http://") && !url.starts_with('/') {
+        return Err(ProviderCatalogError(format!(
+            "供应商 {provider_id} 的额度地址必须是绝对地址或以 / 开头"
+        )));
+    }
+    let auth = match quota.auth.trim() {
+        "bearer" => QuotaAuth::Bearer,
+        "raw" => QuotaAuth::Raw,
+        other => {
+            return Err(ProviderCatalogError(format!(
+                "供应商 {provider_id} 的额度鉴权方式 {other} 不支持"
+            )))
+        }
+    };
+    let timeout_secs = quota.timeout_secs.unwrap_or(8);
+    if timeout_secs == 0 || timeout_secs > 30 {
+        return Err(ProviderCatalogError(format!(
+            "供应商 {provider_id} 的额度超时必须在 1 到 30 秒之间"
+        )));
+    }
+    Ok(Some(CatalogQuota {
+        adapter,
+        url: url.to_string(),
+        auth,
+        timeout_secs,
+    }))
 }
 
 fn protocol_key(protocol: ProviderProtocol) -> &'static str {

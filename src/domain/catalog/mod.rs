@@ -96,6 +96,46 @@ pub struct CatalogProvider {
     pub upstream_model_names: BTreeMap<String, String>,
     /// 访问该供应商上游时使用的代理地址；缺省表示直连。
     pub proxy_url: Option<String>,
+    /// 额度查询的声明；缺省表示未接入额度。
+    pub quota: Option<CatalogQuota>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogQuota {
+    pub adapter: QuotaAdapterKind,
+    pub url: String,
+    pub auth: QuotaAuth,
+    pub timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuotaAdapterKind {
+    DeepSeekBalance,
+    GlmCodingPlan,
+    KimiCodeUsages,
+    MiniMaxPlan,
+    CommandCodeCredits,
+    OpenCodeGoUsage,
+}
+
+impl QuotaAdapterKind {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "deepseek_balance" => Some(Self::DeepSeekBalance),
+            "glm_coding_plan" => Some(Self::GlmCodingPlan),
+            "kimi_code_usages" => Some(Self::KimiCodeUsages),
+            "minimax_plan" => Some(Self::MiniMaxPlan),
+            "commandcode_credits" => Some(Self::CommandCodeCredits),
+            "opencode_go_usage" => Some(Self::OpenCodeGoUsage),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuotaAuth {
+    Bearer,
+    Raw,
 }
 
 /// 目录声明的上游请求头；值只允许非敏感静态值或当前请求的会话 ID。
@@ -191,6 +231,23 @@ pub(super) struct RawProvider {
     pub(super) upstream_model_names: BTreeMap<String, String>,
     #[serde(default)]
     pub(super) proxy_url: Option<String>,
+    #[serde(default)]
+    pub(super) quota: Option<RawProviderQuota>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawProviderQuota {
+    pub(super) adapter: String,
+    pub(super) url: String,
+    #[serde(default = "default_quota_auth")]
+    pub(super) auth: String,
+    #[serde(default)]
+    pub(super) timeout_secs: Option<u64>,
+}
+
+fn default_quota_auth() -> String {
+    "bearer".to_string()
 }
 
 #[derive(Debug, Deserialize)]

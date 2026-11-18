@@ -35,6 +35,12 @@ language_models = [
   "deepseek-flash",
 ]
 
+[providers.quota]
+adapter = "deepseek_balance"
+url = "https://api.deepseek.com/user/balance"
+auth = "bearer"
+timeout_secs = 8
+
 [[providers]]
 id = "bigmodel_coding_plan"
 name = "GLM Coding Plan"
@@ -42,6 +48,12 @@ auth_scheme = "bearer"
 base_url = "https://open.bigmodel.cn/api/v1"
 protocols = ["chat_completions", "responses"]
 language_models = ["glm-5.3", "glm-5.3-flash"]
+
+[providers.quota]
+adapter = "glm_coding_plan"
+url = "https://open.bigmodel.cn/api/monitor/usage/quota/limit"
+auth = "raw"
+timeout_secs = 8
 
 [[providers]]
 id = "kimi"
@@ -53,6 +65,12 @@ language_models = [
   "k3",
 ]
 
+[providers.quota]
+adapter = "kimi_code_usages"
+url = "https://api.kimi.com/coding/v1/usages"
+auth = "bearer"
+timeout_secs = 8
+
 [[providers]]
 id = "minimax"
 name = "MiniMax Token Plan"
@@ -60,6 +78,12 @@ auth_scheme = "bearer"
 base_url = "https://api.minimax.cn/v1"
 protocols = ["chat_completions", "responses"]
 language_models = ["MiniMax-M3"]
+
+[providers.quota]
+adapter = "minimax_plan"
+url = "https://www.minimax.cn/v1/token_plan/remains"
+auth = "bearer"
+timeout_secs = 8
 
 [[providers]]
 id = "commandcode"
@@ -81,6 +105,12 @@ language_models = [
   "glm-5.3-flash",
   "MiniMax-M3",
 ]
+
+[providers.quota]
+adapter = "commandcode_credits"
+url = "https://api.commandcode.ai/alpha/billing/credits"
+auth = "bearer"
+timeout_secs = 8
 
 [providers.upstream_model_names]
 deepseek-flash = "deepseek/deepseek-v4.1-flash"
@@ -109,6 +139,12 @@ language_models = [
   "glm-5.3-flash",
   "MiniMax-M3",
 ]
+
+[providers.quota]
+adapter = "opencode_go_usage"
+url = "https://opencode.ai/zen/go/v1/usage"
+auth = "bearer"
+timeout_secs = 8
 
 # 通用上游请求头：literal 为静态值，source = "session_id" 使用当前会话 ID。
 [providers.request_headers]

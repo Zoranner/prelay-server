@@ -180,6 +180,7 @@ pub(super) fn load_providers(
         )?;
         let upstream_model_names = validation::validate_upstream_model_names(&id, &provider)?;
         let proxy_url = validation::validate_proxy_url(&id, provider.proxy_url.as_deref())?;
+        let quota = validation::validate_provider_quota(&id, provider.quota.as_ref())?;
         if !provider.image_generation_models.is_empty()
             && !provider
                 .protocols
@@ -206,6 +207,7 @@ pub(super) fn load_providers(
                 image_generation_models: provider.image_generation_models,
                 upstream_model_names,
                 proxy_url,
+                quota,
             },
         );
     }

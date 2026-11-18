@@ -200,7 +200,6 @@ impl Storage {
             .all(&self.db)
             .await?;
         let mut resolved = Vec::with_capacity(models.len());
-        let mut shared_quota = HashMap::new();
         for model in models {
             let provider = provider_configs::Entity::find_by_id(&model.provider_id)
                 .one(&self.db)
@@ -209,19 +208,6 @@ impl Storage {
                 continue;
             };
             if !can_use_provider_on(&self.db, &access.identity_id, &model.provider_id).await? {
-                continue;
-            }
-            let quota_available = match shared_quota.get(&model.provider_id) {
-                Some(available) => *available,
-                None => {
-                    let available = self
-                        .shared_quota_available(&access.identity_id, &model.provider_id)
-                        .await?;
-                    shared_quota.insert(model.provider_id.clone(), available);
-                    available
-                }
-            };
-            if !quota_available {
                 continue;
             }
             resolved.push(ProtocolModel {

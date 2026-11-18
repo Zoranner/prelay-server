@@ -102,8 +102,9 @@ pub async fn test_state() -> AppState {
             std::env::temp_dir().join(format!("prelay-rollout-test-{}", uuid::Uuid::new_v4())),
         ),
     );
+    let provider_catalog = std::sync::Arc::new(fixture_catalog());
     AppState {
-        provider_catalog: std::sync::Arc::new(fixture_catalog()),
+        provider_catalog: provider_catalog.clone(),
         storage,
         activity_store,
         client: reqwest::Client::new(),
@@ -111,7 +112,7 @@ pub async fn test_state() -> AppState {
         client_update: ClientUpdateCache::unavailable(reqwest::Client::new()),
         extensions: ExtensionCatalog::unavailable(reqwest::Client::new()),
         failover: Default::default(),
-        quota: crate::service::quota::QuotaService::new(reqwest::Client::new()),
+        quota: crate::service::quota::QuotaService::new(reqwest::Client::new(), provider_catalog),
     }
 }
 

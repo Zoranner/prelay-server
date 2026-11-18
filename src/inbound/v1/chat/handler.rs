@@ -8,7 +8,8 @@ use serde_json::Value;
 use crate::{
     error::AppError,
     inbound::v1::{
-        auth::CurrentProtocolAccess, candidates::run_endpoint_model_candidates,
+        auth::CurrentProtocolAccess,
+        candidates::{hold_reservation, run_endpoint_model_candidates},
         endpoint_resolver::resolve_language_model_candidates,
     },
     AppState,
@@ -45,10 +46,25 @@ pub(super) async fn create_chat_completion(
     };
     let candidates =
         resolve_language_model_candidates(&state, &access, &model, "chat_completions").await?;
-    let (response, provider_id) = run_endpoint_model_candidates(
+    let estimated_tokens = crate::service::quota::estimate_tokens(&payload);
+    let quota = state.quota.clone();
+    let storage = state.storage.clone();
+    let identity_id = access.identity_id.clone();
+    let (response, provider_id, reservation) = run_endpoint_model_candidates(
         candidates,
         &state.failover,
         AppError::BadRequest(format!("接入点未配置模型 {model}")),
+        move |resolved| {
+            let quota = quota.clone();
+            let storage = storage.clone();
+            let identity_id = identity_id.clone();
+            let provider_id = resolved.provider.id.clone();
+            async move {
+                quota
+                    .reserve(&storage, &provider_id, &identity_id, estimated_tokens)
+                    .await
+            }
+        },
         |resolved| {
             create_chat_completion_with_candidate(
                 &state,
@@ -78,5 +94,5 @@ pub(super) async fn create_chat_completion(
             "failed to remember active endpoint model provider"
         );
     }
-    Ok(response)
+    Ok(hold_reservation(response, reservation))
 }

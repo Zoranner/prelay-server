@@ -1,64 +1,103 @@
 use std::time::Duration;
 
-use prelay_protocol::{ProviderQuota, QuotaBalanceResponse};
+use crate::domain::catalog::{CatalogQuota, QuotaAuth};
+use prelay_protocol::{ProviderQuota, QuotaBalance, QuotaBalancePart, QuotaError, QuotaErrorCode};
 use serde::Deserialize;
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
+use super::{quota_error, resolve_quota_url};
 
 pub(super) async fn fetch(
     client: &reqwest::Client,
     base_url: &str,
+    quota: &CatalogQuota,
     api_key: &str,
-) -> Result<ProviderQuota, String> {
-    let url = balance_url(base_url);
-    let response = client
-        .get(url)
-        .bearer_auth(api_key)
-        .timeout(REQUEST_TIMEOUT)
+) -> Result<ProviderQuota, QuotaError> {
+    let url = resolve_quota_url(base_url, &quota.url);
+    let request = match quota.auth {
+        QuotaAuth::Bearer => client.get(&url).bearer_auth(api_key),
+        QuotaAuth::Raw => client
+            .get(&url)
+            .header(reqwest::header::AUTHORIZATION, api_key),
+    };
+    let response = request
+        .timeout(Duration::from_secs(quota.timeout_secs))
         .send()
         .await
-        .map_err(|_| "DeepSeek 余额接口请求失败".to_string())?;
+        .map_err(|_| quota_error(QuotaErrorCode::Unreachable, "DeepSeek 余额接口请求失败"))?;
     if !response.status().is_success() {
-        return Err(format!(
-            "DeepSeek 余额接口返回 HTTP {}",
-            response.status().as_u16()
-        ));
+        return Err(http_error(response.status()));
     }
-    let body = response
-        .text()
-        .await
-        .map_err(|error| format!("DeepSeek 余额响应无法解析: {error}"))?;
+    let body = response.text().await.map_err(|error| {
+        quota_error(
+            QuotaErrorCode::InvalidResponse,
+            format!("DeepSeek 余额响应无法解析: {error}"),
+        )
+    })?;
     parse_balance(&body)
 }
 
-fn parse_balance(body: &str) -> Result<ProviderQuota, String> {
-    let body = serde_json::from_str::<BalanceResponse>(body)
-        .map_err(|error| format!("DeepSeek 余额响应无法解析: {error}"))?;
-    let balance = body
-        .balance_infos
+fn parse_balance(body: &str) -> Result<ProviderQuota, QuotaError> {
+    let body = serde_json::from_str::<BalanceResponse>(body).map_err(|error| {
+        quota_error(
+            QuotaErrorCode::InvalidResponse,
+            format!("DeepSeek 余额响应无法解析: {error}"),
+        )
+    })?;
+    if body.balance_infos.is_empty() {
+        return Err(quota_error(
+            QuotaErrorCode::InvalidResponse,
+            "DeepSeek 余额响应没有币种信息",
+        ));
+    }
+    let mut infos = body.balance_infos;
+    infos.sort_by_key(|info| match info.currency.as_str() {
+        "CNY" => 0,
+        "USD" => 1,
+        _ => 2,
+    });
+    let parts = infos
         .iter()
-        .find(|balance| balance.currency == "CNY")
-        .or_else(|| {
-            body.balance_infos
-                .iter()
-                .find(|balance| balance.currency == "USD")
+        .map(|info| QuotaBalancePart {
+            currency: info.currency.clone(),
+            amount: info.total_balance.clone(),
         })
-        .or_else(|| body.balance_infos.first())
-        .ok_or_else(|| "DeepSeek 余额响应没有币种信息".to_string())?;
-    Ok(ProviderQuota::Balance(QuotaBalanceResponse {
-        available: body.is_available,
-        amount: balance.total_balance.clone(),
-        currency: balance.currency.clone(),
-    }))
+        .collect::<Vec<_>>();
+    let text = infos
+        .iter()
+        .map(|info| format!("{}{}", symbol(&info.currency), info.total_balance))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    Ok(ProviderQuota {
+        plan: None,
+        windows: Vec::new(),
+        balance: Some(QuotaBalance {
+            text,
+            parts,
+            available: body.is_available,
+        }),
+        error: None,
+        read_at: None,
+        stale: false,
+    })
 }
 
-fn balance_url(base_url: &str) -> String {
-    let base = base_url.trim().trim_end_matches('/');
-    let base = base.strip_suffix("/v1").unwrap_or(base);
-    if base.is_empty() {
-        "https://api.deepseek.com/user/balance".to_string()
-    } else {
-        format!("{base}/user/balance")
+fn http_error(status: reqwest::StatusCode) -> QuotaError {
+    let code = match status.as_u16() {
+        401 | 403 => QuotaErrorCode::Unauthorized,
+        500..=599 => QuotaErrorCode::Unreachable,
+        _ => QuotaErrorCode::InvalidResponse,
+    };
+    quota_error(
+        code,
+        format!("DeepSeek 余额接口返回 HTTP {}", status.as_u16()),
+    )
+}
+
+fn symbol(currency: &str) -> &str {
+    match currency {
+        "CNY" => "¥",
+        "USD" => "$",
+        _ => "",
     }
 }
 
@@ -77,16 +116,20 @@ struct BalanceInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::{balance_url, parse_balance};
+    use super::parse_balance;
+    use crate::service::quota::resolve_quota_url;
 
     #[test]
-    fn strips_the_v1_suffix() {
+    fn resolves_a_relative_quota_url() {
         assert_eq!(
-            balance_url("https://api.deepseek.com/v1"),
+            resolve_quota_url("https://api.deepseek.com/v1", "/user/balance"),
             "https://api.deepseek.com/user/balance"
         );
         assert_eq!(
-            balance_url("https://api.deepseek.com"),
+            resolve_quota_url(
+                "https://api.deepseek.com/v1",
+                "https://api.deepseek.com/user/balance"
+            ),
             "https://api.deepseek.com/user/balance"
         );
     }
@@ -103,13 +146,23 @@ mod tests {
             }"#,
         )
         .expect("balance parses");
+        let balance = quota.balance.expect("balance");
+        assert!(quota.windows.is_empty());
+        assert_eq!(quota.error, None);
+        assert!(balance.available);
+        assert_eq!(balance.text, "¥110.00 · $1.00");
         assert_eq!(
-            quota,
-            prelay_protocol::ProviderQuota::Balance(prelay_protocol::QuotaBalanceResponse {
-                available: true,
-                amount: "110.00".to_string(),
-                currency: "CNY".to_string(),
-            })
+            balance.parts,
+            vec![
+                prelay_protocol::QuotaBalancePart {
+                    currency: "CNY".to_string(),
+                    amount: "110.00".to_string(),
+                },
+                prelay_protocol::QuotaBalancePart {
+                    currency: "USD".to_string(),
+                    amount: "1.00".to_string(),
+                },
+            ]
         );
     }
 }

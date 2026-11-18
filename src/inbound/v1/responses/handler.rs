@@ -11,7 +11,8 @@ use crate::{
     codec::{bridge::responses::decode::decode_responses_request, internal::InternalRequest},
     error::AppError,
     inbound::v1::{
-        auth::CurrentProtocolAccess, candidates::run_endpoint_model_candidates,
+        auth::CurrentProtocolAccess,
+        candidates::{hold_reservation, run_endpoint_model_candidates},
         endpoint_resolver::resolve_language_model_candidates,
     },
     store::storage::ResponseState,
@@ -61,10 +62,25 @@ pub(super) async fn create_response(
         .unwrap_or_else(|| format!("conv_{}", uuid::Uuid::new_v4().simple()));
     let candidates =
         resolve_language_model_candidates(&state, &access, &request.model, "responses").await?;
-    let (response, provider_id) = run_endpoint_model_candidates(
+    let estimated_tokens = crate::service::quota::estimate_tokens(payload.as_ref());
+    let quota = state.quota.clone();
+    let storage = state.storage.clone();
+    let identity_id = access.identity_id.clone();
+    let (response, provider_id, reservation) = run_endpoint_model_candidates(
         candidates,
         &state.failover,
         AppError::BadRequest(format!("接入点未配置模型 {model_requested}")),
+        move |resolved| {
+            let quota = quota.clone();
+            let storage = storage.clone();
+            let identity_id = identity_id.clone();
+            let provider_id = resolved.provider.id.clone();
+            async move {
+                quota
+                    .reserve(&storage, &provider_id, &identity_id, estimated_tokens)
+                    .await
+            }
+        },
         |resolved| {
             create_response_with_candidate(
                 &state,
@@ -103,5 +119,5 @@ pub(super) async fn create_response(
             "failed to remember active endpoint model provider"
         );
     }
-    Ok(response)
+    Ok(hold_reservation(response, reservation))
 }

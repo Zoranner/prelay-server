@@ -63,8 +63,9 @@ async fn test_state_with_connection() -> (AppState, DatabaseConnection) {
             std::env::temp_dir().join(format!("prelay-rollout-test-{}", uuid::Uuid::new_v4())),
         ),
     );
+    let provider_catalog = std::sync::Arc::new(crate::test_support::fixture_catalog());
     let state = AppState {
-        provider_catalog: std::sync::Arc::new(crate::test_support::fixture_catalog()),
+        provider_catalog: provider_catalog.clone(),
         storage,
         activity_store,
         client: reqwest::Client::new(),
@@ -76,7 +77,7 @@ async fn test_state_with_connection() -> (AppState, DatabaseConnection) {
             reqwest::Client::new(),
         ),
         failover: Default::default(),
-        quota: crate::service::quota::QuotaService::new(reqwest::Client::new()),
+        quota: crate::service::quota::QuotaService::new(reqwest::Client::new(), provider_catalog),
     };
     (state, connection)
 }

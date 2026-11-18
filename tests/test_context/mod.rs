@@ -27,8 +27,9 @@ pub async fn test_context_with_catalog(provider_catalog: ProviderCatalog) -> Tes
         storage.storage().clone(),
         rollout_store,
     );
+    let provider_catalog = std::sync::Arc::new(provider_catalog);
     let app = app::router(AppState {
-        provider_catalog: std::sync::Arc::new(provider_catalog),
+        provider_catalog: provider_catalog.clone(),
         storage: storage.storage().clone(),
         activity_store: activity_store.clone(),
         client: reqwest::Client::new(),
@@ -36,7 +37,10 @@ pub async fn test_context_with_catalog(provider_catalog: ProviderCatalog) -> Tes
         client_update: ClientUpdateCache::unavailable(reqwest::Client::new()),
         extensions: ExtensionCatalog::unavailable(reqwest::Client::new()),
         failover: Default::default(),
-        quota: prelay_server::service::quota::QuotaService::new(reqwest::Client::new()),
+        quota: prelay_server::service::quota::QuotaService::new(
+            reqwest::Client::new(),
+            provider_catalog,
+        ),
     })
     .await
     .expect("build application router");

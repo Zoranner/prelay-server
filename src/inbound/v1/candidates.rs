@@ -1,19 +1,26 @@
-use std::future::Future;
+use std::{future::Future, time::Duration};
+
+use axum::{body::Body, response::Response};
+use futures::StreamExt;
 
 use crate::{
     error::AppError, inbound::v1::endpoint_resolver::ResolvedEndpointProvider,
     outbound::client::retry_with_policy, service::failover::FailoverRegistry,
+    service::quota::ReservationGuard,
 };
 
-pub(super) async fn run_endpoint_model_candidates<T, F, Fut>(
+pub(super) async fn run_endpoint_model_candidates<T, F, Fut, R, RFut>(
     candidates: Vec<ResolvedEndpointProvider>,
     failover: &FailoverRegistry,
     no_candidate_error: AppError,
+    mut reserve: R,
     mut attempt: F,
-) -> Result<(T, String), AppError>
+) -> Result<(T, String, ReservationGuard), AppError>
 where
     F: FnMut(ResolvedEndpointProvider) -> Fut,
     Fut: Future<Output = Result<T, AppError>>,
+    R: FnMut(&ResolvedEndpointProvider) -> RFut,
+    RFut: Future<Output = Result<ReservationGuard, AppError>>,
 {
     let policy = crate::outbound::client::policy();
     let mut last_upstream_error = None;
@@ -23,22 +30,44 @@ where
         .take(policy.max_candidates.unwrap_or(usize::MAX))
     {
         let provider_id = resolved.provider.id.clone();
+        let guard = match reserve(&resolved).await {
+            Ok(guard) => guard,
+            Err(error) => {
+                failover.rest(&provider_id, Duration::from_secs(30));
+                last_upstream_error = Some(error);
+                continue;
+            }
+        };
         match retry_with_policy(policy, || attempt(resolved.clone())).await {
             Ok(response) => {
                 failover.clear(&provider_id);
-                return Ok((response, provider_id));
+                return Ok((response, provider_id, guard));
             }
             Err(error) if error.is_failoverable_upstream() => {
+                drop(guard);
                 if let Some(base) = crate::service::failover::rest_base(&error) {
                     failover.rest(&provider_id, base);
                 }
                 last_upstream_error = Some(error);
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                drop(guard);
+                return Err(error);
+            }
         }
     }
 
     Err(last_upstream_error.unwrap_or(no_candidate_error))
+}
+
+/// 把预留绑定到响应体生命周期，流式响应结束或断开后才释放。
+pub(crate) fn hold_reservation(response: Response, guard: ReservationGuard) -> Response {
+    let (parts, body) = response.into_parts();
+    let body = Body::from_stream(body.into_data_stream().map(move |chunk| {
+        let _held = &guard;
+        chunk
+    }));
+    Response::from_parts(parts, body)
 }
 
 /// 冷却中的候选排到最后（各自保持原有相对顺序），但不会被丢弃。
@@ -54,11 +83,16 @@ fn order_candidates(
 
 #[cfg(test)]
 mod tests {
-    use super::run_endpoint_model_candidates;
+    use axum::{body::Body, response::Response};
+    use futures::stream;
+
+    use super::{hold_reservation, run_endpoint_model_candidates};
     use crate::{
-        codec::providers::spec::UpstreamProtocol, domain::registry::ProviderConfig,
-        error::AppError, inbound::v1::endpoint_resolver::ResolvedEndpointProvider,
-        service::failover::FailoverRegistry,
+        codec::providers::spec::UpstreamProtocol,
+        domain::registry::ProviderConfig,
+        error::AppError,
+        inbound::v1::endpoint_resolver::ResolvedEndpointProvider,
+        service::{failover::FailoverRegistry, quota::QuotaReservations},
     };
     use axum::http::StatusCode;
     use std::sync::{Arc, Mutex};
@@ -100,6 +134,7 @@ mod tests {
             vec![provider("a"), provider("b")],
             &registry,
             AppError::BadRequest("no candidate".to_string()),
+            |_| async { Ok::<_, AppError>(crate::service::quota::ReservationGuard::none()) },
             move |candidate| {
                 let seen = seen.clone();
                 async move {
@@ -128,6 +163,7 @@ mod tests {
             vec![provider("a"), provider("b")],
             &registry,
             AppError::BadRequest("no candidate".to_string()),
+            |_| async { Ok::<_, AppError>(crate::service::quota::ReservationGuard::none()) },
             |candidate| async move {
                 if candidate.provider.id == "a" {
                     Err(upstream_error(502))
@@ -155,6 +191,7 @@ mod tests {
             vec![provider("a")],
             &registry,
             AppError::BadRequest("no candidate".to_string()),
+            |_| async { Ok::<_, AppError>(crate::service::quota::ReservationGuard::none()) },
             |_candidate| async move { Ok::<_, AppError>("ok") },
         )
         .await;
@@ -172,6 +209,7 @@ mod tests {
             vec![provider("a"), provider("b")],
             &registry,
             AppError::BadRequest("no candidate".to_string()),
+            |_| async { Ok::<_, AppError>(crate::service::quota::ReservationGuard::none()) },
             move |candidate| {
                 let seen = seen.clone();
                 async move {
@@ -184,5 +222,36 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(*tried.lock().expect("tried"), vec!["a"]);
+    }
+
+    #[tokio::test]
+    async fn reservation_is_held_until_the_response_is_dropped() {
+        let reservations = QuotaReservations::default();
+        let windows = vec![prelay_protocol::QuotaWindow {
+            label: "1 天".to_string(),
+            span_secs: Some(24 * 60 * 60),
+            used_percent: 0.0,
+            resets_at: Some("2026-11-18T00:00:00+08:00".to_string()),
+            display: None,
+            amount: Some("1000".to_string()),
+            limit: Some("1000".to_string()),
+            unit: Some("tokens".to_string()),
+            aside: false,
+            pool: None,
+        }];
+        let guard = reservations
+            .reserve_windows("provider", "identity", &windows, 100)
+            .expect("reserve");
+        assert_eq!(reservations.held_total("provider", "identity"), 100);
+
+        let response = hold_reservation(
+            Response::new(Body::from_stream(stream::pending::<
+                Result<bytes::Bytes, std::convert::Infallible>,
+            >())),
+            guard,
+        );
+        assert_eq!(reservations.held_total("provider", "identity"), 100);
+        drop(response);
+        assert_eq!(reservations.held_total("provider", "identity"), 0);
     }
 }

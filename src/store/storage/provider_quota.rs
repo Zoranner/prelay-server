@@ -1,7 +1,7 @@
 use chrono::{
     DateTime, Datelike, Duration, FixedOffset, Months, NaiveDate, TimeZone, Timelike, Utc, Weekday,
 };
-use prelay_protocol::{QuotaWindowKind, QuotaWindowResponse, ShareQuotaWindow};
+use prelay_protocol::{QuotaWindow, ShareQuotaWindow, ShareQuotaWindowKind};
 use sea_orm::{
     ColumnTrait, EntityTrait, ExprTrait, FromQueryResult, QueryFilter, QuerySelect, Select,
 };
@@ -37,14 +37,21 @@ impl Storage {
         share_created_at: &str,
         rules: &[ShareQuotaWindow],
         now: DateTime<Utc>,
-    ) -> Result<Vec<QuotaWindowResponse>, StorageError> {
+    ) -> Result<Vec<QuotaWindow>, StorageError> {
         let share_created_at = DateTime::parse_from_rfc3339(share_created_at)
             .ok()
             .map(|value| value.with_timezone(&Utc));
         let mut windows = Vec::with_capacity(rules.len());
         for rule in rules {
             let (start, end) = share_window_bounds(now, rule)?;
-            let used = used_tokens(&self.db, provider_id, grantee_identity_id, start, end).await?;
+            // 共享关系建立前的活动不属于这次共享，不能计入本期已用。
+            let usage_start = share_created_at
+                .as_ref()
+                .filter(|created_at| **created_at > start)
+                .cloned()
+                .unwrap_or(start);
+            let used =
+                used_tokens(&self.db, provider_id, grantee_identity_id, usage_start, end).await?;
             let mut carry_over = 0;
             if rule.accumulate {
                 let (previous_start, previous_end) = previous_window_bounds(rule, start, end)?;
@@ -63,54 +70,34 @@ impl Storage {
             }
             let limit = rule.limit.saturating_add(carry_over);
             let remaining = std::cmp::Ord::max(limit - used, 0);
-            let remaining_percent = if limit > 0 {
-                remaining as f64 / limit as f64 * 100.0
+            let used_percent = if limit > 0 {
+                (used as f64 / limit as f64 * 100.0).clamp(0.0, 100.0)
             } else {
                 0.0
             };
-            windows.push(QuotaWindowResponse {
-                window: rule.window,
-                accumulate: rule.accumulate,
-                remaining_percent,
-                remaining: Some(remaining),
-                limit: Some(limit),
-                used: Some(used),
-                carry_over: Some(carry_over),
+            windows.push(QuotaWindow {
+                label: match rule.window {
+                    ShareQuotaWindowKind::Day => "1 天",
+                    ShareQuotaWindowKind::Week => "7 天",
+                    ShareQuotaWindowKind::Month => "月",
+                }
+                .to_string(),
+                span_secs: match rule.window {
+                    ShareQuotaWindowKind::Day => Some(24 * 60 * 60),
+                    ShareQuotaWindowKind::Week => Some(7 * 24 * 60 * 60),
+                    ShareQuotaWindowKind::Month => None,
+                },
+                used_percent,
                 resets_at: Some(end.to_rfc3339()),
+                display: Some(format!("{used} / {limit}")),
+                amount: Some(remaining.to_string()),
+                limit: Some(limit.to_string()),
+                unit: Some("tokens".to_string()),
+                aside: false,
+                pool: None,
             });
         }
         Ok(windows)
-    }
-
-    pub(crate) async fn shared_quota_available(
-        &self,
-        grantee_identity_id: &str,
-        provider_id: &str,
-    ) -> Result<bool, StorageError> {
-        let Some(share) = self
-            .provider_share(provider_id, grantee_identity_id)
-            .await?
-        else {
-            return Ok(true);
-        };
-        let Some(json) = share.quota_json.as_deref() else {
-            return Ok(true);
-        };
-        let rules = serde_json::from_str::<Vec<ShareQuotaWindow>>(json).map_err(|error| {
-            StorageError::InvalidProviderSharing(format!("stored share quota is invalid: {error}"))
-        })?;
-        let windows = self
-            .shared_quota_windows(
-                provider_id,
-                grantee_identity_id,
-                &share.created_at,
-                &rules,
-                Utc::now(),
-            )
-            .await?;
-        Ok(windows
-            .iter()
-            .all(|window| window.remaining.unwrap_or_default() > 0))
     }
 }
 
@@ -153,8 +140,8 @@ fn share_window_bounds(
     let offset = local_offset()?;
     let (hour, minute) = parse_reset_time(&rule.reset_time)?;
     match rule.window {
-        QuotaWindowKind::Day => day_bounds(now, offset, hour, minute),
-        QuotaWindowKind::Week => week_bounds(
+        ShareQuotaWindowKind::Day => day_bounds(now, offset, hour, minute),
+        ShareQuotaWindowKind::Week => week_bounds(
             now,
             offset,
             hour,
@@ -165,7 +152,7 @@ fn share_window_bounds(
                 )
             })?,
         ),
-        QuotaWindowKind::Month => month_bounds(
+        ShareQuotaWindowKind::Month => month_bounds(
             now,
             offset,
             hour,
@@ -174,9 +161,6 @@ fn share_window_bounds(
                 StorageError::InvalidProviderSharing("month quota requires a reset day".to_string())
             })?,
         ),
-        QuotaWindowKind::FiveHour => Err(StorageError::InvalidProviderSharing(
-            "shared quota does not support five-hour windows".to_string(),
-        )),
     }
 }
 
@@ -186,9 +170,9 @@ fn previous_window_bounds(
     end: DateTime<Utc>,
 ) -> Result<(DateTime<Utc>, DateTime<Utc>), StorageError> {
     let shift = match rule.window {
-        QuotaWindowKind::Day => Duration::days(1),
-        QuotaWindowKind::Week => Duration::days(7),
-        QuotaWindowKind::Month => {
+        ShareQuotaWindowKind::Day => Duration::days(1),
+        ShareQuotaWindowKind::Week => Duration::days(7),
+        ShareQuotaWindowKind::Month => {
             let offset = local_offset()?;
             let start_date = start.with_timezone(&offset).date_naive();
             let previous_start_date =
@@ -199,14 +183,6 @@ fn previous_window_bounds(
                             "could not resolve previous month".to_string(),
                         )
                     })?;
-            let previous_end_date =
-                start_date
-                    .checked_add_months(Months::new(1))
-                    .ok_or_else(|| {
-                        StorageError::InvalidProviderSharing(
-                            "could not resolve next month".to_string(),
-                        )
-                    })?;
             let local_start = start.with_timezone(&offset);
             return Ok((
                 local_datetime(
@@ -215,17 +191,7 @@ fn previous_window_bounds(
                     local_start.minute(),
                     offset,
                 ),
-                local_datetime(
-                    previous_end_date,
-                    local_start.hour(),
-                    local_start.minute(),
-                    offset,
-                ),
-            ));
-        }
-        QuotaWindowKind::FiveHour => {
-            return Err(StorageError::InvalidProviderSharing(
-                "shared quota does not support five-hour windows".to_string(),
+                local_datetime(start_date, local_start.hour(), local_start.minute(), offset),
             ));
         }
     };
@@ -384,7 +350,7 @@ mod tests {
             .with_timezone(&Utc)
     }
 
-    fn rule(window: QuotaWindowKind) -> ShareQuotaWindow {
+    fn rule(window: ShareQuotaWindowKind) -> ShareQuotaWindow {
         ShareQuotaWindow {
             window,
             limit: 100,
@@ -404,14 +370,14 @@ mod tests {
     #[test]
     fn day_window_resets_at_local_midnight() {
         let (start, end) =
-            share_window_bounds(at(10, 0), &rule(QuotaWindowKind::Day)).expect("day bounds");
+            share_window_bounds(at(10, 0), &rule(ShareQuotaWindowKind::Day)).expect("day bounds");
         assert_eq!(local(start), "2026-11-16T00:00:00+08:00");
         assert_eq!(local(end), "2026-11-17T00:00:00+08:00");
     }
 
     #[test]
     fn day_window_respects_a_custom_reset_time() {
-        let mut rule = rule(QuotaWindowKind::Day);
+        let mut rule = rule(ShareQuotaWindowKind::Day);
         rule.reset_time = "18:00".to_string();
         let (start, end) = share_window_bounds(at(10, 0), &rule).expect("day bounds");
         assert_eq!(local(start), "2026-11-15T18:00:00+08:00");
@@ -420,7 +386,7 @@ mod tests {
 
     #[test]
     fn week_window_resets_on_monday() {
-        let mut rule = rule(QuotaWindowKind::Week);
+        let mut rule = rule(ShareQuotaWindowKind::Week);
         rule.reset_weekday = Some(1);
         let (start, end) = share_window_bounds(at(10, 0), &rule).expect("week bounds");
         assert_eq!(local(start), "2026-11-16T00:00:00+08:00");
@@ -429,7 +395,7 @@ mod tests {
 
     #[test]
     fn month_window_resets_on_first_day() {
-        let mut rule = rule(QuotaWindowKind::Month);
+        let mut rule = rule(ShareQuotaWindowKind::Month);
         rule.reset_day = Some(1);
         let (start, end) = share_window_bounds(at(10, 0), &rule).expect("month bounds");
         assert_eq!(local(start), "2026-11-01T00:00:00+08:00");
@@ -438,11 +404,21 @@ mod tests {
 
     #[test]
     fn previous_day_window_is_yesterday() {
-        let rule = rule(QuotaWindowKind::Day);
+        let rule = rule(ShareQuotaWindowKind::Day);
         let (start, end) = share_window_bounds(at(10, 0), &rule).expect("day bounds");
         let (previous_start, previous_end) =
             previous_window_bounds(&rule, start, end).expect("previous bounds");
         assert_eq!(local(previous_start), "2026-11-15T00:00:00+08:00");
         assert_eq!(local(previous_end), "2026-11-16T00:00:00+08:00");
+    }
+
+    #[test]
+    fn previous_month_window_is_the_previous_month() {
+        let rule = rule(ShareQuotaWindowKind::Month);
+        let (start, end) = share_window_bounds(at(10, 0), &rule).expect("month bounds");
+        let (previous_start, previous_end) =
+            previous_window_bounds(&rule, start, end).expect("previous bounds");
+        assert_eq!(local(previous_start), "2026-10-01T00:00:00+08:00");
+        assert_eq!(local(previous_end), "2026-11-01T00:00:00+08:00");
     }
 }

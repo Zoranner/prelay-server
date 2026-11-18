@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use chrono::Utc;
 use prelay_protocol::{
     ProviderListItemResponse, ProviderShareResponse, ProviderSharingResponse, ProviderVisibility,
-    QuotaWindowKind, ShareQuotaWindow, UpdateProviderSharingRequest,
+    ShareQuotaWindow, ShareQuotaWindowKind, UpdateProviderSharingRequest,
 };
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
@@ -381,35 +381,29 @@ fn validate_share_quota(quota: &[ShareQuotaWindow]) -> Result<(), StorageError> 
                 "quota limit must be positive".to_string(),
             ));
         }
-        if rule.window == QuotaWindowKind::FiveHour {
-            return Err(StorageError::InvalidProviderSharing(
-                "shared quota supports day, week, and month windows".to_string(),
-            ));
-        }
         parse_reset_time(&rule.reset_time)?;
         match rule.window {
-            QuotaWindowKind::Day => {
+            ShareQuotaWindowKind::Day => {
                 if rule.reset_weekday.is_some() || rule.reset_day.is_some() {
                     return Err(StorageError::InvalidProviderSharing(
                         "day quota must not set weekday or month day".to_string(),
                     ));
                 }
             }
-            QuotaWindowKind::Week => {
+            ShareQuotaWindowKind::Week => {
                 if !matches!(rule.reset_weekday, Some(1..=7)) || rule.reset_day.is_some() {
                     return Err(StorageError::InvalidProviderSharing(
                         "week quota requires a weekday from 1 to 7".to_string(),
                     ));
                 }
             }
-            QuotaWindowKind::Month => {
+            ShareQuotaWindowKind::Month => {
                 if !matches!(rule.reset_day, Some(1..=28)) || rule.reset_weekday.is_some() {
                     return Err(StorageError::InvalidProviderSharing(
                         "month quota requires a day from 1 to 28".to_string(),
                     ));
                 }
             }
-            QuotaWindowKind::FiveHour => unreachable!(),
         }
     }
     Ok(())
