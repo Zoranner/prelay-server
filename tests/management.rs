@@ -23,7 +23,7 @@ mod leaderboard;
 mod provider_catalog;
 #[path = "management/provider_operations.rs"]
 mod provider_operations;
-#[path = "management/provider_sharing.rs"]
+#[path = "management/provider_sharing/mod.rs"]
 mod provider_sharing;
 #[path = "management/provider_usage.rs"]
 mod provider_usage;
