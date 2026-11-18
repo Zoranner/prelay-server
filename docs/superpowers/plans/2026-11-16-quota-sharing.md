@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust、Axum、SeaORM、PostgreSQL、Vue 3、Nuxt、Tauri、Bun。
 
-**Spec:** `prelay-server/docs/superpowers/specs/2026-11-16-quota-sharing-design.md`
+**Spec:** `docs/superpowers/specs/2026-11-16-quota-sharing-design.md`
 
 ## Global Constraints
 
