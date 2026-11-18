@@ -166,3 +166,24 @@ display_name = "Text model"
     );
     fs::remove_dir_all(directory).expect("remove temporary catalog directory");
 }
+
+#[test]
+fn deepseek_templates_stop_after_answering_questions() {
+    for instructions in [
+        include_str!("../../config/catalog/models/instructions/deepseek-v4-pro.md"),
+        include_str!("../../config/catalog/models/instructions/deepseek-flash.md"),
+    ] {
+        assert!(
+            !instructions.contains("先简短回答，再继续未完成的原任务"),
+            "基础指令不能要求回答后继续原任务"
+        );
+        assert!(
+            instructions.contains("提问、质疑和要方案不构成修改授权"),
+            "基础指令必须明确提问不构成修改授权"
+        );
+        assert!(
+            instructions.contains("先回答并停下"),
+            "基础指令必须要求回答后停下"
+        );
+    }
+}
