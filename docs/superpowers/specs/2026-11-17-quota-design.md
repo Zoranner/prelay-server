@@ -101,6 +101,6 @@ timeout_secs = 8
 ## 验证边界
 
 - 六个解析器用契约 fixture 验证，未使用真实上游密钥。
-- GLM 团队版的 `org/project/type=2` 账号上下文未接入。
+- GLM 只支持个人版 Coding Plan；团队版不在范围。
 - GoToken 保持未接入。
 - 共享额度的并发保护只覆盖单个服务进程。
