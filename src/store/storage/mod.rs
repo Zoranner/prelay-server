@@ -51,6 +51,8 @@ pub(crate) struct CompletedStreamMaterialization {
     pub(crate) identity_id: String,
     pub(crate) activity_id: String,
     pub(crate) activity: StreamActivityUpdate,
+    /// 活动行缺失时用于补建该行的活动快照。
+    pub(crate) activity_snapshot: Option<ActivityInsert>,
     pub(crate) rollout: RolloutSummary,
     pub(crate) rollout_created_at: String,
     pub(crate) completed_at: String,

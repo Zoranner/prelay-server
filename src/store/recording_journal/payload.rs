@@ -91,6 +91,12 @@ pub(crate) struct TurnFinishedRecord {
     pub(crate) response_events: Vec<RecordedContentEvent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) response_state: Option<ResponseStateRecord>,
+    /// 开启该轮时的完整活动快照。
+    ///
+    /// 结束记录必须能独立收敛：即使 `turn_started` 已被 checkpoint 越过、
+    /// 对应的活动行缺失，也能据此补建活动行。旧记录没有该字段。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) activity_snapshot: Option<ActivityInsert>,
     pub(crate) timing: TurnTiming,
 }
 

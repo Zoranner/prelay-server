@@ -70,7 +70,7 @@ where
     Ok(())
 }
 
-fn model(
+pub(super) fn model(
     identity_id: &str,
     id: String,
     log: ActivityInsert,

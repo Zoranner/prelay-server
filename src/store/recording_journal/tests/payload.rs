@@ -142,6 +142,7 @@ fn round_trips_turn_started_and_finished() {
         session: SessionContext::new("thread-a"),
         response_events: vec![recorded_usage_event("2026-11-17T12:00:01.000+08:00")],
         response_state: None,
+        activity_snapshot: Some(activity()),
         timing: timing(true),
     };
     round_trip(RecordKind::TurnFinished, &finished);

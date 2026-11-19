@@ -7,6 +7,7 @@ mod payload;
 mod reader;
 mod record;
 mod sink;
+mod sink_stream;
 
 use std::{fs::OpenOptions, io::Write, path::Path};
 

@@ -242,6 +242,7 @@ where
         runtime,
         identity_id,
         activity_id,
+        activity_snapshot: log.clone(),
         stream: upstream,
         started_at,
         started_at_wall,

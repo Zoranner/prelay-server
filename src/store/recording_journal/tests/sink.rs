@@ -361,6 +361,7 @@ async fn materializes_a_finished_stream_turn_and_updates_the_activity() {
                 usage_event(10, 4),
             )],
             response_state: None,
+            activity_snapshot: None,
             timing: TurnTiming {
                 started_at: "2026-11-17T12:00:00.000+08:00".to_string(),
                 first_token_at: Some("2026-11-17T12:00:00.100+08:00".to_string()),
@@ -392,7 +393,7 @@ async fn materializes_a_finished_stream_turn_and_updates_the_activity() {
         .any(|statement| statement.sql.contains("activity_rollouts")));
 }
 
-fn activity_model() -> activities::Model {
+pub(super) fn activity_model() -> activities::Model {
     activities::Model {
         id: "activity-stream-sink".to_string(),
         identity_id: "identity-1".to_string(),
@@ -426,7 +427,7 @@ fn activity_model() -> activities::Model {
     }
 }
 
-fn usage_event(input_tokens: i64, output_tokens: i64) -> ContentDraft {
+pub(super) fn usage_event(input_tokens: i64, output_tokens: i64) -> ContentDraft {
     ContentDraft::new(ContentEventBody::Usage(ConversationUsage {
         input_tokens: Some(input_tokens),
         output_tokens: Some(output_tokens),

@@ -207,9 +207,8 @@ async fn apply_turn_started(
         )
         .await
         .map_err(|error| MaterializeError::Sink(error.to_string()))?;
-    if started.complete {
-        return Ok(());
-    }
+    // rollout 的 turn_end 只能说明线程文件写过结束标记，不能证明活动行已经落库：
+    // 上一次物化可能刚写完 turn_end 就中断。这里始终按幂等 upsert 补齐活动行。
     let summary = started.summary(envelope.activity_id.clone());
     storage
         .upsert_activity_with_rollout_at(ActivityRolloutMaterialization {
@@ -238,6 +237,7 @@ async fn apply_turn_finished(
         session,
         response_events,
         response_state,
+        activity_snapshot,
         timing,
     } = payload;
     let started_at = timing.started_at;
@@ -266,6 +266,7 @@ async fn apply_turn_finished(
             identity_id: envelope.identity_id.clone(),
             activity_id: envelope.activity_id.clone(),
             activity,
+            activity_snapshot,
             rollout: summary,
             rollout_created_at: started_at,
             completed_at: finished_at.clone(),

@@ -13,7 +13,8 @@ use crate::{
 use super::{activities::insert_with_id, Storage, StorageError};
 
 use super::{
-    activities::apply_stream_update, activity_materialization::upsert_with_id_at,
+    activities::apply_stream_update,
+    activity_materialization::{model as activity_model, upsert_with_id_at},
     ActivityRolloutMaterialization, CompletedStreamMaterialization,
 };
 
@@ -75,6 +76,7 @@ impl Storage {
             identity_id,
             activity_id,
             activity,
+            activity_snapshot,
             rollout,
             rollout_created_at,
             completed_at,
@@ -83,12 +85,29 @@ impl Storage {
         let row = activities::Entity::find_by_id(&activity_id)
             .filter(activities::Column::IdentityId.eq(&identity_id))
             .one(&transaction)
-            .await?
-            .ok_or(StorageError::ActivityNotFound)?;
-        let mut active: activities::ActiveModel = row.into();
-        apply_stream_update(&mut active, activity);
-        active.is_streaming = Set(Some(false));
-        active.update(&transaction).await?;
+            .await?;
+        match row {
+            Some(row) => {
+                let mut active: activities::ActiveModel = row.into();
+                apply_stream_update(&mut active, activity);
+                active.is_streaming = Set(Some(false));
+                active.update(&transaction).await?;
+            }
+            None => {
+                // 结束记录必须能独立收敛：活动行缺失时用随记录携带的开轮快照补建，
+                // 再写入结束状态，避免 checkpoint 已越过 turn_started 时永久卡死。
+                let snapshot = activity_snapshot.ok_or(StorageError::ActivityNotFound)?;
+                let mut active = activity_model(
+                    &identity_id,
+                    activity_id.clone(),
+                    snapshot,
+                    rollout_created_at.clone(),
+                );
+                apply_stream_update(&mut active, activity);
+                active.is_streaming = Set(Some(false));
+                active.insert(&transaction).await?;
+            }
+        }
         upsert_rollout_at(
             &transaction,
             &identity_id,

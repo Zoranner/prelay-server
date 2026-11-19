@@ -20,7 +20,7 @@ use crate::{
     domain::{
         activity::rollout::SessionContext,
         activity::{ContentDraft, ContentEventBody, ConversationError, RawStreamContentCapture},
-        stats::StreamActivityUpdate,
+        stats::{ActivityInsert, StreamActivityUpdate},
     },
     service::recording::{
         options::StreamSession, state::response_from_stream_session, RecordingRuntime,
@@ -41,6 +41,8 @@ pub(super) struct JournalStreamState {
     pub(super) runtime: RecordingRuntime,
     pub(super) identity_id: String,
     pub(super) activity_id: String,
+    /// 开启该轮时的完整活动快照，随结束记录一起写入，保证结束记录可以独立收敛。
+    pub(super) activity_snapshot: ActivityInsert,
     pub(super) stream: Pin<Box<dyn Stream<Item = Result<Bytes, io::Error>> + Send>>,
     pub(super) started_at: Instant,
     pub(super) started_at_wall: DateTime<Utc>,
@@ -206,6 +208,7 @@ impl JournalStreamState {
             session: self.session_context.clone(),
             response_events,
             response_state,
+            activity_snapshot: Some(self.activity_snapshot.clone()),
             timing: TurnTiming {
                 started_at: self.started_at_wall.to_rfc3339(),
                 first_token_at: self.first_token_at.clone(),
