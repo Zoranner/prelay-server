@@ -26,12 +26,14 @@ mod config;
 mod error;
 mod health;
 mod pending;
+mod retry;
 
 pub(crate) use config::RecordingRuntimeConfig;
 pub(crate) use error::RecordingRuntimeError;
 use health::RuntimeHealth;
 pub(crate) use health::{RecordingHealthSnapshot, RecordingHealthStatus};
 use pending::pending_response_state;
+use retry::retry_delay;
 
 #[derive(Clone)]
 pub struct RecordingRuntime {
@@ -136,12 +138,15 @@ impl RecordingRuntime {
                 _ = &mut start_rx => {}
                 _ = &mut shutdown_rx => return,
             }
+            let mut consecutive_failures = 0_u32;
             loop {
+                let mut pending_retry_delay = None;
                 tokio::select! {
                     _ = &mut shutdown_rx => break,
                     _ = ticker.tick() => {
                         match materializer.replay_all(&cipher).await {
                             Ok(_) => {
+                                consecutive_failures = 0;
                                 task_health.record_materialized(
                                     materializer.last_applied_sequence(),
                                     materialize_lag_slo,
@@ -176,8 +181,18 @@ impl RecordingRuntime {
                                     error = %error,
                                     "recording materializer failed; its committed journal is retained"
                                 );
+                                consecutive_failures = consecutive_failures.saturating_add(1);
+                                pending_retry_delay = Some(retry_delay(consecutive_failures));
                             }
                         }
+                    }
+                }
+                // 失败后按退避重试：物化卡住时不再每个 tick 刷一条同样的错误，
+                // 同时保留 shutdown 的响应性。
+                if let Some(delay) = pending_retry_delay {
+                    tokio::select! {
+                        _ = &mut shutdown_rx => break,
+                        _ = tokio::time::sleep(delay) => {}
                     }
                 }
             }
