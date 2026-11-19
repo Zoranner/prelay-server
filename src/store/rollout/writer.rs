@@ -252,6 +252,7 @@ impl RolloutWriter {
                 status,
                 http_status,
                 error_code,
+                turn_id: Some(self.turn_id.clone()),
             }),
             finished_at,
         )?;

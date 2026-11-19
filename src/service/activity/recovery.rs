@@ -2,7 +2,7 @@ use chrono::Utc;
 
 use crate::{
     domain::activity::{
-        rollout::{RolloutStatus, SessionContext, TurnEndEvent},
+        rollout::{RolloutStatus, SessionContext},
         RolloutSummary,
     },
     store::storage::{InterruptedRollout, RecoveredRollout, StorageError},
@@ -88,14 +88,8 @@ impl ActivityStore {
             .read_slice(&rollout.rollout_path, rollout.start_line, rollout.end_line)
         {
             Ok(file) => {
-                let turn_end = file
-                    .events
-                    .iter()
-                    .rev()
-                    .find(|event| event.event_type == "turn_end")
-                    .and_then(|event| {
-                        serde_json::from_value::<TurnEndEvent>(event.payload.clone()).ok()
-                    });
+                let turn_end =
+                    crate::store::rollout::activity_turn_end(&file.events, &rollout.activity_id);
                 match turn_end {
                     Some(turn_end) => RecoveredRollout {
                         activity_id: rollout.activity_id.clone(),

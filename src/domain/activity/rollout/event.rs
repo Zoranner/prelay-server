@@ -59,6 +59,9 @@ pub struct TurnEndEvent {
     pub http_status: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
+    /// 结束的是哪一个 turn。旧文件没有该字段，读取时只能按位置归属。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

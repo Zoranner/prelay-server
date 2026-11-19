@@ -1,10 +1,93 @@
 use super::{
-    ActivityTurn, CompletedTurnMaterialization, FinishedTurnMaterialization, RolloutStore,
-    StartedTurnMaterialization,
+    read::ThreadEvents, ActivityTurn, CompletedTurnMaterialization, FinishedTurnMaterialization,
+    RolloutStore, StartedTurnMaterialization,
 };
 use crate::domain::activity::rollout::{
-    ConversationFormat, RolloutError, RolloutStatus, RolloutSummary, TurnEndEvent, WindowEvent,
+    ConversationEvent, RolloutError, RolloutStatus, RolloutSummary, TurnEndEvent, WindowEvent,
 };
+
+/// 结束某个 turn 的 `turn_end` 及其在文件中的行号。
+pub(super) struct TurnCompletion {
+    pub(super) end: TurnEndEvent,
+    pub(super) line: u64,
+}
+
+/// 找到属于指定 turn 的 `turn_end`。
+///
+/// 新事件在 `turn_end` 里带上 `turn_id`，可以精确归属；旧格式没有该字段时，
+/// 只能退回到“出现在该 turn 与下一个 turn 之间”的位置判断。
+pub(super) fn turn_completion(
+    thread: &ThreadEvents,
+    turn_index: usize,
+) -> Result<Option<TurnCompletion>, RolloutError> {
+    let Some((index, end)) = completion_index(&thread.events, turn_index)? else {
+        return Ok(None);
+    };
+    let line = thread.lines.get(index).copied().ok_or_else(|| {
+        RolloutError::InvalidPath("turn_end event has no file position".to_string())
+    })?;
+    Ok(Some(TurnCompletion { end, line }))
+}
+
+/// 按 `activity_id` 找到结束该活动的 `turn_end`。
+///
+/// 供恢复路径使用：只看保存下来的事件切片时，同样不能用“切片里最后一个 `turn_end`”。
+pub(crate) fn activity_turn_end(
+    events: &[ConversationEvent],
+    activity_id: &str,
+) -> Option<TurnEndEvent> {
+    let turn_index = events.iter().position(|event| {
+        event.event_type == "turn"
+            && event
+                .payload
+                .get("activity_id")
+                .and_then(serde_json::Value::as_str)
+                == Some(activity_id)
+    })?;
+    completion_index(events, turn_index)
+        .ok()
+        .flatten()
+        .map(|(_, end)| end)
+}
+
+/// 返回 `(事件下标, turn_end)`。
+///
+/// 先按 `turn_id` 归属再解析：属于别的 turn 的坏记录不能让本次查询失败。
+fn completion_index(
+    events: &[ConversationEvent],
+    turn_index: usize,
+) -> Result<Option<(usize, TurnEndEvent)>, RolloutError> {
+    let turn_id = events[turn_index]
+        .payload
+        .get("turn_id")
+        .and_then(serde_json::Value::as_str);
+    let next_turn_index = events
+        .iter()
+        .enumerate()
+        .skip(turn_index + 1)
+        .find(|(_, event)| event.event_type == "turn")
+        .map(|(index, _)| index);
+    for (index, event) in events.iter().enumerate().skip(turn_index + 1) {
+        if event.event_type != "turn_end" {
+            continue;
+        }
+        let end_turn_id = event
+            .payload
+            .get("turn_id")
+            .and_then(serde_json::Value::as_str);
+        let owns_turn = match (end_turn_id, turn_id) {
+            (Some(owner), Some(turn_id)) => owner == turn_id,
+            (Some(_), None) => false,
+            (None, _) => next_turn_index.is_none_or(|next| index < next),
+        };
+        if !owns_turn {
+            continue;
+        }
+        let end: TurnEndEvent = serde_json::from_value(event.payload.clone())?;
+        return Ok(Some((index, end)));
+    }
+    Ok(None)
+}
 
 impl RolloutStore {
     pub(crate) fn find_activity_turn(
@@ -13,8 +96,8 @@ impl RolloutStore {
         thread_id: &str,
         activity_id: &str,
     ) -> Result<Option<ActivityTurn>, RolloutError> {
-        let (state, events) = self.load_thread_source(identity_id, thread_id)?;
-        let Some(turn_index) = events.iter().position(|event| {
+        let (state, thread) = self.load_thread_source(identity_id, thread_id)?;
+        let Some(turn_index) = thread.events.iter().position(|event| {
             event.event_type == "turn"
                 && event
                     .payload
@@ -24,28 +107,36 @@ impl RolloutStore {
         }) else {
             return Ok(None);
         };
-        let next_turn_index = events
+        let next_turn_index = thread
+            .events
             .iter()
             .enumerate()
             .skip(turn_index + 1)
             .find(|(_, event)| event.event_type == "turn")
             .map(|(index, _)| index);
-        let meta_lines = u64::from(state.format == ConversationFormat::V1);
-        let previous_turn = events[..turn_index]
+        // 首个 turn 的持久化区间从文件开头算起（包含文件头与窗口行），
+        // 后续 turn 从自身所在行开始。
+        let previous_turn = thread.events[..turn_index]
             .iter()
             .rposition(|event| event.event_type == "turn");
         let start_line = if previous_turn.is_some() {
-            meta_lines + turn_index as u64 + 1
+            thread.lines.get(turn_index).copied().ok_or_else(|| {
+                RolloutError::InvalidPath("turn event has no file position".to_string())
+            })?
         } else {
             1
         };
-        let end_line = next_turn_index
-            .map(|index| meta_lines + index as u64)
-            .unwrap_or(state.line_count);
+        let positional_end = next_turn_index
+            .and_then(|index| thread.lines.get(index).copied())
+            .map_or(state.line_count, |line| line.saturating_sub(1));
+        let completion = turn_completion(&thread, turn_index)?;
+        let end_line = completion.as_ref().map_or(positional_end, |completion| {
+            positional_end.max(completion.line)
+        });
         let slice = self.read_slice(&state.relative_path, start_line, end_line)?;
         let mut window_id = None;
         let mut generation = 0;
-        for event in &events[..=turn_index] {
+        for event in &thread.events[..=turn_index] {
             if event.event_type != "window" {
                 continue;
             }
@@ -54,15 +145,9 @@ impl RolloutStore {
                 generation = window.generation;
             }
         }
-        let turn_end = slice
-            .events
-            .iter()
-            .rev()
-            .find(|event| event.event_type == "turn_end");
-        let status = match turn_end {
-            Some(event) => serde_json::from_value::<TurnEndEvent>(event.payload.clone())?.status,
-            None => RolloutStatus::Writing,
-        };
+        let status = completion
+            .as_ref()
+            .map_or(RolloutStatus::Writing, |completion| completion.end.status);
         Ok(Some(ActivityTurn {
             relative_path: state.relative_path,
             thread_id: thread_id.to_string(),
@@ -74,7 +159,7 @@ impl RolloutStore {
             event_count: slice.event_count,
             byte_size: slice.byte_size,
             sha256: slice.sha256,
-            complete: turn_end.is_some(),
+            complete: completion.is_some(),
         }))
     }
 

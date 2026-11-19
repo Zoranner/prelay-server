@@ -307,3 +307,151 @@ async fn refuses_to_finish_a_turn_that_was_never_started() {
         .await
         .is_err());
 }
+
+fn write_thread_file(root: &std::path::Path, thread_id: &str, lines: &[serde_json::Value]) {
+    let directory = root.join("identity-1");
+    std::fs::create_dir_all(&directory).expect("create thread directory");
+    let mut contents = lines
+        .iter()
+        .map(serde_json::Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    contents.push('\n');
+    std::fs::write(directory.join(format!("{thread_id}.jsonl")), contents)
+        .expect("write thread file");
+}
+
+#[tokio::test]
+async fn a_new_turn_after_a_legacy_thread_is_not_reported_complete() {
+    let root = tempfile::tempdir().expect("temp rollout root");
+    // 旧格式线程文件里被忽略的控制行不会出现在解析后的事件序列里，
+    // 因此事件下标与文件行号并不一一对应。
+    write_thread_file(
+        root.path(),
+        "thread-legacy",
+        &[
+            json!({"seq":1,"time":"2026-11-17T12:00:00.000+08:00","type":"session_meta","payload":{"thread_id":"thread-legacy"}}),
+            json!({"seq":2,"time":"2026-11-17T12:00:00.500+08:00","type":"media","payload":{"kind":"image"}}),
+            json!({"seq":3,"time":"2026-11-17T12:00:01.000+08:00","type":"window_start","payload":{"generation":0}}),
+            json!({"seq":4,"time":"2026-11-17T12:00:02.000+08:00","type":"turn","payload":{"turn_id":"turn-a","activity_id":"activity-a","model":"model-1","upstream_model":"model-upstream"}}),
+            json!({"seq":5,"time":"2026-11-17T12:00:03.000+08:00","type":"session_end","payload":{"status":"completed"}}),
+        ],
+    );
+    let store = RolloutStore::new(root.path().to_path_buf());
+    let writer = store
+        .begin(
+            "identity-1",
+            &session("thread-legacy"),
+            turn("activity-b"),
+            vec![message(EventPhase::Request, "next")],
+        )
+        .await
+        .expect("begin turn after legacy thread");
+    drop(writer);
+
+    let found = store
+        .find_activity_turn("identity-1", "thread-legacy", "activity-b")
+        .expect("find new turn")
+        .expect("new turn exists");
+    assert!(
+        !found.complete,
+        "a freshly started turn must not inherit the previous turn's turn_end"
+    );
+}
+
+#[tokio::test]
+async fn a_turn_end_belongs_only_to_the_turn_it_closes() {
+    let root = tempfile::tempdir().expect("temp rollout root");
+    // 同一线程上两个请求交错：b 在 a 结束前已经开始，a 的 turn_end 落在 b 之后。
+    write_thread_file(
+        root.path(),
+        "thread-interleaved",
+        &[
+            json!({"v":1,"type":"meta","thread_id":"thread-interleaved","created_at":"2026-11-17T12:00:00.000+08:00"}),
+            json!({"seq":1,"time":"2026-11-17T12:00:00.100+08:00","type":"window_start","payload":{"generation":0}}),
+            json!({"seq":2,"time":"2026-11-17T12:00:01.000+08:00","type":"turn","payload":{"turn_id":"turn-a","activity_id":"activity-a","model":"model-1","upstream_model":"model-upstream"}}),
+            json!({"seq":3,"time":"2026-11-17T12:00:02.000+08:00","type":"turn","payload":{"turn_id":"turn-b","activity_id":"activity-b","model":"model-1","upstream_model":"model-upstream"}}),
+            json!({"seq":4,"time":"2026-11-17T12:00:03.000+08:00","type":"turn_end","payload":{"status":"completed","turn_id":"turn-a"}}),
+        ],
+    );
+    let store = RolloutStore::new(root.path().to_path_buf());
+    let closed = store
+        .find_activity_turn("identity-1", "thread-interleaved", "activity-a")
+        .expect("find closed turn")
+        .expect("closed turn exists");
+    let open = store
+        .find_activity_turn("identity-1", "thread-interleaved", "activity-b")
+        .expect("find open turn")
+        .expect("open turn exists");
+
+    assert!(
+        closed.complete,
+        "the turn_end carrying turn-a closes activity-a"
+    );
+    assert_eq!(closed.status, RolloutStatus::Completed);
+    assert!(
+        !open.complete,
+        "activity-b must not be closed by turn-a's turn_end"
+    );
+}
+
+#[tokio::test]
+async fn an_unreadable_turn_end_from_another_turn_does_not_break_the_lookup() {
+    let root = tempfile::tempdir().expect("temp rollout root");
+    // a 的 turn_end 状态无法解析；查询 b 时不能因为别人那条坏记录失败。
+    write_thread_file(
+        root.path(),
+        "thread-broken-end",
+        &[
+            json!({"v":1,"type":"meta","thread_id":"thread-broken-end","created_at":"2026-11-17T12:00:00.000+08:00"}),
+            json!({"seq":1,"time":"2026-11-17T12:00:00.100+08:00","type":"window_start","payload":{"generation":0}}),
+            json!({"seq":2,"time":"2026-11-17T12:00:01.000+08:00","type":"turn","payload":{"turn_id":"turn-a","activity_id":"activity-a","model":"model-1","upstream_model":"model-upstream"}}),
+            json!({"seq":3,"time":"2026-11-17T12:00:02.000+08:00","type":"turn","payload":{"turn_id":"turn-b","activity_id":"activity-b","model":"model-1","upstream_model":"model-upstream"}}),
+            json!({"seq":4,"time":"2026-11-17T12:00:03.000+08:00","type":"turn_end","payload":{"status":"not-a-status","turn_id":"turn-a"}}),
+            json!({"seq":5,"time":"2026-11-17T12:00:04.000+08:00","type":"turn_end","payload":{"status":"completed","turn_id":"turn-b"}}),
+        ],
+    );
+    let store = RolloutStore::new(root.path().to_path_buf());
+    let found = store
+        .find_activity_turn("identity-1", "thread-broken-end", "activity-b")
+        .expect("an unrelated broken turn_end must not fail the lookup")
+        .expect("turn exists");
+
+    assert!(found.complete);
+    assert_eq!(found.status, RolloutStatus::Completed);
+}
+
+#[test]
+fn activity_turn_end_ignores_turn_ends_owned_by_other_turns() {
+    let event = |seq: u64, event_type: &str, payload: serde_json::Value| {
+        crate::domain::activity::ConversationEvent {
+            seq,
+            time: "2026-11-17T12:00:00.000+08:00".to_string(),
+            event_type: event_type.to_string(),
+            payload,
+        }
+    };
+    let events = vec![
+        event(
+            1,
+            "turn",
+            json!({"turn_id":"turn-a","activity_id":"activity-a"}),
+        ),
+        event(
+            2,
+            "turn",
+            json!({"turn_id":"turn-b","activity_id":"activity-b"}),
+        ),
+        event(
+            3,
+            "turn_end",
+            json!({"status":"completed","turn_id":"turn-a"}),
+        ),
+    ];
+
+    assert_eq!(
+        super::activity::activity_turn_end(&events, "activity-a").map(|end| end.status),
+        Some(RolloutStatus::Completed)
+    );
+    assert!(super::activity::activity_turn_end(&events, "activity-b").is_none());
+}

@@ -36,7 +36,8 @@ impl RolloutStore {
         let cache_key = PathBuf::from(format!("{identity_id}/{}", session.thread_id));
         let lock = self.lock_for(&cache_key);
         let guard = lock.lock_owned().await;
-        let (state, events) = self.load_thread_source(identity_id, &session.thread_id)?;
+        let (state, thread) = self.load_thread_source(identity_id, &session.thread_id)?;
+        let events = &thread.events;
         let turn_index = events
             .iter()
             .position(|event| {
@@ -58,10 +59,7 @@ impl RolloutStore {
                 "activity turn {activity_id} is not the last turn"
             )));
         }
-        if events[turn_index + 1..]
-            .iter()
-            .any(|event| event.event_type == "turn_end")
-        {
+        if super::super::activity::turn_completion(&thread, turn_index)?.is_some() {
             return Err(RolloutError::InvalidPath(format!(
                 "activity turn {activity_id} is already complete"
             )));

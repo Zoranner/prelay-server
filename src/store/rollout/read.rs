@@ -28,8 +28,28 @@ pub(super) struct ParsedConversation {
     pub(super) format: ConversationFormat,
     pub(super) meta: Option<ConversationMeta>,
     pub(super) events: Vec<ConversationEvent>,
+    /// 每个事件在文件中的 1-based 行号，与 `events` 一一对应。
+    pub(super) lines: Vec<u64>,
     pub(super) line_count: u64,
     pub(super) last_seq: u64,
+}
+
+/// 线程文件里解析出的事件及其行号。
+///
+/// 行号不能由事件下标推算：旧格式文件里的 `session_meta`、`media` 等控制行会被忽略，
+/// 续写到这类文件的事件下标与行号并不一一对应。
+pub(super) struct ThreadEvents {
+    pub(super) events: Vec<ConversationEvent>,
+    pub(super) lines: Vec<u64>,
+}
+
+impl ThreadEvents {
+    pub(super) fn empty() -> Self {
+        Self {
+            events: Vec::new(),
+            lines: Vec::new(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -124,7 +144,7 @@ impl RolloutStore {
         &self,
         identity_id: &str,
         thread_id: &str,
-    ) -> Result<(ThreadState, Vec<ConversationEvent>), RolloutError> {
+    ) -> Result<(ThreadState, ThreadEvents), RolloutError> {
         let base = format!("{identity_id}/{thread_id}.jsonl");
         match self.read_thread_candidate(&base)? {
             ThreadCandidate::Events(parsed, stamp) => {
@@ -136,7 +156,13 @@ impl RolloutStore {
                     parsed.line_count,
                     parsed.last_seq,
                 )?;
-                Ok((state, parsed.events))
+                Ok((
+                    state,
+                    ThreadEvents {
+                        events: parsed.events,
+                        lines: parsed.lines,
+                    },
+                ))
             }
             ThreadCandidate::Missing => {
                 for index in 1..=MAX_RECOVERED_SEGMENTS {
@@ -151,14 +177,20 @@ impl RolloutStore {
                                 parsed.line_count,
                                 parsed.last_seq,
                             )?;
-                            return Ok((state, parsed.events));
+                            return Ok((
+                                state,
+                                ThreadEvents {
+                                    events: parsed.events,
+                                    lines: parsed.lines,
+                                },
+                            ));
                         }
                         ThreadCandidate::Corrupt => continue,
                         ThreadCandidate::Missing if index == 1 => {
-                            return Ok((ThreadState::empty(base), Vec::new()));
+                            return Ok((ThreadState::empty(base), ThreadEvents::empty()));
                         }
                         ThreadCandidate::Missing => {
-                            return Ok((ThreadState::empty(candidate), Vec::new()));
+                            return Ok((ThreadState::empty(candidate), ThreadEvents::empty()));
                         }
                     }
                 }
@@ -179,11 +211,17 @@ impl RolloutStore {
                                 parsed.line_count,
                                 parsed.last_seq,
                             )?;
-                            return Ok((state, parsed.events));
+                            return Ok((
+                                state,
+                                ThreadEvents {
+                                    events: parsed.events,
+                                    lines: parsed.lines,
+                                },
+                            ));
                         }
                         ThreadCandidate::Corrupt => continue,
                         ThreadCandidate::Missing => {
-                            return Ok((ThreadState::empty(candidate), Vec::new()));
+                            return Ok((ThreadState::empty(candidate), ThreadEvents::empty()));
                         }
                     }
                 }
@@ -294,17 +332,20 @@ fn parse_conversation_contents(contents: &str) -> Result<ParsedConversation, Rol
     }
 
     let mut events = Vec::new();
+    let mut event_lines = Vec::new();
     let mut last_seq = 0;
-    for line in &lines[start..] {
+    for (offset, line) in lines[start..].iter().enumerate() {
         if let Some(event) = parse_event_line(line)? {
             last_seq = last_seq.max(event.seq);
             events.push(event);
+            event_lines.push((start + offset + 1) as u64);
         }
     }
     Ok(ParsedConversation {
         format,
         meta,
         events,
+        lines: event_lines,
         line_count: lines.len() as u64,
         last_seq,
     })

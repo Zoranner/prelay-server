@@ -6,6 +6,7 @@ use std::{
 };
 
 use super::{
+    read::ThreadEvents,
     support::{event_identity, is_content_event, item_id, item_ref_key, ContentHash},
     RolloutStore,
 };
@@ -33,7 +34,7 @@ impl FileStamp {
 
 pub(super) enum ThreadSource {
     Cached(ThreadState),
-    Loaded(ThreadState, Vec<ConversationEvent>),
+    Loaded(ThreadState, ThreadEvents),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

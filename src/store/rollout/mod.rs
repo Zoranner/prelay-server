@@ -265,6 +265,8 @@ impl RolloutStore {
 
 pub use writer::RolloutWriter;
 
+pub(crate) use activity::activity_turn_end;
+
 #[cfg(test)]
 mod tests;
 
