@@ -346,6 +346,14 @@ checkpoint 通过临时文件、`fsync` 和原子替换写入。checkpoint 损�
 - response state 已存在：upsert 覆盖为同一逻辑记录中的稳定值；不因重放产生重复响应。
 - `ProviderObservation` 使用独立重试，不阻塞活动记录和 response state 的 checkpoint；失败只影响接入点首选 Provider 的记忆。
 
+### 物化收敛不变量
+
+- 每条记录必须能独立收敛。`TurnStarted` 始终按幂等 upsert 写入活动占位和 rollout 索引，不能因为线程文件里已经出现 `turn_end` 就跳过数据库写入；`TurnFinished` 自带开轮活动快照，活动行缺失时用快照补建该行，再写终态。
+- `turn_end` 只结束它所属的 turn。新事件带 `turn_id`，按 `turn_id` 归属；旧事件没有该字段时，只在该 turn 与下一个 turn 之间按位置归属，不能被后续 turn 继承。
+- 线程文件的行号必须来自解析结果，不能由事件下标推算。旧格式文件里的 `session_meta`、`media` 等控制行不产生事件，下标与行号并不一一对应。
+- 物化失败时 checkpoint 停在最后一个成功批次，并按指数退避重试；已推进 checkpoint 覆盖的 WAL 段即使本轮后续批次失败也要立即回收，避免磁盘只增不减。
+- 单轮物化读取按已编码帧累计预算，积压再大也不会整盘读入并解密。预算只在完整 commit 帧之后生效，保证每轮至少推进一个可应用批次；单条记录超过预算时仍完整读取后停止，内存上限约为“预算 + 一条记录”。
+
 ### response state 读路径
 
 - WAL 提交成功后，处理器把 `response_id -> WAL locator` 放入 `ResponseStateCache`，标记为 pending；locator 至少包含 record ID、segment、offset 和 length，cache 不复制完整 response state 正文。
