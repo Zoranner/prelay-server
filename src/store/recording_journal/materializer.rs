@@ -18,6 +18,12 @@ use super::{
     JournalError,
 };
 
+/// 单轮物化最多读取的已编码字节数。
+///
+/// 物化失败时会一直重试同一批记录；如果不限制单轮读取量，每轮都会把整个积压重新读入
+/// 并解密一遍，积压越大越慢，最终拖垮进程。
+const DEFAULT_REPLAY_BUDGET_BYTES: usize = 32 * 1024 * 1024;
+
 #[derive(Debug)]
 pub(crate) enum MaterializeError {
     Journal(JournalError),
@@ -74,6 +80,7 @@ pub(crate) struct Materializer<S: MaterializeSink> {
     node_id: String,
     sink: Arc<S>,
     checkpoint: Option<JournalCheckpoint>,
+    replay_budget_bytes: usize,
 }
 
 impl<S: MaterializeSink> Materializer<S> {
@@ -86,21 +93,41 @@ impl<S: MaterializeSink> Materializer<S> {
             node_id,
             sink,
             checkpoint,
+            replay_budget_bytes: DEFAULT_REPLAY_BUDGET_BYTES,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_replay_budget(&mut self, bytes: usize) {
+        self.replay_budget_bytes = bytes.max(1);
     }
 
     pub(crate) async fn replay_all(
         &mut self,
         cipher: &JournalCipher,
     ) -> Result<MaterializeSummary, MaterializeError> {
-        let batches = RecordingJournalReader::read_committed_after(
+        let batches = RecordingJournalReader::read_committed_after_bounded(
             &self.root,
             cipher,
             self.checkpoint.as_ref(),
+            self.replay_budget_bytes,
         )?;
-        let summary = self.apply_batches(&batches).await?;
-        self.cleanup_applied_segments()?;
-        Ok(summary)
+        match self.apply_batches(&batches).await {
+            Ok(summary) => {
+                self.cleanup_applied_segments()?;
+                Ok(summary)
+            }
+            Err(error) => {
+                // 本轮已经推进的批次必须立刻回收，否则物化失败期间磁盘只增不减。
+                if let Err(cleanup_error) = self.cleanup_applied_segments() {
+                    tracing::warn!(
+                        error = %cleanup_error,
+                        "failed to reclaim applied journal segments after a materialize failure"
+                    );
+                }
+                Err(error)
+            }
+        }
     }
 
     pub(crate) async fn apply_batches(
@@ -150,9 +177,20 @@ impl<S: MaterializeSink> Materializer<S> {
                     record.first_sequence
                 )));
             }
+            let record_kind = record.kind.clone();
+            let record_activity = record.activity_id.clone();
+            let record_sequence = record.first_sequence;
             let journal_record = JournalRecord::new(record.activity_id, record.kind, record.parts);
             let envelope = journal_record.decode_envelope()?;
-            self.sink.apply(envelope).await?;
+            self.sink
+                .apply(envelope)
+                .await
+                .map_err(|error| match error {
+                    MaterializeError::Sink(message) => MaterializeError::Sink(format!(
+                        "{record_kind} {record_activity} at sequence {record_sequence}: {message}"
+                    )),
+                    other => other,
+                })?;
             last_applied_sequence = record.last_sequence;
             applied += 1;
         }

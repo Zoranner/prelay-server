@@ -7,7 +7,7 @@ use tempfile::tempdir;
 use crate::store::recording_journal::{
     checkpoint::JournalCheckpoint,
     journal::JournalRecord,
-    layout::read_node_id,
+    layout::{list_segments, read_node_id},
     materializer::{MaterializeError, MaterializeSink, MaterializeSummary, Materializer},
     record::{RecordEnvelope, RecordKind},
 };
@@ -343,4 +343,81 @@ async fn rejects_a_checkpoint_that_splits_a_logical_record() {
         .expect_err("split checkpoint must fail");
     assert!(matches!(error, MaterializeError::Journal(_)));
     assert!(sink.applied().is_empty());
+}
+
+#[tokio::test]
+async fn bounds_how_much_is_replayed_in_one_pass() {
+    let directory = tempdir().expect("temporary directory");
+    {
+        let mut writer = open_writer(directory.path(), 1024 * 1024);
+        for index in 0..8 {
+            writer
+                .append_and_commit(&[large_record(&format!("activity-{index}"))])
+                .expect("append record");
+        }
+    }
+    let sink = Arc::new(TestSink::default());
+    let mut materializer =
+        Materializer::open(directory.path(), Arc::clone(&sink)).expect("open materializer");
+    materializer.set_replay_budget(4 * 1024);
+
+    let first = materializer
+        .replay_all(&test_cipher())
+        .await
+        .expect("first pass");
+    assert!(
+        first.applied_records >= 1 && first.applied_records < 8,
+        "one pass must stop at the byte budget instead of replaying the whole backlog"
+    );
+
+    let mut applied = first.applied_records;
+    for _ in 0..8 {
+        let pass = materializer
+            .replay_all(&test_cipher())
+            .await
+            .expect("next pass");
+        if pass.applied_records == 0 {
+            break;
+        }
+        applied += pass.applied_records;
+    }
+    assert_eq!(applied, 8);
+    assert_eq!(sink.applied().len(), 8);
+}
+
+#[tokio::test]
+async fn reclaims_applied_segments_when_a_later_batch_fails() {
+    let directory = tempdir().expect("temporary directory");
+    {
+        let mut writer = open_writer(directory.path(), 1024);
+        writer
+            .append_and_commit(&[large_record("activity-1")])
+            .expect("append first segment");
+        writer
+            .append_and_commit(&[large_record("activity-2")])
+            .expect("append second segment");
+    }
+    let node_id = read_node_id(directory.path()).expect("read node ID");
+    let before = list_segments(directory.path(), &node_id).expect("list segments before replay");
+    assert!(before.len() > 1);
+    let sink = Arc::new(TestSink::default());
+    sink.fail_on("activity-2:turn_completed");
+    let mut materializer =
+        Materializer::open(directory.path(), Arc::clone(&sink)).expect("open materializer");
+
+    let error = materializer
+        .replay_all(&test_cipher())
+        .await
+        .expect_err("second batch must fail");
+    assert!(matches!(error, MaterializeError::Sink(_)));
+    let after = list_segments(directory.path(), &node_id).expect("list segments after replay");
+    assert!(
+        !before[0].path.exists(),
+        "a segment covered by the durable checkpoint must be reclaimed even when a later batch fails"
+    );
+    assert!(after.len() < before.len());
+    assert_eq!(
+        after.last().map(|segment| &segment.path),
+        before.last().map(|segment| &segment.path)
+    );
 }

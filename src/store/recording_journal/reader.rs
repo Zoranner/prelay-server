@@ -1,4 +1,9 @@
-use std::{collections::HashMap, fs, path::Path};
+use std::{
+    collections::HashMap,
+    fs::{self, File},
+    io::{BufReader, Read, Seek, SeekFrom},
+    path::Path,
+};
 
 use super::{
     checkpoint::JournalCheckpoint,
@@ -22,10 +27,24 @@ impl RecordingJournalReader {
         Self::read_committed_after(root, cipher, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn read_committed_after(
         root: impl AsRef<Path>,
         cipher: &JournalCipher,
         checkpoint: Option<&JournalCheckpoint>,
+    ) -> Result<Vec<CommittedBatch>, JournalError> {
+        Self::read_committed_after_bounded(root, cipher, checkpoint, usize::MAX)
+    }
+
+    /// 读取 checkpoint 之后已提交的批次，单次最多读取 `max_bytes` 个已编码帧。
+    ///
+    /// 预算用于限制单轮物化的内存与 I/O：积压再大也不会整盘读入并解密一遍。
+    /// 只有读到完整的 commit 帧之后才会因预算停止，因此调用必然获得至少一个可应用批次。
+    pub(crate) fn read_committed_after_bounded(
+        root: impl AsRef<Path>,
+        cipher: &JournalCipher,
+        checkpoint: Option<&JournalCheckpoint>,
+        max_bytes: usize,
     ) -> Result<Vec<CommittedBatch>, JournalError> {
         let root = root.as_ref();
         let node_id = read_node_id(root)?;
@@ -39,7 +58,7 @@ impl RecordingJournalReader {
                 ));
             }
         }
-        let frames = scan_frames(&node_id, &segments, cipher, checkpoint)?;
+        let frames = scan_frames(&node_id, &segments, cipher, checkpoint, max_bytes)?;
         committed_batches(frames)
     }
 }
@@ -49,7 +68,7 @@ pub(super) fn max_observed_sequence(
     segments: &[JournalSegment],
     cipher: &JournalCipher,
 ) -> Result<u64, JournalError> {
-    Ok(scan_frames(node_id, segments, cipher, None)?
+    Ok(scan_frames(node_id, segments, cipher, None, usize::MAX)?
         .into_iter()
         .map(|located| located.frame.sequence)
         .max()
@@ -61,6 +80,7 @@ fn scan_frames(
     segments: &[JournalSegment],
     cipher: &JournalCipher,
     checkpoint: Option<&JournalCheckpoint>,
+    max_bytes: usize,
 ) -> Result<Vec<LocatedFrame>, JournalError> {
     let mut max_index_by_epoch = HashMap::<String, u32>::new();
     for segment in segments {
@@ -71,6 +91,7 @@ fn scan_frames(
     }
 
     let mut frames = Vec::new();
+    let mut budget = ScanBudget::new(max_bytes);
     for segment in segments {
         let mut start_offset = 0_usize;
         let mut skip_first_frame = false;
@@ -87,19 +108,18 @@ fn scan_frames(
                 skip_first_frame = true;
             }
         }
-        let bytes = fs::read(&segment.path)?;
         let binding = JournalBinding {
             node_id: node_id.to_string(),
             epoch: segment.epoch.clone(),
         };
         let scan = scan_segment(
             segment,
-            &bytes,
             cipher,
             &binding,
             start_offset,
             skip_first_frame,
             checkpoint,
+            &mut budget,
         )?;
         if scan.truncated_tail && max_index_by_epoch.get(&segment.epoch) != Some(&segment.index) {
             return Err(JournalError::Corrupt(format!(
@@ -108,6 +128,9 @@ fn scan_frames(
             )));
         }
         frames.extend(scan.frames);
+        if scan.stopped_at_budget {
+            break;
+        }
     }
     frames.sort_by_key(|located| located.frame.sequence);
     for pair in frames.windows(2) {
@@ -121,9 +144,29 @@ fn scan_frames(
     Ok(frames)
 }
 
+struct ScanBudget {
+    max_bytes: usize,
+    used: usize,
+}
+
+impl ScanBudget {
+    fn new(max_bytes: usize) -> Self {
+        Self { max_bytes, used: 0 }
+    }
+
+    fn charge(&mut self, bytes: usize) {
+        self.used = self.used.saturating_add(bytes);
+    }
+
+    fn exhausted(&self) -> bool {
+        self.used >= self.max_bytes
+    }
+}
+
 struct SegmentScan {
     frames: Vec<LocatedFrame>,
     truncated_tail: bool,
+    stopped_at_budget: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,48 +179,63 @@ struct LocatedFrame {
 
 fn scan_segment(
     segment: &JournalSegment,
-    bytes: &[u8],
     cipher: &JournalCipher,
     binding: &JournalBinding,
     start_offset: usize,
     skip_first_frame: bool,
     checkpoint: Option<&JournalCheckpoint>,
+    budget: &mut ScanBudget,
 ) -> Result<SegmentScan, JournalError> {
     let mut frames = Vec::new();
-    if start_offset > bytes.len() {
+    let segment_len = usize::try_from(fs::metadata(&segment.path)?.len()).map_err(|_| {
+        JournalError::Corrupt("journal segment is larger than the addressable range".to_string())
+    })?;
+    if start_offset > segment_len {
         return Err(JournalError::Corrupt(
             "checkpoint offset is beyond the journal segment".to_string(),
         ));
     }
-    let mut cursor = start_offset;
+    let mut reader = BufReader::new(File::open(&segment.path)?);
+    reader.seek(SeekFrom::Start(start_offset as u64))?;
+    let mut remaining = segment_len - start_offset;
     let mut truncated_tail = false;
+    let mut stopped_at_budget = false;
     let mut first_frame = true;
-    while cursor < bytes.len() {
-        if bytes.len() - cursor < 4 {
+    while remaining > 0 {
+        if remaining < 4 {
             truncated_tail = true;
             break;
         }
-        let frame_offset = cursor;
-        let length = u32::from_be_bytes(
-            bytes[cursor..cursor + 4]
-                .try_into()
-                .expect("four-byte length prefix"),
-        ) as usize;
-        cursor += 4;
+        let mut length_bytes = [0_u8; 4];
+        if reader.read_exact(&mut length_bytes).is_err() {
+            truncated_tail = true;
+            break;
+        }
+        remaining -= 4;
+        budget.charge(4);
+        let length = u32::from_be_bytes(length_bytes) as usize;
         if length > MAX_FRAME_BYTES {
             return Err(JournalError::Corrupt(
                 "journal frame length exceeds maximum".to_string(),
             ));
         }
-        if bytes.len() - cursor < length {
+        if remaining < length {
             truncated_tail = true;
             break;
         }
-        let frame = decode_frame(&bytes[cursor..cursor + length], cipher, binding)?;
-        cursor += length;
+        let mut body = vec![0_u8; length];
+        if reader.read_exact(&mut body).is_err() {
+            truncated_tail = true;
+            break;
+        }
+        remaining -= length;
+        budget.charge(length);
+        let frame_offset = segment_len - remaining - length - 4;
+        let frame = decode_frame(&body, cipher, binding)?;
+        let is_commit = frame.frame_type == FrameType::Commit;
         if skip_first_frame && first_frame {
             first_frame = false;
-            if frame.frame_type != FrameType::Commit {
+            if !is_commit {
                 return Err(JournalError::Corrupt(
                     "checkpoint offset does not point at a commit frame".to_string(),
                 ));
@@ -202,6 +260,11 @@ fn scan_segment(
             segment: segment.index,
             offset: frame_offset as u64,
         });
+        // 预算只在完整的 commit 帧之后生效，保证每轮至少推进一个可应用的批次。
+        if budget.exhausted() && is_commit {
+            stopped_at_budget = true;
+            break;
+        }
     }
     for pair in frames.windows(2) {
         if pair[0].frame.sequence >= pair[1].frame.sequence {
@@ -213,6 +276,7 @@ fn scan_segment(
     Ok(SegmentScan {
         frames,
         truncated_tail,
+        stopped_at_budget,
     })
 }
 
