@@ -165,7 +165,6 @@ impl ExtensionCatalog {
             .await?
             .ok_or(CatalogError::VersionNotFound)?;
         let mut artifacts = Vec::with_capacity(classification.artifacts.len());
-        let mut included = Vec::new();
         for artifact in classification.artifacts {
             let mut files = Vec::with_capacity(artifact.paths.len());
             for path in artifact.paths {
@@ -181,7 +180,6 @@ impl ExtensionCatalog {
                 {
                     return Err(CatalogError::ContentInvalid);
                 }
-                included.push(path.clone());
                 files.push(ExtensionFile {
                     content_base64: BASE64.encode(content),
                     path,
@@ -206,15 +204,10 @@ impl ExtensionCatalog {
                 files,
             });
         }
-        let skipped = paths
-            .into_iter()
-            .filter(|path| !included.contains(path))
-            .collect();
         Ok(ExtensionInstallBundle {
             name: repository.to_string(),
             version,
             artifacts,
-            skipped,
         })
     }
 

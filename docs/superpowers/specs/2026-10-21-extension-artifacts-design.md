@@ -57,7 +57,6 @@ pub struct ExtensionInstallBundle {
     pub name: String,
     pub version: ExtensionVersion,
     pub artifacts: Vec<ExtensionArtifact>,
-    pub skipped: Vec<String>,
 }
 ```
 
@@ -118,7 +117,7 @@ pub struct ExtensionSummary {
 
 ### 安装包
 
-`install_bundle` 按制品收集文件，不再按单一类型过滤整个仓库。未匹配任何制品的文件进入 `skipped` 列表并随安装结果返回。规则包与插件包的文件都必须通过现有的路径校验，不接受绝对路径、反斜杠和 `..`。
+`install_bundle` 按制品收集文件，不再按单一类型过滤整个仓库。未匹配任何制品的文件不进入安装包，也不在安装结果中单独报告。规则包与插件包的文件都必须通过现有的路径校验，不接受绝对路径、反斜杠和 `..`。
 
 单制品 Rule、Skill、MCP 安装包在 `artifacts` 之外继续输出旧客户端的 `kind/files` 字段；多制品和 Hook 包不输出旧字段。新客户端只以 `artifacts` 为准，旧服务端的 `kind/files` 响应由协议反序列化兼容为单制品 `artifacts`。
 
@@ -213,7 +212,7 @@ Codex 对非托管 Hook 要求用户审核并信任，未信任的 Hook 不会�
 ## 分阶段
 
 1. `prelay-protocol`：增加 `Hook`、`ExtensionArtifact`、`CatalogKind`，调整安装包结构。
-2. `prelay-server`：分类改为规则/插件，按制品打包，增加 `skipped` 和过渡接口。
+2. `prelay-server`：分类改为规则/插件，按制品打包，保留过渡接口。
 3. `prelay-client` 原生层：遍历制品安装，新增 Hook 合并与统一安装记录。
 4. `prelay-client` 前端：两个分类、插件标签、安装抽屉、已安装聚合。
 5. `superpowers`：增加 `hooks/hooks.json` 与 `hooks/scripts/`，不使用 `.prelay.json`（见文末修订），新增版本 tag，不移动已发布 tag。
@@ -234,7 +233,7 @@ git diff --check
 服务端测试需要 `TEST_POSTGRES_URL` 指向专用测试库。至少覆盖：
 
 - 单制品包仍按原类型安装。
-- 多制品包产出的 artifacts、文件和 `skipped` 正确。
+- 多制品包产出的 artifacts 和文件正确。
 - 清单缺失路径、越界路径、空制品被拒绝。
 - 过渡接口返回与原分类一致的结果。
 

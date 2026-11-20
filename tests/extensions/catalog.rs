@@ -225,7 +225,6 @@ async fn builds_a_rule_install_bundle_from_the_published_commit() {
         bundle.artifacts[0].files[0].content_base64,
         BASE64.encode("# Managed rules")
     );
-    assert!(bundle.skipped.is_empty());
 }
 
 #[tokio::test]

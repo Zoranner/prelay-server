@@ -59,14 +59,6 @@ async fn builds_a_plugin_bundle_and_filters_catalog_by_artifact() {
         bundle.artifacts[1].files[1].path,
         "hooks/scripts/session-start.sh"
     );
-    assert_eq!(
-        bundle.skipped,
-        vec![
-            ".prelay.json".to_string(),
-            "AGENTS.md".to_string(),
-            "README.md".to_string()
-        ]
-    );
 
     let plugins = catalog.list(CatalogKind::Plugin).await.unwrap();
     assert_eq!(plugins.len(), 1);
@@ -153,7 +145,6 @@ async fn builds_a_hook_only_bundle_and_preserves_binary_support_files() {
             .unwrap(),
         binary
     );
-    assert_eq!(bundle.skipped, vec!["README.md".to_string()]);
 
     let plugins = catalog.list(CatalogKind::Plugin).await.unwrap();
     assert_eq!(plugins.len(), 1);
@@ -213,7 +204,6 @@ async fn builds_a_hook_skill_and_mcp_bundle() {
         ]
     );
     assert_eq!(bundle.artifacts[2].files.len(), 2);
-    assert_eq!(bundle.skipped, vec!["README.md".to_string()]);
 }
 
 #[tokio::test]
