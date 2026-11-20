@@ -22,7 +22,6 @@ use super::{provider_views::provider_response, Storage, StorageError};
 
 #[derive(Clone, Debug)]
 pub(crate) struct ProviderGrant {
-    pub(crate) quota_json: Option<String>,
     pub(crate) created_at: String,
 }
 
@@ -115,6 +114,17 @@ impl Storage {
         Ok(ProviderSharingResponse {
             visibility: provider.visibility,
             users: provider_sharing_users(&self.db, provider_id).await?,
+            quota: provider
+                .provider
+                .share_quota_json
+                .as_deref()
+                .map(serde_json::from_str::<Vec<ShareQuotaWindow>>)
+                .transpose()
+                .map_err(|error| {
+                    StorageError::InvalidProviderSharing(format!(
+                        "stored sharing quota is invalid: {error}"
+                    ))
+                })?,
         })
     }
 
@@ -131,6 +141,16 @@ impl Storage {
 
         let mut provider = provider.into_active_model();
         provider.visibility = Set(visibility_value(visibility).to_string());
+        provider.share_quota_json = Set(input
+            .quota
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| {
+                StorageError::InvalidProviderSharing(format!(
+                    "could not serialize sharing quota: {error}"
+                ))
+            })?);
         provider.update(&transaction).await?;
 
         let existing_created_at = identity_provider_shares::Entity::find()
@@ -146,16 +166,6 @@ impl Storage {
             .await?;
         let now = Utc::now().to_rfc3339();
         for user in input.users {
-            let quota_json = user
-                .quota
-                .as_ref()
-                .map(serde_json::to_string)
-                .transpose()
-                .map_err(|error| {
-                    StorageError::InvalidProviderSharing(format!(
-                        "could not serialize share quota: {error}"
-                    ))
-                })?;
             let created_at = existing_created_at
                 .get(&user.identity_id)
                 .cloned()
@@ -164,7 +174,7 @@ impl Storage {
                 provider_id: Set(provider_id.to_string()),
                 grantee_identity_id: Set(user.identity_id),
                 created_at: Set(created_at),
-                quota_json: Set(quota_json),
+                quota_json: Set(None),
             }
             .insert(&transaction)
             .await?;
@@ -237,7 +247,6 @@ where
                     .one(db)
                     .await?
                     .map(|share| ProviderGrant {
-                        quota_json: share.quota_json,
                         created_at: share.created_at,
                     });
                 grant.is_some()
@@ -287,20 +296,9 @@ async fn provider_sharing_users(
                 .get(&share.grantee_identity_id)
                 .cloned()
                 .ok_or(StorageError::IdentityNotFound)?;
-            let quota = share
-                .quota_json
-                .as_deref()
-                .map(serde_json::from_str::<Vec<ShareQuotaWindow>>)
-                .transpose()
-                .map_err(|error| {
-                    StorageError::InvalidProviderSharing(format!(
-                        "stored share quota is invalid: {error}"
-                    ))
-                })?;
             Ok(ProviderSharingUserResponse {
                 identity_id: share.grantee_identity_id,
                 display_name,
-                quota,
             })
         })
         .collect()
@@ -315,6 +313,9 @@ async fn validate_sharing_input<C>(
 where
     C: ConnectionTrait,
 {
+    if let Some(quota) = &input.quota {
+        validate_share_quota(quota)?;
+    }
     match visibility {
         ProviderVisibility::Private | ProviderVisibility::All => {
             if !input.users.is_empty() {
@@ -343,9 +344,6 @@ where
             return Err(StorageError::InvalidProviderSharing(
                 "selected identities must be unique".to_string(),
             ));
-        }
-        if let Some(quota) = &user.quota {
-            validate_share_quota(quota)?;
         }
     }
     let identity_ids = input

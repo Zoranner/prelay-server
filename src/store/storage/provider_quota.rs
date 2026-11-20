@@ -18,6 +18,31 @@ use super::{
 const LOCAL_OFFSET_SECONDS: i32 = 8 * 60 * 60;
 
 impl Storage {
+    /// 读取某个共享用户实际生效的额度规则与起算时间。
+    pub(crate) async fn shared_quota_rule(
+        &self,
+        provider_id: &str,
+        grantee_identity_id: &str,
+    ) -> Result<Option<(String, String)>, StorageError> {
+        use crate::store::entity::identity::provider_configs as identity_provider_configs;
+
+        let Some(provider) = identity_provider_configs::Entity::find_by_id(provider_id)
+            .one(&self.db)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let Some(json) = provider.share_quota_json else {
+            return Ok(None);
+        };
+        let since = self
+            .provider_share(provider_id, grantee_identity_id)
+            .await?
+            .map(|share| share.created_at)
+            .unwrap_or(provider.created_at);
+        Ok(Some((json, since)))
+    }
+
     pub(crate) async fn provider_share(
         &self,
         provider_id: &str,

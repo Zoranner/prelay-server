@@ -107,51 +107,46 @@ impl QuotaService {
                             .await,
                         )
                     } else {
-                        match visible.grant.as_ref() {
-                            Some(grant) => match grant.quota_json.as_deref() {
-                                Some(json) => {
-                                    let rules = serde_json::from_str::<Vec<ShareQuotaWindow>>(json)
-                                        .map_err(|error| {
-                                            StorageError::InvalidProviderSharing(format!(
-                                                "stored share quota is invalid: {error}"
-                                            ))
-                                        })?;
-                                    let mut windows = storage
-                                        .shared_quota_windows(
-                                            &visible.provider.id,
-                                            &identity_id,
-                                            &grant.created_at,
-                                            &rules,
-                                            now,
-                                        )
-                                        .await?;
-                                    self.reservations.apply_pending(
+                        match visible.provider.share_quota_json.as_deref() {
+                            Some(json) => {
+                                let rules = serde_json::from_str::<Vec<ShareQuotaWindow>>(json)
+                                    .map_err(|error| {
+                                        StorageError::InvalidProviderSharing(format!(
+                                            "stored share quota is invalid: {error}"
+                                        ))
+                                    })?;
+                                // 共享额度的起算点：指定用户用授权时间，全部用户用 Provider 创建时间。
+                                let since = visible
+                                    .grant
+                                    .as_ref()
+                                    .map(|grant| grant.created_at.as_str())
+                                    .unwrap_or(visible.provider.created_at.as_str());
+                                let mut windows = storage
+                                    .shared_quota_windows(
                                         &visible.provider.id,
                                         &identity_id,
-                                        &mut windows,
-                                    );
-                                    (
-                                        ProviderQuotaMode::SharedLimited,
-                                        ProviderQuota {
-                                            plan: None,
-                                            windows,
-                                            balance: None,
-                                            error: None,
-                                            read_at: Some(now.to_rfc3339()),
-                                            stale: false,
-                                        },
+                                        since,
+                                        &rules,
+                                        now,
                                     )
-                                }
-                                None => (
-                                    ProviderQuotaMode::SharedUnlimited,
-                                    self.external_quota(
-                                        storage,
-                                        &visible.owner_identity_id,
-                                        &visible.provider,
-                                    )
-                                    .await,
-                                ),
-                            },
+                                    .await?;
+                                self.reservations.apply_pending(
+                                    &visible.provider.id,
+                                    &identity_id,
+                                    &mut windows,
+                                );
+                                (
+                                    ProviderQuotaMode::SharedLimited,
+                                    ProviderQuota {
+                                        plan: None,
+                                        windows,
+                                        balance: None,
+                                        error: None,
+                                        read_at: Some(now.to_rfc3339()),
+                                        stale: false,
+                                    },
+                                )
+                            }
                             None => (
                                 ProviderQuotaMode::SharedUnlimited,
                                 self.external_quota(

@@ -128,23 +128,14 @@ impl QuotaReservations {
         if tokens <= 0 {
             return Ok(empty());
         }
-        let Some(share) = storage.provider_share(provider_id, identity_id).await? else {
+        let Some((json, since)) = storage.shared_quota_rule(provider_id, identity_id).await? else {
             return Ok(empty());
         };
-        let Some(json) = share.quota_json.as_deref() else {
-            return Ok(empty());
-        };
-        let rules = serde_json::from_str::<Vec<ShareQuotaWindow>>(json).map_err(|error| {
+        let rules = serde_json::from_str::<Vec<ShareQuotaWindow>>(&json).map_err(|error| {
             AppError::Internal(anyhow::anyhow!("stored share quota is invalid: {error}"))
         })?;
         let windows = storage
-            .shared_quota_windows(
-                provider_id,
-                identity_id,
-                &share.created_at,
-                &rules,
-                Utc::now(),
-            )
+            .shared_quota_windows(provider_id, identity_id, &since, &rules, Utc::now())
             .await?;
         if windows.is_empty() {
             return Ok(empty());

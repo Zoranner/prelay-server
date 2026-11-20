@@ -58,16 +58,16 @@ async fn provider_visibility_controls_lists_and_replaces_selected_grantees() {
         Some(serde_json::json!({
             "visibility": "selected",
             "users": [{
-                "identity_id": grantee["identity_id"],
-                "quota": null
-            }]
+                "identity_id": grantee["identity_id"]
+            }],
+            "quota": null
         })),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(sharing["visibility"], "selected");
     assert_eq!(sharing["users"][0]["identity_id"], grantee["identity_id"]);
-    assert!(sharing["users"][0]["quota"].is_null());
+    assert!(sharing["quota"].is_null());
 
     let (status, providers): (StatusCode, Vec<serde_json::Value>) = request_json(
         &app,
@@ -130,9 +130,9 @@ async fn provider_visibility_controls_lists_and_replaces_selected_grantees() {
         Some(serde_json::json!({
             "visibility": "selected",
             "users": [{
-                "identity_id": replacement["identity_id"],
-                "quota": null
-            }]
+                "identity_id": replacement["identity_id"]
+            }],
+            "quota": null
         })),
     )
     .await;
@@ -221,9 +221,9 @@ async fn shared_provider_can_back_endpoint_until_revoked_and_deleted() {
         Some(serde_json::json!({
             "visibility": "selected",
             "users": [{
-                "identity_id": grantee["identity_id"],
-                "quota": null
-            }]
+                "identity_id": grantee["identity_id"]
+            }],
+            "quota": null
         })),
     )
     .await;
@@ -344,9 +344,9 @@ async fn non_owner_can_ping_a_shared_provider_but_cannot_test_its_protocols() {
         Some(serde_json::json!({
             "visibility": "selected",
             "users": [{
-                "identity_id": grantee["identity_id"],
-                "quota": null
-            }]
+                "identity_id": grantee["identity_id"]
+            }],
+            "quota": null
         })),
     )
     .await;

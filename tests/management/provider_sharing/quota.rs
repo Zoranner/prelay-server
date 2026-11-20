@@ -43,23 +43,23 @@ async fn limited_share_reports_the_shared_quota_windows() {
         Some(serde_json::json!({
             "visibility": "selected",
             "users": [{
-                "identity_id": grantee["identity_id"],
-                "quota": [{
-                    "window": "day",
-                    "limit": 1000,
-                    "accumulate": true,
-                    "reset_time": "00:00",
-                    "reset_weekday": null,
-                    "reset_day": null
-                }]
+                "identity_id": grantee["identity_id"]
+            }],
+            "quota": [{
+                "window": "day",
+                "limit": 1000,
+                "accumulate": true,
+                "reset_time": "00:00",
+                "reset_weekday": null,
+                "reset_day": null
             }]
         })),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(sharing["visibility"], "selected");
-    assert_eq!(sharing["users"][0]["quota"][0]["window"], "day");
-    assert_eq!(sharing["users"][0]["quota"][0]["limit"], 1000);
+    assert_eq!(sharing["quota"][0]["window"], "day");
+    assert_eq!(sharing["quota"][0]["limit"], 1000);
 
     let (status, quotas): (StatusCode, Vec<serde_json::Value>) = request_json(
         &app,
@@ -134,15 +134,15 @@ async fn exhausted_shared_quota_is_rejected_before_the_upstream_call() {
         Some(serde_json::json!({
             "visibility": "selected",
             "users": [{
-                "identity_id": grantee["identity_id"],
-                "quota": [{
-                    "window": "day",
-                    "limit": 1,
-                    "accumulate": false,
-                    "reset_time": "00:00",
-                    "reset_weekday": null,
-                    "reset_day": null
-                }]
+                "identity_id": grantee["identity_id"]
+            }],
+            "quota": [{
+                "window": "day",
+                "limit": 1,
+                "accumulate": false,
+                "reset_time": "00:00",
+                "reset_weekday": null,
+                "reset_day": null
             }]
         })),
     )
@@ -189,7 +189,7 @@ async fn exhausted_shared_quota_is_rejected_before_the_upstream_call() {
 }
 
 #[tokio::test]
-async fn each_grantee_gets_a_separate_shared_quota() {
+async fn every_grantee_uses_the_same_shared_quota_rule() {
     let app = app::router(test_state().await).await.expect("build app");
     let owner = register_named(
         &app,
@@ -241,41 +241,33 @@ async fn each_grantee_gets_a_separate_shared_quota() {
             "visibility": "selected",
             "users": [
                 {
-                    "identity_id": first["identity_id"],
-                    "quota": [{
-                        "window": "day",
-                        "limit": 1000,
-                        "accumulate": false,
-                        "reset_time": "00:00",
-                        "reset_weekday": null,
-                        "reset_day": null
-                    }]
+                    "identity_id": first["identity_id"]
                 },
                 {
-                    "identity_id": second["identity_id"],
-                    "quota": [{
-                        "window": "day",
-                        "limit": 2000,
-                        "accumulate": false,
-                        "reset_time": "00:00",
-                        "reset_weekday": null,
-                        "reset_day": null
-                    }]
+                    "identity_id": second["identity_id"]
                 }
-            ]
+            ],
+            "quota": [{
+                "window": "day",
+                "limit": 1000,
+                "accumulate": false,
+                "reset_time": "00:00",
+                "reset_weekday": null,
+                "reset_day": null
+            }]
         })),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    for (credential, expected_limit) in [(first_credential, "1000"), (second_credential, "2000")] {
+    for credential in [first_credential, second_credential] {
         let (status, quotas): (StatusCode, Vec<serde_json::Value>) =
             request_json(&app, "GET", "/api/providers/quotas", Some(credential), None).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(quotas.len(), 1);
         assert_eq!(quotas[0]["mode"], "shared_limited");
-        assert_eq!(quotas[0]["quota"]["windows"][0]["limit"], expected_limit);
-        assert_eq!(quotas[0]["quota"]["windows"][0]["amount"], expected_limit);
+        assert_eq!(quotas[0]["quota"]["windows"][0]["limit"], "1000");
+        assert_eq!(quotas[0]["quota"]["windows"][0]["amount"], "1000");
     }
 }
 
@@ -323,9 +315,9 @@ async fn direct_share_uses_the_owner_quota_mode() {
         Some(serde_json::json!({
             "visibility": "selected",
             "users": [{
-                "identity_id": grantee["identity_id"],
-                "quota": null
-            }]
+                "identity_id": grantee["identity_id"]
+            }],
+            "quota": null
         })),
     )
     .await;
