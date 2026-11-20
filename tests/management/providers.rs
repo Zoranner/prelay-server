@@ -252,7 +252,11 @@ async fn management_provider_response_exposes_the_key_only_to_its_current_identi
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(provider["api_key"], "sk-visible-to-owner-only");
+    assert_eq!(
+        provider["credential"]["api_key"],
+        "sk-visible-to-owner-only"
+    );
+    assert!(provider.get("api_key").is_none());
 
     let credential_b = register(&app, "machine-key-b", "S-1-5-21-618").await["credential"]
         .as_str()
