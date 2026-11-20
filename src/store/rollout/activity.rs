@@ -234,6 +234,15 @@ impl RolloutStore {
         identity_id: &str,
         materialization: FinishedTurnMaterialization,
     ) -> Result<RolloutSummary, RolloutError> {
+        self.finish_activity_turn(identity_id, materialization)
+            .await
+    }
+
+    pub(crate) async fn finish_activity_turn(
+        &self,
+        identity_id: &str,
+        materialization: FinishedTurnMaterialization,
+    ) -> Result<RolloutSummary, RolloutError> {
         let FinishedTurnMaterialization {
             session,
             activity_id,

@@ -117,6 +117,10 @@ impl RolloutStatus {
     }
 }
 
+/// 活动在线程文件中的连续包络。
+///
+/// 交错轮次允许后续 turn 的事件落在前一个活动的包络内，因此不同活动的区间
+/// 可以重叠。统计字段按包络计算，不表示只包含该 turn 的正文。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RolloutSummary {
     pub activity_id: String,

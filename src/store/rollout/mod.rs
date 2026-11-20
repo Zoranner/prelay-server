@@ -32,6 +32,11 @@ pub(crate) struct TimedContentDraft {
     pub(crate) draft: ContentDraft,
 }
 
+/// 一个活动在线程文件中的连续包络。
+///
+/// 交错轮次允许后续 turn 的事件落在前一个活动的包络内，因此不同活动的区间
+/// 可以重叠。`event_count`、`byte_size` 和 `sha256` 按包络统计，不表示只包含
+/// 该 turn 的正文；正文归属以 `turn` 和 `turn_end` 的 `turn_id` 为准。
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ActivityTurn {
     pub(crate) relative_path: String,

@@ -10,6 +10,9 @@ use crate::{
 
 use super::ActivityStore;
 
+const INTERRUPTED_CODE: &str = "activity_interrupted";
+const INTERRUPTED_MESSAGE: &str = "process interrupted before activity rollout completion";
+
 impl ActivityStore {
     pub async fn recover_interrupted(&self) -> Result<u64, StorageError> {
         let interrupted = self.storage.list_writing_rollouts().await?;
@@ -22,10 +25,11 @@ impl ActivityStore {
                     status: summary.status,
                     http_status: None,
                     error_code: (summary.status == RolloutStatus::Partial)
-                        .then(|| "activity_interrupted".to_string()),
-                    error_message: (summary.status == RolloutStatus::Partial).then(|| {
-                        "process interrupted before activity rollout completion".to_string()
-                    }),
+                        .then(|| INTERRUPTED_CODE.to_string()),
+                    error_message: (summary.status == RolloutStatus::Partial)
+                        .then(|| INTERRUPTED_MESSAGE.to_string()),
+                    start_line: Some(summary.start_line),
+                    end_line: Some(summary.end_line),
                     event_count: Some(summary.event_count),
                     byte_size: Some(summary.byte_size),
                     sha256: Some(summary.sha256),
@@ -65,21 +69,23 @@ impl ActivityStore {
         if turn.complete {
             return Ok(Some(turn.summary(rollout.activity_id.clone())));
         }
-        let mut writer = self
-            .rollouts
-            .resume_activity_turn(&rollout.identity_id, &session, &rollout.activity_id)
-            .await
-            .map_err(|error| StorageError::Rollout(error.to_string()))?;
-        let summary = writer
-            .finish_with_at(
-                RolloutStatus::Partial,
-                None,
-                Some("activity_interrupted".to_string()),
-                Some("process interrupted before activity rollout completion".to_string()),
-                &Utc::now().to_rfc3339(),
+        self.rollouts
+            .finish_activity_turn(
+                &rollout.identity_id,
+                crate::store::rollout::FinishedTurnMaterialization {
+                    session,
+                    activity_id: rollout.activity_id.clone(),
+                    response_events: Vec::new(),
+                    status: RolloutStatus::Partial,
+                    http_status: None,
+                    error_code: Some(INTERRUPTED_CODE.to_string()),
+                    error_message: Some(INTERRUPTED_MESSAGE.to_string()),
+                    finished_at: Utc::now().to_rfc3339(),
+                },
             )
-            .map_err(|error| StorageError::Rollout(error.to_string()))?;
-        Ok(Some(summary))
+            .await
+            .map(Some)
+            .map_err(|error| StorageError::Rollout(error.to_string()))
     }
 
     fn recovered_rollout_status(&self, rollout: &InterruptedRollout) -> RecoveredRollout {
@@ -97,6 +103,8 @@ impl ActivityStore {
                         http_status: turn_end.http_status.map(i64::from),
                         error_code: turn_end.error_code,
                         error_message: None,
+                        start_line: Some(rollout.start_line),
+                        end_line: Some(rollout.end_line),
                         event_count: Some(file.event_count),
                         byte_size: Some(file.byte_size),
                         sha256: Some(file.sha256),
@@ -105,10 +113,10 @@ impl ActivityStore {
                         activity_id: rollout.activity_id.clone(),
                         status: RolloutStatus::Partial,
                         http_status: None,
-                        error_code: Some("activity_interrupted".to_string()),
-                        error_message: Some(
-                            "process interrupted before activity rollout completion".to_string(),
-                        ),
+                        error_code: Some(INTERRUPTED_CODE.to_string()),
+                        error_message: Some(INTERRUPTED_MESSAGE.to_string()),
+                        start_line: Some(rollout.start_line),
+                        end_line: Some(rollout.end_line),
                         event_count: Some(file.event_count),
                         byte_size: Some(file.byte_size),
                         sha256: Some(file.sha256),
@@ -126,15 +134,160 @@ impl ActivityStore {
                     activity_id: rollout.activity_id.clone(),
                     status: RolloutStatus::Partial,
                     http_status: None,
-                    error_code: Some("activity_interrupted".to_string()),
-                    error_message: Some(
-                        "process interrupted before activity rollout completion".to_string(),
-                    ),
+                    error_code: Some(INTERRUPTED_CODE.to_string()),
+                    error_message: Some(INTERRUPTED_MESSAGE.to_string()),
+                    start_line: Some(rollout.start_line),
+                    end_line: Some(rollout.end_line),
                     event_count: None,
                     byte_size: None,
                     sha256: None,
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::domain::activity::rollout::{SessionContext, TurnContext};
+    use crate::domain::stats::ActivityInsert;
+    use crate::service::activity::ActivityStore;
+    use crate::store::rollout::RolloutStore;
+
+    #[tokio::test]
+    async fn recovers_interleaved_writing_activity_with_full_envelope_range() {
+        let storage = crate::test_support::test_storage().await;
+        let identity = storage
+            .register_identity(
+                "recover-interleaved-machine",
+                "S-recover-interleaved",
+                &crate::domain::identity::credential::generate_credential(),
+            )
+            .await
+            .expect("register identity");
+        let root = tempfile::tempdir().expect("temp rollout root");
+        let rollouts = RolloutStore::new(root.path().to_path_buf());
+        let session = SessionContext::new("thread-interleaved-recovery");
+        let first = rollouts
+            .begin(
+                &identity.identity_id,
+                &session,
+                TurnContext {
+                    activity_id: "interleaved-a".to_string(),
+                    model_requested: "deepseek-flash".to_string(),
+                    model_upstream: "deepseek-chat".to_string(),
+                },
+                Vec::new(),
+            )
+            .await
+            .expect("begin earlier turn");
+        drop(first);
+        let later = rollouts
+            .begin(
+                &identity.identity_id,
+                &session,
+                TurnContext {
+                    activity_id: "interleaved-b".to_string(),
+                    model_requested: "deepseek-flash".to_string(),
+                    model_upstream: "deepseek-chat".to_string(),
+                },
+                Vec::new(),
+            )
+            .await
+            .expect("begin later turn");
+        drop(later);
+
+        let started = rollouts
+            .find_activity_turn(
+                &identity.identity_id,
+                "thread-interleaved-recovery",
+                "interleaved-a",
+            )
+            .expect("find started turn")
+            .expect("started turn exists");
+        assert!(!started.complete);
+        let mut activity = test_activity();
+        activity.status = "streaming".to_string();
+        activity.is_streaming = true;
+        storage
+            .insert_activity_with_rollout(
+                &identity.identity_id,
+                "interleaved-a".to_string(),
+                activity,
+                started.summary("interleaved-a"),
+            )
+            .await
+            .expect("insert interrupted activity");
+
+        let activity_store = ActivityStore::new(storage.clone(), rollouts.clone());
+        assert_eq!(
+            activity_store
+                .recover_interrupted()
+                .await
+                .expect("recover interrupted activity"),
+            1
+        );
+
+        let completed = rollouts
+            .find_activity_turn(
+                &identity.identity_id,
+                "thread-interleaved-recovery",
+                "interleaved-a",
+            )
+            .expect("find recovered turn")
+            .expect("recovered turn exists");
+        assert!(completed.complete);
+        let rollout = storage
+            .find_activity_rollout("interleaved-a")
+            .await
+            .expect("load recovered rollout")
+            .expect("recovered rollout");
+        assert_eq!(rollout.status, "partial");
+        assert_eq!(rollout.start_line, completed.start_line as i64);
+        assert_eq!(rollout.end_line, completed.end_line as i64);
+        assert_eq!(rollout.event_count, completed.event_count as i64);
+        assert_eq!(rollout.byte_size, completed.byte_size as i64);
+        assert_eq!(rollout.sha256.as_deref(), Some(completed.sha256.as_str()));
+
+        let recovered_activity = storage
+            .list_activities(&identity.identity_id, 1)
+            .await
+            .expect("load recovered activity")
+            .pop()
+            .expect("recovered activity exists");
+        assert_eq!(recovered_activity.status, "failed");
+        assert_eq!(
+            recovered_activity.error_code.as_deref(),
+            Some("activity_interrupted")
+        );
+    }
+
+    fn test_activity() -> ActivityInsert {
+        ActivityInsert {
+            protocol_in: "responses".to_string(),
+            protocol_out: "responses".to_string(),
+            protocol_upstream: "responses".to_string(),
+            endpoint_name: "Codex".to_string(),
+            provider_id: "provider-1".to_string(),
+            provider_name: "DeepSeek".to_string(),
+            provider_type: "deepseek".to_string(),
+            model_requested: "deepseek-flash".to_string(),
+            model_upstream: "deepseek-chat".to_string(),
+            status: "success".to_string(),
+            http_status: 200,
+            error_code: None,
+            error_message: None,
+            is_streaming: false,
+            input_tokens: None,
+            output_tokens: None,
+            reasoning_tokens: None,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
+            latency_ms: 1,
+            upstream_latency_ms: None,
+            first_token_ms: None,
+            tool_call_count: None,
+            upstream_request_id: None,
         }
     }
 }

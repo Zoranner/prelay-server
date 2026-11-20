@@ -224,6 +224,8 @@ async fn applies_a_verified_recovered_rollout_to_both_tables() {
             http_status: Some(200),
             error_code: None,
             error_message: None,
+            start_line: Some(1),
+            end_line: Some(6),
             event_count: Some(4),
             byte_size: Some(512),
             sha256: Some("e".repeat(64)),
@@ -245,6 +247,8 @@ async fn applies_a_verified_recovered_rollout_to_both_tables() {
         .expect("load recovered rollout")
         .expect("recovered rollout");
     assert_eq!(rollout.status, "completed");
+    assert_eq!(rollout.start_line, 1);
+    assert_eq!(rollout.end_line, 6);
     assert_eq!(rollout.event_count, 4);
     assert_eq!(rollout.byte_size, 512);
     assert!(rollout.completed_at.is_some());

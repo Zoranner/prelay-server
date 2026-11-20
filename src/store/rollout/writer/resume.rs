@@ -10,13 +10,14 @@ use sha2::{Digest, Sha256};
 use super::{super::support::is_safe_path_segment, RolloutWriter};
 use crate::{
     domain::activity::rollout::{
-        ConversationFormat, RolloutError, RolloutStatus, SessionContext, TurnEvent, WindowEvent,
+        RolloutError, RolloutStatus, SessionContext, TurnEvent, WindowEvent,
     },
     store::rollout::RolloutStore,
 };
 
 impl RolloutStore {
-    pub(crate) async fn resume_activity_turn(
+    /// 只负责续写已有 turn；调用方必须通过 `finish_activity_turn` 获取完整包络摘要。
+    pub(in crate::store::rollout) async fn resume_activity_turn(
         &self,
         identity_id: &str,
         session: &SessionContext,
@@ -51,14 +52,6 @@ impl RolloutStore {
             .ok_or_else(|| {
                 RolloutError::InvalidPath(format!("activity turn {activity_id} does not exist"))
             })?;
-        if events[turn_index + 1..]
-            .iter()
-            .any(|event| event.event_type == "turn")
-        {
-            return Err(RolloutError::InvalidPath(format!(
-                "activity turn {activity_id} is not the last turn"
-            )));
-        }
         if super::super::activity::turn_completion(&thread, turn_index)?.is_some() {
             return Err(RolloutError::InvalidPath(format!(
                 "activity turn {activity_id} is already complete"
@@ -77,12 +70,13 @@ impl RolloutStore {
                 generation = window.generation;
             }
         }
-        let meta_lines = u64::from(state.format == ConversationFormat::V1);
         let previous_turn = events[..turn_index]
             .iter()
             .rposition(|event| event.event_type == "turn");
         let start_line = if previous_turn.is_some() {
-            meta_lines + turn_index as u64 + 1
+            thread.lines.get(turn_index).copied().ok_or_else(|| {
+                RolloutError::InvalidPath("turn event has no file position".to_string())
+            })?
         } else {
             1
         };

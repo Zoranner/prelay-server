@@ -25,6 +25,8 @@ pub struct RecoveredRollout {
     pub http_status: Option<i64>,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
+    pub start_line: Option<u64>,
+    pub end_line: Option<u64>,
     pub event_count: Option<u64>,
     pub byte_size: Option<u64>,
     pub sha256: Option<String>,
@@ -70,6 +72,12 @@ impl Storage {
         });
         if let Some(event_count) = update.event_count {
             active.event_count = Set(to_i64(event_count)?);
+        }
+        if let Some(start_line) = update.start_line {
+            active.start_line = Set(to_i64(start_line)?);
+        }
+        if let Some(end_line) = update.end_line {
+            active.end_line = Set(to_i64(end_line)?);
         }
         if let Some(byte_size) = update.byte_size {
             active.byte_size = Set(to_i64(byte_size)?);
