@@ -94,7 +94,7 @@ impl QuotaService {
             futures::future::join_all(providers.into_iter().map(|visible| {
                 let identity_id = identity_id.clone();
                 async move {
-                    let (mode, quota) = if visible.can_manage {
+                    let (mode, quota) = if visible.is_owner {
                         (
                             ProviderQuotaMode::Own,
                             self.external_quota(
@@ -105,11 +105,8 @@ impl QuotaService {
                             .await,
                         )
                     } else {
-                        match storage
-                            .provider_share(&visible.provider.id, &identity_id)
-                            .await?
-                        {
-                            Some(share) => match share.quota_json.as_deref() {
+                        match visible.grant.as_ref() {
+                            Some(grant) => match grant.quota_json.as_deref() {
                                 Some(json) => {
                                     let rules = serde_json::from_str::<Vec<ShareQuotaWindow>>(json)
                                         .map_err(|error| {
@@ -121,7 +118,7 @@ impl QuotaService {
                                         .shared_quota_windows(
                                             &visible.provider.id,
                                             &identity_id,
-                                            &share.created_at,
+                                            &grant.created_at,
                                             &rules,
                                             now,
                                         )

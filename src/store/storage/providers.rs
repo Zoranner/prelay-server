@@ -3,8 +3,10 @@ use prelay_protocol::{
     CreateProviderRequest, ProviderCapabilityOverrides, ProviderResponse, UpdateProviderRequest,
 };
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
-    EntityTrait, IntoActiveModel, QueryFilter, QueryOrder, TransactionTrait,
+    ActiveModelTrait,
+    ActiveValue::{NotSet, Set},
+    ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, IntoActiveModel, QueryFilter,
+    QueryOrder, TransactionTrait,
 };
 use uuid::Uuid;
 
@@ -27,7 +29,7 @@ use super::{
         models_json, normalize_models, validate_catalog_provider, validate_models,
     },
     provider_views::provider_response,
-    provider_visibility::owned_provider,
+    provider_visibility::{owned_provider, visible_provider},
     Storage, StorageError,
 };
 
@@ -232,7 +234,7 @@ async fn create_inner(
         identity_id: Set(identity_id.to_string()),
         name: Set(input.name.trim().to_string()),
         provider_type: Set(input.provider_type.trim().to_string()),
-        visibility: Set("private".to_string()),
+        visibility: NotSet,
         base_url: Set(input.base_url.trim().to_string()),
         api_key_ciphertext: Set(api_key_ciphertext),
         capabilities_json: Set(capabilities_json),
@@ -268,7 +270,10 @@ pub(crate) async fn list(
         .await?;
     let mut responses = Vec::with_capacity(providers.len());
     for provider in providers {
-        responses.push(provider_response(crypto, catalog, provider)?);
+        let visible = visible_provider(db, identity_id, provider)
+            .await?
+            .ok_or(StorageError::ProviderNotFound)?;
+        responses.push(provider_response(crypto, catalog, visible, false)?);
     }
     Ok(responses)
 }
@@ -281,7 +286,10 @@ pub(crate) async fn get(
     catalog: Option<&ProviderCatalog>,
 ) -> Result<ProviderResponse, StorageError> {
     let provider = find_provider(db, identity_id, provider_id).await?;
-    provider_response(crypto, catalog, provider)
+    let visible = visible_provider(db, identity_id, provider)
+        .await?
+        .ok_or(StorageError::ProviderNotFound)?;
+    provider_response(crypto, catalog, visible, true)
 }
 
 pub(crate) async fn update(

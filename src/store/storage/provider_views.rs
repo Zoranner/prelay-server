@@ -1,63 +1,51 @@
-use prelay_protocol::{
-    ProviderCapabilityOverrides, ProviderListItemResponse, ProviderResponse, ProviderVisibility,
-};
+use prelay_protocol::{ProviderCapabilityOverrides, ProviderCredential, ProviderResponse};
 
 use crate::{
     codec::providers::spec::resolved_upstream_protocols, domain::catalog::ProviderCatalog,
     store::entity::identity::provider_configs as identity_provider_configs,
 };
 
-use super::{crypto::KeyCipher, StorageError};
+use super::{crypto::KeyCipher, provider_visibility::VisibleProvider, StorageError};
 
+/// Provider 唯一读模型：列表、编辑前加载和保存回写都从这里投影。
+/// `credential` 只在创建人读取编辑数据时填充，列表恒为 `None`。
 pub(super) fn provider_response(
     crypto: &KeyCipher,
     catalog: Option<&ProviderCatalog>,
-    provider: identity_provider_configs::Model,
+    visible: VisibleProvider,
+    include_credential: bool,
 ) -> Result<ProviderResponse, StorageError> {
+    let VisibleProvider {
+        provider,
+        owner_identity_id,
+        owner_display_name,
+        visibility,
+        ..
+    } = visible;
     let capabilities = capabilities(&provider);
     let upstream_protocols = resolved_upstream_protocols(catalog, &provider.provider_type);
     let models = models(&provider);
-    let api_key = crypto.decrypt(&provider.api_key_ciphertext)?;
+    let credential = if include_credential {
+        Some(ProviderCredential {
+            api_key: crypto.decrypt(&provider.api_key_ciphertext)?,
+            api_key_masked: mask_ciphertext(&provider.api_key_ciphertext),
+        })
+    } else {
+        None
+    };
     Ok(ProviderResponse {
         id: provider.id,
         name: provider.name,
         provider_type: provider.provider_type,
         base_url: provider.base_url,
-        api_key,
-        api_key_masked: mask_ciphertext(&provider.api_key_ciphertext),
         capabilities,
         upstream_protocols,
         models,
         created_at: provider.created_at,
-    })
-}
-
-pub(super) fn provider_list_item(
-    catalog: Option<&ProviderCatalog>,
-    provider: identity_provider_configs::Model,
-    owner_identity_id: String,
-    owner_display_name: String,
-    visibility: ProviderVisibility,
-    selected_identity_ids: Vec<String>,
-    can_manage: bool,
-) -> Result<ProviderListItemResponse, StorageError> {
-    let capabilities = capabilities(&provider);
-    let upstream_protocols = resolved_upstream_protocols(catalog, &provider.provider_type);
-    let models = models(&provider);
-    Ok(ProviderListItemResponse {
-        id: provider.id,
-        name: provider.name,
-        provider_type: provider.provider_type,
-        base_url: provider.base_url,
-        capabilities,
-        upstream_protocols,
-        models,
         owner_identity_id,
         owner_display_name,
         visibility,
-        selected_identity_ids,
-        can_manage,
-        created_at: provider.created_at,
+        credential,
     })
 }
 

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
 use prelay_protocol::{
-    ProviderListItemResponse, ProviderShareResponse, ProviderSharingResponse, ProviderVisibility,
+    ProviderResponse, ProviderSharingResponse, ProviderSharingUserResponse, ProviderVisibility,
     ShareQuotaWindow, ShareQuotaWindowKind, UpdateProviderSharingRequest,
 };
 use sea_orm::{
@@ -18,7 +18,13 @@ use crate::store::entity::{
     },
 };
 
-use super::{provider_views::provider_list_item, Storage, StorageError};
+use super::{provider_views::provider_response, Storage, StorageError};
+
+#[derive(Clone, Debug)]
+pub(crate) struct ProviderGrant {
+    pub(crate) quota_json: Option<String>,
+    pub(crate) created_at: String,
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct VisibleProvider {
@@ -26,7 +32,8 @@ pub(crate) struct VisibleProvider {
     pub(crate) owner_identity_id: String,
     pub(crate) owner_display_name: String,
     pub(crate) visibility: ProviderVisibility,
-    pub(crate) can_manage: bool,
+    pub(crate) is_owner: bool,
+    pub(crate) grant: Option<ProviderGrant>,
 }
 
 impl Storage {
@@ -51,7 +58,7 @@ impl Storage {
         &self,
         identity_id: &str,
         catalog: Option<&ProviderCatalog>,
-    ) -> Result<Vec<ProviderListItemResponse>, StorageError> {
+    ) -> Result<Vec<ProviderResponse>, StorageError> {
         let providers = identity_provider_configs::Entity::find()
             .order_by_asc(identity_provider_configs::Column::CreatedAt)
             .all(&self.db)
@@ -61,20 +68,7 @@ impl Storage {
             let Some(provider) = visible_provider(&self.db, identity_id, provider).await? else {
                 continue;
             };
-            let selected_identity_ids = if provider.visibility == ProviderVisibility::Selected {
-                selected_identity_ids(&self.db, &provider.provider.id).await?
-            } else {
-                Vec::new()
-            };
-            visible.push(provider_list_item(
-                catalog,
-                provider.provider,
-                provider.owner_identity_id,
-                provider.owner_display_name,
-                provider.visibility,
-                selected_identity_ids,
-                provider.can_manage,
-            )?);
+            visible.push(provider_response(&self.crypto, catalog, provider, false)?);
         }
         Ok(visible)
     }
@@ -115,9 +109,12 @@ impl Storage {
         provider_id: &str,
     ) -> Result<ProviderSharingResponse, StorageError> {
         let provider = self.get_visible_provider(identity_id, provider_id).await?;
+        if !provider.is_owner {
+            return Err(StorageError::ProviderSharingNotAllowed);
+        }
         Ok(ProviderSharingResponse {
-            shares: provider_shares(&self.db, provider_id).await?,
-            can_manage: provider.can_manage,
+            visibility: provider.visibility,
+            users: provider_sharing_users(&self.db, provider_id).await?,
         })
     }
 
@@ -129,14 +126,10 @@ impl Storage {
     ) -> Result<ProviderSharingResponse, StorageError> {
         let transaction = self.db.begin().await?;
         let provider = owned_provider(&transaction, identity_id, provider_id).await?;
-        validate_sharing_input(&transaction, identity_id, &input).await?;
+        let visibility = input.visibility;
+        validate_sharing_input(&transaction, identity_id, visibility, &input).await?;
 
         let mut provider = provider.into_active_model();
-        let visibility = if input.shares.is_empty() {
-            ProviderVisibility::Private
-        } else {
-            ProviderVisibility::Selected
-        };
         provider.visibility = Set(visibility_value(visibility).to_string());
         provider.update(&transaction).await?;
 
@@ -152,8 +145,8 @@ impl Storage {
             .exec(&transaction)
             .await?;
         let now = Utc::now().to_rfc3339();
-        for share in input.shares {
-            let quota_json = share
+        for user in input.users {
+            let quota_json = user
                 .quota
                 .as_ref()
                 .map(serde_json::to_string)
@@ -164,12 +157,12 @@ impl Storage {
                     ))
                 })?;
             let created_at = existing_created_at
-                .get(&share.identity_id)
+                .get(&user.identity_id)
                 .cloned()
                 .unwrap_or_else(|| now.clone());
             identity_provider_shares::ActiveModel {
                 provider_id: Set(provider_id.to_string()),
-                grantee_identity_id: Set(share.identity_id),
+                grantee_identity_id: Set(user.identity_id),
                 created_at: Set(created_at),
                 quota_json: Set(quota_json),
             }
@@ -229,6 +222,7 @@ where
 {
     let visibility = parse_visibility(&provider.visibility)?;
     let is_owner = provider.identity_id == identity_id;
+    let mut grant = None;
     let visible = is_owner
         || match visibility {
             ProviderVisibility::Private => false,
@@ -236,12 +230,18 @@ where
                 .one(db)
                 .await?
                 .is_some(),
-            ProviderVisibility::Selected => identity_provider_shares::Entity::find()
-                .filter(identity_provider_shares::Column::ProviderId.eq(&provider.id))
-                .filter(identity_provider_shares::Column::GranteeIdentityId.eq(identity_id))
-                .one(db)
-                .await?
-                .is_some(),
+            ProviderVisibility::Selected => {
+                grant = identity_provider_shares::Entity::find()
+                    .filter(identity_provider_shares::Column::ProviderId.eq(&provider.id))
+                    .filter(identity_provider_shares::Column::GranteeIdentityId.eq(identity_id))
+                    .one(db)
+                    .await?
+                    .map(|share| ProviderGrant {
+                        quota_json: share.quota_json,
+                        created_at: share.created_at,
+                    });
+                grant.is_some()
+            }
         };
     if !visible {
         return Ok(None);
@@ -253,30 +253,17 @@ where
     Ok(Some(VisibleProvider {
         owner_identity_id: owner.id,
         owner_display_name: owner.display_name,
-        can_manage: is_owner,
+        is_owner,
         visibility,
+        grant,
         provider,
     }))
 }
 
-async fn selected_identity_ids(
+async fn provider_sharing_users(
     db: &DatabaseConnection,
     provider_id: &str,
-) -> Result<Vec<String>, StorageError> {
-    Ok(identity_provider_shares::Entity::find()
-        .filter(identity_provider_shares::Column::ProviderId.eq(provider_id))
-        .order_by_asc(identity_provider_shares::Column::GranteeIdentityId)
-        .all(db)
-        .await?
-        .into_iter()
-        .map(|share| share.grantee_identity_id)
-        .collect())
-}
-
-async fn provider_shares(
-    db: &DatabaseConnection,
-    provider_id: &str,
-) -> Result<Vec<ProviderShareResponse>, StorageError> {
+) -> Result<Vec<ProviderSharingUserResponse>, StorageError> {
     let shares = identity_provider_shares::Entity::find()
         .filter(identity_provider_shares::Column::ProviderId.eq(provider_id))
         .order_by_asc(identity_provider_shares::Column::GranteeIdentityId)
@@ -310,7 +297,7 @@ async fn provider_shares(
                         "stored share quota is invalid: {error}"
                     ))
                 })?;
-            Ok(ProviderShareResponse {
+            Ok(ProviderSharingUserResponse {
                 identity_id: share.grantee_identity_id,
                 display_name,
                 quota,
@@ -322,35 +309,50 @@ async fn provider_shares(
 async fn validate_sharing_input<C>(
     db: &C,
     owner_identity_id: &str,
+    visibility: ProviderVisibility,
     input: &UpdateProviderSharingRequest,
 ) -> Result<(), StorageError>
 where
     C: ConnectionTrait,
 {
+    match visibility {
+        ProviderVisibility::Private | ProviderVisibility::All => {
+            if !input.users.is_empty() {
+                return Err(StorageError::InvalidProviderSharing(
+                    "visibility without selected users must not carry users".to_string(),
+                ));
+            }
+            return Ok(());
+        }
+        ProviderVisibility::Selected if input.users.is_empty() => {
+            return Err(StorageError::InvalidProviderSharing(
+                "selected visibility requires at least one user".to_string(),
+            ));
+        }
+        ProviderVisibility::Selected => {}
+    }
+
     let mut identities = HashSet::new();
-    for share in &input.shares {
-        if share.identity_id == owner_identity_id {
+    for user in &input.users {
+        if user.identity_id == owner_identity_id {
             return Err(StorageError::InvalidProviderSharing(
                 "provider owner cannot be a selected grantee".to_string(),
             ));
         }
-        if !identities.insert(share.identity_id.as_str()) {
+        if !identities.insert(user.identity_id.as_str()) {
             return Err(StorageError::InvalidProviderSharing(
                 "selected identities must be unique".to_string(),
             ));
         }
-        if let Some(quota) = &share.quota {
+        if let Some(quota) = &user.quota {
             validate_share_quota(quota)?;
         }
     }
     let identity_ids = input
-        .shares
+        .users
         .iter()
-        .map(|share| share.identity_id.clone())
+        .map(|user| user.identity_id.clone())
         .collect::<Vec<_>>();
-    if identity_ids.is_empty() {
-        return Ok(());
-    }
     let existing = identities::Entity::find()
         .filter(identities::Column::Id.is_in(identity_ids.clone()))
         .all(db)

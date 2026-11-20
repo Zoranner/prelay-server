@@ -56,7 +56,8 @@ async fn provider_visibility_controls_lists_and_replaces_selected_grantees() {
         &format!("/api/providers/{provider_id}/sharing"),
         Some(owner_credential),
         Some(serde_json::json!({
-            "shares": [{
+            "visibility": "selected",
+            "users": [{
                 "identity_id": grantee["identity_id"],
                 "quota": null
             }]
@@ -64,8 +65,9 @@ async fn provider_visibility_controls_lists_and_replaces_selected_grantees() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(sharing["shares"][0]["identity_id"], grantee["identity_id"]);
-    assert!(sharing["shares"][0]["quota"].is_null());
+    assert_eq!(sharing["visibility"], "selected");
+    assert_eq!(sharing["users"][0]["identity_id"], grantee["identity_id"]);
+    assert!(sharing["users"][0]["quota"].is_null());
 
     let (status, providers): (StatusCode, Vec<serde_json::Value>) = request_json(
         &app,
@@ -79,11 +81,9 @@ async fn provider_visibility_controls_lists_and_replaces_selected_grantees() {
     assert_eq!(providers.len(), 1);
     assert_eq!(providers[0]["owner_identity_id"], owner["identity_id"]);
     assert_eq!(providers[0]["owner_display_name"], "Owner");
-    assert_eq!(providers[0]["can_manage"], false);
-    assert_eq!(
-        providers[0]["selected_identity_ids"],
-        serde_json::json!([grantee["identity_id"]])
-    );
+    assert!(providers[0].get("can_manage").is_none());
+    assert!(providers[0].get("selected_identity_ids").is_none());
+    assert!(providers[0]["credential"].is_null());
     assert!(providers[0].get("api_key").is_none());
     assert!(providers[0].get("api_key_masked").is_none());
 
@@ -104,11 +104,23 @@ async fn provider_visibility_controls_lists_and_replaces_selected_grantees() {
         &format!("/api/providers/{provider_id}/sharing"),
         Some(grantee_credential),
         Some(serde_json::json!({
-            "shares": []
+            "visibility": "private",
+            "users": []
         })),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, error): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "GET",
+        &format!("/api/providers/{provider_id}/sharing"),
+        Some(grantee_credential),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(error["error"]["code"], "provider_sharing_not_allowed");
 
     let (status, _): (StatusCode, serde_json::Value) = request_json(
         &app,
@@ -116,7 +128,8 @@ async fn provider_visibility_controls_lists_and_replaces_selected_grantees() {
         &format!("/api/providers/{provider_id}/sharing"),
         Some(owner_credential),
         Some(serde_json::json!({
-            "shares": [{
+            "visibility": "selected",
+            "users": [{
                 "identity_id": replacement["identity_id"],
                 "quota": null
             }]
@@ -146,10 +159,8 @@ async fn provider_visibility_controls_lists_and_replaces_selected_grantees() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(providers.len(), 1);
-    assert_eq!(
-        providers[0]["selected_identity_ids"],
-        serde_json::json!([replacement["identity_id"]])
-    );
+    assert_eq!(providers[0]["owner_identity_id"], owner["identity_id"]);
+    assert!(providers[0]["credential"].is_null());
 
     let (status, sharing): (StatusCode, serde_json::Value) = request_json(
         &app,
@@ -157,12 +168,14 @@ async fn provider_visibility_controls_lists_and_replaces_selected_grantees() {
         &format!("/api/providers/{provider_id}/sharing"),
         Some(owner_credential),
         Some(serde_json::json!({
-            "shares": []
+            "visibility": "private",
+            "users": []
         })),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert!(sharing["shares"].as_array().expect("shares").is_empty());
+    assert_eq!(sharing["visibility"], "private");
+    assert!(sharing["users"].as_array().expect("users").is_empty());
 
     let (status, providers): (StatusCode, Vec<serde_json::Value>) = request_json(
         &app,
@@ -206,7 +219,8 @@ async fn shared_provider_can_back_endpoint_until_revoked_and_deleted() {
         &format!("/api/providers/{provider_id}/sharing"),
         Some(owner_credential),
         Some(serde_json::json!({
-            "shares": [{
+            "visibility": "selected",
+            "users": [{
                 "identity_id": grantee["identity_id"],
                 "quota": null
             }]
@@ -244,7 +258,8 @@ async fn shared_provider_can_back_endpoint_until_revoked_and_deleted() {
         &format!("/api/providers/{provider_id}/sharing"),
         Some(owner_credential),
         Some(serde_json::json!({
-            "shares": []
+            "visibility": "private",
+            "users": []
         })),
     )
     .await;
@@ -327,7 +342,8 @@ async fn non_owner_can_ping_a_shared_provider_but_cannot_test_its_protocols() {
         &format!("/api/providers/{provider_id}/sharing"),
         Some(owner_credential),
         Some(serde_json::json!({
-            "shares": [{
+            "visibility": "selected",
+            "users": [{
                 "identity_id": grantee["identity_id"],
                 "quota": null
             }]

@@ -121,7 +121,8 @@ async fn visible_users_read_complete_provider_usage_without_sensitive_data() {
         &format!("/api/providers/{provider_id}/sharing"),
         Some(owner_credential),
         Some(serde_json::json!({
-            "shares": [{
+            "visibility": "selected",
+            "users": [{
                 "identity_id": grantee_id,
                 "quota": null
             }]
@@ -327,7 +328,8 @@ async fn every_registered_identity_can_read_complete_usage_for_an_all_shared_pro
         &format!("/api/providers/{provider_id}/sharing"),
         Some(owner_credential),
         Some(serde_json::json!({
-            "shares": [{
+            "visibility": "selected",
+            "users": [{
                 "identity_id": reader_id,
                 "quota": null
             }]

@@ -41,7 +41,8 @@ async fn limited_share_reports_the_shared_quota_windows() {
         &format!("/api/providers/{provider_id}/sharing"),
         Some(owner_credential),
         Some(serde_json::json!({
-            "shares": [{
+            "visibility": "selected",
+            "users": [{
                 "identity_id": grantee["identity_id"],
                 "quota": [{
                     "window": "day",
@@ -56,8 +57,9 @@ async fn limited_share_reports_the_shared_quota_windows() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(sharing["shares"][0]["quota"][0]["window"], "day");
-    assert_eq!(sharing["shares"][0]["quota"][0]["limit"], 1000);
+    assert_eq!(sharing["visibility"], "selected");
+    assert_eq!(sharing["users"][0]["quota"][0]["window"], "day");
+    assert_eq!(sharing["users"][0]["quota"][0]["limit"], 1000);
 
     let (status, quotas): (StatusCode, Vec<serde_json::Value>) = request_json(
         &app,
@@ -130,7 +132,8 @@ async fn exhausted_shared_quota_is_rejected_before_the_upstream_call() {
         &format!("/api/providers/{provider_id}/sharing"),
         Some(owner_credential),
         Some(serde_json::json!({
-            "shares": [{
+            "visibility": "selected",
+            "users": [{
                 "identity_id": grantee["identity_id"],
                 "quota": [{
                     "window": "day",
@@ -235,7 +238,8 @@ async fn each_grantee_gets_a_separate_shared_quota() {
         &format!("/api/providers/{provider_id}/sharing"),
         Some(owner_credential),
         Some(serde_json::json!({
-            "shares": [
+            "visibility": "selected",
+            "users": [
                 {
                     "identity_id": first["identity_id"],
                     "quota": [{
@@ -317,7 +321,8 @@ async fn direct_share_uses_the_owner_quota_mode() {
         &format!("/api/providers/{provider_id}/sharing"),
         Some(owner_credential),
         Some(serde_json::json!({
-            "shares": [{
+            "visibility": "selected",
+            "users": [{
                 "identity_id": grantee["identity_id"],
                 "quota": null
             }]

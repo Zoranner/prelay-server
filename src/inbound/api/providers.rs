@@ -5,10 +5,9 @@ use axum::{
     Json, Router,
 };
 use prelay_protocol::{
-    CreateProviderRequest, ProviderListItemResponse, ProviderOperationRequest,
-    ProviderOperationResponse, ProviderQuotaResponse, ProviderResponse, ProviderSharingResponse,
-    ProviderUsageResponse, TestProviderProtocolRequest, UpdateProviderRequest,
-    UpdateProviderSharingRequest,
+    CreateProviderRequest, ProviderOperationRequest, ProviderOperationResponse,
+    ProviderQuotaResponse, ProviderResponse, ProviderSharingResponse, ProviderUsageResponse,
+    TestProviderProtocolRequest, UpdateProviderRequest, UpdateProviderSharingRequest,
 };
 use serde::Deserialize;
 
@@ -48,7 +47,7 @@ struct ProviderUsageQuery {
 async fn list(
     State(state): State<AppState>,
     Extension(identity): Extension<CurrentIdentity>,
-) -> Result<Json<Vec<ProviderListItemResponse>>, ApiError> {
+) -> Result<Json<Vec<ProviderResponse>>, ApiError> {
     let providers = state
         .storage
         .list_visible_providers(&identity.id, Some(&state.provider_catalog))
@@ -276,7 +275,7 @@ async fn test_protocol_for_provider(
         .storage
         .get_visible_provider(&identity.id, &provider_id)
         .await?;
-    if !provider.can_manage {
+    if !provider.is_owner {
         return Err(crate::store::storage::StorageError::ProviderSharingNotAllowed.into());
     }
     let api_key = state

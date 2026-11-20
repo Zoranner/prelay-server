@@ -65,7 +65,7 @@
 
 - `QuotaWindowKind`：`five_hour`、`day`、`week`、`month`。
 - `ShareQuotaWindow`：共享额度窗口规则。
-- `ProviderShareInput`、`ProviderShareResponse`：共享记录。
+- `ProviderSharingUserInput`、`ProviderSharingUserResponse`：共享用户及其额度规则。
 - `ProviderQuotaMode`：`own`、`shared_unlimited`、`shared_limited`。
 - `ProviderQuota`：`plan`、`balance`、`shared`、`unsupported`、`error`。
 - `QuotaWindowResponse`：窗口剩余、额度、已用、累计、重置时间。
@@ -73,8 +73,8 @@
 
 共享接口改为：
 
-- `GET /api/providers/:provider_id/sharing` 返回 `shares` 和 `can_manage`。
-- `PATCH /api/providers/:provider_id/sharing` 接收 `shares` 全量替换。
+- `GET /api/providers/:provider_id/sharing` 返回 `visibility` 和 `users`，仅创建人可读。
+- `PATCH /api/providers/:provider_id/sharing` 接收 `visibility` 和 `users` 全量替换。
 - `GET /api/providers/quotas` 返回当前身份可见供应商的额度快照。
 
 ## 额度计算
