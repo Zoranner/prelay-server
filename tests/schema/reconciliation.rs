@@ -82,6 +82,7 @@ async fn insert_provider(
         api_key_ciphertext: Set("ciphertext".to_string()),
         capabilities_json: Set(capabilities_json),
         models_json: Set(models_json),
+        share_quota_json: Set(None),
         created_at: Set("2026-09-14T00:00:00Z".to_string()),
     }
     .insert(db)

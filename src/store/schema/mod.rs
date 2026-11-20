@@ -191,6 +191,13 @@ impl<C: ConnectionTrait> SchemaInitializer<'_, C> {
                 )
                 .await?;
         }
+        if !column_exists(self.db, "identity_provider_configs", "share_quota_json").await? {
+            self.db
+                .execute_unprepared(
+                    "ALTER TABLE identity_provider_configs ADD COLUMN share_quota_json TEXT",
+                )
+                .await?;
+        }
         if !table_exists(self.db, "identity_provider_shares").await? {
             self.create_table(tables::provider_shares::statement())
                 .await?;

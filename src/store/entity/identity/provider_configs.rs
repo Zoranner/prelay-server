@@ -13,6 +13,7 @@ pub struct Model {
     pub api_key_ciphertext: String,
     pub capabilities_json: Option<String>,
     pub models_json: Option<String>,
+    pub share_quota_json: Option<String>,
     pub created_at: String,
 }
 

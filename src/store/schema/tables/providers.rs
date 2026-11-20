@@ -37,6 +37,7 @@ pub(in crate::store::schema) fn configs() -> TableCreateStatement {
         )
         .col(ColumnDef::new(ProviderConfigs::CapabilitiesJson).string())
         .col(ColumnDef::new(ProviderConfigs::ModelsJson).string())
+        .col(ColumnDef::new(ProviderConfigs::ShareQuotaJson).string())
         .col(
             ColumnDef::new(ProviderConfigs::CreatedAt)
                 .string()
@@ -63,5 +64,6 @@ pub(in crate::store::schema) enum ProviderConfigs {
     ApiKeyCiphertext,
     CapabilitiesJson,
     ModelsJson,
+    ShareQuotaJson,
     CreatedAt,
 }

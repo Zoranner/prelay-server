@@ -239,6 +239,7 @@ async fn create_inner(
         api_key_ciphertext: Set(api_key_ciphertext),
         capabilities_json: Set(capabilities_json),
         models_json: Set(models_json(&models)),
+        share_quota_json: NotSet,
         created_at: Set(created_at.clone()),
     }
     .insert(&transaction)
