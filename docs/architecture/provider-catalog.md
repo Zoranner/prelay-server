@@ -93,17 +93,17 @@ priority = 0
 
 ```toml
 [[providers]]
-id = "gotoken"
-name = "GoToken 套餐"
+id = "example"
+name = "Example Provider"
 auth_scheme = "bearer"
-base_url = "https://gotoken.cc"
+base_url = "https://provider.example"
 protocols = ["chat_completions", "responses", "images_generations"]
 language_models = ["gpt-6.1-sol"]
 image_generation_models = ["gpt-image-1"]
 
 [providers.protocol_base_urls]
-chat_completions = "https://gotoken.cc/v1"
-images_generations = "https://gotoken.cc/v1"
+chat_completions = "https://provider.example/v1"
+images_generations = "https://provider.example/v1"
 ```
 
 `protocols` 必须按 `chat_completions`、`responses`、`images_generations` 的相对顺序排列。图像生成模型引用存在时，供应商必须声明 `images_generations`。两类引用分别只能指向对应目录中的模型，不能重复或交叉引用。

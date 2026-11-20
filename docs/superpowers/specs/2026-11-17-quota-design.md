@@ -58,9 +58,8 @@ timeout_secs = 8
 | MiniMax Token Plan | `GET /v1/token_plan/remains` | `model_remains[]`、`base_resp` | 5 小时和 7 天；剩余百分比翻成已用 |
 | Command Code | `GET /alpha/billing/credits`、`GET /alpha/billing/subscriptions` | `windowLimits.fiveHour/weekly`、`credits.monthlyCredits`、`data.planId/currentPeriodEnd` | 5 小时、7 天、月；月度 cap 按套餐或 5 小时 cap 推导，重置取计费周期结束 |
 | OpenCode Go | `GET /zen/go/v1/usage` | `usage.rolling/weekly/monthly.percent` | 5 小时、7 天、月；百分比为已用 |
-| GoToken | 无公开额度接口 | 无 | 显示未接入 |
 
-千问 Token Plan 已退役，不再出现在目录和新建供应商列表。
+千问 Token Plan 和 GoToken 已退役，不再出现在部署目录和新建供应商列表。
 
 ## 共享额度
 
@@ -108,5 +107,4 @@ timeout_secs = 8
 
 - 六个解析器用契约 fixture 验证，未使用真实上游密钥。
 - GLM 只支持个人版 Coding Plan；团队版不在范围。
-- GoToken 保持未接入。
 - 共享额度的并发保护只覆盖单个服务进程。

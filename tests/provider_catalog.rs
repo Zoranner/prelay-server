@@ -78,6 +78,14 @@ fn deployment_catalog_excludes_retired_qwen_token_plan_provider() {
 }
 
 #[test]
+fn deployment_catalog_excludes_retired_gotoken_provider() {
+    let catalog =
+        ProviderCatalog::load(Path::new("config/catalog")).expect("load deployment catalog");
+
+    assert!(catalog.provider("gotoken").is_none());
+}
+
+#[test]
 fn deployment_catalog_declares_quota_adapters() {
     let catalog =
         ProviderCatalog::load(Path::new("config/catalog")).expect("load deployment catalog");
@@ -97,11 +105,6 @@ fn deployment_catalog_declares_quota_adapters() {
             "{provider_id} quota adapter"
         );
     }
-    assert!(catalog
-        .provider("gotoken")
-        .expect("gotoken provider")
-        .quota
-        .is_none());
 }
 
 #[test]
