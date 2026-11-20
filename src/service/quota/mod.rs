@@ -381,10 +381,20 @@ pub(crate) async fn fetch_quota_body(
     vendor: &str,
 ) -> Result<String, QuotaError> {
     let url = resolve_quota_url(base_url, &quota.url);
+    fetch_quota_url_body(client, &url, quota, api_key, vendor).await
+}
+
+pub(crate) async fn fetch_quota_url_body(
+    client: &reqwest::Client,
+    url: &str,
+    quota: &CatalogQuota,
+    api_key: &str,
+    vendor: &str,
+) -> Result<String, QuotaError> {
     let request = match quota.auth {
-        crate::domain::catalog::QuotaAuth::Bearer => client.get(&url).bearer_auth(api_key),
+        crate::domain::catalog::QuotaAuth::Bearer => client.get(url).bearer_auth(api_key),
         crate::domain::catalog::QuotaAuth::Raw => client
-            .get(&url)
+            .get(url)
             .header(reqwest::header::AUTHORIZATION, api_key),
     };
     let response = request

@@ -56,7 +56,7 @@ timeout_secs = 8
 | GLM Coding Plan | `GET /api/monitor/usage/quota/limit` | `data.limits[]` 的 `type`、`unit`、`number`、`percentage`、`nextResetTime` | 5 小时、周、MCP 月；百分比为已用 |
 | Kimi Code | `GET /coding/v1/usages` | `limits[]`、`usage`、`remaining`、`resetTime` | 动态短窗口和 7 天 |
 | MiniMax Token Plan | `GET /v1/token_plan/remains` | `model_remains[]`、`base_resp` | 5 小时和 7 天；剩余百分比翻成已用 |
-| Command Code | `GET /alpha/billing/credits` | `windowLimits.fiveHour/weekly`、`credits` | 5 小时、7 天、月度 credits 和 USD 余额 |
+| Command Code | `GET /alpha/billing/credits`、`GET /alpha/billing/subscriptions` | `windowLimits.fiveHour/weekly`、`credits.monthlyCredits`、`data.planId/currentPeriodEnd` | 5 小时、7 天、月；月度 cap 按套餐或 5 小时 cap 推导，重置取计费周期结束 |
 | OpenCode Go | `GET /zen/go/v1/usage` | `usage.rolling/weekly/monthly.percent` | 5 小时、7 天、月；百分比为已用 |
 | GoToken | 无公开额度接口 | 无 | 显示未接入 |
 
