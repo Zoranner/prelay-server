@@ -72,10 +72,13 @@ async fn limited_share_reports_the_shared_quota_windows() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(quotas.len(), 1);
     assert_eq!(quotas[0]["mode"], "shared_limited");
-    assert_eq!(quotas[0]["quota"]["windows"][0]["label"], "1 天");
+    assert_eq!(quotas[0]["quota"]["windows"][0]["kind"], "day");
     assert_eq!(quotas[0]["quota"]["windows"][0]["used_percent"], 0.0);
-    assert_eq!(quotas[0]["quota"]["windows"][0]["limit"], "1000");
-    assert_eq!(quotas[0]["quota"]["windows"][0]["amount"], "1000");
+    assert_eq!(quotas[0]["quota"]["windows"][0]["limit"], 1000.0);
+    assert_eq!(quotas[0]["quota"]["windows"][0]["remaining"], 1000.0);
+    assert_eq!(quotas[0]["quota"]["windows"][0]["unit"], "tokens");
+    assert!(quotas[0]["quota"]["windows"][0].get("label").is_none());
+    assert!(quotas[0]["quota"]["windows"][0].get("amount").is_none());
 
     let (status, owner_quotas): (StatusCode, Vec<serde_json::Value>) = request_json(
         &app,
@@ -266,8 +269,10 @@ async fn every_grantee_uses_the_same_shared_quota_rule() {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(quotas.len(), 1);
         assert_eq!(quotas[0]["mode"], "shared_limited");
-        assert_eq!(quotas[0]["quota"]["windows"][0]["limit"], "1000");
-        assert_eq!(quotas[0]["quota"]["windows"][0]["amount"], "1000");
+        assert_eq!(quotas[0]["quota"]["windows"][0]["kind"], "day");
+        assert_eq!(quotas[0]["quota"]["windows"][0]["limit"], 1000.0);
+        assert_eq!(quotas[0]["quota"]["windows"][0]["remaining"], 1000.0);
+        assert_eq!(quotas[0]["quota"]["windows"][0]["unit"], "tokens");
     }
 }
 
