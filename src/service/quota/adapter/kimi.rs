@@ -29,7 +29,11 @@ fn parse(body: &str) -> Result<ProviderQuota, QuotaError> {
     if let Some(limits) = root.get("limits").and_then(Value::as_array) {
         for limit in limits {
             let span_secs = limit.get("window").and_then(window_span);
-            let detail = limit.get("detail").unwrap_or(limit);
+            let detail = limit
+                .get("detail")
+                .filter(|value| !value.is_null())
+                .or_else(|| limit.get("window"))
+                .unwrap_or(limit);
             if let Some((used_percent, resets_at)) = read_counted_window(detail) {
                 windows.push(QuotaWindow {
                     kind: kind_for_span(span_secs),
@@ -346,5 +350,40 @@ mod tests {
         assert_eq!(balance.parts[0].currency, "CNY");
         assert_eq!(balance.parts[0].amount, "25.00");
         assert!(balance.available);
+    }
+
+    #[test]
+    fn reads_counted_window_from_window_when_detail_is_absent_or_null() {
+        for body in [
+            r#"{
+                "limits": [{
+                    "window": {
+                        "duration": 300,
+                        "timeUnit": "TIME_UNIT_MINUTE",
+                        "limit": "100",
+                        "used": "25",
+                        "resetTime": "2026-09-30T05:24:18Z"
+                    }
+                }]
+            }"#,
+            r#"{
+                "limits": [{
+                    "detail": null,
+                    "window": {
+                        "duration": 300,
+                        "timeUnit": "TIME_UNIT_MINUTE",
+                        "limit": "100",
+                        "used": "25",
+                        "resetTime": "2026-09-30T05:24:18Z"
+                    }
+                }]
+            }"#,
+        ] {
+            let quota = parse(body).expect("Kimi window detail fallback");
+            assert_eq!(quota.windows.len(), 1);
+            assert_eq!(quota.windows[0].kind, QuotaWindowKind::Rolling);
+            assert_eq!(quota.windows[0].span_secs, Some(5 * 60 * 60));
+            assert_eq!(quota.windows[0].used_percent, 25.0);
+        }
     }
 }
