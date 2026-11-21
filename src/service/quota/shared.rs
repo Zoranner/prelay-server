@@ -45,32 +45,45 @@ pub(crate) async fn windows(
                         previous_end,
                     )
                     .await?;
-                carry_over = (rule.limit - previous_used).clamp(0, rule.limit);
+                carry_over = carried_tokens(rule.limit, previous_used);
             }
         }
-        let limit = rule.limit.saturating_add(carry_over);
-        let remaining = (limit - used).max(0);
-        let used_percent = if limit > 0 {
-            (used as f64 / limit as f64 * 100.0).clamp(0.0, 100.0)
-        } else {
-            0.0
-        };
-        windows.push(QuotaWindow {
-            kind: share_window_kind(rule.window),
-            span_secs: match rule.window {
-                ShareQuotaWindowKind::Day => Some(24 * 60 * 60),
-                ShareQuotaWindowKind::Week => Some(7 * 24 * 60 * 60),
-                ShareQuotaWindowKind::Month => None,
-            },
-            used_percent,
-            resets_at: Some(end.to_rfc3339()),
-            remaining: Some(remaining as f64),
-            limit: Some(limit as f64),
-            unit: Some(QuotaUnit::Tokens),
-            display: None,
-        });
+        windows.push(window_for(rule, end, used, carry_over));
     }
     Ok(windows)
+}
+
+fn carried_tokens(limit: i64, previous_used: i64) -> i64 {
+    (limit - previous_used).clamp(0, limit)
+}
+
+fn window_for(
+    rule: &ShareQuotaWindow,
+    end: DateTime<Utc>,
+    used: i64,
+    carry_over: i64,
+) -> QuotaWindow {
+    let limit = rule.limit.saturating_add(carry_over);
+    let remaining = (limit - used).max(0);
+    let used_percent = if limit > 0 {
+        (used as f64 / limit as f64 * 100.0).clamp(0.0, 100.0)
+    } else {
+        0.0
+    };
+    QuotaWindow {
+        kind: share_window_kind(rule.window),
+        span_secs: match rule.window {
+            ShareQuotaWindowKind::Day => Some(24 * 60 * 60),
+            ShareQuotaWindowKind::Week => Some(7 * 24 * 60 * 60),
+            ShareQuotaWindowKind::Month => None,
+        },
+        used_percent,
+        resets_at: Some(end.to_rfc3339()),
+        remaining: Some(remaining as f64),
+        limit: Some(limit as f64),
+        unit: Some(QuotaUnit::Tokens),
+        display: None,
+    }
 }
 
 fn share_window_kind(kind: ShareQuotaWindowKind) -> QuotaWindowKind {
@@ -384,5 +397,26 @@ mod tests {
             previous_window_bounds(&rule, start, end).expect("previous bounds");
         assert_eq!(local(previous_start), "2026-10-01T00:00:00+08:00");
         assert_eq!(local(previous_end), "2026-11-01T00:00:00+08:00");
+    }
+
+    #[test]
+    fn carried_tokens_keep_only_unused_capacity() {
+        assert_eq!(carried_tokens(100, 30), 70);
+        assert_eq!(carried_tokens(100, 100), 0);
+        assert_eq!(carried_tokens(100, 130), 0);
+    }
+
+    #[test]
+    fn window_uses_carried_tokens_in_limit() {
+        let rule = rule(ShareQuotaWindowKind::Day);
+        let (_, end) = share_window_bounds(at(10, 0), &rule).expect("day bounds");
+        let window = window_for(&rule, end, 40, carried_tokens(rule.limit, 70));
+
+        assert_eq!(window.kind, QuotaWindowKind::Day);
+        assert_eq!(window.span_secs, Some(24 * 60 * 60));
+        assert_eq!(window.limit, Some(130.0));
+        assert_eq!(window.remaining, Some(90.0));
+        assert!((window.used_percent - 40.0 / 130.0 * 100.0).abs() < 1e-9);
+        assert_eq!(window.unit, Some(QuotaUnit::Tokens));
     }
 }
