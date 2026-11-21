@@ -185,8 +185,8 @@ impl QuotaReservations {
                 return Err(AppError::Upstream {
                     status: Some(StatusCode::TOO_MANY_REQUESTS),
                     message: format!(
-                        "共享额度不足：{:?} 窗口可用 {} tokens，重置 {}",
-                        window.kind,
+                        "共享额度不足：{} 窗口可用 {} tokens，重置 {}",
+                        window_kind_name(window.kind),
                         available,
                         window.resets_at.as_deref().unwrap_or("未知")
                     ),
@@ -326,6 +326,16 @@ pub(crate) fn estimate_tokens(payload: &serde_json::Value) -> i64 {
         .unwrap_or(0)
         .max(0);
     body_estimate.max(output_budget).clamp(256, 2_000_000)
+}
+
+fn window_kind_name(kind: QuotaWindowKind) -> &'static str {
+    match kind {
+        QuotaWindowKind::Custom => "custom",
+        QuotaWindowKind::Rolling => "rolling",
+        QuotaWindowKind::Day => "day",
+        QuotaWindowKind::Week => "week",
+        QuotaWindowKind::Month => "month",
+    }
 }
 
 #[cfg(test)]

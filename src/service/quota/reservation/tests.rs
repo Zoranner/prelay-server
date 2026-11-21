@@ -8,7 +8,7 @@ use std::{
 
 use prelay_protocol::{QuotaUnit, QuotaWindow, QuotaWindowKind};
 
-use super::{estimate_tokens, HeldKey, QuotaReservations};
+use super::{estimate_tokens, window_kind_name, HeldKey, QuotaReservations};
 
 #[test]
 fn estimates_at_least_one_small_request() {
@@ -176,4 +176,11 @@ fn held_keys_distinguish_window_kinds() {
         ..day.clone()
     };
     assert_ne!(day, week);
+}
+
+#[test]
+fn quota_error_uses_stable_window_names() {
+    assert_eq!(window_kind_name(QuotaWindowKind::Day), "day");
+    assert_eq!(window_kind_name(QuotaWindowKind::Week), "week");
+    assert_eq!(window_kind_name(QuotaWindowKind::Month), "month");
 }
