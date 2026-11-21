@@ -13,6 +13,8 @@ use prelay_protocol::{QuotaWindow, QuotaWindowKind, ShareQuotaWindow};
 
 use crate::{error::AppError, store::storage::Storage};
 
+use super::shared;
+
 const DEFAULT_PENDING_SETTLEMENT_TTL: Duration = Duration::from_secs(15);
 
 #[derive(Clone)]
@@ -134,9 +136,15 @@ impl QuotaReservations {
         let rules = serde_json::from_str::<Vec<ShareQuotaWindow>>(&json).map_err(|error| {
             AppError::Internal(anyhow::anyhow!("stored share quota is invalid: {error}"))
         })?;
-        let windows = storage
-            .shared_quota_windows(provider_id, identity_id, &since, &rules, Utc::now())
-            .await?;
+        let windows = shared::windows(
+            storage,
+            provider_id,
+            identity_id,
+            &since,
+            &rules,
+            Utc::now(),
+        )
+        .await?;
         if windows.is_empty() {
             return Ok(empty());
         }

@@ -4,9 +4,9 @@ use crate::domain::catalog::{CatalogQuota, QuotaAuth};
 use prelay_protocol::{ProviderQuota, QuotaError, QuotaErrorCode, QuotaWindow, QuotaWindowKind};
 use serde::Deserialize;
 
-use super::{parse_epoch_millis, quota_error, resolve_quota_url};
+use crate::service::quota::{parse_epoch_millis, quota_error, resolve_quota_url};
 
-pub(super) async fn fetch(
+pub(crate) async fn fetch(
     client: &reqwest::Client,
     base_url: &str,
     quota: &CatalogQuota,

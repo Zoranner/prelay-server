@@ -1,11 +1,7 @@
-mod commandcode;
-mod deepseek;
+mod adapter;
 mod fetch;
-mod glm;
-mod kimi;
-mod minimax;
-mod opencode;
 mod reservation;
+mod shared;
 
 pub(crate) use fetch::{fetch_quota_body, fetch_quota_url_body};
 pub(crate) use reservation::{estimate_tokens, QuotaReservations, ReservationGuard};
@@ -121,15 +117,15 @@ impl QuotaService {
                                     .as_ref()
                                     .map(|grant| grant.created_at.as_str())
                                     .unwrap_or(visible.provider.created_at.as_str());
-                                let mut windows = storage
-                                    .shared_quota_windows(
-                                        &visible.provider.id,
-                                        &identity_id,
-                                        since,
-                                        &rules,
-                                        now,
-                                    )
-                                    .await?;
+                                let mut windows = shared::windows(
+                                    storage,
+                                    &visible.provider.id,
+                                    &identity_id,
+                                    since,
+                                    &rules,
+                                    now,
+                                )
+                                .await?;
                                 self.reservations.apply_pending(
                                     &visible.provider.id,
                                     &identity_id,
@@ -225,22 +221,23 @@ impl QuotaService {
         let result = tokio::time::timeout(PROVIDER_TIMEOUT, async {
             match quota.adapter {
                 QuotaAdapterKind::DeepSeekBalance => {
-                    deepseek::fetch(&self.client, &provider.base_url, quota, api_key).await
+                    adapter::deepseek::fetch(&self.client, &provider.base_url, quota, api_key).await
                 }
                 QuotaAdapterKind::MiniMaxPlan => {
-                    minimax::fetch(&self.client, &provider.base_url, quota, api_key).await
+                    adapter::minimax::fetch(&self.client, &provider.base_url, quota, api_key).await
                 }
                 QuotaAdapterKind::GlmCodingPlan => {
-                    glm::fetch(&self.client, &provider.base_url, quota, api_key).await
+                    adapter::glm::fetch(&self.client, &provider.base_url, quota, api_key).await
                 }
                 QuotaAdapterKind::KimiCodeUsages => {
-                    kimi::fetch(&self.client, &provider.base_url, quota, api_key).await
+                    adapter::kimi::fetch(&self.client, &provider.base_url, quota, api_key).await
                 }
                 QuotaAdapterKind::CommandCodeCredits => {
-                    commandcode::fetch(&self.client, &provider.base_url, quota, api_key).await
+                    adapter::commandcode::fetch(&self.client, &provider.base_url, quota, api_key)
+                        .await
                 }
                 QuotaAdapterKind::OpenCodeGoUsage => {
-                    opencode::fetch(&self.client, &provider.base_url, quota, api_key).await
+                    adapter::opencode::fetch(&self.client, &provider.base_url, quota, api_key).await
                 }
             }
         })
@@ -402,3 +399,13 @@ pub(crate) fn parse_epoch_millis(value: i64) -> Option<String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod structure_tests {
+    #[test]
+    fn quota_adapters_live_under_adapter_module() {
+        assert!(std::path::Path::new("src/service/quota/adapter/glm.rs").exists());
+        assert!(std::path::Path::new("src/service/quota/shared.rs").exists());
+        assert!(!std::path::Path::new("src/service/quota/glm.rs").exists());
+    }
+}

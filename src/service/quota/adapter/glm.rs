@@ -3,9 +3,9 @@ use serde::Deserialize;
 
 use crate::domain::catalog::CatalogQuota;
 
-use super::{fetch_quota_body, parse_epoch_millis, quota_error};
+use crate::service::quota::{fetch_quota_body, parse_epoch_millis, quota_error};
 
-pub(super) async fn fetch(
+pub(crate) async fn fetch(
     client: &reqwest::Client,
     base_url: &str,
     quota: &CatalogQuota,

@@ -8,7 +8,9 @@ use serde_json::Value;
 
 use crate::domain::catalog::CatalogQuota;
 
-use super::{fetch_quota_body, fetch_quota_url_body, quota_error, resolve_quota_url};
+use crate::service::quota::{
+    fetch_quota_body, fetch_quota_url_body, quota_error, resolve_quota_url,
+};
 
 const PLAN_MONTHLY_CAP: &[(&str, f64)] = &[
     ("max-20x", 200.0),
@@ -31,7 +33,7 @@ struct Subscription {
     current_period_end: Option<String>,
 }
 
-pub(super) async fn fetch(
+pub(crate) async fn fetch(
     client: &reqwest::Client,
     base_url: &str,
     quota: &CatalogQuota,
