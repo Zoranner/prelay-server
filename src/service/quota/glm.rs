@@ -1,4 +1,4 @@
-use prelay_protocol::{ProviderQuota, QuotaError, QuotaErrorCode, QuotaWindow};
+use prelay_protocol::{ProviderQuota, QuotaError, QuotaErrorCode, QuotaWindow, QuotaWindowKind};
 use serde::Deserialize;
 
 use crate::domain::catalog::CatalogQuota;
@@ -43,35 +43,30 @@ fn parse(body: &str) -> Result<ProviderQuota, QuotaError> {
         .ok_or_else(|| quota_error(QuotaErrorCode::InvalidResponse, "GLM 额度响应没有 data"))?;
     let mut windows = Vec::with_capacity(data.limits.len());
     for limit in data.limits {
-        let aside = limit.kind.as_deref() == Some("TIME_LIMIT");
-        let (label, span_secs) = if aside {
-            ("MCP · 月".to_string(), None)
-        } else {
-            match limit.unit {
-                Some(3) => {
-                    let hours = limit.number.unwrap_or(5).max(1);
-                    (format!("{hours} 小时"), Some(hours * 60 * 60))
-                }
-                Some(6) => ("7 天".to_string(), Some(7 * 24 * 60 * 60)),
-                Some(1) => ("1 天".to_string(), Some(24 * 60 * 60)),
-                _ => ("额度".to_string(), None),
+        if limit.kind.as_deref() == Some("TIME_LIMIT") {
+            continue;
+        }
+        let (kind, span_secs) = match limit.unit {
+            Some(3) => {
+                let hours = limit.number.unwrap_or(5).max(1);
+                (QuotaWindowKind::Rolling, Some(hours * 60 * 60))
             }
+            Some(6) => (QuotaWindowKind::Week, Some(7 * 24 * 60 * 60)),
+            _ => (QuotaWindowKind::Custom, None),
         };
         let display = match (limit.current_value, limit.usage) {
             (Some(used), Some(total)) => Some(format!("{used} / {total}")),
             _ => None,
         };
         windows.push(QuotaWindow {
-            label,
+            kind,
             span_secs,
             used_percent: limit.percentage.unwrap_or(0.0).clamp(0.0, 100.0),
             resets_at: limit.next_reset_time.and_then(parse_epoch_millis),
+            remaining: None,
+            limit: None,
+            unit: None,
             display,
-            amount: limit.remaining.map(|value| value.to_string()),
-            limit: limit.usage.map(|value| value.to_string()),
-            unit: Some("credits".to_string()),
-            aside,
-            pool: None,
         });
     }
     if windows.is_empty() {
@@ -114,7 +109,6 @@ struct Limit {
     percentage: Option<f64>,
     #[serde(rename = "currentValue")]
     current_value: Option<f64>,
-    remaining: Option<f64>,
     usage: Option<f64>,
     #[serde(rename = "nextResetTime")]
     next_reset_time: Option<i64>,
@@ -122,10 +116,10 @@ struct Limit {
 
 #[cfg(test)]
 mod tests {
-    use super::parse;
+    use super::{parse, QuotaWindowKind};
 
     #[test]
-    fn parses_five_hour_week_and_mcp_windows() {
+    fn parses_five_hour_and_week_windows() {
         let quota = parse(
             r#"{
                 "code": 200,
@@ -142,12 +136,13 @@ mod tests {
         )
         .expect("GLM quota parses");
         assert_eq!(quota.plan.as_deref(), Some("pro"));
-        assert_eq!(quota.windows.len(), 3);
-        assert_eq!(quota.windows[0].label, "5 小时");
+        assert_eq!(quota.windows.len(), 2);
+        assert_eq!(quota.windows[0].kind, QuotaWindowKind::Rolling);
+        assert_eq!(quota.windows[0].span_secs, Some(5 * 60 * 60));
         assert_eq!(quota.windows[0].used_percent, 12.5);
-        assert_eq!(quota.windows[1].label, "7 天");
-        assert_eq!(quota.windows[2].label, "MCP · 月");
-        assert!(quota.windows[2].aside);
+        assert_eq!(quota.windows[1].kind, QuotaWindowKind::Week);
+        assert_eq!(quota.windows[1].span_secs, Some(7 * 24 * 60 * 60));
+        assert!(quota.balance.is_none());
     }
 
     #[test]

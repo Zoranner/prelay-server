@@ -62,16 +62,10 @@ fn parse_balance(body: &str) -> Result<ProviderQuota, QuotaError> {
             amount: info.total_balance.clone(),
         })
         .collect::<Vec<_>>();
-    let text = infos
-        .iter()
-        .map(|info| format!("{}{}", symbol(&info.currency), info.total_balance))
-        .collect::<Vec<_>>()
-        .join(" · ");
     Ok(ProviderQuota {
         plan: None,
         windows: Vec::new(),
         balance: Some(QuotaBalance {
-            text,
             parts,
             available: body.is_available,
         }),
@@ -91,14 +85,6 @@ fn http_error(status: reqwest::StatusCode) -> QuotaError {
         code,
         format!("DeepSeek 余额接口返回 HTTP {}", status.as_u16()),
     )
-}
-
-fn symbol(currency: &str) -> &str {
-    match currency {
-        "CNY" => "¥",
-        "USD" => "$",
-        _ => "",
-    }
 }
 
 #[derive(Deserialize)]
@@ -150,7 +136,6 @@ mod tests {
         assert!(quota.windows.is_empty());
         assert_eq!(quota.error, None);
         assert!(balance.available);
-        assert_eq!(balance.text, "¥110.00 · $1.00");
         assert_eq!(
             balance.parts,
             vec![

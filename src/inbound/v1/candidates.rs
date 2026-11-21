@@ -233,16 +233,14 @@ mod tests {
     async fn reservation_is_held_until_the_response_is_dropped() {
         let reservations = QuotaReservations::default();
         let windows = vec![prelay_protocol::QuotaWindow {
-            label: "1 天".to_string(),
+            kind: prelay_protocol::QuotaWindowKind::Day,
             span_secs: Some(24 * 60 * 60),
             used_percent: 0.0,
             resets_at: Some("2026-11-18T00:00:00+08:00".to_string()),
+            remaining: Some(1000.0),
+            limit: Some(1000.0),
+            unit: Some(prelay_protocol::QuotaUnit::Tokens),
             display: None,
-            amount: Some("1000".to_string()),
-            limit: Some("1000".to_string()),
-            unit: Some("tokens".to_string()),
-            aside: false,
-            pool: None,
         }];
         let guard = reservations
             .reserve_windows("provider", "identity", &windows, 100)

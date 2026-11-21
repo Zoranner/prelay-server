@@ -1,4 +1,4 @@
-use prelay_protocol::{ProviderQuota, QuotaError, QuotaErrorCode, QuotaWindow};
+use prelay_protocol::{ProviderQuota, QuotaError, QuotaErrorCode, QuotaWindow, QuotaWindowKind};
 use serde_json::Value;
 
 use crate::domain::catalog::CatalogQuota;
@@ -29,10 +29,10 @@ fn parse(body: &str) -> Result<ProviderQuota, QuotaError> {
         )
     })?;
     let mut windows = Vec::new();
-    for (key, label, span_secs) in [
-        ("rolling", "5 小时", 5 * 60 * 60),
-        ("weekly", "7 天", 7 * 24 * 60 * 60),
-        ("monthly", "月", 0),
+    for (key, kind, span_secs) in [
+        ("rolling", QuotaWindowKind::Rolling, Some(5 * 60 * 60)),
+        ("weekly", QuotaWindowKind::Week, Some(7 * 24 * 60 * 60)),
+        ("monthly", QuotaWindowKind::Month, None),
     ] {
         let Some(window) = usage.get(key) else {
             continue;
@@ -41,20 +41,18 @@ fn parse(body: &str) -> Result<ProviderQuota, QuotaError> {
             continue;
         };
         windows.push(QuotaWindow {
-            label: label.to_string(),
-            span_secs: (span_secs > 0).then_some(span_secs),
+            kind,
+            span_secs,
             used_percent: percent.clamp(0.0, 100.0),
             resets_at: window
                 .get("resetsAt")
                 .and_then(Value::as_str)
                 .filter(|value| chrono::DateTime::parse_from_rfc3339(value).is_ok())
                 .map(str::to_string),
-            display: None,
-            amount: None,
+            remaining: None,
             limit: None,
-            unit: Some("USD".to_string()),
-            aside: false,
-            pool: None,
+            unit: None,
+            display: None,
         });
     }
     if windows.is_empty() {
@@ -83,7 +81,7 @@ fn number(value: Option<&Value>) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse;
+    use super::{parse, QuotaWindowKind};
 
     #[test]
     fn parses_rolling_weekly_and_monthly_windows() {
@@ -96,9 +94,9 @@ mod tests {
         )
         .expect("OpenCode Go quota parses");
         assert_eq!(quota.windows.len(), 3);
-        assert_eq!(quota.windows[0].label, "5 小时");
+        assert_eq!(quota.windows[0].kind, QuotaWindowKind::Rolling);
         assert_eq!(quota.windows[0].used_percent, 52.0);
-        assert_eq!(quota.windows[2].label, "月");
+        assert_eq!(quota.windows[2].kind, QuotaWindowKind::Month);
         assert_eq!(quota.windows[2].used_percent, 61.0);
     }
 }

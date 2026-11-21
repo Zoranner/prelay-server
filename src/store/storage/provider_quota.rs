@@ -1,7 +1,9 @@
 use chrono::{
     DateTime, Datelike, Duration, FixedOffset, Months, NaiveDate, TimeZone, Timelike, Utc, Weekday,
 };
-use prelay_protocol::{QuotaWindow, ShareQuotaWindow, ShareQuotaWindowKind};
+use prelay_protocol::{
+    QuotaUnit, QuotaWindow, QuotaWindowKind, ShareQuotaWindow, ShareQuotaWindowKind,
+};
 use sea_orm::{
     ColumnTrait, EntityTrait, ExprTrait, FromQueryResult, QueryFilter, QuerySelect, Select,
 };
@@ -101,12 +103,7 @@ impl Storage {
                 0.0
             };
             windows.push(QuotaWindow {
-                label: match rule.window {
-                    ShareQuotaWindowKind::Day => "1 天",
-                    ShareQuotaWindowKind::Week => "7 天",
-                    ShareQuotaWindowKind::Month => "月",
-                }
-                .to_string(),
+                kind: share_window_kind(rule.window),
                 span_secs: match rule.window {
                     ShareQuotaWindowKind::Day => Some(24 * 60 * 60),
                     ShareQuotaWindowKind::Week => Some(7 * 24 * 60 * 60),
@@ -114,15 +111,21 @@ impl Storage {
                 },
                 used_percent,
                 resets_at: Some(end.to_rfc3339()),
-                display: Some(format!("{used} / {limit}")),
-                amount: Some(remaining.to_string()),
-                limit: Some(limit.to_string()),
-                unit: Some("tokens".to_string()),
-                aside: false,
-                pool: None,
+                remaining: Some(remaining as f64),
+                limit: Some(limit as f64),
+                unit: Some(QuotaUnit::Tokens),
+                display: None,
             });
         }
         Ok(windows)
+    }
+}
+
+fn share_window_kind(kind: ShareQuotaWindowKind) -> QuotaWindowKind {
+    match kind {
+        ShareQuotaWindowKind::Day => QuotaWindowKind::Day,
+        ShareQuotaWindowKind::Week => QuotaWindowKind::Week,
+        ShareQuotaWindowKind::Month => QuotaWindowKind::Month,
     }
 }
 
@@ -435,6 +438,22 @@ mod tests {
             previous_window_bounds(&rule, start, end).expect("previous bounds");
         assert_eq!(local(previous_start), "2026-11-15T00:00:00+08:00");
         assert_eq!(local(previous_end), "2026-11-16T00:00:00+08:00");
+    }
+
+    #[test]
+    fn shared_windows_use_period_kinds() {
+        assert_eq!(
+            share_window_kind(ShareQuotaWindowKind::Day),
+            QuotaWindowKind::Day
+        );
+        assert_eq!(
+            share_window_kind(ShareQuotaWindowKind::Week),
+            QuotaWindowKind::Week
+        );
+        assert_eq!(
+            share_window_kind(ShareQuotaWindowKind::Month),
+            QuotaWindowKind::Month
+        );
     }
 
     #[test]

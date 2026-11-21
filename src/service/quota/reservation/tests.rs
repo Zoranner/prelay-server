@@ -6,9 +6,9 @@ use std::{
     thread,
 };
 
-use prelay_protocol::QuotaWindow;
+use prelay_protocol::{QuotaUnit, QuotaWindow, QuotaWindowKind};
 
-use super::{estimate_tokens, QuotaReservations};
+use super::{estimate_tokens, HeldKey, QuotaReservations};
 
 #[test]
 fn estimates_at_least_one_small_request() {
@@ -33,16 +33,14 @@ fn empty_reservations_can_be_cloned() {
 fn reservations_do_not_overshoot_a_window() {
     let reservations = QuotaReservations::default();
     let windows = vec![QuotaWindow {
-        label: "1 天".to_string(),
+        kind: QuotaWindowKind::Day,
         span_secs: Some(24 * 60 * 60),
         used_percent: 0.0,
         resets_at: Some("2026-11-18T00:00:00+08:00".to_string()),
+        remaining: Some(1000.0),
+        limit: Some(1000.0),
+        unit: Some(QuotaUnit::Tokens),
         display: None,
-        amount: Some("1000".to_string()),
-        limit: Some("1000".to_string()),
-        unit: Some("tokens".to_string()),
-        aside: false,
-        pool: None,
     }];
     let guards = Arc::new(Mutex::new(Vec::new()));
     let successes = Arc::new(AtomicUsize::new(0));
@@ -67,16 +65,14 @@ fn reservations_do_not_overshoot_a_window() {
 fn settled_reservations_hold_capacity_until_pending_expires() {
     let reservations = QuotaReservations::with_pending_ttl(std::time::Duration::from_millis(30));
     let windows = vec![QuotaWindow {
-        label: "1 天".to_string(),
+        kind: QuotaWindowKind::Day,
         span_secs: Some(24 * 60 * 60),
         used_percent: 0.0,
         resets_at: Some("2026-11-18T00:00:00+08:00".to_string()),
+        remaining: Some(100.0),
+        limit: Some(100.0),
+        unit: Some(QuotaUnit::Tokens),
         display: None,
-        amount: Some("100".to_string()),
-        limit: Some("100".to_string()),
-        unit: Some("tokens".to_string()),
-        aside: false,
-        pool: None,
     }];
 
     let mut guard = reservations
@@ -103,16 +99,14 @@ fn settled_reservations_hold_capacity_until_pending_expires() {
 fn pending_usage_is_visible_in_the_quota_window() {
     let reservations = QuotaReservations::default();
     let mut windows = vec![QuotaWindow {
-        label: "1 天".to_string(),
+        kind: QuotaWindowKind::Day,
         span_secs: Some(24 * 60 * 60),
         used_percent: 0.0,
         resets_at: Some("2026-11-18T00:00:00+08:00".to_string()),
-        display: Some("0 / 100".to_string()),
-        amount: Some("100".to_string()),
-        limit: Some("100".to_string()),
-        unit: Some("tokens".to_string()),
-        aside: false,
-        pool: None,
+        remaining: Some(100.0),
+        limit: Some(100.0),
+        unit: Some(QuotaUnit::Tokens),
+        display: None,
     }];
     let mut guard = reservations
         .reserve_windows("p", "i", &windows, 60)
@@ -121,8 +115,7 @@ fn pending_usage_is_visible_in_the_quota_window() {
     drop(guard);
 
     reservations.apply_pending("p", "i", &mut windows);
-    assert_eq!(windows[0].amount.as_deref(), Some("40"));
-    assert_eq!(windows[0].display.as_deref(), Some("60 / 100"));
+    assert_eq!(windows[0].remaining, Some(40.0));
     assert_eq!(windows[0].used_percent, 60.0);
 }
 
@@ -133,16 +126,14 @@ fn pending_usage_clears_when_materialization_reaches_its_sequence() {
     let mut reservations = QuotaReservations::default();
     reservations.track_sequences(Arc::clone(&durable), Arc::clone(&applied));
     let windows = vec![QuotaWindow {
-        label: "1 天".to_string(),
+        kind: QuotaWindowKind::Day,
         span_secs: Some(24 * 60 * 60),
         used_percent: 0.0,
         resets_at: Some("2026-11-18T00:00:00+08:00".to_string()),
+        remaining: Some(100.0),
+        limit: Some(100.0),
+        unit: Some(QuotaUnit::Tokens),
         display: None,
-        amount: Some("100".to_string()),
-        limit: Some("100".to_string()),
-        unit: Some("tokens".to_string()),
-        aside: false,
-        pool: None,
     }];
 
     let mut guard = reservations
@@ -170,4 +161,19 @@ fn pending_usage_clears_when_materialization_reaches_its_sequence() {
         reservations.reserve_windows("p", "i", &windows, 50).is_ok(),
         "materialized usage must release the pending capacity"
     );
+}
+
+#[test]
+fn held_keys_distinguish_window_kinds() {
+    let day = HeldKey {
+        provider_id: "p".into(),
+        identity_id: "i".into(),
+        window: QuotaWindowKind::Day,
+        reset: "r".into(),
+    };
+    let week = HeldKey {
+        window: QuotaWindowKind::Week,
+        ..day.clone()
+    };
+    assert_ne!(day, week);
 }

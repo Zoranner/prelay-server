@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use prelay_protocol::{
     ProviderQuota, QuotaBalance, QuotaBalancePart, QuotaError, QuotaErrorCode, QuotaWindow,
+    QuotaWindowKind,
 };
 use serde_json::Value;
 
@@ -85,9 +86,9 @@ fn parse(body: &str, subscription: Option<&Subscription>) -> Result<ProviderQuot
         .and_then(|limits| limits.get("fiveHour"))
         .and_then(|window| number(window.get("cap")));
     let mut windows = Vec::new();
-    for (key, label, span_secs) in [
-        ("fiveHour", "5 小时", 5 * 60 * 60),
-        ("weekly", "7 天", 7 * 24 * 60 * 60),
+    for (key, kind, span_secs) in [
+        ("fiveHour", QuotaWindowKind::Rolling, 5 * 60 * 60),
+        ("weekly", QuotaWindowKind::Week, 7 * 24 * 60 * 60),
     ] {
         let Some(window) = root.get("windowLimits").and_then(|limits| limits.get(key)) else {
             continue;
@@ -100,16 +101,14 @@ fn parse(body: &str, subscription: Option<&Subscription>) -> Result<ProviderQuot
             continue;
         }
         windows.push(QuotaWindow {
-            label: label.to_string(),
+            kind,
             span_secs: Some(span_secs),
             used_percent: (used / cap * 100.0).clamp(0.0, 100.0),
             resets_at: timestamp(window.get("resetAt")),
-            display: Some(format!("${used:.2} / ${cap:.2}")),
-            amount: Some(format!("{:.2}", (cap - used).max(0.0))),
-            limit: Some(format!("{cap:.2}")),
-            unit: Some("USD".to_string()),
-            aside: false,
-            pool: None,
+            remaining: None,
+            limit: None,
+            unit: None,
+            display: None,
         });
     }
     let credits = root.get("credits");
@@ -130,16 +129,14 @@ fn parse(body: &str, subscription: Option<&Subscription>) -> Result<ProviderQuot
         let remaining = remaining.clamp(0.0, cap);
         let used = (cap - remaining).max(0.0);
         windows.push(QuotaWindow {
-            label: "月".to_string(),
+            kind: QuotaWindowKind::Month,
             span_secs: None,
             used_percent: (used / cap * 100.0).clamp(0.0, 100.0),
             resets_at: subscription.and_then(|value| value.current_period_end.clone()),
-            display: Some(format!("${used:.2} / ${cap:.2}")),
-            amount: Some(format!("{remaining:.2}")),
-            limit: Some(format!("{cap:.2}")),
-            unit: Some("USD".to_string()),
-            aside: false,
-            pool: None,
+            remaining: None,
+            limit: None,
+            unit: None,
+            display: None,
         });
     }
     // monthlyCredits 是月度套餐剩余，已经由月度窗口表达；这里的余额只表示
@@ -149,7 +146,6 @@ fn parse(body: &str, subscription: Option<&Subscription>) -> Result<ProviderQuot
         .filter_map(|key| credits.and_then(|value| number(value.get(*key))))
         .sum::<f64>();
     let balance = credits.map(|_| QuotaBalance {
-        text: format!("${left:.2}"),
         parts: vec![QuotaBalancePart {
             currency: "USD".to_string(),
             amount: format!("{left:.2}"),
@@ -246,16 +242,17 @@ mod tests {
         assert_eq!(quota.windows.len(), 3);
         assert_eq!(quota.windows[0].used_percent, 50.0);
         assert_eq!(quota.windows[1].used_percent, 60.0);
-        assert_eq!(quota.windows[2].label, "月");
-        assert_eq!(quota.windows[2].limit.as_deref(), Some("10.00"));
-        assert_eq!(quota.windows[2].amount.as_deref(), Some("10.00"));
+        assert_eq!(quota.windows[2].kind, super::QuotaWindowKind::Month);
+        assert!(quota.windows[2].limit.is_none());
+        assert!(quota.windows[2].remaining.is_none());
+        assert!(quota.windows[2].unit.is_none());
         assert_eq!(quota.windows[2].used_percent, 0.0);
         assert_eq!(
             quota.windows[2].resets_at.as_deref(),
             Some("2026-11-21T00:00:00+08:00")
         );
         let balance = quota.balance.expect("balance");
-        assert_eq!(balance.text, "$2.00");
+        assert_eq!(balance.parts[0].amount, "2.00");
     }
 
     #[test]
@@ -278,17 +275,20 @@ mod tests {
 
         assert_eq!(quota.windows.len(), 3);
         let monthly = &quota.windows[2];
-        assert_eq!(monthly.label, "月");
-        assert_eq!(monthly.limit.as_deref(), Some("70.00"));
-        assert_eq!(monthly.amount.as_deref(), Some("0.06"));
+        assert_eq!(monthly.kind, super::QuotaWindowKind::Month);
+        assert!(monthly.limit.is_none());
+        assert!(monthly.remaining.is_none());
         assert!((monthly.used_percent - 99.914_285_714_285_7).abs() < 0.001);
         assert_eq!(
             monthly.resets_at.as_deref(),
             Some("2026-11-21T00:00:00+08:00")
         );
         assert_eq!(
-            quota.balance.as_ref().map(|balance| balance.text.as_str()),
-            Some("$0.00")
+            quota
+                .balance
+                .as_ref()
+                .map(|balance| balance.parts[0].amount.as_str()),
+            Some("0.00")
         );
     }
 
@@ -311,7 +311,7 @@ mod tests {
         .expect("Command Code quota parses");
 
         let monthly = &quota.windows[2];
-        assert_eq!(monthly.limit.as_deref(), Some("100.00"));
+        assert_eq!(monthly.kind, super::QuotaWindowKind::Month);
         assert_eq!(monthly.used_percent, 50.0);
     }
 
@@ -327,7 +327,7 @@ mod tests {
         .expect("Command Code quota parses");
 
         assert_eq!(quota.windows.len(), 1);
-        assert_eq!(quota.windows[0].label, "5 小时");
+        assert_eq!(quota.windows[0].kind, super::QuotaWindowKind::Rolling);
         assert_eq!(quota.plan.as_deref(), Some("unknown-plan"));
     }
 }

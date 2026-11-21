@@ -9,7 +9,7 @@ use std::{
 
 use axum::http::StatusCode;
 use chrono::Utc;
-use prelay_protocol::{QuotaWindow, ShareQuotaWindow};
+use prelay_protocol::{QuotaWindow, QuotaWindowKind, ShareQuotaWindow};
 
 use crate::{error::AppError, store::storage::Storage};
 
@@ -42,7 +42,7 @@ impl Default for QuotaReservations {
 struct HeldKey {
     provider_id: String,
     identity_id: String,
-    window: String,
+    window: QuotaWindowKind,
     reset: String,
 }
 
@@ -161,15 +161,11 @@ impl QuotaReservations {
         self.prune_pending(&mut pending);
         let mut keys = Vec::with_capacity(windows.len());
         for window in windows {
-            let remaining = window
-                .amount
-                .as_deref()
-                .and_then(|amount| amount.parse::<i64>().ok())
-                .unwrap_or(0);
+            let remaining = window.remaining.unwrap_or_default().max(0.0) as i64;
             let key = HeldKey {
                 provider_id: provider_id.to_string(),
                 identity_id: identity_id.to_string(),
-                window: window.label.clone(),
+                window: window.kind,
                 reset: window.resets_at.clone().unwrap_or_default(),
             };
             let already = held.get(&key).copied().unwrap_or(0);
@@ -181,8 +177,8 @@ impl QuotaReservations {
                 return Err(AppError::Upstream {
                     status: Some(StatusCode::TOO_MANY_REQUESTS),
                     message: format!(
-                        "共享额度不足：{} 可用 {} tokens，重置 {}",
-                        window.label,
+                        "共享额度不足：{:?} 窗口可用 {} tokens，重置 {}",
+                        window.kind,
                         available,
                         window.resets_at.as_deref().unwrap_or("未知")
                     ),
@@ -217,7 +213,7 @@ impl QuotaReservations {
             let key = HeldKey {
                 provider_id: provider_id.to_string(),
                 identity_id: identity_id.to_string(),
-                window: window.label.clone(),
+                window: window.kind,
                 reset: window.resets_at.clone().unwrap_or_default(),
             };
             let Some(usage) = pending.get(&key) else {
@@ -226,26 +222,13 @@ impl QuotaReservations {
             if usage.tokens <= 0 {
                 continue;
             }
-            let Some(limit) = window
-                .limit
-                .as_deref()
-                .and_then(|value| value.parse::<i64>().ok())
-            else {
+            let Some(limit) = window.limit.filter(|limit| *limit > 0.0) else {
                 continue;
             };
-            if limit <= 0 {
-                continue;
-            }
-            let remaining = window
-                .amount
-                .as_deref()
-                .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or(0);
-            let adjusted = remaining.saturating_sub(usage.tokens).max(0);
-            window.amount = Some(adjusted.to_string());
-            window.used_percent =
-                (((limit - adjusted) as f64 / limit as f64) * 100.0).clamp(0.0, 100.0);
-            window.display = Some(format!("{} / {}", limit - adjusted, limit));
+            let remaining = window.remaining.unwrap_or_default().max(0.0);
+            let adjusted = (remaining - usage.tokens as f64).max(0.0);
+            window.remaining = Some(adjusted);
+            window.used_percent = (((limit - adjusted) / limit) * 100.0).clamp(0.0, 100.0);
         }
     }
 
