@@ -194,7 +194,6 @@ pub(crate) async fn test_provider_with_capabilities(
         provider_type: provider_type.to_string(),
         base_url: base_url.to_string(),
         api_key: api_key.to_string(),
-        token: String::new(),
         capabilities_json: capabilities.map(serde_json::to_string).transpose()?,
         models: Vec::new(),
         created_at: chrono::Utc::now().to_rfc3339(),

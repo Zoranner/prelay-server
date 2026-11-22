@@ -16,7 +16,6 @@ pub struct Model {
     pub provider_type: Option<String>,
     pub model_requested: Option<String>,
     pub model_upstream: Option<String>,
-    pub proxy_token_id: Option<String>,
     pub status: String,
     pub http_status: Option<i64>,
     pub error_code: Option<String>,

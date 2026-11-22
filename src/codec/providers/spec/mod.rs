@@ -278,7 +278,6 @@ mod tests {
             provider_type: provider_type.to_string(),
             base_url: "http://127.0.0.1:11434/api".to_string(),
             api_key: "sk-test".to_string(),
-            token: "token".to_string(),
             capabilities_json: None,
             models: Vec::new(),
             created_at: "2026-06-05T00:00:00Z".to_string(),

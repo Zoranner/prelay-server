@@ -9,8 +9,6 @@ pub struct ProviderConfig {
     /// API base URL, e.g. https://api.openai.com
     pub base_url: String,
     pub api_key: String,
-    /// Internal token used by clients to authenticate with this proxy
-    pub token: String,
     pub capabilities_json: Option<String>,
     /// 该供应商启用的模型清单；清单外的模型不再提供给接入点。
     pub models: Vec<String>,

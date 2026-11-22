@@ -23,7 +23,6 @@ pub(in crate::store::schema) fn statement() -> TableCreateStatement {
         .col(ColumnDef::new(Activities::ProviderType).string())
         .col(ColumnDef::new(Activities::ModelRequested).string())
         .col(ColumnDef::new(Activities::ModelUpstream).string())
-        .col(ColumnDef::new(Activities::ProxyTokenId).string())
         .col(ColumnDef::new(Activities::Status).string().not_null())
         .col(ColumnDef::new(Activities::HttpStatus).big_integer())
         .col(ColumnDef::new(Activities::ErrorCode).string())
@@ -64,7 +63,6 @@ pub(in crate::store::schema) enum Activities {
     ProviderType,
     ModelRequested,
     ModelUpstream,
-    ProxyTokenId,
     Status,
     HttpStatus,
     ErrorCode,

@@ -76,7 +76,7 @@ pub async fn initialize(db: &DatabaseConnection) -> Result<(), DbErr> {
         manager.rename_legacy_activities().await?;
     }
     manager.migrate_activity_schema().await?;
-    manager.drop_legacy_cost_columns().await?;
+    manager.drop_legacy_activity_columns().await?;
     if !has_memories {
         initialize_memory_schema(&manager).await?;
     }
@@ -353,15 +353,13 @@ impl<C: ConnectionTrait> SchemaInitializer<'_, C> {
             .await
     }
 
-    async fn drop_legacy_cost_columns(&self) -> Result<(), DbErr> {
-        for column in ["estimated_cost", "currency"] {
-            if column_exists(self.db, "identity_activities", column).await? {
-                self.db
-                    .execute_unprepared(&format!(
-                        "ALTER TABLE identity_activities DROP COLUMN {column}"
-                    ))
-                    .await?;
-            }
+    async fn drop_legacy_activity_columns(&self) -> Result<(), DbErr> {
+        for column in ["estimated_cost", "currency", "proxy_token_id"] {
+            self.db
+                .execute_unprepared(&format!(
+                    "ALTER TABLE identity_activities DROP COLUMN IF EXISTS {column}"
+                ))
+                .await?;
         }
         Ok(())
     }

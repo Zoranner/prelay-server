@@ -255,7 +255,6 @@ impl Storage {
                     provider_type: provider.provider_type,
                     base_url: provider.base_url,
                     api_key: self.crypto.decrypt(&provider.api_key_ciphertext)?,
-                    token: String::new(),
                     capabilities_json: provider.capabilities_json,
                     models: super::provider_validation::parse_models(
                         provider.models_json.as_deref(),

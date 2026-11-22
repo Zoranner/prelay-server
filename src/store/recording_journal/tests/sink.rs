@@ -407,7 +407,6 @@ pub(super) fn activity_model() -> activities::Model {
         provider_type: Some("openai".to_string()),
         model_requested: Some("model-1".to_string()),
         model_upstream: Some("model-upstream".to_string()),
-        proxy_token_id: None,
         status: "streaming".to_string(),
         http_status: Some(200),
         error_code: None,

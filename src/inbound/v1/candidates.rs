@@ -111,7 +111,6 @@ mod tests {
                 provider_type: "test".to_string(),
                 base_url: "http://127.0.0.1:1".to_string(),
                 api_key: String::new(),
-                token: String::new(),
                 capabilities_json: None,
                 models: Vec::new(),
                 created_at: String::new(),

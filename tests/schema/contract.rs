@@ -220,7 +220,7 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
             "{column} must map to an i64-compatible BIGINT"
         );
     }
-    for column in ["estimated_cost", "currency"] {
+    for column in ["estimated_cost", "currency", "proxy_token_id"] {
         assert!(
             !column_exists(db, "identity_activities", column).await,
             "identity_activities.{column} must not exist"
