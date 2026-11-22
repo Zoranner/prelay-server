@@ -127,7 +127,7 @@ src/
 | `bridge/internal.rs` | `codec/internal.rs` | 内部规范请求与角色 |
 | `bridge/usage.rs` | `codec/usage.rs` | 用量解析 |
 | `bridge/` 其余 | `codec/bridge/` | 下游协议桥接与流式转换 |
-| `providers/` | `codec/providers/` | 上游协议编解码、能力与地址解析、模型发现 |
+| `providers/` | `codec/providers/` | 上游协议编解码、能力与地址解析 |
 | `database.rs` | `store/connect.rs` | 连接配置与连接池 |
 | `schema/` | `store/schema/` | DDL 与初始化 |
 | `entity/` | `store/entity/` | SeaORM 实体 |

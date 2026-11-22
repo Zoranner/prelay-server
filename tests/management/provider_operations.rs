@@ -1,25 +1,13 @@
 use axum::{
     http::{HeaderMap, StatusCode},
-    routing::{get, head, post},
-    Json, Router,
+    routing::{head, post},
+    Router,
 };
 use prelay_server::{bootstrap as app, test_support::test_state};
 
 use crate::{auth::register, http::request_json};
 
 async fn spawn_provider_actions_upstream(expected_api_key: &'static str) -> String {
-    async fn models(headers: HeaderMap) -> Json<serde_json::Value> {
-        assert_eq!(
-            headers
-                .get("authorization")
-                .and_then(|value| value.to_str().ok()),
-            Some("Bearer sk-provider-action-secret")
-        );
-        Json(serde_json::json!({
-            "data": [{ "id": "discovered-model" }]
-        }))
-    }
-
     async fn chat(headers: HeaderMap) -> (StatusCode, &'static str) {
         assert_eq!(
             headers
@@ -31,9 +19,7 @@ async fn spawn_provider_actions_upstream(expected_api_key: &'static str) -> Stri
     }
 
     assert_eq!(expected_api_key, "sk-provider-action-secret");
-    let upstream = Router::new()
-        .route("/models", get(models))
-        .route("/chat/completions", post(chat));
+    let upstream = Router::new().route("/chat/completions", post(chat));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind upstream");
@@ -62,7 +48,7 @@ async fn management_provider_actions_do_not_persist_the_supplied_key() {
         "model": "discovered-model"
     });
 
-    let (status, discovered): (StatusCode, serde_json::Value) = request_json(
+    let (status, _): (StatusCode, serde_json::Value) = request_json(
         &app,
         "POST",
         "/api/providers/discover-models",
@@ -70,12 +56,7 @@ async fn management_provider_actions_do_not_persist_the_supplied_key() {
         Some(input.clone()),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        discovered["models"],
-        serde_json::json!(["discovered-model"])
-    );
-    assert!(!discovered.to_string().contains("sk-provider-action-secret"));
+    assert_eq!(status, StatusCode::NOT_FOUND);
 
     let (status, tested): (StatusCode, serde_json::Value) = request_json(
         &app,
@@ -149,44 +130,33 @@ async fn management_saved_provider_ping_checks_reachability_without_a_provider_k
 }
 
 #[tokio::test]
-async fn management_provider_operations_return_success_envelopes_for_upstream_network_failures() {
+async fn management_provider_operations_return_failure_envelopes_for_upstream_network_failures() {
     let app = app::router(test_state().await).await.expect("build app");
     let credential = register(&app, "machine-upstream-failure", "S-1-5-21-650").await["credential"]
         .as_str()
         .expect("credential")
         .to_string();
-    for (path, body, expected_error_prefixes) in [
-        (
-            "/api/providers/discover-models",
-            serde_json::json!({
-                "provider_type": "openai_compatible",
-                "base_url": "http://127.0.0.1:0",
-                "api_key": "sk-upstream-failure-secret"
-            }),
-            &["模型获取失败，上游"][..],
-        ),
-        (
-            "/api/providers/test-protocol",
-            serde_json::json!({
-                "provider_type": "openai_compatible",
-                "base_url": "http://127.0.0.1:0",
-                "api_key": "sk-upstream-failure-secret",
-                "protocol": "openai",
-                "model": "unavailable-model"
-            }),
-            &["上游测试超时", "上游连接失败", "上游测试失败"][..],
-        ),
-    ] {
-        let (status, response): (StatusCode, serde_json::Value) =
-            request_json(&app, "POST", path, Some(&credential), Some(body)).await;
-        assert_eq!(status, StatusCode::OK, "{path}");
-        assert_eq!(response["ok"], false, "{path}");
-        let error = response["error"].as_str().expect("operation error");
-        assert!(
-            expected_error_prefixes
-                .iter()
-                .any(|prefix| error.starts_with(prefix)),
-            "{path}: {response}"
-        );
-    }
+    let (status, response): (StatusCode, serde_json::Value) = request_json(
+        &app,
+        "POST",
+        "/api/providers/test-protocol",
+        Some(&credential),
+        Some(serde_json::json!({
+            "provider_type": "openai_compatible",
+            "base_url": "http://127.0.0.1:0",
+            "api_key": "sk-upstream-failure-secret",
+            "protocol": "openai",
+            "model": "unavailable-model"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(response["ok"], false);
+    let error = response["error"].as_str().expect("operation error");
+    assert!(
+        ["上游测试超时", "上游连接失败", "上游测试失败"]
+            .iter()
+            .any(|prefix| error.starts_with(prefix)),
+        "{response}"
+    );
 }

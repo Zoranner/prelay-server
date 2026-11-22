@@ -22,7 +22,7 @@
 - `identity_endpoint_models`：保存接入点实际暴露的模型、供应商和上游模型映射。
 - `identity_endpoint_model_routes`：保存同一接入点模型组的当前路由选择。
 - `ProviderCatalog`：保存部署目录中的模型详情、供应商关系、协议和显示信息。
-- `/api/providers/discover-models`：继续作为上游诊断接口，不产生持久化模型事实。
+- `/api/providers/discover-models`：已移除；模型清单只由目录和供应商启用清单决定，不再提供上游模型发现接口。
 
 ### 删除
 

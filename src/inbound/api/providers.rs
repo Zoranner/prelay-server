@@ -11,7 +11,7 @@ use prelay_protocol::{
 };
 use serde::Deserialize;
 
-use crate::{codec::providers::model_discovery, domain::stats::StatsRange, AppState};
+use crate::{domain::stats::StatsRange, AppState};
 
 use super::auth::CurrentIdentity;
 use super::{ApiError, ApiJson, ApiQuery};
@@ -21,7 +21,6 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/providers", get(list).post(create))
         .route("/providers/quotas", get(list_quotas))
-        .route("/providers/discover-models", post(discover_models))
         .route("/providers/test-protocol", post(test_protocol))
         .route("/providers/:provider_id/ping", post(ping))
         .route(
@@ -211,39 +210,6 @@ async fn get_usage(
             .get_visible_provider_usage(&identity.id, &provider_id, query.range.unwrap_or_default())
             .await?,
     ))
-}
-
-async fn discover_models(
-    State(state): State<AppState>,
-    ApiJson(input): ApiJson<ProviderOperationRequest>,
-) -> Result<Json<ProviderOperationResponse>, ApiError> {
-    let models = match model_discovery::discover_models(
-        &state.provider_client(&input.provider_type)?,
-        &input.base_url,
-        &input.api_key,
-    )
-    .await
-    {
-        Ok(models) => models,
-        Err(error) => {
-            return Ok(Json(ProviderOperationResponse {
-                ok: false,
-                protocol: None,
-                latency_ms: None,
-                first_token_ms: None,
-                error: Some(error.public_message()),
-                models: None,
-            }));
-        }
-    };
-    Ok(Json(ProviderOperationResponse {
-        ok: true,
-        protocol: None,
-        latency_ms: None,
-        first_token_ms: None,
-        error: None,
-        models: Some(models),
-    }))
 }
 
 async fn test_protocol(
