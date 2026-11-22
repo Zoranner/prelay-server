@@ -1,7 +1,5 @@
 use chrono::Utc;
-use prelay_protocol::{
-    CreateProviderRequest, ProviderCapabilityOverrides, ProviderResponse, UpdateProviderRequest,
-};
+use prelay_protocol::{CreateProviderRequest, ProviderResponse, UpdateProviderRequest};
 use sea_orm::{
     ActiveModelTrait,
     ActiveValue::{NotSet, Set},
@@ -217,7 +215,7 @@ async fn create_inner(
     let api_key_ciphertext = crypto.encrypt(&input.api_key)?;
     let capabilities_json = input
         .capabilities
-        .map(|capabilities| serde_json::to_string(&without_protocol_set_override(capabilities)))
+        .map(|capabilities| serde_json::to_string(&capabilities))
         .transpose()
         .map_err(|error| StorageError::Crypto(error.to_string()))?;
     let transaction = db.begin().await?;
@@ -317,7 +315,7 @@ pub(crate) async fn update(
     };
     let capabilities_json = match input.capabilities {
         Some(capabilities) => Some(
-            serde_json::to_string(&without_protocol_set_override(capabilities))
+            serde_json::to_string(&capabilities)
                 .map_err(|error| StorageError::Crypto(error.to_string()))?,
         ),
         None => existing.capabilities_json.clone(),
@@ -384,14 +382,6 @@ where
     C: ConnectionTrait,
 {
     owned_provider(db, identity_id, provider_id).await
-}
-
-/// 协议集合由供应商目录定义，请求里的协议集合覆盖不落库。
-fn without_protocol_set_override(
-    mut capabilities: ProviderCapabilityOverrides,
-) -> ProviderCapabilityOverrides {
-    capabilities.upstream_protocols = None;
-    capabilities
 }
 
 #[cfg(test)]

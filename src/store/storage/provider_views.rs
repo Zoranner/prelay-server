@@ -50,14 +50,11 @@ pub(super) fn provider_response(
 }
 
 fn capabilities(provider: &identity_provider_configs::Model) -> ProviderCapabilityOverrides {
-    let mut capabilities: ProviderCapabilityOverrides = provider
+    provider
         .capabilities_json
         .as_deref()
         .and_then(|value| serde_json::from_str(value).ok())
-        .unwrap_or_default();
-    // 协议集合由目录定义，历史记录里的协议集合不再对外返回。
-    capabilities.upstream_protocols = None;
-    capabilities
+        .unwrap_or_default()
 }
 
 fn models(provider: &identity_provider_configs::Model) -> Vec<String> {

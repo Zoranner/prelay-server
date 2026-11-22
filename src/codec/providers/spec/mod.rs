@@ -149,27 +149,6 @@ mod tests {
     }
 
     #[test]
-    fn catalog_protocols_win_over_saved_protocol_overrides() {
-        let catalog = crate::test_support::fixture_catalog();
-        let mut provider = provider("deepseek");
-        provider.capabilities_json = Some(
-            serde_json::to_string(&ProviderCapabilityOverrides {
-                upstream_protocols: Some(vec!["images_generations".to_string()]),
-                ..ProviderCapabilityOverrides::default()
-            })
-            .expect("encode capabilities"),
-        );
-
-        let spec = ProviderSpec::from_provider_config(Some(&catalog), &provider);
-
-        assert_eq!(
-            spec.supported_protocols,
-            vec![UpstreamProtocol::ChatCompletions]
-        );
-        assert_eq!(spec.upstream_for_downstream("images_generations"), None);
-    }
-
-    #[test]
     fn enables_image_generations_only_from_catalog_declaration() {
         let catalog = crate::test_support::fixture_catalog();
 
