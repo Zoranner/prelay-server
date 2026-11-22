@@ -5,9 +5,7 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use prelay_protocol::{
-    CatalogKind, ExtensionKind, ExtensionSummary, ExtensionVersion, ProtocolErrorCode,
-};
+use prelay_protocol::{CatalogKind, ExtensionSummary, ExtensionVersion, ProtocolErrorCode};
 
 use crate::{
     outbound::integrations::extensions::{CatalogError, ExtensionCatalog},
@@ -20,8 +18,6 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/extensions/rules", get(list_rules))
         .route("/extensions/plugins", get(list_plugins))
-        .route("/extensions/skills", get(list_skills))
-        .route("/extensions/mcp", get(list_mcp))
         .route("/extensions/:name/versions", get(list_versions))
         .route("/extensions/:name/versions/:tag/readme", get(readme))
         .route(
@@ -42,34 +38,12 @@ async fn list_plugins(
     list(&state.extensions, CatalogKind::Plugin).await
 }
 
-async fn list_skills(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<ExtensionSummary>>, ApiError> {
-    list_by_artifact(&state.extensions, ExtensionKind::Skill).await
-}
-
-async fn list_mcp(State(state): State<AppState>) -> Result<Json<Vec<ExtensionSummary>>, ApiError> {
-    list_by_artifact(&state.extensions, ExtensionKind::Mcp).await
-}
-
 async fn list(
     catalog: &ExtensionCatalog,
     catalog_kind: CatalogKind,
 ) -> Result<Json<Vec<ExtensionSummary>>, ApiError> {
     Ok(Json(
         catalog.list(catalog_kind).await.map_err(catalog_error)?,
-    ))
-}
-
-async fn list_by_artifact(
-    catalog: &ExtensionCatalog,
-    kind: ExtensionKind,
-) -> Result<Json<Vec<ExtensionSummary>>, ApiError> {
-    Ok(Json(
-        catalog
-            .list_by_artifact(kind)
-            .await
-            .map_err(catalog_error)?,
     ))
 }
 

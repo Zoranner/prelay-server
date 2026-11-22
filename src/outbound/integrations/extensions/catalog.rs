@@ -48,7 +48,6 @@ pub enum CatalogError {
 #[derive(Clone)]
 struct CatalogEntry {
     summary: ExtensionSummary,
-    classification: ClassifiedPackage,
 }
 
 struct CachedCatalog {
@@ -103,25 +102,6 @@ impl ExtensionCatalog {
             .await?
             .into_iter()
             .filter(|entry| entry.summary.catalog_kind == Some(catalog_kind))
-            .map(|entry| entry.summary)
-            .collect())
-    }
-
-    pub async fn list_by_artifact(
-        &self,
-        kind: ExtensionKind,
-    ) -> Result<Vec<ExtensionSummary>, CatalogError> {
-        Ok(self
-            .entries()
-            .await?
-            .into_iter()
-            .filter(|entry| {
-                entry
-                    .classification
-                    .artifacts
-                    .iter()
-                    .any(|artifact| artifact.kind == kind)
-            })
             .map(|entry| entry.summary)
             .collect())
     }
@@ -306,7 +286,6 @@ impl ExtensionCatalog {
                     catalog_kind: Some(classification.catalog_kind),
                     artifacts: classification.artifact_summaries(),
                 },
-                classification,
             });
         }
         entries.sort_by(|left, right| left.summary.repository.cmp(&right.summary.repository));

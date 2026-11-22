@@ -119,7 +119,7 @@ pub struct ExtensionSummary {
 
 `install_bundle` 按制品收集文件，不再按单一类型过滤整个仓库。未匹配任何制品的文件不进入安装包，也不在安装结果中单独报告。规则包与插件包的文件都必须通过现有的路径校验，不接受绝对路径、反斜杠和 `..`。
 
-单制品 Rule、Skill、MCP 安装包在 `artifacts` 之外继续输出旧客户端的 `kind/files` 字段；多制品和 Hook 包不输出旧字段。新客户端只以 `artifacts` 为准，旧服务端的 `kind/files` 响应由协议反序列化兼容为单制品 `artifacts`。
+服务端安装包只输出 `artifacts`，不再输出旧客户端的 `kind/files` 字段。协议反序列化仍接受旧服务端的 `kind/files` 单制品响应，供 `v0.3.0` 客户端连接旧服务端时使用。
 
 Hook 制品只允许 `hooks/*.json`（2026-10-24 修订为 `hooks/**`，见文末）。命令和脚本内容由 Codex 在信任审核时展示，服务端不做执行，也不校验命令是否可运行。
 
@@ -127,9 +127,8 @@ Hook 制品只允许 `hooks/*.json`（2026-10-24 修订为 `hooks/**`，见文�
 
 - `GET /api/extensions/rules` 返回规则包。
 - `GET /api/extensions/plugins` 返回插件包。
-- `GET /api/extensions/skills` 和 `/api/extensions/mcp` 保留一个版本，按制品类型过滤插件目录，标记为过渡接口。
 
-新客户端只使用前两个接口。过渡接口的移除需要单独确认，不在本次变更内。
+`/api/extensions/skills` 和 `/api/extensions/mcp` 过渡接口已随 `prelay-client 0.3.0` 最低版本要求移除。
 
 ## 客户端
 
@@ -205,7 +204,7 @@ Codex 对非托管 Hook 要求用户审核并信任，未信任的 Hook 不会�
 ## 兼容
 
 - 现有包都没有 `.prelay.json`，按推断分别归为规则包或单制品插件包，安装结果不变。
-- 旧客户端连接新服务端时，`/extensions/skills` 和 `/extensions/mcp` 过渡接口继续可用；单制品包继续保留旧安装字段。
+- 低于 `0.3.0` 的旧客户端不再兼容，不能连接当前服务端；服务端不再提供 `/extensions/skills`、`/extensions/mcp` 和单制品旧安装字段。
 - 新客户端连接旧服务端时，`/extensions/plugins` 不存在则回退 `/extensions/skills` 与 `/extensions/mcp`，把缺少 `catalog_kind` 和 `artifacts` 的响应按单制品包处理，并禁用 Hook 安装。
 - 统一安装记录上线后，旧记录文件不再写入，但保留读取直到确认无回退需求。
 
@@ -259,7 +258,7 @@ git diff --check
 
 - 统一安装记录在本次一次迁移：统一记录是唯一写入源，首次写入时合并旧文件，旧文件只读保留；迁移失败不删除旧文件。
 - OpenCode 没有等价的 Hook 机制，插件在 OpenCode 下安装 Skill 和 MCP，跳过 Hook，界面明确标注。
-- `/extensions/skills` 和 `/extensions/mcp` 至少保留到新客户端版本发布后，移除需要单独确认。
+- `/extensions/skills` 和 `/extensions/mcp` 已在 `prelay-client 0.3.0` 成为最低版本后移除；客户端对旧服务端的回退仍保留。
 - `superpowers` 新增版本 tag，不移动已发布 tag；发布动作单独确认。
 
 ## 实现修订（2026-10-24）

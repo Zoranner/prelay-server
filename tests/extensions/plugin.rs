@@ -4,7 +4,7 @@ use prelay_server::outbound::integrations::extensions::{
 };
 
 #[tokio::test]
-async fn builds_a_plugin_bundle_and_filters_catalog_by_artifact() {
+async fn builds_a_plugin_bundle_and_exposes_it_in_plugin_catalog() {
     let commit_sha = "d".repeat(40);
     let base_url = spawn_catalog_server(
         "superpowers",
@@ -69,27 +69,6 @@ async fn builds_a_plugin_bundle_and_filters_catalog_by_artifact() {
     assert_eq!(plugins[0].artifacts[1].kind, ExtensionKind::Hook);
     assert_eq!(plugins[0].artifacts[1].file_count, 2);
     assert!(catalog.list(CatalogKind::Rule).await.unwrap().is_empty());
-    assert_eq!(
-        catalog
-            .list_by_artifact(ExtensionKind::Skill)
-            .await
-            .unwrap()
-            .len(),
-        1
-    );
-    assert!(catalog
-        .list_by_artifact(ExtensionKind::Mcp)
-        .await
-        .unwrap()
-        .is_empty());
-    assert_eq!(
-        catalog
-            .list_by_artifact(ExtensionKind::Hook)
-            .await
-            .unwrap()
-            .len(),
-        1
-    );
 }
 
 #[tokio::test]

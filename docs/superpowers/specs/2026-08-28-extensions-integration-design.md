@@ -1,5 +1,7 @@
 # 扩展目录合并设计
 
+> 本设计已由 `2026-10-21-extension-artifacts-design.md` 取代；当前接口和兼容边界以该文档和实现为准。
+
 ## 目标
 
 将 `prelay-extensions` 的扩展发现能力合并到 `prelay-server`，让桌面客户端只通过 Prelay 管理 API 发现、查看和安装扩展。独立服务、客户端直连 Gitea、客户端保存扩展源地址均不再保留。

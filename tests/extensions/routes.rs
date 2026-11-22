@@ -75,6 +75,28 @@ async fn extension_catalog_routes_require_a_device_credential() {
     );
 }
 
+#[tokio::test]
+async fn extension_transitional_catalog_routes_are_removed() {
+    let app = app::router(test_state().await).await.expect("build app");
+    let credential = valid_credential();
+    register(&app, &credential).await;
+
+    for path in ["/api/extensions/skills", "/api/extensions/mcp"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header("authorization", format!("Bearer {credential}"))
+                    .body(Body::empty())
+                    .expect("build transitional route request"),
+            )
+            .await
+            .expect("route request");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+    }
+}
+
 async fn register(app: &axum::Router, credential: &str) {
     let request = CreateIdentityRequest {
         machine_id: "extension-machine".to_string(),
