@@ -3,7 +3,7 @@ use prelay_protocol::{
     CatalogTruncationPolicyResponse, ProviderProtocolBaseUrl,
 };
 
-use super::{CatalogImageGenerationModel, CatalogLanguageModel, CatalogProvider};
+use super::{CatalogImageGenerationModel, CatalogLanguageModel, CatalogProvider, ProviderStatus};
 
 pub(super) fn language_model_response(
     model: &CatalogLanguageModel,
@@ -73,7 +73,7 @@ pub(super) fn provider_response(provider: &CatalogProvider) -> CatalogProviderRe
         auth_scheme: provider.auth_scheme,
         base_url: provider.base_url.clone(),
         protocols: provider.protocols.clone(),
-        deprecated: provider.deprecated,
+        deprecated: provider.status == ProviderStatus::Deprecated,
         protocol_base_urls: provider
             .protocol_base_urls
             .iter()

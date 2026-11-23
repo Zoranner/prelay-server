@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 
 use crate::{
-    domain::catalog::ProviderCatalog,
-    store::entity::identity::{endpoint_model_routes, endpoint_models, provider_configs},
+    domain::catalog::{ProviderCatalog, ProviderStatus},
+    store::entity::identity::{
+        endpoint_model_routes, endpoint_models, provider_configs, provider_shares,
+    },
 };
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
-    DbBackend, DbErr, EntityTrait, IntoActiveModel, Statement, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
+    DatabaseTransaction, DbBackend, DbErr, EntityTrait, IntoActiveModel, QueryFilter, Statement,
+    TransactionTrait,
 };
 
 const MIGRATION_VERSION: &str = "provider_catalog_v1";
@@ -286,6 +289,47 @@ pub(crate) async fn migrate_provider_models(
         )
         .await?;
     }
+    Ok(())
+}
+
+/// `status = "retired"` 的目录条目在启动时清理存量供应商及其关联记录。
+pub(crate) async fn retire_providers(
+    db: &DatabaseConnection,
+    catalog: &ProviderCatalog,
+) -> Result<(), DbErr> {
+    let retired = provider_configs::Entity::find()
+        .all(db)
+        .await?
+        .into_iter()
+        .filter(|provider| {
+            catalog
+                .provider(&provider.provider_type)
+                .is_some_and(|entry| entry.status == ProviderStatus::Retired)
+        })
+        .collect::<Vec<_>>();
+    if retired.is_empty() {
+        return Ok(());
+    }
+    let transaction = db.begin().await?;
+    for provider in &retired {
+        endpoint_model_routes::Entity::delete_many()
+            .filter(endpoint_model_routes::Column::ProviderId.eq(&provider.id))
+            .exec(&transaction)
+            .await?;
+        endpoint_models::Entity::delete_many()
+            .filter(endpoint_models::Column::ProviderId.eq(&provider.id))
+            .exec(&transaction)
+            .await?;
+        provider_shares::Entity::delete_many()
+            .filter(provider_shares::Column::ProviderId.eq(&provider.id))
+            .exec(&transaction)
+            .await?;
+        provider_configs::Entity::delete_by_id(&provider.id)
+            .exec(&transaction)
+            .await?;
+    }
+    transaction.commit().await?;
+    tracing::info!(retired = retired.len(), "retired providers removed");
     Ok(())
 }
 

@@ -1,7 +1,8 @@
 use prelay_protocol::{ProviderCapabilityOverrides, ProviderCredential, ProviderResponse};
 
 use crate::{
-    codec::providers::spec::resolved_upstream_protocols, domain::catalog::ProviderCatalog,
+    codec::providers::spec::resolved_upstream_protocols,
+    domain::catalog::{ProviderCatalog, ProviderStatus},
     store::entity::identity::provider_configs as identity_provider_configs,
 };
 
@@ -28,7 +29,7 @@ pub(super) fn provider_response(
         .unwrap_or_default();
     let deprecated = catalog
         .and_then(|catalog| catalog.provider(&provider.provider_type))
-        .is_some_and(|entry| entry.deprecated);
+        .is_some_and(|entry| entry.status == ProviderStatus::Deprecated);
     let models = models(&provider);
     let credential = if include_credential {
         Some(ProviderCredential {

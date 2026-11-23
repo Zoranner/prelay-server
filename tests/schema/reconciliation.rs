@@ -1,5 +1,7 @@
 use prelay_server::{
-    store::entity::identity::{endpoint_model_routes, endpoint_models, provider_configs},
+    store::entity::identity::{
+        endpoint_model_routes, endpoint_models, provider_configs, provider_shares,
+    },
     store::schema::{initialize, initialize_with_catalog},
     test_support::fixture_catalog,
 };
@@ -215,6 +217,57 @@ async fn rejects_provider_types_outside_the_catalog() {
     let message = error.to_string();
     assert!(message.contains("provider_type is not in the current catalog"));
     assert!(message.contains("provider-retired"));
+}
+
+#[tokio::test]
+async fn retires_providers_marked_retired_in_catalog() {
+    let db = connect().await;
+    let catalog = fixture_catalog();
+    initialize_with_catalog(&db, &catalog)
+        .await
+        .expect("initialize schema");
+    insert_identity(&db).await;
+    insert_endpoint(&db).await;
+    insert_provider(&db, "provider-retired", "retired_relay", None, None).await;
+    insert_endpoint_model(&db, "model-retired", "provider-retired", "k3", "k3").await;
+    insert_route(&db, "k3", "provider-retired").await;
+    provider_shares::ActiveModel {
+        provider_id: Set("provider-retired".to_string()),
+        grantee_identity_id: Set("identity-a".to_string()),
+        created_at: Set("2026-09-14T00:00:00Z".to_string()),
+        quota_json: Set(None),
+    }
+    .insert(&db)
+    .await
+    .expect("insert provider share");
+
+    initialize_with_catalog(&db, &catalog)
+        .await
+        .expect("retire providers");
+
+    assert!(provider_configs::Entity::find_by_id("provider-retired")
+        .one(&db)
+        .await
+        .expect("query provider")
+        .is_none());
+    assert!(endpoint_models::Entity::find()
+        .filter(endpoint_models::Column::ProviderId.eq("provider-retired"))
+        .all(&db)
+        .await
+        .expect("query endpoint models")
+        .is_empty());
+    assert!(endpoint_model_routes::Entity::find()
+        .filter(endpoint_model_routes::Column::ProviderId.eq("provider-retired"))
+        .all(&db)
+        .await
+        .expect("query endpoint routes")
+        .is_empty());
+    assert!(provider_shares::Entity::find()
+        .filter(provider_shares::Column::ProviderId.eq("provider-retired"))
+        .all(&db)
+        .await
+        .expect("query provider shares")
+        .is_empty());
 }
 
 #[tokio::test]

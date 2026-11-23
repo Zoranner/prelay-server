@@ -3,7 +3,7 @@ id = "gotoken"
 name = "GoToken 套餐"
 auth_scheme = "bearer"
 base_url = "https://gotoken.cc"
-deprecated = true
+status = "deprecated"
 protocols = [
   "chat_completions",
   "responses",

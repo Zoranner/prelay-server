@@ -63,4 +63,12 @@ auth_scheme = "bearer"
 base_url = "https://legacy.example/v1"
 protocols = ["chat_completions"]
 language_models = ["deepseek-v4-flash"]
-deprecated = true
+status = "deprecated"
+
+[[providers]]
+id = "retired_relay"
+name = "Retired Relay"
+auth_scheme = "bearer"
+base_url = "https://retired.example/v1"
+protocols = ["chat_completions"]
+status = "retired"

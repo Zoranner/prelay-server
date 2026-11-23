@@ -1,4 +1,4 @@
-use crate::domain::catalog::ProviderCatalog;
+use crate::domain::catalog::{ProviderCatalog, ProviderStatus};
 
 use super::StorageError;
 
@@ -64,12 +64,15 @@ pub(super) fn validate_catalog_provider(
     let provider = catalog.provider(provider_type).ok_or_else(|| {
         StorageError::ValidationFailed(format!("供应商类型 {provider_type} 不在当前模型目录里"))
     })?;
-    if provider.deprecated {
-        return Err(StorageError::ValidationFailed(format!(
+    match provider.status {
+        ProviderStatus::Active => Ok(()),
+        ProviderStatus::Deprecated => Err(StorageError::ValidationFailed(format!(
             "供应商类型 {provider_type} 已弃用，不能新建或编辑"
-        )));
+        ))),
+        ProviderStatus::Retired => Err(StorageError::ValidationFailed(format!(
+            "供应商类型 {provider_type} 已退役"
+        ))),
     }
-    Ok(())
 }
 
 /// 弃用或目录外的供应商仍可服务存量请求，但不能再调整分享配置。
@@ -78,14 +81,14 @@ pub(super) fn ensure_provider_shareable(
     provider_type: &str,
 ) -> Result<(), StorageError> {
     match catalog.provider(provider_type) {
-        Some(entry) if !entry.deprecated => Ok(()),
+        Some(entry) if entry.status == ProviderStatus::Active => Ok(()),
         _ => Err(StorageError::ProviderSharingNotAllowed),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::validate_catalog_provider;
+    use super::{ensure_provider_shareable, validate_catalog_provider};
     use crate::store::storage::StorageError;
 
     #[test]
@@ -115,9 +118,35 @@ mod tests {
     }
 
     #[test]
+    fn rejects_retired_provider_types() {
+        let catalog = crate::test_support::fixture_catalog();
+
+        let error = validate_catalog_provider(&catalog, "retired_relay")
+            .expect_err("retired provider type must be rejected");
+
+        assert!(matches!(
+            error,
+            StorageError::ValidationFailed(message) if message.contains("已退役")
+        ));
+    }
+
+    #[test]
     fn accepts_active_catalog_provider_types() {
         let catalog = crate::test_support::fixture_catalog();
 
         validate_catalog_provider(&catalog, "deepseek").expect("active provider type");
+    }
+
+    #[test]
+    fn sharing_requires_an_active_provider_type() {
+        let catalog = crate::test_support::fixture_catalog();
+
+        ensure_provider_shareable(&catalog, "deepseek").expect("active provider is shareable");
+        for provider_type in ["legacy_relay", "retired_relay", "missing_provider"] {
+            assert!(matches!(
+                ensure_provider_shareable(&catalog, provider_type),
+                Err(StorageError::ProviderSharingNotAllowed)
+            ));
+        }
     }
 }

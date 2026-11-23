@@ -86,7 +86,7 @@ pub struct CatalogProvider {
     pub auth_scheme: ProviderAuthScheme,
     pub base_url: String,
     pub protocols: Vec<ProviderProtocol>,
-    pub deprecated: bool,
+    pub status: ProviderStatus,
     pub protocol_base_urls: Vec<(ProviderProtocol, String)>,
     /// 追加到上游推理请求的静态或会话头；值来源由目录声明。
     pub request_headers: Vec<CatalogRequestHeader>,
@@ -97,6 +97,15 @@ pub struct CatalogProvider {
     pub proxy_url: Option<String>,
     /// 额度查询的声明；缺省表示未接入额度。
     pub quota: Option<CatalogQuota>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderStatus {
+    #[default]
+    Active,
+    Deprecated,
+    Retired,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -212,13 +221,15 @@ pub(super) struct RawImageGenerationModel {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct RawProvider {
     pub(super) id: String,
     pub(super) name: String,
     pub(super) auth_scheme: ProviderAuthScheme,
     pub(super) base_url: String,
     pub(super) protocols: Vec<ProviderProtocol>,
-    pub(super) deprecated: Option<bool>,
+    #[serde(default)]
+    pub(super) status: ProviderStatus,
     #[serde(default)]
     pub(super) protocol_base_urls: BTreeMap<String, String>,
     #[serde(default)]
@@ -370,7 +381,11 @@ impl ProviderCatalog {
     }
 
     pub fn providers(&self) -> Vec<CatalogProviderResponse> {
-        self.providers.values().map(provider_response).collect()
+        self.providers
+            .values()
+            .filter(|provider| provider.status != ProviderStatus::Retired)
+            .map(provider_response)
+            .collect()
     }
 
     pub fn language_model_response(&self, model_id: &str) -> Option<CatalogLanguageModelResponse> {
@@ -402,49 +417,4 @@ impl ProviderCatalog {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::ProviderCatalog;
-
-    fn catalog() -> ProviderCatalog {
-        crate::test_support::fixture_catalog()
-    }
-
-    #[test]
-    fn resolves_display_names_for_language_and_image_models() {
-        let catalog = catalog();
-
-        assert_eq!(catalog.model_display_name("gpt-5.6-luna"), "GPT-5.6 Luna");
-        assert_eq!(catalog.model_display_name("gpt-image-1"), "GPT Image 1");
-    }
-
-    #[test]
-    fn falls_back_to_model_id_when_unknown() {
-        let catalog = catalog();
-
-        assert_eq!(catalog.model_display_name("unknown-model"), "unknown-model");
-    }
-
-    #[test]
-    fn response_contains_complete_model_catalog() {
-        let catalog = catalog();
-        let response = catalog.response();
-        let language = response
-            .language_models
-            .iter()
-            .find(|model| model.id == "gpt-5.6-luna")
-            .expect("language model");
-        let image = response
-            .image_generation_models
-            .iter()
-            .find(|model| model.id == "gpt-image-1")
-            .expect("image model");
-
-        assert_eq!(language.display_name, "GPT-5.6 Luna");
-        assert!(language.context_window.is_some());
-        assert_eq!(image.display_name, "GPT Image 1");
-        assert!(image
-            .output_modalities
-            .as_ref()
-            .is_some_and(|modalities| modalities == &["image".to_string()]));
-    }
-}
+mod tests;

@@ -7,7 +7,7 @@ use std::{
 
 use prelay_protocol::ProviderProtocol;
 use prelay_server::domain::catalog::{
-    CatalogRequestHeaderValue, ProviderCatalog, QuotaAdapterKind, QuotaAuth,
+    CatalogRequestHeaderValue, ProviderCatalog, ProviderStatus, QuotaAdapterKind, QuotaAuth,
 };
 
 #[path = "provider_catalog/headers.rs"]
@@ -83,7 +83,7 @@ fn deployment_catalog_marks_gotoken_deprecated() {
         ProviderCatalog::load(Path::new("config/catalog")).expect("load deployment catalog");
 
     let gotoken = catalog.provider("gotoken").expect("gotoken entry");
-    assert!(gotoken.deprecated);
+    assert_eq!(gotoken.status, ProviderStatus::Deprecated);
 }
 
 #[test]
