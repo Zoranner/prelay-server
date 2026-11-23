@@ -404,7 +404,10 @@ impl ProviderCatalog {
     }
 
     pub fn provider_response(&self, provider_id: &str) -> Option<CatalogProviderResponse> {
-        self.providers.get(provider_id).map(provider_response)
+        self.providers
+            .get(provider_id)
+            .filter(|provider| provider.status != ProviderStatus::Retired)
+            .map(provider_response)
     }
 
     pub fn response(&self) -> ProviderCatalogResponse {

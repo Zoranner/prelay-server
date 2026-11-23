@@ -42,3 +42,22 @@ fn response_contains_complete_model_catalog() {
         .as_ref()
         .is_some_and(|modalities| modalities == &["image".to_string()]));
 }
+
+#[test]
+fn hides_retired_providers_from_catalog_responses() {
+    let catalog = catalog();
+    let response = catalog.response();
+
+    assert!(response
+        .providers
+        .iter()
+        .all(|provider| provider.id != "retired_relay"));
+    let deprecated = response
+        .providers
+        .iter()
+        .find(|provider| provider.id == "legacy_relay")
+        .expect("deprecated provider");
+    assert!(deprecated.deprecated);
+    assert!(catalog.provider_response("retired_relay").is_none());
+    assert!(catalog.provider_response("legacy_relay").is_some());
+}
