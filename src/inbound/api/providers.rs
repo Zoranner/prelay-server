@@ -154,7 +154,6 @@ async fn ping(
             latency_ms,
             first_token_ms: None,
             error: None,
-            models: None,
         },
         Err(error) => ProviderOperationResponse {
             ok: false,
@@ -166,7 +165,6 @@ async fn ping(
             } else {
                 "上游连接失败".to_string()
             }),
-            models: None,
         },
     }))
 }

@@ -48,7 +48,6 @@ pub(crate) async fn run_protocol_test(
                 latency_ms: Some(started_at.elapsed().as_millis() as i64),
                 first_token_ms: None,
                 error: Some(sanitize_protocol_test_error(error)),
-                models: None,
             });
         }
     };
@@ -65,7 +64,6 @@ pub(crate) async fn run_protocol_test(
             latency_ms,
             first_token_ms: None,
             error: Some(format!("上游测试失败: {}", response.status().as_u16())),
-            models: None,
         });
     }
     let first_token_ms = match first_response_byte_ms(response, started_at).await {
@@ -77,7 +75,6 @@ pub(crate) async fn run_protocol_test(
                 latency_ms: Some(started_at.elapsed().as_millis() as i64),
                 first_token_ms: None,
                 error: Some(sanitize_protocol_test_error(error)),
-                models: None,
             });
         }
     };
@@ -87,7 +84,6 @@ pub(crate) async fn run_protocol_test(
         latency_ms,
         first_token_ms,
         error: None,
-        models: None,
     })
 }
 
