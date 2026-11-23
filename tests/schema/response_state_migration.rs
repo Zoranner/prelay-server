@@ -120,3 +120,96 @@ async fn upgrades_legacy_response_state_schema_and_removes_provider_fk() {
 
     assert_exact_response_state_schema(&db).await;
 }
+
+async fn count(db: &DatabaseConnection, sql: String) -> i64 {
+    let row = db
+        .query_one_raw(Statement::from_string(DbBackend::Postgres, sql))
+        .await
+        .expect("query count")
+        .expect("count row");
+    row.try_get::<i64>("", COUNT_COLUMN).expect("count column")
+}
+
+async fn seed_identity(db: &DatabaseConnection, id: &str) {
+    db.execute_unprepared(&format!(
+        "INSERT INTO identities
+         (id, machine_id, account_sid, credential_hash, display_name, created_at, last_active_at)
+         VALUES ('{id}', 'machine-{id}', 'S-1-5-21-{id}', 'hash', '',
+         '2026-11-22T00:00:00Z', '2026-11-22T00:00:00Z')"
+    ))
+    .await
+    .expect("seed identity");
+}
+
+async fn seed_response_session(
+    db: &DatabaseConnection,
+    identity_id: &str,
+    response_id: &str,
+    protocol_format: &str,
+    status: &str,
+) {
+    db.execute_unprepared(&format!(
+        "INSERT INTO identity_response_sessions
+         (response_id, identity_id, provider_id, model, status, protocol_format,
+          input_messages_json, output_items_json, created_at)
+         VALUES ('{response_id}', '{identity_id}', 'provider-1', 'model-1', '{status}',
+         '{protocol_format}', '[]', '[]', '2026-11-22T00:00:00Z')"
+    ))
+    .await
+    .expect("seed response session");
+}
+
+async fn session_count(db: &DatabaseConnection, response_id: &str) -> i64 {
+    count(
+        db,
+        format!(
+            "SELECT COUNT(*) AS {COUNT_COLUMN} FROM identity_response_sessions \
+             WHERE response_id = '{response_id}'"
+        ),
+    )
+    .await
+}
+
+async fn cleanup_migration_count(db: &DatabaseConnection) -> i64 {
+    count(
+        db,
+        format!(
+            "SELECT COUNT(*) AS {COUNT_COLUMN} FROM prelay_schema_migrations \
+             WHERE version = 'responses_legacy_cleanup_v1'"
+        ),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn removes_responses_legacy_rows_once() {
+    let db = test_empty_database_connection().await;
+    initialize(&db).await.expect("initialize current schema");
+    seed_identity(&db, "identity-legacy").await;
+    seed_response_session(
+        &db,
+        "identity-legacy",
+        "resp_legacy",
+        "legacy_internal_v1",
+        "legacy",
+    )
+    .await;
+    seed_response_session(
+        &db,
+        "identity-legacy",
+        "resp_current",
+        "responses_items_v1",
+        "completed",
+    )
+    .await;
+
+    initialize(&db).await.expect("apply legacy cleanup");
+
+    assert_eq!(session_count(&db, "resp_legacy").await, 0);
+    assert_eq!(session_count(&db, "resp_current").await, 1);
+    assert_eq!(cleanup_migration_count(&db).await, 1);
+
+    initialize(&db).await.expect("rerun legacy cleanup");
+
+    assert_eq!(cleanup_migration_count(&db).await, 1);
+}

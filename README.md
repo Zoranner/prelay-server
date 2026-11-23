@@ -80,7 +80,7 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --pull 
 
 编排内的 PostgreSQL 数据保存在宿主机 `deploy/data/postgres`，活动 JSONL 保存在 `deploy/data/sessions`，记录 WAL、checkpoint 和 node-id 保存在 `deploy/data/recording`。容器内服务以 UID 1000 的 `relay` 用户运行；首次部署前需确保这两个数据目录可由该用户写入，否则服务会在启动阶段明确失败。服务首次连接空数据库时初始化当前 schema；已有当前结构会执行 `activity_rollout_v2` 增量迁移，不完整或结构不兼容的数据库不进行其它修复或升级。
 
-升级已有部署前必须同时备份 PostgreSQL 数据、`ACTIVITY_ROLLOUT_DIR` 和 `RECORDING_JOURNAL_DIR`。WAL 是物化完成前的权威记录来源，不能在未排空时单独恢复旧备份；`activity_rollout_v2` 会补齐 `activity_rollouts` 的线程、窗口和行号字段，移除 `rollout_path` 唯一索引；旧活动行没有线程和行号区间。初始化仍会删除旧 `activity_contents` 表，并在 `anthropic_removal_v1` 中删除 Anthropic 活动及其 `activity_rollouts` 索引；数据库迁移不会迁移或删除旧活动级 JSONL 文件，遗留文件需要按数据保留策略单独处理。
+升级已有部署前必须同时备份 PostgreSQL 数据、`ACTIVITY_ROLLOUT_DIR` 和 `RECORDING_JOURNAL_DIR`。WAL 是物化完成前的权威记录来源，不能在未排空时单独恢复旧备份；`activity_rollout_v2` 会补齐 `activity_rollouts` 的线程、窗口和行号字段，移除 `rollout_path` 唯一索引；旧活动行没有线程和行号区间。初始化仍会删除旧 `activity_contents` 表，并在 `anthropic_removal_v1` 中删除 Anthropic 活动及其 `activity_rollouts` 索引，由 `responses_legacy_cleanup_v1` 删除 `identity_response_sessions` 中 `legacy_internal_v1` 的历史行；数据库迁移不会迁移或删除旧活动级 JSONL 文件，遗留文件需要按数据保留策略单独处理。
 
 使用该 Compose 文件时，客户端安装包的容器内目录是 `/app/updates`，对应宿主机的 `deploy/updates`。GitHub 不可用时，可将发布产物原文件直接放入对应目标和版本目录，例如 `deploy/updates/windows/x64/0.2.0/Prelay_0.2.0_x64-setup.exe`。
 
@@ -138,7 +138,7 @@ Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.5.4`，并以只读方式
 - `RECORDING_MATERIALIZE_LAG_SLO_SECONDS`：活动、统计和会话正文可见性 SLO，默认 `5` 秒。
 - `RECORDING_MATERIALIZE_INTERVAL_MS`：后台物化扫描间隔，默认 `100` 毫秒。
 
-`identity_response_sessions` 保存 `store=true` 的精确 Responses 状态：本轮实际发送的 input items、上游返回的 output items、完成状态和过期时间。请求项和输出项使用 `ENCRYPTION_KEY` 加密保存，数据库和备份仍必须按敏感数据处理；它不是活动正文索引或统计来源。旧版本留下的行标记为 `legacy_internal_v1`，不能作为 `previous_response_id` 续接。服务启动时会对这些 legacy 行的明文列执行一次幂等加密迁移，并在之后每日清理过期精确状态；清理不删除 legacy 行。`provider_id` 只是历史元数据，删除供应商不阻断状态读取；`conversation_id` 是内部活动分组，不是协议 `conversation`。
+`identity_response_sessions` 保存 `store=true` 的精确 Responses 状态：本轮实际发送的 input items、上游返回的 output items、完成状态和过期时间。请求项和输出项使用 `ENCRYPTION_KEY` 加密保存，数据库和备份仍必须按敏感数据处理；它不是活动正文索引或统计来源。旧版本留下的行标记为 `legacy_internal_v1`，不能作为 `previous_response_id` 续接；版本化迁移 `responses_legacy_cleanup_v1` 在启动时删除这些行，之后每日清理只处理过期精确状态。`provider_id` 只是历史元数据，删除供应商不阻断状态读取；`conversation_id` 是内部活动分组，不是协议 `conversation`。
 
 入口请求体仍受 `PROTOCOL_MAX_REQUEST_BODY_BYTES` 限制，默认 `256 MiB`；该限制只决定单次请求能否被服务接收，不截断已经接收的正文。
 

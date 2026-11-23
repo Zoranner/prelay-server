@@ -3,6 +3,7 @@ mod anthropic_removal;
 mod indexes;
 mod provider_catalog;
 mod reconciliation;
+mod responses_legacy_cleanup;
 mod tables;
 mod validation;
 
@@ -54,6 +55,7 @@ pub async fn initialize(db: &DatabaseConnection) -> Result<(), DbErr> {
         initialize_empty_schema(&manager).await?;
         activity_rollout::apply(db).await?;
         anthropic_removal::apply(db).await?;
+        responses_legacy_cleanup::apply(db).await?;
         return Ok(());
     }
     if !validation::required_base_tables_exist(db).await? {
@@ -82,6 +84,7 @@ pub async fn initialize(db: &DatabaseConnection) -> Result<(), DbErr> {
     }
     activity_rollout::apply_in(&transaction).await?;
     anthropic_removal::apply_in(&transaction).await?;
+    responses_legacy_cleanup::apply_in(&transaction).await?;
     manager.validate_current_schema().await?;
     transaction.commit().await?;
     Ok(())

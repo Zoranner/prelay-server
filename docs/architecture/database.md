@@ -52,9 +52,9 @@ PostgreSQL
 - `request_items_json`、`response_items_json`：本轮实际发送的 input items 和上游返回的 output items，使用 `ENCRYPTION_KEY` 加密保存。
 - `expires_at`：普通响应的过期时间，创建后 30 天。
 
-`provider_id` 是历史元数据，不做硬外键；删除供应商不阻断历史状态读取。`conversation_id` 是内部活动分组，不是协议 `conversation`。只有 `status='completed'`、`protocol_format='responses_items_v1'` 且未过期的行可以作为 `previous_response_id`；legacy、未完成和过期行统一按父响应不存在处理。服务启动时对 `legacy_internal_v1` 行的明文列执行一次幂等加密迁移，之后每日清理过期状态；清理只删除 `expires_at` 已过期的行，不删除 legacy 行。旧列 `input_messages_json`、`output_items_json` 继续由新的保存函数写入派生值，只保留一个迁移周期，不再作为精确续接来源。
+`provider_id` 是历史元数据，不做硬外键；删除供应商不阻断历史状态读取。`conversation_id` 是内部活动分组，不是协议 `conversation`。只有 `status='completed'`、`protocol_format='responses_items_v1'` 且未过期的行可以作为 `previous_response_id`；legacy、未完成和过期行统一按父响应不存在处理。版本化迁移 `responses_legacy_cleanup_v1` 在启动时删除全部 `legacy_internal_v1` 行；之后每日清理只删除 `expires_at` 已过期的行。旧列 `input_messages_json`、`output_items_json` 继续由新的保存函数写入派生值，只保留一个迁移周期，不再作为精确续接来源。
 
-数据库和备份仍必须按敏感数据处理；旧版本留下的明文行仍可读取，新写入使用密文。
+数据库和备份仍必须按敏感数据处理；新写入使用密文。
 
 实体关系、唯一约束、外键和索引由统一 schema 初始化模块定义。全新空库首次启动时创建完整当前 schema；已有完整 schema 在启动时执行幂等迁移（补齐缺失列、删除已废弃的遗留表、清理已退出链路的字段、按目录回填模型清单、按供应商清单对账接入点模型）；仅存在部分业务表时拒绝启动，要求创建新的部署。每一项跨资源写入仍须由单个事务完成；失败时不得留下部分供应商、空接入点或失配的模型映射。
 
@@ -104,4 +104,4 @@ postgres://<user>:<password>@<host>:5432/<database>
 
 ## 排除项
 
-本架构不包含通用版本化 schema 升级框架、双写同步、读写分离、分库分表、数据库租户隔离、ORM 自动同步 schema、运行时切换数据库或第二数据库后端的兼容层。允许的迁移只有两类：启动时执行的幂等迁移（补列、删遗留表、清理死字段、按目录对账接入点模型），以及按版本记录执行一次的数据迁移（`provider_catalog_v1`、`provider_model_catalog_v2`、`anthropic_removal_v1`）。后续若出现其他独立迁移需求，应在不破坏 `Storage` 领域边界的前提下另行设计。
+本架构不包含通用版本化 schema 升级框架、双写同步、读写分离、分库分表、数据库租户隔离、ORM 自动同步 schema、运行时切换数据库或第二数据库后端的兼容层。允许的迁移只有两类：启动时执行的幂等迁移（补列、删遗留表、清理死字段、按目录对账接入点模型），以及按版本记录执行一次的数据迁移（`provider_catalog_v1`、`provider_model_catalog_v2`、`anthropic_removal_v1`、`responses_legacy_cleanup_v1`）。后续若出现其他独立迁移需求，应在不破坏 `Storage` 领域边界的前提下另行设计。
