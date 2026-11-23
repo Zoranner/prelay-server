@@ -138,7 +138,7 @@ Compose 固定拉取 `ghcr.io/zoranner/prelay-server:0.5.4`，并以只读方式
 - `RECORDING_MATERIALIZE_LAG_SLO_SECONDS`：活动、统计和会话正文可见性 SLO，默认 `5` 秒。
 - `RECORDING_MATERIALIZE_INTERVAL_MS`：后台物化扫描间隔，默认 `100` 毫秒。
 
-`identity_response_sessions` 保存 `store=true` 的精确 Responses 状态：本轮实际发送的 input items、上游返回的 output items、完成状态和过期时间。请求项和输出项使用 `ENCRYPTION_KEY` 加密保存，数据库和备份仍必须按敏感数据处理；它不是活动正文索引或统计来源。旧版本留下的行标记为 `legacy_internal_v1`，不能作为 `previous_response_id` 续接；版本化迁移 `responses_legacy_cleanup_v1` 在启动时删除这些行，之后每日清理只处理过期精确状态。`provider_id` 只是历史元数据，删除供应商不阻断状态读取；`conversation_id` 是内部活动分组，不是协议 `conversation`。
+`identity_response_sessions` 保存 `store=true` 的精确 Responses 状态：本轮实际发送的 input items、上游返回的 output items、完成状态和过期时间。请求项和输出项使用 `ENCRYPTION_KEY` 加密保存，数据库和备份仍必须按敏感数据处理；它不是活动正文索引或统计来源。旧版本留下的行标记为 `legacy_internal_v1`，不能作为 `previous_response_id` 续接；版本化迁移 `responses_legacy_cleanup_v1` 在启动时删除这些行，旧列 `input_messages_json`、`output_items_json` 随表结构清理，读取只接受 `enc:v1:` 密文，之后每日清理只处理过期精确状态。`provider_id` 只是历史元数据，删除供应商不阻断状态读取；`conversation_id` 是内部活动分组，不是协议 `conversation`。
 
 入口请求体仍受 `PROTOCOL_MAX_REQUEST_BODY_BYTES` 限制，默认 `256 MiB`；该限制只决定单次请求能否被服务接收，不截断已经接收的正文。
 

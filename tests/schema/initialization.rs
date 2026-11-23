@@ -375,10 +375,9 @@ async fn backfills_conversation_id_for_existing_response_sessions() {
     .expect("seed legacy provider");
     db.execute_unprepared(
         "INSERT INTO identity_response_sessions
-         (response_id, identity_id, previous_response_id, provider_id, model,
-          input_messages_json, output_items_json, created_at)
+         (response_id, identity_id, previous_response_id, provider_id, model, created_at)
          VALUES ('resp_legacy', 'legacy-identity', NULL, 'legacy-provider',
-         'legacy-model', '[]', '[]', '2026-10-01T00:00:00Z')",
+         'legacy-model', '2026-10-01T00:00:00Z')",
     )
     .await
     .expect("seed legacy response session");

@@ -69,6 +69,12 @@ async fn assert_exact_response_state_schema(db: &DatabaseConnection) {
             "missing column {column}"
         );
     }
+    for column in ["input_messages_json", "output_items_json"] {
+        assert!(
+            !column_exists(db, "identity_response_sessions", column).await,
+            "identity_response_sessions.{column} must not exist"
+        );
+    }
     assert!(
         index_exists(
             db,
@@ -150,10 +156,9 @@ async fn seed_response_session(
 ) {
     db.execute_unprepared(&format!(
         "INSERT INTO identity_response_sessions
-         (response_id, identity_id, provider_id, model, status, protocol_format,
-          input_messages_json, output_items_json, created_at)
+         (response_id, identity_id, provider_id, model, status, protocol_format, created_at)
          VALUES ('{response_id}', '{identity_id}', 'provider-1', 'model-1', '{status}',
-         '{protocol_format}', '[]', '[]', '2026-11-22T00:00:00Z')"
+         '{protocol_format}', '2026-11-22T00:00:00Z')"
     ))
     .await
     .expect("seed response session");

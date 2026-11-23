@@ -41,16 +41,6 @@ pub(in crate::store::schema) fn statement() -> TableCreateStatement {
         .col(ColumnDef::new(ResponseSessions::ResponseItemsJson).string())
         .col(ColumnDef::new(ResponseSessions::ExpiresAt).string())
         .col(
-            ColumnDef::new(ResponseSessions::InputMessagesJson)
-                .string()
-                .not_null(),
-        )
-        .col(
-            ColumnDef::new(ResponseSessions::OutputItemsJson)
-                .string()
-                .not_null(),
-        )
-        .col(
             ColumnDef::new(ResponseSessions::CreatedAt)
                 .string()
                 .not_null(),
@@ -80,7 +70,5 @@ pub(in crate::store::schema) enum ResponseSessions {
     RequestItemsJson,
     ResponseItemsJson,
     ExpiresAt,
-    InputMessagesJson,
-    OutputItemsJson,
     CreatedAt,
 }

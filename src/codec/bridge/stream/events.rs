@@ -138,20 +138,6 @@ impl StreamStatsSnapshot {
             .collect()
     }
 
-    pub(crate) fn completed_tool_calls(&self) -> Vec<(String, String, String)> {
-        self.tool_calls
-            .values()
-            .filter(|tool_call| tool_call.done)
-            .map(|tool_call| {
-                (
-                    tool_call.id.clone(),
-                    tool_call.name.clone(),
-                    tool_call.arguments.clone(),
-                )
-            })
-            .collect()
-    }
-
     fn append_output_text(&mut self, delta: &str) {
         self.output_text.push_str(delta);
     }

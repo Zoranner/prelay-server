@@ -4,8 +4,6 @@ use crate::{
 
 const STARTUP_CLEANUP_FAILURE: &str = "startup identity cleanup failed";
 const STARTUP_RESPONSE_STATE_CLEANUP_FAILURE: &str = "startup response state cleanup failed";
-const STARTUP_LEGACY_SESSION_ENCRYPTION_FAILURE: &str =
-    "startup legacy response session encryption failed";
 
 pub(super) fn log_cleanup_failure(error: &StorageError) {
     tracing::warn!(
@@ -37,17 +35,6 @@ pub(super) fn handle_startup_response_state_cleanup_failure(error: StorageError)
         "failed to delete expired response states at startup"
     );
     anyhow::anyhow!(STARTUP_RESPONSE_STATE_CLEANUP_FAILURE)
-}
-
-pub(super) fn handle_startup_legacy_session_encryption_failure(
-    error: StorageError,
-) -> anyhow::Error {
-    tracing::error!(
-        error_code = error.code().as_str(),
-        failure_kind = "startup_legacy_session_encryption",
-        "failed to encrypt legacy response session content at startup"
-    );
-    anyhow::anyhow!(STARTUP_LEGACY_SESSION_ENCRYPTION_FAILURE)
 }
 
 pub(super) async fn warn_incomplete_rollout_files(rollout_store: &RolloutStore) {

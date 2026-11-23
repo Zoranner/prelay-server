@@ -6,7 +6,6 @@ use tempfile::tempdir;
 
 use crate::store::entity::identity::activities;
 use crate::{
-    codec::internal::{InternalResponse, InternalUsage},
     domain::{
         activity::{ContentDraft, ContentEventBody, ConversationUsage, SessionContext},
         stats::{ActivityInsert, StreamActivityUpdate},
@@ -169,19 +168,6 @@ async fn materializes_a_completed_turn_into_the_thread_and_database() {
                 upstream_response_id: Some("resp-upstream".to_string()),
                 request_items: json!([{"role": "user", "content": "hello"}]),
                 response_items: json!([{"type": "message"}]),
-                input_messages: Vec::new(),
-                response: InternalResponse {
-                    id: "resp-sink".to_string(),
-                    model: "model-1".to_string(),
-                    output: Vec::new(),
-                    usage: Some(InternalUsage {
-                        input_tokens: Some(10),
-                        output_tokens: Some(4),
-                        reasoning_tokens: None,
-                        cache_read_tokens: None,
-                        cache_write_tokens: None,
-                    }),
-                },
             }),
             timing: TurnTiming {
                 started_at: "2026-11-17T12:00:00.000+08:00".to_string(),

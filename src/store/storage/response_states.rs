@@ -6,10 +6,7 @@ use sea_orm::{
 use serde_json::Value;
 use std::time::Instant;
 
-mod legacy;
-
 use crate::{
-    codec::internal::{InternalMessage, InternalResponse},
     store::entity::identity::response_sessions as identity_response_sessions,
     store::recording_timing::log_elapsed,
     store::storage::{
@@ -44,8 +41,6 @@ pub struct ResponseStateInsert<'a> {
     pub upstream_response_id: Option<&'a str>,
     pub request_items: &'a Value,
     pub response_items: &'a Value,
-    pub input_messages: &'a [InternalMessage],
-    pub response: &'a InternalResponse,
 }
 
 impl Storage {
@@ -92,10 +87,6 @@ impl Storage {
     ) -> Result<u64, StorageError> {
         delete_expired_response_states(&self.db, now).await
     }
-
-    pub async fn encrypt_legacy_response_sessions(&self) -> Result<u64, StorageError> {
-        legacy::encrypt_legacy_response_sessions(&self.db, &self.crypto).await
-    }
 }
 
 async fn save_response_state_at(
@@ -111,10 +102,6 @@ async fn save_response_state_at(
         encrypt_session_value(crypto, &serde_json::to_string(insert.request_items)?)?;
     let response_items_json =
         encrypt_session_value(crypto, &serde_json::to_string(insert.response_items)?)?;
-    let input_messages_json =
-        encrypt_session_value(crypto, &serde_json::to_string(insert.input_messages)?)?;
-    let output_items_json =
-        encrypt_session_value(crypto, &serde_json::to_string(&insert.response.output)?)?;
 
     let state = identity_response_sessions::ActiveModel {
         response_id: Set(insert.response_id.to_string()),
@@ -129,8 +116,6 @@ async fn save_response_state_at(
         request_items_json: Set(Some(request_items_json)),
         response_items_json: Set(Some(response_items_json)),
         expires_at: Set(Some(expires_at)),
-        input_messages_json: Set(input_messages_json),
-        output_items_json: Set(output_items_json),
         created_at: Set(created_at),
     };
     identity_response_sessions::Entity::insert(state)
@@ -150,8 +135,6 @@ async fn save_response_state_at(
                 identity_response_sessions::Column::RequestItemsJson,
                 identity_response_sessions::Column::ResponseItemsJson,
                 identity_response_sessions::Column::ExpiresAt,
-                identity_response_sessions::Column::InputMessagesJson,
-                identity_response_sessions::Column::OutputItemsJson,
                 identity_response_sessions::Column::CreatedAt,
             ])
             .to_owned(),
@@ -237,9 +220,6 @@ mod tests {
     use serde_json::json;
 
     use crate::{
-        codec::internal::{
-            InternalContentPart, InternalOutputItem, InternalResponse, InternalRole,
-        },
         store::entity::identity::response_sessions as identity_response_sessions,
         store::storage::{ResponseStateInsert, Storage},
     };
@@ -270,8 +250,6 @@ mod tests {
                 upstream_response_id: Some("resp_upstream"),
                 request_items: &request_items,
                 response_items: &response_items,
-                input_messages: &[],
-                response: &response("resp_local", "hi"),
             })
             .await
             .expect("save exact state");
@@ -302,8 +280,6 @@ mod tests {
                 upstream_response_id: None,
                 request_items: &json!([{"secret": "request"}]),
                 response_items: &json!([{"secret": "response"}]),
-                input_messages: &[],
-                response: &response("resp_encrypted", "encrypted"),
             })
             .await
             .expect("save exact state");
@@ -347,8 +323,6 @@ mod tests {
             conversation_id: Set(None),
             provider_id: Set(provider_id.clone()),
             model: Set("model".to_string()),
-            input_messages_json: Set("[]".to_string()),
-            output_items_json: Set("[]".to_string()),
             status: Set("legacy".to_string()),
             protocol_format: Set("legacy_internal_v1".to_string()),
             upstream_response_id: Set(None),
@@ -374,8 +348,6 @@ mod tests {
             conversation_id: Set(None),
             provider_id: Set(provider_id),
             model: Set("model".to_string()),
-            input_messages_json: Set("[]".to_string()),
-            output_items_json: Set("[]".to_string()),
             status: Set("completed".to_string()),
             protocol_format: Set("responses_items_v1".to_string()),
             upstream_response_id: Set(None),
@@ -397,8 +369,6 @@ mod tests {
 
     #[path = "expiry_tests.rs"]
     mod expiry_tests;
-    #[path = "legacy_encryption.rs"]
-    mod legacy_encryption;
 
     async fn test_storage() -> Storage {
         crate::test_support::test_storage().await
@@ -428,18 +398,5 @@ mod tests {
             .await
             .expect("create provider");
         (identity.identity_id, provider_id)
-    }
-
-    fn response(id: &str, text: &str) -> InternalResponse {
-        InternalResponse {
-            id: id.to_string(),
-            model: "test-model".to_string(),
-            output: vec![InternalOutputItem::Message {
-                id: format!("{id}-message"),
-                role: InternalRole::Assistant,
-                content: vec![InternalContentPart::Text(text.to_string())],
-            }],
-            usage: None,
-        }
     }
 }

@@ -14,12 +14,39 @@ pub(super) fn decrypt_session_value(
     crypto: &KeyCipher,
     value: &str,
 ) -> Result<String, StorageError> {
-    match value.strip_prefix(SESSION_CIPHERTEXT_PREFIX) {
-        Some(ciphertext) => crypto.decrypt(ciphertext),
-        None => Ok(value.to_string()),
-    }
+    let ciphertext = value
+        .strip_prefix(SESSION_CIPHERTEXT_PREFIX)
+        .ok_or_else(|| {
+            StorageError::InvalidStoredState("response state value is not encrypted".to_string())
+        })?;
+    crypto.decrypt(ciphertext)
 }
 
-pub(super) fn is_encrypted_session_value(value: &str) -> bool {
-    value.starts_with(SESSION_CIPHERTEXT_PREFIX)
+#[cfg(test)]
+mod tests {
+    use super::{decrypt_session_value, encrypt_session_value};
+    use crate::store::storage::{crypto::KeyCipher, MasterKey, StorageError};
+
+    fn cipher() -> KeyCipher {
+        KeyCipher::new(MasterKey::from_bytes([0; 32]))
+    }
+
+    #[test]
+    fn rejects_plaintext_session_values() {
+        let error =
+            decrypt_session_value(&cipher(), "plain-json").expect_err("plaintext must be rejected");
+
+        assert!(matches!(error, StorageError::InvalidStoredState(_)));
+    }
+
+    #[test]
+    fn decrypts_prefixed_session_values() {
+        let cipher = cipher();
+        let value = encrypt_session_value(&cipher, "secret").expect("encrypt value");
+
+        assert_eq!(
+            decrypt_session_value(&cipher, &value).expect("decrypt value"),
+            "secret"
+        );
+    }
 }

@@ -46,13 +46,13 @@ PostgreSQL
 
 `identity_response_sessions` 保存 Responses 精确状态，主键仍是 `(response_id, identity_id)`。精确状态列包括：
 
-- `status`：`completed` 或 `legacy`。
-- `protocol_format`：精确状态为 `responses_items_v1`，旧行为 `legacy_internal_v1`。
+- `status`：`completed`；历史 `legacy` 行由迁移删除。
+- `protocol_format`：精确状态为 `responses_items_v1`；旧格式 `legacy_internal_v1` 只表示历史数据。
 - `upstream_response_id`：上游响应 ID，只作元数据。
 - `request_items_json`、`response_items_json`：本轮实际发送的 input items 和上游返回的 output items，使用 `ENCRYPTION_KEY` 加密保存。
 - `expires_at`：普通响应的过期时间，创建后 30 天。
 
-`provider_id` 是历史元数据，不做硬外键；删除供应商不阻断历史状态读取。`conversation_id` 是内部活动分组，不是协议 `conversation`。只有 `status='completed'`、`protocol_format='responses_items_v1'` 且未过期的行可以作为 `previous_response_id`；legacy、未完成和过期行统一按父响应不存在处理。版本化迁移 `responses_legacy_cleanup_v1` 在启动时删除全部 `legacy_internal_v1` 行；之后每日清理只删除 `expires_at` 已过期的行。旧列 `input_messages_json`、`output_items_json` 继续由新的保存函数写入派生值，只保留一个迁移周期，不再作为精确续接来源。
+`provider_id` 是历史元数据，不做硬外键；删除供应商不阻断历史状态读取。`conversation_id` 是内部活动分组，不是协议 `conversation`。只有 `status='completed'`、`protocol_format='responses_items_v1'` 且未过期的行可以作为 `previous_response_id`；legacy、未完成和过期行统一按父响应不存在处理。版本化迁移 `responses_legacy_cleanup_v1` 在启动时删除全部 `legacy_internal_v1` 行；之后每日清理只删除 `expires_at` 已过期的行。旧列 `input_messages_json`、`output_items_json` 已从表结构移除，初始化时用 `DROP COLUMN IF EXISTS` 清理；精确状态读取只接受 `enc:v1:` 密文，明文值按损坏状态拒绝。
 
 数据库和备份仍必须按敏感数据处理；新写入使用密文。
 

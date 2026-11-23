@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    codec::internal::{InternalMessage, InternalResponse},
     domain::{
         activity::{ContentDraft, SessionContext},
         stats::{ActivityInsert, StreamActivityUpdate},
@@ -29,8 +28,6 @@ pub(crate) struct ResponseStateRecord {
     pub(crate) upstream_response_id: Option<String>,
     pub(crate) request_items: Value,
     pub(crate) response_items: Value,
-    pub(crate) input_messages: Vec<InternalMessage>,
-    pub(crate) response: InternalResponse,
 }
 
 impl ResponseStateRecord {
@@ -44,8 +41,6 @@ impl ResponseStateRecord {
             upstream_response_id: insert.upstream_response_id.map(str::to_string),
             request_items: insert.request_items.clone(),
             response_items: insert.response_items.clone(),
-            input_messages: insert.input_messages.to_vec(),
-            response: insert.response.clone(),
         }
     }
 }

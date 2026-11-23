@@ -191,7 +191,6 @@ pub(super) async fn create_native_response(
             conversation_id: context.conversation_id.clone(),
             provider_id: provider.id.clone(),
             model: model_upstream.to_string(),
-            input_messages: request.messages.clone(),
             request_items: input_items.to_vec(),
             response_id: context.response_id.clone(),
         });
@@ -321,8 +320,6 @@ pub(super) async fn create_native_response(
             upstream_response_id: upstream_response_id.as_deref(),
             request_items: &request_items,
             response_items: &response_items,
-            input_messages: &request.messages,
-            response: &decoded_response,
         })
     });
     let response_output = response

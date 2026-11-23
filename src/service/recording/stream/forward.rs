@@ -22,9 +22,7 @@ use crate::{
         activity::{ContentDraft, ContentEventBody, ConversationError, RawStreamContentCapture},
         stats::{ActivityInsert, StreamActivityUpdate},
     },
-    service::recording::{
-        options::StreamSession, state::response_from_stream_session, RecordingRuntime,
-    },
+    service::recording::{options::StreamSession, RecordingRuntime},
     store::{
         recording_journal::{
             RecordEnvelope, RecordKind, RecordedContentEvent, ResponseStateRecord,
@@ -177,7 +175,6 @@ impl JournalStreamState {
             );
             return None;
         }
-        let response = response_from_stream_session(session, snapshot)?;
         let request_items = Value::Array(session.request_items.clone());
         let response_items = Value::Array(snapshot.response_output_items.clone());
         Some(ResponseStateRecord::from_insert(ResponseStateInsert {
@@ -190,8 +187,6 @@ impl JournalStreamState {
             upstream_response_id: snapshot.upstream_response_id.as_deref(),
             request_items: &request_items,
             response_items: &response_items,
-            input_messages: &session.input_messages,
-            response: &response,
         }))
     }
 

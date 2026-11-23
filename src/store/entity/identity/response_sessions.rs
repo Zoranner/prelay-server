@@ -17,8 +17,6 @@ pub struct Model {
     pub request_items_json: Option<String>,
     pub response_items_json: Option<String>,
     pub expires_at: Option<String>,
-    pub input_messages_json: String,
-    pub output_items_json: String,
     pub created_at: String,
 }
 

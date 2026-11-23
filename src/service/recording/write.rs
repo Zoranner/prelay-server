@@ -84,8 +84,6 @@ pub(crate) async fn record_completed_turn(
                 upstream_response_id: response_state.upstream_response_id.as_deref(),
                 request_items: &response_state.request_items,
                 response_items: &response_state.response_items,
-                input_messages: &response_state.input_messages,
-                response: &response_state.response,
             })
             .await?;
     }

@@ -247,6 +247,13 @@ impl<C: ConnectionTrait> SchemaInitializer<'_, C> {
                  ADD COLUMN IF NOT EXISTS expires_at TEXT",
             )
             .await?;
+        self.db
+            .execute_unprepared(
+                "ALTER TABLE identity_response_sessions
+                 DROP COLUMN IF EXISTS input_messages_json,
+                 DROP COLUMN IF EXISTS output_items_json",
+            )
+            .await?;
         self.create_index(indexes::response_sessions_expires_at())
             .await?;
         self.db

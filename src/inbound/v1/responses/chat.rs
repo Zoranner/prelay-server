@@ -214,7 +214,6 @@ pub(super) async fn create_chat_response(
             conversation_id: conversation_id.clone(),
             provider_id: provider.id.clone(),
             model: request.model.clone(),
-            input_messages: request.messages.clone(),
             request_items: input_items.to_vec(),
             response_id,
         });
@@ -341,8 +340,6 @@ pub(super) async fn create_chat_response(
             upstream_response_id: None,
             request_items: &request_items,
             response_items: &response_items,
-            input_messages: &request.messages,
-            response: &response,
         })
     });
     record_completed_turn(

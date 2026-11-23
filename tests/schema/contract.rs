@@ -249,6 +249,12 @@ async fn assert_complete_schema(db: &DatabaseConnection) {
     ] {
         assert_string_column(db, "identity_response_sessions", column).await;
     }
+    for column in ["input_messages_json", "output_items_json"] {
+        assert!(
+            !column_exists(db, "identity_response_sessions", column).await,
+            "identity_response_sessions.{column} must not exist"
+        );
+    }
     assert!(
         index_exists(
             db,

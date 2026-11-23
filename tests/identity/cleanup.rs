@@ -1,9 +1,6 @@
 use chrono::{Duration, Utc};
 use prelay_protocol::{CreateEndpointRequest, CreateProviderRequest, EndpointModelInput};
 use prelay_server::{
-    codec::internal::{
-        InternalContentPart, InternalMessage, InternalOutputItem, InternalResponse, InternalRole,
-    },
     domain::activity::{
         ContentDraft, ContentEventBody, ConversationMessage, EventPhase, SessionContext,
     },
@@ -317,23 +314,7 @@ async fn seed_owned_resources(
         )
         .await
         .expect("create activity");
-    let input = vec![InternalMessage {
-        role: InternalRole::User,
-        content: vec![InternalContentPart::Text("input".to_string())],
-        tool_call_id: None,
-        tool_calls: Vec::new(),
-        reasoning_content: None,
-    }];
-    let response = InternalResponse {
-        id: format!("resp_{suffix}"),
-        model: "upstream-model".to_string(),
-        output: vec![InternalOutputItem::Message {
-            id: format!("message-{suffix}"),
-            role: InternalRole::Assistant,
-            content: vec![InternalContentPart::Text("output".to_string())],
-        }],
-        usage: None,
-    };
+    let response_id = format!("resp_{suffix}");
     let request_items = serde_json::json!([{ "role": "user", "content": "input" }]);
     let response_items = serde_json::json!([{
         "type": "message",
@@ -343,7 +324,7 @@ async fn seed_owned_resources(
     storage
         .save_response_state(ResponseStateInsert {
             identity_id,
-            response_id: &response.id,
+            response_id: &response_id,
             previous_response_id: None,
             conversation_id: "conversation-inactive",
             provider_id: &provider_id,
@@ -351,8 +332,6 @@ async fn seed_owned_resources(
             upstream_response_id: None,
             request_items: &request_items,
             response_items: &response_items,
-            input_messages: &input,
-            response: &response,
         })
         .await
         .expect("create response session");

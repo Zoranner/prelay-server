@@ -7,10 +7,7 @@ use serde_json::json;
 
 use super::support::{test_log, test_storage};
 use crate::{
-    codec::{
-        bridge::stream::{InternalFinishReason, InternalStreamEvent, StreamStatsSnapshot},
-        internal::{InternalContentPart, InternalMessage, InternalRole},
-    },
+    codec::bridge::stream::{InternalFinishReason, InternalStreamEvent, StreamStatsSnapshot},
     domain::activity::SessionContext,
     service::recording::{
         record_stream_with_rollout, StreamRecording, StreamRollout, StreamSession,
@@ -53,13 +50,6 @@ async fn stream_recording_persists_a_completed_response_session() {
     snapshot.record_event(&InternalStreamEvent::Finished(InternalFinishReason::Stop));
     let stats = Arc::new(Mutex::new(snapshot));
 
-    let input_messages = vec![InternalMessage {
-        role: InternalRole::User,
-        content: vec![InternalContentPart::Text("question".to_string())],
-        tool_call_id: None,
-        tool_calls: Vec::new(),
-        reasoning_content: None,
-    }];
     record_stream_with_rollout(
         rollout_store,
         identity_id.clone(),
@@ -77,7 +67,6 @@ async fn stream_recording_persists_a_completed_response_session() {
                 conversation_id: "conversation-stream".to_string(),
                 provider_id,
                 model: "deepseek-chat".to_string(),
-                input_messages,
                 request_items: vec![json!({"role": "user", "content": "question"})],
                 response_id: "resp_stream".to_string(),
             }),
@@ -151,7 +140,6 @@ async fn stream_recording_skips_state_without_exact_output_items() {
                 conversation_id: "conversation-stream".to_string(),
                 provider_id,
                 model: "deepseek-chat".to_string(),
-                input_messages: Vec::new(),
                 request_items: vec![json!({"role": "user", "content": "question"})],
                 response_id: "resp_incomplete".to_string(),
             }),

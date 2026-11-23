@@ -306,8 +306,6 @@ async fn save_response_state(
         upstream_response_id: state.upstream_response_id.as_deref(),
         request_items: &state.request_items,
         response_items: &state.response_items,
-        input_messages: &state.input_messages,
-        response: &state.response,
     };
     storage
         .save_response_state_at(insert, created_at, created_at + Duration::days(30))

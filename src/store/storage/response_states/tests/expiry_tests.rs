@@ -2,7 +2,7 @@ use chrono::Utc;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
 use serde_json::json;
 
-use super::{response, seed_identity_and_provider, test_storage};
+use super::{seed_identity_and_provider, test_storage};
 use crate::{
     store::entity::identity::response_sessions as identity_response_sessions,
     store::storage::ResponseStateInsert,
@@ -20,8 +20,6 @@ async fn deletes_only_expired_response_states() {
         conversation_id: Set(Some("conv_ttl".to_string())),
         provider_id: Set(provider_id.clone()),
         model: Set("model-ttl".to_string()),
-        input_messages_json: Set("[]".to_string()),
-        output_items_json: Set("[]".to_string()),
         status: Set("completed".to_string()),
         protocol_format: Set("responses_items_v1".to_string()),
         upstream_response_id: Set(Some("resp_upstream_expired".to_string())),
@@ -45,8 +43,6 @@ async fn deletes_only_expired_response_states() {
             upstream_response_id: None,
             request_items: &json!([]),
             response_items: &json!([]),
-            input_messages: &[],
-            response: &response("resp_active", "active"),
         })
         .await
         .expect("save active state");
@@ -58,8 +54,6 @@ async fn deletes_only_expired_response_states() {
         conversation_id: Set(None),
         provider_id: Set(provider_id),
         model: Set("model-ttl".to_string()),
-        input_messages_json: Set("[]".to_string()),
-        output_items_json: Set("[]".to_string()),
         status: Set("legacy".to_string()),
         protocol_format: Set("legacy_internal_v1".to_string()),
         upstream_response_id: Set(None),
@@ -105,8 +99,6 @@ async fn deleting_a_provider_does_not_block_response_state_history() {
             upstream_response_id: None,
             request_items: &json!([]),
             response_items: &json!([]),
-            input_messages: &[],
-            response: &response("resp_history", "history"),
         })
         .await
         .expect("save state");

@@ -26,9 +26,8 @@ use crate::{
 
 use super::{
     diagnostics::{
-        handle_startup_cleanup_failure, handle_startup_legacy_session_encryption_failure,
-        handle_startup_response_state_cleanup_failure, warn_incomplete_rollout_files,
-        warn_orphan_rollout_files,
+        handle_startup_cleanup_failure, handle_startup_response_state_cleanup_failure,
+        warn_incomplete_rollout_files, warn_orphan_rollout_files,
     },
     environment::{catalog_directory, listen_address, load_environment_file},
     router::router,
@@ -52,16 +51,6 @@ pub async fn serve() -> anyhow::Result<()> {
     initialize_with_catalog(&db, &provider_catalog).await?;
     let master_key = MasterKey::from_environment()?;
     let storage = Storage::from_connection(db, master_key.clone());
-    let encrypted = storage
-        .encrypt_legacy_response_sessions()
-        .await
-        .map_err(handle_startup_legacy_session_encryption_failure)?;
-    if encrypted > 0 {
-        tracing::info!(
-            encrypted,
-            "encrypted legacy response session content at startup"
-        );
-    }
     let rollout_store = RolloutStore::from_environment().map_err(anyhow::Error::msg)?;
     rollout_store
         .validate()

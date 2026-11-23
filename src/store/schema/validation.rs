@@ -67,8 +67,6 @@ pub(super) async fn response_session_schema_exists<C: ConnectionTrait>(
         "request_items_json",
         "response_items_json",
         "expires_at",
-        "input_messages_json",
-        "output_items_json",
         "created_at",
     ] {
         if !column_exists(db, "identity_response_sessions", column).await? {

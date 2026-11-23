@@ -1,7 +1,6 @@
 use serde_json::json;
 
 use crate::{
-    codec::internal::InternalResponse,
     domain::{
         activity::{ContentDraft, ContentEventBody, ConversationUsage, SessionContext},
         stats::{ActivityInsert, StreamActivityUpdate},
@@ -55,13 +54,6 @@ fn response_state() -> ResponseStateRecord {
         upstream_response_id: Some("resp_upstream".to_string()),
         request_items: json!([{"role": "user", "content": "hello"}]),
         response_items: json!([{"type": "message"}]),
-        input_messages: Vec::new(),
-        response: InternalResponse {
-            id: "resp_local".to_string(),
-            model: "model-a".to_string(),
-            output: Vec::new(),
-            usage: None,
-        },
     }
 }
 

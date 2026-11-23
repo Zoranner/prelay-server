@@ -6,7 +6,6 @@ use super::{
     pending_response_state, RecordingHealthStatus, RecordingRuntime, RecordingRuntimeConfig,
 };
 use crate::{
-    codec::internal::InternalResponse,
     domain::{activity::SessionContext, stats::ActivityInsert},
     store::{
         recording_journal::{
@@ -34,13 +33,6 @@ fn builds_pending_response_state_from_the_committed_envelope() {
             upstream_response_id: None,
             request_items: json!([{"role": "user", "content": "hello"}]),
             response_items: json!([{"type": "message"}]),
-            input_messages: Vec::new(),
-            response: InternalResponse {
-                id: "resp_pending".to_string(),
-                model: "model-pending".to_string(),
-                output: Vec::new(),
-                usage: None,
-            },
         }),
         timing: TurnTiming {
             started_at: "2026-11-17T12:00:00+08:00".to_string(),
@@ -150,13 +142,6 @@ async fn commits_an_envelope_and_exposes_response_state_before_materialization()
                 upstream_response_id: None,
                 request_items: json!([]),
                 response_items: json!([]),
-                input_messages: Vec::new(),
-                response: InternalResponse {
-                    id: "resp_commit".to_string(),
-                    model: "model-commit".to_string(),
-                    output: Vec::new(),
-                    usage: None,
-                },
             }),
             timing: TurnTiming {
                 started_at: "2026-11-17T12:00:00+08:00".to_string(),

@@ -3,7 +3,7 @@ use serde_json::json;
 
 use crate::support;
 
-use super::fixtures::{response, seed_identity_and_provider};
+use super::fixtures::seed_identity_and_provider;
 
 #[tokio::test]
 async fn provider_keys_and_response_sessions_stay_scoped_to_the_identity() {
@@ -40,8 +40,6 @@ async fn provider_keys_and_response_sessions_stay_scoped_to_the_identity() {
             upstream_response_id: None,
             request_items: &request_a,
             response_items: &response_items_a,
-            input_messages: &[],
-            response: &response("response-a", "identity-a output"),
         })
         .await
         .expect("save identity A session");
@@ -56,8 +54,6 @@ async fn provider_keys_and_response_sessions_stay_scoped_to_the_identity() {
             upstream_response_id: None,
             request_items: &request_b,
             response_items: &response_items_b,
-            input_messages: &[],
-            response: &response("response-b", "identity-b output"),
         })
         .await
         .expect("save identity B session");
