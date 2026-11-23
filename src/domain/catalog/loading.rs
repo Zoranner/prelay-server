@@ -201,6 +201,7 @@ pub(super) fn load_providers(
                 auth_scheme: provider.auth_scheme,
                 base_url,
                 protocols: provider.protocols,
+                deprecated: provider.deprecated.unwrap_or(false),
                 protocol_base_urls,
                 request_headers,
                 language_models: provider.language_models,

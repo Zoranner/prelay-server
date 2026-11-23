@@ -73,6 +73,7 @@ pub(super) fn provider_response(provider: &CatalogProvider) -> CatalogProviderRe
         auth_scheme: provider.auth_scheme,
         base_url: provider.base_url.clone(),
         protocols: provider.protocols.clone(),
+        deprecated: provider.deprecated,
         protocol_base_urls: provider
             .protocol_base_urls
             .iter()

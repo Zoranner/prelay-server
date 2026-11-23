@@ -23,7 +23,12 @@ pub(super) fn provider_response(
         ..
     } = visible;
     let capabilities = capabilities(&provider);
-    let upstream_protocols = resolved_upstream_protocols(catalog, &provider.provider_type);
+    let upstream_protocols = catalog
+        .map(|catalog| resolved_upstream_protocols(catalog, &provider.provider_type))
+        .unwrap_or_default();
+    let deprecated = catalog
+        .and_then(|catalog| catalog.provider(&provider.provider_type))
+        .is_some_and(|entry| entry.deprecated);
     let models = models(&provider);
     let credential = if include_credential {
         Some(ProviderCredential {
@@ -37,6 +42,7 @@ pub(super) fn provider_response(
         id: provider.id,
         name: provider.name,
         provider_type: provider.provider_type,
+        deprecated,
         base_url: provider.base_url,
         capabilities,
         upstream_protocols,

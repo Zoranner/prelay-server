@@ -55,3 +55,12 @@ responses = "https://relay.example/responses/v1"
 [providers.upstream_model_names]
 k3 = "kimi-k3"
 deepseek-v4-pro = "relay-deepseek-v4-pro"
+
+[[providers]]
+id = "legacy_relay"
+name = "Legacy Relay"
+auth_scheme = "bearer"
+base_url = "https://legacy.example/v1"
+protocols = ["chat_completions"]
+language_models = ["deepseek-v4-flash"]
+deprecated = true

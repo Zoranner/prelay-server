@@ -133,14 +133,15 @@ impl Storage {
         identity_id: &str,
         provider_id: &str,
         input: UpdateProviderSharingRequest,
+        catalog: &ProviderCatalog,
     ) -> Result<ProviderSharingResponse, StorageError> {
         let transaction = self.db.begin().await?;
         let provider = owned_provider(&transaction, identity_id, provider_id).await?;
-        let visibility = input.visibility;
-        validate_sharing_input(&transaction, identity_id, visibility, &input).await?;
+        super::provider_validation::ensure_provider_shareable(catalog, &provider.provider_type)?;
+        validate_sharing_input(&transaction, identity_id, input.visibility, &input).await?;
 
         let mut provider = provider.into_active_model();
-        provider.visibility = Set(visibility_value(visibility).to_string());
+        provider.visibility = Set(visibility_value(input.visibility).to_string());
         provider.share_quota_json = Set(input
             .quota
             .as_ref()

@@ -191,7 +191,7 @@ async fn update_sharing(
     Ok(Json(
         state
             .storage
-            .update_provider_sharing(&identity.id, &provider_id, input)
+            .update_provider_sharing(&identity.id, &provider_id, input, &state.provider_catalog)
             .await?,
     ))
 }

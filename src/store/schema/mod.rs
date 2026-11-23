@@ -96,6 +96,7 @@ pub async fn initialize_with_catalog(
 ) -> Result<(), DbErr> {
     initialize(db).await?;
     provider_catalog::apply(db, catalog).await?;
+    provider_catalog::ensure_provider_types_in_catalog(db, catalog).await?;
     backfill_activity_provider_types(db).await?;
     provider_catalog::migrate_provider_models(db, catalog).await?;
     reconciliation::reconcile_protocol_base_urls(db, catalog).await?;

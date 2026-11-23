@@ -289,6 +289,27 @@ pub(crate) async fn migrate_provider_models(
     Ok(())
 }
 
+/// `provider_type` 必须是当前目录键。目录外记录属于无效数据，拒绝启动并列出。
+pub(crate) async fn ensure_provider_types_in_catalog(
+    db: &DatabaseConnection,
+    catalog: &ProviderCatalog,
+) -> Result<(), DbErr> {
+    let providers = provider_configs::Entity::find().all(db).await?;
+    let mut unknown = providers
+        .iter()
+        .filter(|provider| catalog.provider(&provider.provider_type).is_none())
+        .map(|provider| format!("{} ({})", provider.id, provider.provider_type))
+        .collect::<Vec<_>>();
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    unknown.sort();
+    Err(DbErr::Custom(format!(
+        "provider_type is not in the current catalog: {}; delete these providers before starting",
+        unknown.join(", ")
+    )))
+}
+
 async fn legacy_disabled_models(
     db: &DatabaseConnection,
 ) -> Result<HashMap<String, Vec<String>>, DbErr> {

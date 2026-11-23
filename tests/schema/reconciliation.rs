@@ -199,6 +199,25 @@ async fn migrates_legacy_provider_columns_on_startup() {
 }
 
 #[tokio::test]
+async fn rejects_provider_types_outside_the_catalog() {
+    let db = connect().await;
+    let catalog = fixture_catalog();
+    initialize_with_catalog(&db, &catalog)
+        .await
+        .expect("initialize schema");
+    insert_identity(&db).await;
+    insert_provider(&db, "provider-retired", "retired_provider", None, None).await;
+
+    let error = initialize_with_catalog(&db, &catalog)
+        .await
+        .expect_err("provider type outside the catalog must fail startup");
+
+    let message = error.to_string();
+    assert!(message.contains("provider_type is not in the current catalog"));
+    assert!(message.contains("provider-retired"));
+}
+
+#[tokio::test]
 async fn reconciles_endpoint_models_with_the_current_catalog() {
     let db = connect().await;
     // 第一次初始化记录目录迁移版本，第二次只跑接入点模型对账。

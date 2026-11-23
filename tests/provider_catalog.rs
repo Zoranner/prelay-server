@@ -78,11 +78,12 @@ fn deployment_catalog_excludes_retired_qwen_token_plan_provider() {
 }
 
 #[test]
-fn deployment_catalog_excludes_retired_gotoken_provider() {
+fn deployment_catalog_marks_gotoken_deprecated() {
     let catalog =
         ProviderCatalog::load(Path::new("config/catalog")).expect("load deployment catalog");
 
-    assert!(catalog.provider("gotoken").is_none());
+    let gotoken = catalog.provider("gotoken").expect("gotoken entry");
+    assert!(gotoken.deprecated);
 }
 
 #[test]

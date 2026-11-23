@@ -61,8 +61,63 @@ pub(super) fn validate_catalog_provider(
     provider_type: &str,
 ) -> Result<(), StorageError> {
     let provider_type = provider_type.trim();
-    catalog.provider(provider_type).ok_or_else(|| {
+    let provider = catalog.provider(provider_type).ok_or_else(|| {
         StorageError::ValidationFailed(format!("供应商类型 {provider_type} 不在当前模型目录里"))
     })?;
+    if provider.deprecated {
+        return Err(StorageError::ValidationFailed(format!(
+            "供应商类型 {provider_type} 已弃用，不能新建或编辑"
+        )));
+    }
     Ok(())
+}
+
+/// 弃用或目录外的供应商仍可服务存量请求，但不能再调整分享配置。
+pub(super) fn ensure_provider_shareable(
+    catalog: &ProviderCatalog,
+    provider_type: &str,
+) -> Result<(), StorageError> {
+    match catalog.provider(provider_type) {
+        Some(entry) if !entry.deprecated => Ok(()),
+        _ => Err(StorageError::ProviderSharingNotAllowed),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_catalog_provider;
+    use crate::store::storage::StorageError;
+
+    #[test]
+    fn rejects_deprecated_provider_types() {
+        let catalog = crate::test_support::fixture_catalog();
+
+        let error = validate_catalog_provider(&catalog, "legacy_relay")
+            .expect_err("deprecated provider type must be rejected");
+
+        assert!(matches!(
+            error,
+            StorageError::ValidationFailed(message) if message.contains("已弃用")
+        ));
+    }
+
+    #[test]
+    fn rejects_provider_types_missing_from_the_catalog() {
+        let catalog = crate::test_support::fixture_catalog();
+
+        let error = validate_catalog_provider(&catalog, "retired_provider")
+            .expect_err("provider type outside the catalog must be rejected");
+
+        assert!(matches!(
+            error,
+            StorageError::ValidationFailed(message) if message.contains("不在当前模型目录里")
+        ));
+    }
+
+    #[test]
+    fn accepts_active_catalog_provider_types() {
+        let catalog = crate::test_support::fixture_catalog();
+
+        validate_catalog_provider(&catalog, "deepseek").expect("active provider type");
+    }
 }

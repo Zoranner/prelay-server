@@ -2,9 +2,7 @@ mod capabilities;
 mod request_headers;
 mod urls;
 
-pub use capabilities::{
-    resolved_upstream_protocols, ProviderCapabilities, ProviderSpec, UpstreamProtocol,
-};
+pub use capabilities::{resolved_upstream_protocols, ProviderSpec, UpstreamProtocol};
 pub use request_headers::{with_provider_headers, RequestHeaderContext};
 pub use urls::{normalize_upstream_base_url, provider_upstream_base_url};
 
@@ -14,173 +12,72 @@ mod tests {
         provider_upstream_base_url, resolved_upstream_protocols, ProviderSpec, UpstreamProtocol,
     };
     use crate::domain::registry::{ProviderCapabilityOverrides, ProviderConfig};
+    use crate::test_support::fixture_catalog;
 
     #[test]
-    fn maps_openai_to_native_responses_with_tools() {
-        let spec = ProviderSpec::from_provider_config(None, &provider("openai"));
+    fn resolves_protocols_from_catalog_entry() {
+        let catalog = fixture_catalog();
 
-        assert_eq!(spec.supported_protocols, vec![UpstreamProtocol::Responses]);
-        assert!(spec.capabilities.tool_calls);
-        assert!(spec.capabilities.reasoning);
-        assert!(spec.capabilities.structured_outputs);
-        assert!(spec.capabilities.streaming_usage);
-    }
-
-    #[test]
-    fn maps_custom_responses_compatible_to_native_responses() {
-        let spec = ProviderSpec::from_provider_config(None, &provider("responses_compatible"));
-
-        assert_eq!(spec.supported_protocols, vec![UpstreamProtocol::Responses]);
-        assert!(spec.capabilities.tool_calls);
-        assert!(spec.capabilities.reasoning);
-    }
-
-    #[test]
-    fn maps_gotoken_to_documented_upstream_protocols() {
-        let spec = ProviderSpec::from_provider_config(None, &provider("gotoken"));
-
+        let deepseek = ProviderSpec::from_provider_config(&catalog, &provider("deepseek"));
         assert_eq!(
-            spec.supported_protocols,
-            vec![
-                UpstreamProtocol::Responses,
-                UpstreamProtocol::ChatCompletions,
-            ]
-        );
-        assert!(spec.capabilities.tool_calls);
-    }
-
-    #[test]
-    fn preserves_unknown_provider_type_as_chat_completions_without_tools() {
-        let spec = ProviderSpec::from_provider_config(None, &provider("custom"));
-
-        assert_eq!(
-            spec.supported_protocols,
+            deepseek.supported_protocols,
             vec![UpstreamProtocol::ChatCompletions]
         );
-        assert!(!spec.capabilities.tool_calls);
-        assert!(spec.capabilities.system_messages);
-    }
 
-    #[test]
-    fn preserves_legacy_openai_compatible_variants_without_tool_capability() {
-        for provider_type in ["minimax", "zhipu"] {
-            let spec = ProviderSpec::from_provider_config(None, &provider(provider_type));
-
-            assert_eq!(
-                spec.supported_protocols,
-                vec![UpstreamProtocol::ChatCompletions]
-            );
-            assert!(!spec.capabilities.tool_calls);
-        }
-    }
-
-    #[test]
-    fn maps_new_api_service_variants_to_chat_completions_with_tools() {
-        for provider_type in ["kimi", "deepseek", "qwen"] {
-            let spec = ProviderSpec::from_provider_config(None, &provider(provider_type));
-
-            assert!(spec
-                .supported_protocols
-                .contains(&UpstreamProtocol::ChatCompletions));
-            assert!(spec.capabilities.tool_calls);
-            assert!(spec.capabilities.tool_choice);
-            assert!(spec.capabilities.system_messages);
-        }
-    }
-
-    #[test]
-    fn maps_api_service_protocol_variants_to_documented_upstream_protocols() {
-        for provider_type in ["qwen_responses", "minimax_responses"] {
-            let spec = ProviderSpec::from_provider_config(None, &provider(provider_type));
-
-            assert_eq!(
-                spec.supported_protocols,
-                vec![
-                    UpstreamProtocol::Responses,
-                    UpstreamProtocol::ChatCompletions,
-                ]
-            );
-            assert!(spec.capabilities.tool_calls);
-        }
-    }
-
-    #[test]
-    fn maps_subscription_openai_variants_to_chat_completions_with_tools() {
-        for provider_type in [
-            "kimi_coding",
-            "zai_coding_openai",
-            "zhipu_coding_openai",
-            "minimax_token_openai",
-            "bailian_coding_openai",
-            "bailian_token_openai",
-        ] {
-            let spec = ProviderSpec::from_provider_config(None, &provider(provider_type));
-
-            assert_eq!(
-                spec.supported_protocols,
-                vec![UpstreamProtocol::ChatCompletions]
-            );
-            assert!(spec.capabilities.tool_calls);
-            assert!(spec.capabilities.tool_choice);
-            assert!(spec.capabilities.system_messages);
-        }
-    }
-
-    #[test]
-    fn applies_provider_capability_overrides() {
-        let mut provider = provider("openai_compatible");
-        provider.capabilities_json = Some(
-            serde_json::to_string(&ProviderCapabilityOverrides {
-                tool_calls: Some(true),
-                structured_outputs: Some(true),
-                max_context_tokens: Some(8192),
-                max_output_tokens: Some(2048),
-                ..ProviderCapabilityOverrides::default()
-            })
-            .expect("encode capabilities"),
+        let relay = ProviderSpec::from_provider_config(&catalog, &provider("relay"));
+        assert_eq!(
+            relay.supported_protocols,
+            vec![
+                UpstreamProtocol::ChatCompletions,
+                UpstreamProtocol::Responses,
+            ]
         );
+    }
 
-        let spec = ProviderSpec::from_provider_config(None, &provider);
+    #[test]
+    fn provider_missing_from_catalog_has_no_protocols() {
+        let catalog = fixture_catalog();
+        let spec = ProviderSpec::from_provider_config(&catalog, &provider("retired_provider"));
 
-        assert!(spec.capabilities.tool_calls);
-        assert!(spec.capabilities.structured_outputs);
-        assert_eq!(spec.capabilities.max_context_tokens, Some(8192));
-        assert_eq!(spec.capabilities.max_output_tokens, Some(2048));
+        assert!(spec.supported_protocols.is_empty());
+        assert_eq!(spec.upstream_for_downstream("responses"), None);
+        assert_eq!(spec.upstream_for_downstream("chat_completions"), None);
+        assert!(!spec.supports_downstream("responses"));
     }
 
     #[test]
     fn enables_image_generations_only_from_catalog_declaration() {
         let catalog = crate::test_support::fixture_catalog();
 
-        let image_only =
-            ProviderSpec::from_provider_config(Some(&catalog), &provider("image_only"));
+        let image_only = ProviderSpec::from_provider_config(&catalog, &provider("image_only"));
         assert_eq!(
             image_only.upstream_for_downstream("images_generations"),
             Some(UpstreamProtocol::ImageGenerations)
         );
 
-        let deepseek = ProviderSpec::from_provider_config(Some(&catalog), &provider("deepseek"));
+        let deepseek = ProviderSpec::from_provider_config(&catalog, &provider("deepseek"));
         assert_eq!(deepseek.upstream_for_downstream("images_generations"), None);
     }
 
     #[test]
-    fn resolves_protocol_values_from_catalog_or_legacy_provider_type() {
+    fn resolves_protocol_values_from_catalog() {
         let catalog = crate::test_support::fixture_catalog();
 
         assert_eq!(
-            resolved_upstream_protocols(Some(&catalog), "deepseek"),
+            resolved_upstream_protocols(&catalog, "deepseek"),
             ["openai"]
         );
         assert_eq!(
-            resolved_upstream_protocols(Some(&catalog), "gotoken"),
-            ["openai", "responses", "images_generations"]
+            resolved_upstream_protocols(&catalog, "relay"),
+            ["openai", "responses"]
         );
-        assert_eq!(resolved_upstream_protocols(None, "kimi_coding"), ["openai"]);
+        assert!(resolved_upstream_protocols(&catalog, "retired_provider").is_empty());
     }
 
     #[test]
     fn chooses_upstream_protocol_by_downstream_request_preference() {
-        let spec = ProviderSpec::from_provider_config(None, &provider("gotoken"));
+        let catalog = crate::test_support::fixture_catalog();
+        let spec = ProviderSpec::from_provider_config(&catalog, &provider("relay"));
 
         assert_eq!(
             spec.upstream_for_downstream("responses"),

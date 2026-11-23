@@ -24,7 +24,6 @@ pub struct ProviderCatalog {
     image_generation_models: BTreeMap<String, CatalogImageGenerationModel>,
     providers: BTreeMap<String, CatalogProvider>,
 }
-
 #[derive(Debug, Clone)]
 pub struct CatalogLanguageModel {
     pub id: String,
@@ -55,7 +54,6 @@ pub struct CatalogLanguageModel {
     pub experimental_supported_tools: Option<Vec<String>>,
     pub minimal_client_version: Option<String>,
 }
-
 #[derive(Debug, Clone)]
 pub struct CatalogImageGenerationModel {
     pub id: String,
@@ -88,6 +86,7 @@ pub struct CatalogProvider {
     pub auth_scheme: ProviderAuthScheme,
     pub base_url: String,
     pub protocols: Vec<ProviderProtocol>,
+    pub deprecated: bool,
     pub protocol_base_urls: Vec<(ProviderProtocol, String)>,
     /// 追加到上游推理请求的静态或会话头；值来源由目录声明。
     pub request_headers: Vec<CatalogRequestHeader>,
@@ -219,6 +218,7 @@ pub(super) struct RawProvider {
     pub(super) auth_scheme: ProviderAuthScheme,
     pub(super) base_url: String,
     pub(super) protocols: Vec<ProviderProtocol>,
+    pub(super) deprecated: Option<bool>,
     #[serde(default)]
     pub(super) protocol_base_urls: BTreeMap<String, String>,
     #[serde(default)]

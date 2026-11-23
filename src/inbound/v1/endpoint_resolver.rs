@@ -35,7 +35,7 @@ pub async fn resolve_endpoint_model_candidates(
                 return None;
             }
             let provider_spec = crate::codec::providers::spec::ProviderSpec::from_provider_config(
-                Some(&state.provider_catalog),
+                &state.provider_catalog,
                 &resolved.provider,
             );
             provider_spec
