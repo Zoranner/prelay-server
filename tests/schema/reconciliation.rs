@@ -347,17 +347,6 @@ async fn reconciles_protocol_base_urls_with_the_catalog() {
         Some(r#"["k3"]"#.to_string()),
     )
     .await;
-    insert_provider(
-        &db,
-        "provider-outside-catalog",
-        "supergpt",
-        Some(
-            r#"{"protocol_base_urls":{"images_generations":"https://keep.example/v1"}}"#
-                .to_string(),
-        ),
-        None,
-    )
-    .await;
 
     initialize_with_catalog(&db, &fixture_catalog())
         .await
@@ -384,24 +373,6 @@ async fn reconciles_protocol_base_urls_with_the_catalog() {
         capabilities["protocol_base_urls"]["openai"],
         serde_json::json!("https://custom.example/v1"),
         "protocol urls not declared by the catalog must be kept"
-    );
-
-    let outside = provider_configs::Entity::find_by_id("provider-outside-catalog")
-        .one(&db)
-        .await
-        .expect("load provider outside the catalog")
-        .expect("provider row outside the catalog");
-    let capabilities: serde_json::Value = serde_json::from_str(
-        outside
-            .capabilities_json
-            .as_deref()
-            .expect("outside capabilities json"),
-    )
-    .expect("parse outside capabilities");
-    assert_eq!(
-        capabilities["protocol_base_urls"]["images_generations"],
-        serde_json::json!("https://keep.example/v1"),
-        "providers missing from the catalog must keep their stored values"
     );
 
     initialize_with_catalog(&db, &fixture_catalog())

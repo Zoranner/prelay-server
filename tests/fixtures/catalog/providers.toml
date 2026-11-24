@@ -12,6 +12,20 @@ language_models = [
 ]
 
 [[providers]]
+id = "openai_compatible"
+name = "OpenAI Compatible"
+auth_scheme = "bearer"
+base_url = "https://compatible.example/v1"
+protocols = ["chat_completions"]
+
+[[providers]]
+id = "openai"
+name = "OpenAI"
+auth_scheme = "bearer"
+base_url = "https://api.openai.example/v1"
+protocols = ["responses"]
+
+[[providers]]
 id = "gotoken"
 name = "GoToken"
 auth_scheme = "bearer"
