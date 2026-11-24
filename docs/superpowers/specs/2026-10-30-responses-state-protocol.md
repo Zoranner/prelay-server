@@ -20,9 +20,9 @@
 
 ## 当前部署数据状态
 
-当前核对的部署库中，`identity_response_sessions` 为空。本次不安排旧行内容迁移、备份或批量删除；只需要完成表结构升级，随后由新协议写入精确状态。不要删除或清空该表。
+编写本规范时核对的部署库中，`identity_response_sessions` 为空。后续版本已增加 `responses_legacy_cleanup_v1`，会在启动时整行删除 `legacy_internal_v1` 行；该表不再保证为空。
 
-`legacy` 行处理仍保留在代码里，作为其他环境或异常情况下的防御路径；当前库没有数据，不需要为它安排一次性数据任务。
+读取端仍拒绝非 `responses_items_v1` 格式，作为异常数据或迁移未执行时的防御路径；这不是活跃的 legacy 写入路径。
 
 空表不能直接推断 `/v1/responses` 从未使用：该表只在响应成功且客户端显式或默认启用 `store=true` 时写入。当前 Codex 的 Responses 请求构造会显式发送 `store=false`，因此即使请求已经到达 Prelay，旧表也会保持为空；实际是否使用过应以 `identity_activities` 的 `protocol_in='responses'` 记录为准。
 
@@ -59,15 +59,15 @@ Conversations API 是独立子系统，包含 conversation 对象、conversation
 `identity_response_sessions` 增加精确状态列：
 
 ```text
-status                 text not null        -- completed / legacy
-protocol_format        text not null        -- responses_items_v1 / legacy_internal_v1
+status                 text not null        -- completed（当前唯一写入值）/ legacy（历史值）
+protocol_format        text not null        -- responses_items_v1（当前唯一写入值）；legacy_internal_v1 是已无写入路径的历史值
 upstream_response_id   text null
 request_items_json     text null            -- 加密的精确 Responses input items
 response_items_json    text null            -- 加密的精确 Responses output items
 expires_at             text null            -- RFC3339；普通响应 created_at + 30 天
 ```
 
-现有 `input_messages_json`、`output_items_json` 继续作为内部桥接的派生列保留一个迁移周期，不再作为精确续接来源。
+`input_messages_json`、`output_items_json` 是从内部消息聚合派生的旧列，已从建表定义移除，并由启动迁移 `DROP COLUMN IF EXISTS` 清理；它们不再作为精确续接来源，也不参与迁移。
 
 约束：
 
@@ -76,7 +76,7 @@ expires_at             text null            -- RFC3339；普通响应 created_at
 - `request_items_json` 保存本轮实际发送的完整 input items，包括从父响应前置的 items。
 - `response_items_json` 保存上游返回的完整 output items。
 - 新写入使用 `responses_items_v1`；旧行为 `legacy_internal_v1`，不可精确续接。
-- 只有 `status='completed'` 且未过期的状态可以作为 `previous_response_id`。
+- 只有 `status='completed'`、`protocol_format='responses_items_v1'` 且未过期的状态可以作为 `previous_response_id`。
 
 ## 请求流程
 
@@ -84,7 +84,7 @@ expires_at             text null            -- RFC3339；普通响应 created_at
 2. 校验 `previous_response_id` 与 `conversation` 互斥。
 3. `conversation` 非空时返回 `unsupported_parameter`。
 4. 有 `previous_response_id` 时，按 `(identity_id, response_id)` 读取状态：
-   - 不存在、过期、非 `completed`、legacy 格式：返回稳定错误。
+   - 不存在、过期、非 `completed`、非 `responses_items_v1`：返回稳定错误。
 5. 当前 `instructions` 只作用于本次请求，不写入续接 items。
 6. 计算本轮 `input_items`：
    - 无父响应：当前输入 items。
@@ -113,18 +113,18 @@ expires_at             text null            -- RFC3339；普通响应 created_at
 稳定错误码：
 
 - `invalid_request_error` + `previous_response_id`/`conversation` 互斥：参数冲突，HTTP 400。
-- `previous_response_not_found`：父响应不存在、跨身份、已过期、未完成或 legacy 不可续接；HTTP 400。统一返回同一错误，不泄露父响应是否属于其他身份。
+- `previous_response_not_found`：父响应不存在、跨身份、已过期、未完成或格式不可续接；HTTP 400。统一返回同一错误，不泄露父响应是否属于其他身份。
 - `unsupported_parameter`：`conversation` 尚未实现；HTTP 400。
 
 跨身份查询必须返回“不存在”，不能泄露其他身份是否存在对应响应。
 
 ## 迁移边界
 
-- 新 schema 迁移只增列、补索引、移除 provider 外键，不删除旧列。
-- 旧行标记为 `legacy_internal_v1`；`previous_response_id` 命中旧行时返回 `previous_response_not_found`，客户端应改用完整历史。
-- 启动时对 `legacy_internal_v1` 行的明文列执行一次幂等加密迁移；只改写为 `enc:v1:` 密文，不改变 legacy 标记或续接语义。
-- 旧列保留到所有读取方都切到精确 items 后再单独清理。
-- 当前库为空，不需要数据回填或删除；如果其他环境存在旧行，它们没有精确 items，也没有可续接语义，TTL 清理只删除 `expires_at` 已过期的精确状态，旧行清理单独评估。
+- 旧列 `input_messages_json`、`output_items_json` 已从 `identity_response_sessions` 的建表定义移除，并由启动迁移清理；不再有“先保留、再加密”的迁移周期。
+- 旧 `legacy_internal_v1` 行由版本化迁移 `responses_legacy_cleanup_v1` 在启动时整行删除，不做内容迁移。旧数据是 `InternalMessage` 聚合，不是精确 Responses items，无法满足 `previous_response_id` 的精确续接契约。
+- 迁移是幂等且按版本记录的；发布前仍须按部署规则备份并只读盘点，确认 legacy 行数和 `prelay_schema_migrations` 状态。
+- `protocol_format` 当前只写 `responses_items_v1`。保留该列用于读取端对未知格式 fail-closed，并为未来 items 结构演进留判别位；它不是活跃的双格式分支。
+- 当前库如果没有 legacy 行，迁移不会改写任何数据；如果其他环境存在 legacy 行，它们会被删除，客户端应改用完整历史。
 
 ## 流式边界
 
