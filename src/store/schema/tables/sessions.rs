@@ -28,13 +28,13 @@ pub(in crate::store::schema) fn statement() -> TableCreateStatement {
             ColumnDef::new(ResponseSessions::Status)
                 .string()
                 .not_null()
-                .default("legacy"),
+                .default("completed"),
         )
         .col(
             ColumnDef::new(ResponseSessions::ProtocolFormat)
                 .string()
                 .not_null()
-                .default("legacy_internal_v1"),
+                .default("responses_items_v1"),
         )
         .col(ColumnDef::new(ResponseSessions::UpstreamResponseId).string())
         .col(ColumnDef::new(ResponseSessions::RequestItemsJson).string())

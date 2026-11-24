@@ -19,6 +19,21 @@ async fn column_exists(db: &DatabaseConnection, table: &str, column: &str) -> bo
     row.try_get::<i64>("", COUNT_COLUMN).expect("column count") == 1
 }
 
+async fn column_default(db: &DatabaseConnection, table: &str, column: &str) -> Option<String> {
+    let sql = format!(
+        "SELECT column_default FROM information_schema.columns \
+         WHERE table_schema = current_schema() \
+         AND table_name = '{table}' \
+         AND column_name = '{column}'"
+    );
+    db.query_one_raw(Statement::from_string(DbBackend::Postgres, sql))
+        .await
+        .expect("query column default")
+        .expect("column default row")
+        .try_get::<Option<String>>("", "column_default")
+        .expect("column default")
+}
+
 async fn index_exists(db: &DatabaseConnection, table: &str, index: &str) -> bool {
     let sql = format!(
         "SELECT COUNT(*) AS {COUNT_COLUMN} FROM pg_indexes \
@@ -73,6 +88,22 @@ async fn assert_exact_response_state_schema(db: &DatabaseConnection) {
         assert!(
             !column_exists(db, "identity_response_sessions", column).await,
             "identity_response_sessions.{column} must not exist"
+        );
+    }
+    for (column, expected) in [
+        ("status", "completed"),
+        ("protocol_format", "responses_items_v1"),
+    ] {
+        let default = column_default(db, "identity_response_sessions", column)
+            .await
+            .unwrap_or_default();
+        assert!(
+            default.contains(expected),
+            "identity_response_sessions.{column} default must be {expected}, got {default}"
+        );
+        assert!(
+            !default.contains("legacy"),
+            "identity_response_sessions.{column} default must not be legacy"
         );
     }
     assert!(
@@ -190,6 +221,12 @@ async fn cleanup_migration_count(db: &DatabaseConnection) -> i64 {
 async fn removes_responses_legacy_rows_once() {
     let db = test_empty_database_connection().await;
     initialize(&db).await.expect("initialize current schema");
+    db.execute_unprepared(
+        "DELETE FROM prelay_schema_migrations \
+         WHERE version = 'responses_legacy_cleanup_v1'",
+    )
+    .await
+    .expect("simulate an unapplied cleanup migration");
     seed_identity(&db, "identity-legacy").await;
     seed_response_session(
         &db,

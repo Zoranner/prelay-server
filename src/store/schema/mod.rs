@@ -241,12 +241,19 @@ impl<C: ConnectionTrait> SchemaInitializer<'_, C> {
         self.db
             .execute_unprepared(
                 "ALTER TABLE identity_response_sessions
-                 ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'legacy',
-                 ADD COLUMN IF NOT EXISTS protocol_format TEXT NOT NULL DEFAULT 'legacy_internal_v1',
+                 ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'completed',
+                 ADD COLUMN IF NOT EXISTS protocol_format TEXT NOT NULL DEFAULT 'responses_items_v1',
                  ADD COLUMN IF NOT EXISTS upstream_response_id TEXT,
                  ADD COLUMN IF NOT EXISTS request_items_json TEXT,
                  ADD COLUMN IF NOT EXISTS response_items_json TEXT,
                  ADD COLUMN IF NOT EXISTS expires_at TEXT",
+            )
+            .await?;
+        self.db
+            .execute_unprepared(
+                "ALTER TABLE identity_response_sessions
+                 ALTER COLUMN status SET DEFAULT 'completed',
+                 ALTER COLUMN protocol_format SET DEFAULT 'responses_items_v1'",
             )
             .await?;
         self.db
