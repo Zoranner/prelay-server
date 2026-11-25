@@ -8,7 +8,7 @@ use crate::support;
 use super::fixtures::{activity, provider_input};
 
 #[tokio::test]
-async fn model_candidates_keep_mapping_order_then_prefer_observed_latency() {
+async fn model_candidates_keep_mapping_order_after_observed_latency() {
     let storage = support::test_storage().await;
     let identity = storage
         .register_identity(
@@ -83,18 +83,9 @@ async fn model_candidates_keep_mapping_order_then_prefer_observed_latency() {
         .expect("record backup latency");
 
     let selected = storage
-        .select_protocol_model_candidates(&access, "test-model")
+        .resolve_protocol_models(&access, "test-model")
         .await
-        .expect("select candidates by latency");
-    assert_eq!(selected[0].provider.id, backup_provider_id);
-
-    storage
-        .remember_protocol_model_provider(&access, "test-model", &primary_provider_id)
-        .await
-        .expect("remember current provider");
-    let selected = storage
-        .select_protocol_model_candidates(&access, "test-model")
-        .await
-        .expect("select candidates with remembered provider");
+        .expect("resolve candidates after latency observations");
     assert_eq!(selected[0].provider.id, primary_provider_id);
+    assert_eq!(selected[1].provider.id, backup_provider_id);
 }

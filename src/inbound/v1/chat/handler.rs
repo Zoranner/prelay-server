@@ -35,6 +35,10 @@ pub(super) async fn create_chat_completion(
         .get("stream")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let session_key = access
+        .thread_id
+        .clone()
+        .or_else(|| access.session_id.clone());
     let session_id = access
         .session_id
         .clone()
@@ -48,8 +52,14 @@ pub(super) async fn create_chat_completion(
         started_at,
         started_at_wall,
     };
-    let candidates =
-        resolve_language_model_candidates(&state, &access, &model, "chat_completions").await?;
+    let candidates = resolve_language_model_candidates(
+        &state,
+        &access,
+        &model,
+        "chat_completions",
+        session_key.as_deref(),
+    )
+    .await?;
     let estimated_tokens = crate::service::quota::estimate_tokens(&payload);
     let quota = state.quota.clone();
     let storage = state.storage.clone();
@@ -80,6 +90,11 @@ pub(super) async fn create_chat_completion(
         },
     )
     .await?;
+    if let Some(session_key) = session_key.as_deref() {
+        state
+            .session_routes
+            .remember(&access.endpoint_id, &model, session_key, &provider_id);
+    }
     record_provider_observation_best_effort(
         &state,
         &ProtocolAccess {

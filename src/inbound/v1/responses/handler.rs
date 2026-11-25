@@ -71,8 +71,19 @@ pub(super) async fn create_response(
         .as_ref()
         .and_then(|parent| parent.conversation_id.clone())
         .unwrap_or_else(|| format!("conv_{}", uuid::Uuid::new_v4().simple()));
-    let candidates =
-        resolve_language_model_candidates(&state, &access, &request.model, "responses").await?;
+    let session_key = access
+        .thread_id
+        .clone()
+        .or_else(|| access.session_id.clone())
+        .unwrap_or_else(|| conversation_id.clone());
+    let candidates = resolve_language_model_candidates(
+        &state,
+        &access,
+        &request.model,
+        "responses",
+        Some(session_key.as_str()),
+    )
+    .await?;
     let estimated_tokens = crate::service::quota::estimate_tokens(payload.as_ref());
     let quota = state.quota.clone();
     let storage = state.storage.clone();
@@ -113,6 +124,12 @@ pub(super) async fn create_response(
         },
     )
     .await?;
+    state.session_routes.remember(
+        &access.endpoint_id,
+        &model_requested,
+        &session_key,
+        &provider_id,
+    );
     record_provider_observation_best_effort(
         &state,
         &ProtocolAccess {

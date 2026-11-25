@@ -130,6 +130,7 @@ pub async fn serve() -> anyhow::Result<()> {
         client_update,
         extensions,
         failover: Default::default(),
+        session_routes: Default::default(),
         quota,
         recording: Some(recording),
     };

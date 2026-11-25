@@ -37,6 +37,7 @@ pub async fn test_context_with_catalog(provider_catalog: ProviderCatalog) -> Tes
         client_update: ClientUpdateCache::unavailable(reqwest::Client::new()),
         extensions: ExtensionCatalog::unavailable(reqwest::Client::new()),
         failover: Default::default(),
+        session_routes: Default::default(),
         quota: prelay_server::service::quota::QuotaService::new(
             reqwest::Client::new(),
             provider_catalog,

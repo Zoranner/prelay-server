@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn fails_over_responses_to_a_healthy_candidate_and_keeps_using_it() {
+async fn fails_over_responses_and_keeps_the_session_on_the_healthy_candidate() {
     let failing_upstream = spawn_failing_chat_upstream().await;
     let healthy_upstream = spawn_chat_upstream().await;
     let state = crate::test_support::test_state().await;
@@ -21,13 +21,15 @@ async fn fails_over_responses_to_a_healthy_candidate_and_keeps_using_it() {
     )
     .await
     .expect("create backup provider");
-    let auth = create_test_endpoint_auth_with_candidates(
+    let mut auth = create_test_endpoint_auth_with_candidates(
         &state.storage,
         &[primary, backup],
         "deepseek-chat",
         "deepseek-chat",
     )
     .await;
+    auth.access.0.session_id = Some("session-sticky".to_string());
+    let primary_id = auth.provider_ids[0].clone();
     let payload = json!({ "model": "deepseek-chat", "input": "hello" });
 
     create_response(
@@ -37,13 +39,14 @@ async fn fails_over_responses_to_a_healthy_candidate_and_keeps_using_it() {
     )
     .await
     .expect("fall back to the healthy candidate");
+    state.failover.clear(&primary_id);
     create_response(
         State(state.clone()),
         auth.access.clone(),
         axum::Json(payload),
     )
     .await
-    .expect("keep using the last successful candidate");
+    .expect("keep the session on the healthy candidate");
 
     let logs = state
         .storage
@@ -52,6 +55,65 @@ async fn fails_over_responses_to_a_healthy_candidate_and_keeps_using_it() {
         .expect("load activities");
     assert_eq!(logs.len(), 3);
     assert_eq!(logs.iter().filter(|log| log.status == "failed").count(), 1);
+    assert_eq!(logs.iter().filter(|log| log.status == "success").count(), 2);
+}
+
+#[tokio::test]
+async fn new_response_session_starts_from_the_configured_order() {
+    let failing_upstream = spawn_failing_chat_upstream().await;
+    let healthy_upstream = spawn_chat_upstream().await;
+    let state = crate::test_support::test_state().await;
+    let primary = test_provider(
+        "primary",
+        "openai_compatible",
+        &failing_upstream,
+        "sk-primary",
+    )
+    .await
+    .expect("create primary provider");
+    let backup = test_provider(
+        "backup",
+        "openai_compatible",
+        &healthy_upstream,
+        "sk-backup",
+    )
+    .await
+    .expect("create backup provider");
+    let mut auth = create_test_endpoint_auth_with_candidates(
+        &state.storage,
+        &[primary, backup],
+        "deepseek-chat",
+        "deepseek-chat",
+    )
+    .await;
+    let primary_id = auth.provider_ids[0].clone();
+    auth.access.0.session_id = Some("session-a".to_string());
+    let payload = json!({ "model": "deepseek-chat", "input": "hello" });
+
+    create_response(
+        State(state.clone()),
+        auth.access.clone(),
+        axum::Json(payload.clone()),
+    )
+    .await
+    .expect("first session falls back to the healthy candidate");
+    state.failover.clear(&primary_id);
+    auth.access.0.session_id = Some("session-b".to_string());
+    create_response(
+        State(state.clone()),
+        auth.access.clone(),
+        axum::Json(payload),
+    )
+    .await
+    .expect("new session starts from the configured order");
+
+    let logs = state
+        .storage
+        .list_activities(&auth.access.0.identity_id, 10)
+        .await
+        .expect("load activities");
+    assert_eq!(logs.len(), 4);
+    assert_eq!(logs.iter().filter(|log| log.status == "failed").count(), 2);
     assert_eq!(logs.iter().filter(|log| log.status == "success").count(), 2);
 }
 

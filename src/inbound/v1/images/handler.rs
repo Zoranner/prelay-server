@@ -38,6 +38,10 @@ pub(super) async fn create_image_generation(
         .get("stream")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let session_key = access
+        .thread_id
+        .clone()
+        .or_else(|| access.session_id.clone());
     let session_id = access
         .session_id
         .clone()
@@ -51,9 +55,14 @@ pub(super) async fn create_image_generation(
         started_at,
         started_at_wall,
     };
-    let candidates =
-        resolve_endpoint_model_candidates(&state, &access, &model, IMAGE_GENERATIONS_PROTOCOL)
-            .await?;
+    let candidates = resolve_endpoint_model_candidates(
+        &state,
+        &access,
+        &model,
+        IMAGE_GENERATIONS_PROTOCOL,
+        session_key.as_deref(),
+    )
+    .await?;
     let estimated_tokens = crate::service::quota::estimate_tokens(&payload);
     let quota = state.quota.clone();
     let storage = state.storage.clone();
@@ -84,6 +93,11 @@ pub(super) async fn create_image_generation(
         },
     )
     .await?;
+    if let Some(session_key) = session_key.as_deref() {
+        state
+            .session_routes
+            .remember(&access.endpoint_id, &model, session_key, &provider_id);
+    }
     record_provider_observation_best_effort(
         &state,
         &ProtocolAccess {

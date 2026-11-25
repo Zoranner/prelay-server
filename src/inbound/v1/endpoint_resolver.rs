@@ -16,7 +16,9 @@ pub async fn resolve_endpoint_model_candidates(
     access: &CurrentProtocolAccess,
     model: &str,
     downstream_protocol: &str,
+    session_key: Option<&str>,
 ) -> Result<Vec<ResolvedEndpointProvider>, AppError> {
+    let endpoint_id = access.endpoint_id.clone();
     let access = ProtocolAccess {
         identity_id: access.identity_id.clone(),
         endpoint_id: access.endpoint_id.clone(),
@@ -24,10 +26,10 @@ pub async fn resolve_endpoint_model_candidates(
     };
     let resolved = state
         .storage
-        .select_protocol_model_candidates(&access, model)
+        .resolve_protocol_models(&access, model)
         .await?;
     let mut not_enabled = false;
-    let candidates = resolved
+    let mut candidates = resolved
         .into_iter()
         .filter_map(|resolved| {
             if !resolved.provider.provides_model(model) {
@@ -47,6 +49,7 @@ pub async fn resolve_endpoint_model_candidates(
                 })
         })
         .collect::<Vec<_>>();
+    prefer_session_provider(state, &endpoint_id, model, session_key, &mut candidates);
     if candidates.is_empty() {
         if not_enabled {
             return Err(AppError::BadRequest(format!(
@@ -65,14 +68,42 @@ pub async fn resolve_language_model_candidates(
     access: &CurrentProtocolAccess,
     model: &str,
     downstream_protocol: &str,
+    session_key: Option<&str>,
 ) -> Result<Vec<ResolvedEndpointProvider>, AppError> {
-    resolve_endpoint_model_candidates(state, access, model, downstream_protocol).await
+    resolve_endpoint_model_candidates(state, access, model, downstream_protocol, session_key).await
+}
+
+fn prefer_session_provider(
+    state: &AppState,
+    endpoint_id: &str,
+    model: &str,
+    session_key: Option<&str>,
+    candidates: &mut Vec<ResolvedEndpointProvider>,
+) {
+    let Some(session_key) = session_key else {
+        return;
+    };
+    let Some(provider_id) = state
+        .session_routes
+        .provider_for(endpoint_id, model, session_key)
+    else {
+        return;
+    };
+    let Some(index) = candidates
+        .iter()
+        .position(|candidate| candidate.provider.id == provider_id)
+    else {
+        return;
+    };
+    let preferred = candidates.remove(index);
+    candidates.insert(0, preferred);
 }
 
 #[cfg(test)]
 pub(crate) struct TestEndpointAuth {
     pub(crate) access: axum::extract::Extension<CurrentProtocolAccess>,
     pub(crate) token: String,
+    pub(crate) provider_ids: Vec<String>,
 }
 
 #[cfg(test)]
@@ -107,6 +138,7 @@ pub(crate) async fn create_test_endpoint_auth_with_candidates(
         .await
         .expect("register identity");
     let mut models = Vec::with_capacity(providers.len());
+    let mut provider_ids = Vec::with_capacity(providers.len());
     for provider in providers {
         let provider_id = storage
             .create_provider(
@@ -125,6 +157,7 @@ pub(crate) async fn create_test_endpoint_auth_with_candidates(
             )
             .await
             .expect("create identity provider");
+        provider_ids.push(provider_id.clone());
         models.push(prelay_protocol::EndpointModelInput {
             provider_id,
             upstream_model: upstream_model.to_string(),
@@ -141,7 +174,7 @@ pub(crate) async fn create_test_endpoint_auth_with_candidates(
         )
         .await
         .expect("create identity endpoint");
-    test_endpoint_auth(identity.identity_id, endpoint)
+    test_endpoint_auth(identity.identity_id, endpoint, provider_ids)
 }
 
 #[cfg(test)]
@@ -167,7 +200,7 @@ pub(crate) async fn create_empty_test_endpoint_auth(
         )
         .await
         .expect("create identity endpoint");
-    test_endpoint_auth(identity.identity_id, endpoint)
+    test_endpoint_auth(identity.identity_id, endpoint, Vec::new())
 }
 
 #[cfg(test)]
@@ -204,6 +237,7 @@ pub(crate) async fn test_provider_with_capabilities(
 fn test_endpoint_auth(
     identity_id: String,
     endpoint: prelay_protocol::EndpointResponse,
+    provider_ids: Vec<String>,
 ) -> TestEndpointAuth {
     TestEndpointAuth {
         access: axum::extract::Extension(CurrentProtocolAccess {
@@ -216,5 +250,150 @@ fn test_endpoint_auth(
             window_generation: None,
         }),
         token: endpoint.token,
+        provider_ids,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::stats::ActivityInsert;
+
+    fn activity(provider_id: &str, upstream_latency_ms: i64) -> ActivityInsert {
+        ActivityInsert {
+            protocol_in: "chat_completions".to_string(),
+            protocol_out: "chat_completions".to_string(),
+            protocol_upstream: "chat_completions".to_string(),
+            endpoint_name: "Test Endpoint".to_string(),
+            provider_id: provider_id.to_string(),
+            provider_name: "test".to_string(),
+            provider_type: "openai_compatible".to_string(),
+            model_requested: "deepseek-chat".to_string(),
+            model_upstream: "deepseek-chat".to_string(),
+            status: "success".to_string(),
+            http_status: 200,
+            latency_ms: upstream_latency_ms,
+            upstream_latency_ms: Some(upstream_latency_ms),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn ignores_observed_latency_and_keeps_the_configured_order() {
+        let state = crate::test_support::test_state().await;
+        let primary = test_provider(
+            "Primary",
+            "openai_compatible",
+            "http://127.0.0.1:1",
+            "sk-primary",
+        )
+        .await
+        .expect("create primary provider");
+        let backup = test_provider(
+            "Backup",
+            "openai_compatible",
+            "http://127.0.0.1:1",
+            "sk-backup",
+        )
+        .await
+        .expect("create backup provider");
+        let auth = create_test_endpoint_auth_with_candidates(
+            &state.storage,
+            &[primary, backup],
+            "deepseek-chat",
+            "deepseek-chat",
+        )
+        .await;
+        let primary_id = auth.provider_ids[0].clone();
+        let backup_id = auth.provider_ids[1].clone();
+        let identity_id = auth.access.0.identity_id.clone();
+        state
+            .storage
+            .insert_activity_with_id(
+                &identity_id,
+                "slow-primary".to_string(),
+                activity(&primary_id, 900),
+            )
+            .await
+            .expect("record primary latency");
+        state
+            .storage
+            .insert_activity_with_id(
+                &identity_id,
+                "fast-backup".to_string(),
+                activity(&backup_id, 10),
+            )
+            .await
+            .expect("record backup latency");
+
+        let candidates = resolve_endpoint_model_candidates(
+            &state,
+            &auth.access.0,
+            "deepseek-chat",
+            "chat_completions",
+            None,
+        )
+        .await
+        .expect("resolve endpoint candidates");
+
+        assert_eq!(candidates[0].provider.id, primary_id);
+    }
+
+    #[tokio::test]
+    async fn prefers_the_session_provider_over_the_configured_order() {
+        let state = crate::test_support::test_state().await;
+        let primary = test_provider(
+            "Primary",
+            "openai_compatible",
+            "http://127.0.0.1:1",
+            "sk-primary",
+        )
+        .await
+        .expect("create primary provider");
+        let backup = test_provider(
+            "Backup",
+            "openai_compatible",
+            "http://127.0.0.1:1",
+            "sk-backup",
+        )
+        .await
+        .expect("create backup provider");
+        let auth = create_test_endpoint_auth_with_candidates(
+            &state.storage,
+            &[primary, backup],
+            "deepseek-chat",
+            "deepseek-chat",
+        )
+        .await;
+        let primary_id = auth.provider_ids[0].clone();
+        let backup_id = auth.provider_ids[1].clone();
+        state.session_routes.remember(
+            &auth.access.0.endpoint_id,
+            "deepseek-chat",
+            "session-a",
+            &backup_id,
+        );
+
+        let sticky = resolve_endpoint_model_candidates(
+            &state,
+            &auth.access.0,
+            "deepseek-chat",
+            "chat_completions",
+            Some("session-a"),
+        )
+        .await
+        .expect("resolve sticky session");
+        assert_eq!(sticky[0].provider.id, backup_id);
+
+        let new_session = resolve_endpoint_model_candidates(
+            &state,
+            &auth.access.0,
+            "deepseek-chat",
+            "chat_completions",
+            Some("session-b"),
+        )
+        .await
+        .expect("resolve new session");
+        assert_eq!(new_session[0].provider.id, primary_id);
     }
 }

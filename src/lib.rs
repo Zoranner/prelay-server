@@ -19,6 +19,7 @@ pub struct AppState {
     pub client_update: outbound::integrations::client_update::ClientUpdateCache,
     pub extensions: outbound::integrations::extensions::ExtensionCatalog,
     pub failover: service::failover::FailoverRegistry,
+    pub session_routes: service::session_routes::SessionRouteRegistry,
     pub quota: service::quota::QuotaService,
     pub recording: Option<service::recording::RecordingRuntime>,
 }

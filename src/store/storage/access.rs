@@ -1,4 +1,3 @@
-use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use chrono::Utc;
@@ -8,7 +7,7 @@ use sea_orm::{
 
 use super::{identities, ProtocolAccess, ProtocolModel, Storage, StorageError};
 use crate::store::entity::identity::{
-    activities, endpoint_configs, endpoint_model_routes, endpoint_models, provider_configs,
+    endpoint_configs, endpoint_model_routes, endpoint_models, provider_configs,
 };
 use crate::store::recording_timing::log_elapsed;
 
@@ -42,115 +41,9 @@ impl Storage {
         self.load_protocol_models(access, Some(model_name)).await
     }
 
-    pub async fn select_protocol_model_candidates(
-        &self,
-        access: &ProtocolAccess,
-        model_name: &str,
-    ) -> Result<Vec<ProtocolModel>, StorageError> {
-        let started_at = Instant::now();
-        let mut candidates = self.resolve_protocol_models(access, model_name).await?;
-        let result = self
-            .select_candidates(access, model_name, &mut candidates)
-            .await;
-        if result.is_ok() {
-            log_elapsed(
-                "storage.select_protocol_model_candidates",
-                started_at,
-                Some(model_name),
-            );
-        }
-        result
-    }
-
-    async fn select_candidates(
-        &self,
-        access: &ProtocolAccess,
-        model_name: &str,
-        candidates: &mut Vec<ProtocolModel>,
-    ) -> Result<Vec<ProtocolModel>, StorageError> {
-        if candidates.len() < 2 {
-            return Ok(std::mem::take(candidates));
-        }
-
-        let provider_latencies = self
-            .provider_average_latencies(
-                &access.identity_id,
-                candidates
-                    .iter()
-                    .map(|candidate| candidate.provider.id.as_str()),
-            )
-            .await?;
-        let sort_by_latency = |left: &ProtocolModel, right: &ProtocolModel| match (
-            provider_latencies.get(&left.provider.id),
-            provider_latencies.get(&right.provider.id),
-        ) {
-            (Some(left), Some(right)) => {
-                left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal)
-            }
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        };
-
-        let active_provider_id = endpoint_model_routes::Entity::find_by_id((
-            access.endpoint_id.clone(),
-            model_name.to_string(),
-        ))
-        .one(&self.db)
-        .await?
-        .map(|route| route.provider_id);
-        if let Some(active_provider_id) = active_provider_id {
-            if let Some(index) = candidates
-                .iter()
-                .position(|candidate| candidate.provider.id == active_provider_id)
-            {
-                let active = candidates.remove(index);
-                candidates.sort_by(sort_by_latency);
-                candidates.insert(0, active);
-                return Ok(std::mem::take(candidates));
-            }
-        }
-
-        candidates.sort_by(sort_by_latency);
-        Ok(std::mem::take(candidates))
-    }
-
-    async fn provider_average_latencies<'a>(
-        &self,
-        identity_id: &str,
-        provider_ids: impl Iterator<Item = &'a str>,
-    ) -> Result<HashMap<String, f64>, StorageError> {
-        let provider_ids = provider_ids
-            .map(str::to_string)
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
-        if provider_ids.is_empty() {
-            return Ok(HashMap::new());
-        }
-        let rows = activities::Entity::find()
-            .filter(activities::Column::IdentityId.eq(identity_id))
-            .filter(activities::Column::Status.eq("success"))
-            .filter(activities::Column::ProviderId.is_in(provider_ids))
-            .filter(activities::Column::UpstreamLatencyMs.is_not_null())
-            .all(&self.db)
-            .await?;
-        let mut totals = HashMap::<String, (i128, u64)>::new();
-        for row in rows {
-            let (Some(provider_id), Some(latency)) = (row.provider_id, row.upstream_latency_ms)
-            else {
-                continue;
-            };
-            let total = totals.entry(provider_id).or_default();
-            total.0 += i128::from(latency);
-            total.1 += 1;
-        }
-        Ok(totals
-            .into_iter()
-            .map(|(provider_id, (sum, count))| (provider_id, sum as f64 / count as f64))
-            .collect())
-    }
-
+    /// 记录最近一次成功响应的供应商，仅作为观测数据保存。
+    ///
+    /// 选路不再读取该记录；会话粘性由进程内的 `SessionRouteRegistry` 维护。
     pub async fn remember_protocol_model_provider(
         &self,
         access: &ProtocolAccess,

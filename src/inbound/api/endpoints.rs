@@ -71,17 +71,12 @@ async fn update(
     Path(endpoint_id): Path<String>,
     ApiJson(input): ApiJson<UpdateEndpointRequest>,
 ) -> Result<Json<EndpointResponse>, ApiError> {
-    Ok(Json(
-        state
-            .storage
-            .update_interface_with_catalog(
-                &identity.id,
-                &endpoint_id,
-                input,
-                &state.provider_catalog,
-            )
-            .await?,
-    ))
+    let endpoint = state
+        .storage
+        .update_interface_with_catalog(&identity.id, &endpoint_id, input, &state.provider_catalog)
+        .await?;
+    state.session_routes.clear_endpoint(&endpoint_id);
+    Ok(Json(endpoint))
 }
 
 async fn delete_one(
@@ -93,6 +88,7 @@ async fn delete_one(
         .storage
         .delete_interface(&identity.id, &endpoint_id)
         .await?;
+    state.session_routes.clear_endpoint(&endpoint_id);
     Ok(StatusCode::NO_CONTENT)
 }
 
