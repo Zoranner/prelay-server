@@ -6,8 +6,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 concurrency:
   group: prelay-server-release-${{ github.ref_name }}
@@ -65,10 +64,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag_version="${GITHUB_REF_NAME#v}"
-          [[ "$tag_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          server_version="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
-          test "$tag_version" = "$server_version"
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "Release tag must match vX.Y.Z: $tag" >&2
+            exit 1
+          fi
+          tag_version="${BASH_REMATCH[1]}"
+          server_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "prelay-server") | .version')"
+          if [[ "$tag_version" != "$server_version" ]]; then
+            echo "Tag version $tag_version does not match prelay-server package version $server_version" >&2
+            exit 1
+          fi
           echo "version=$tag_version" >> "$GITHUB_OUTPUT"
           echo "image=ghcr.io/zoranner/prelay-server" >> "$GITHUB_OUTPUT"
 
@@ -86,6 +92,9 @@ jobs:
             platform: linux/arm64
             archive_suffix: linux-arm64
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v5
         with:
@@ -142,6 +151,9 @@ jobs:
     name: Publish release
     needs: [prepare, build-server-image]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
     steps:
       - uses: docker/setup-buildx-action@v4
 
@@ -179,12 +191,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           name: Prelay Server ${{ needs.prepare.outputs.version }}
-          body: |
-            Server image: ${{ needs.prepare.outputs.image }}:${{ needs.prepare.outputs.version }}
-            Offline images: prelay-server-${{ needs.prepare.outputs.version }}-linux-amd64.tar, prelay-server-${{ needs.prepare.outputs.version }}-linux-arm64.tar
-            管理 API 最低支持 Prelay Client 0.3.0；已移除旧扩展目录、模型发现接口和供应商操作结果中的模型发现字段
-            供应商目录新增弃用状态；Gotoken 目录条目为 deprecated，已有供应商可用但不可编辑或分享
-            升级前请备份 PostgreSQL、ACTIVITY_ROLLOUT_DIR 和 RECORDING_JOURNAL_DIR，确认活动目录与记录目录可写，并按 README 核对数据库迁移、WAL 恢复和文件保留策略。
+          body: ""
           files: |
             artifacts/*.tar
           fail_on_unmatched_files: true
