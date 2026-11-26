@@ -430,11 +430,15 @@ async fn management_endpoint_rejects_model_outside_provider_list() {
     .await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        error["error"]["code"],
+        "endpoint_model_not_in_provider_models"
+    );
     assert!(
         error["error"]["message"]
             .as_str()
             .unwrap_or_default()
-            .contains("不在供应商"),
+            .contains("not enabled by the provider"),
         "{error}"
     );
 }

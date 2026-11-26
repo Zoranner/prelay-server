@@ -35,18 +35,14 @@ async fn fails_over_responses_and_keeps_the_session_on_the_healthy_candidate() {
     create_response(
         State(state.clone()),
         auth.access.clone(),
-        axum::Json(payload.clone()),
+        V1Json(payload.clone()),
     )
     .await
     .expect("fall back to the healthy candidate");
     state.failover.clear(&primary_id);
-    create_response(
-        State(state.clone()),
-        auth.access.clone(),
-        axum::Json(payload),
-    )
-    .await
-    .expect("keep the session on the healthy candidate");
+    create_response(State(state.clone()), auth.access.clone(), V1Json(payload))
+        .await
+        .expect("keep the session on the healthy candidate");
 
     let logs = state
         .storage
@@ -93,19 +89,15 @@ async fn new_response_session_starts_from_the_configured_order() {
     create_response(
         State(state.clone()),
         auth.access.clone(),
-        axum::Json(payload.clone()),
+        V1Json(payload.clone()),
     )
     .await
     .expect("first session falls back to the healthy candidate");
     state.failover.clear(&primary_id);
     auth.access.0.session_id = Some("session-b".to_string());
-    create_response(
-        State(state.clone()),
-        auth.access.clone(),
-        axum::Json(payload),
-    )
-    .await
-    .expect("new session starts from the configured order");
+    create_response(State(state.clone()), auth.access.clone(), V1Json(payload))
+        .await
+        .expect("new session starts from the configured order");
 
     let logs = state
         .storage
@@ -149,7 +141,7 @@ async fn fails_over_responses_when_primary_forbids_the_request() {
     create_response(
         State(state.clone()),
         auth.access.clone(),
-        axum::Json(json!({ "model": "deepseek-chat", "input": "hello" })),
+        V1Json(json!({ "model": "deepseek-chat", "input": "hello" })),
     )
     .await
     .expect("forbidden primary should fall back to the healthy candidate");
@@ -203,7 +195,7 @@ async fn fails_over_responses_when_primary_returns_an_invalid_success_payload() 
     create_response(
         State(state),
         auth.access,
-        axum::Json(json!({ "model": "deepseek-chat", "input": "hello" })),
+        V1Json(json!({ "model": "deepseek-chat", "input": "hello" })),
     )
     .await
     .expect("invalid primary payload should fall back to the healthy candidate");
@@ -217,7 +209,7 @@ async fn rejects_response_when_model_is_not_configured() {
     let error = create_response(
         State(state),
         auth.access.clone(),
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "input": "hello"
         })),

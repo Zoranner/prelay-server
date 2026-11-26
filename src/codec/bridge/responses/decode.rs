@@ -11,7 +11,7 @@ pub fn decode_responses_request(value: &Value) -> Result<InternalRequest, AppErr
         .get("model")
         .and_then(Value::as_str)
         .filter(|model| !model.trim().is_empty())
-        .ok_or_else(|| AppError::BadRequest("model 不能为空".to_string()))?
+        .ok_or_else(|| AppError::BadRequest("model must not be empty".to_string()))?
         .to_string();
     let stream = decode_optional_bool(value.get("stream"), "stream", false)?;
     let previous_response_id = decode_previous_response_id(value.get("previous_response_id"))?;

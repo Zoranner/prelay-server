@@ -44,7 +44,7 @@ async fn forwards_only_to_image_generation_candidate_and_preserves_json_bytes() 
     let response = create_image_generation(
         State(state.clone()),
         auth.access,
-        Json(json!({
+        V1Json(json!({
             "model": "image-upstream",
             "prompt": "private prompt"
         })),
@@ -112,7 +112,7 @@ async fn rejects_image_generation_without_image_protocol_candidate() {
     let error = create_image_generation(
         State(state),
         auth.access,
-        Json(json!({
+        V1Json(json!({
             "model": "image-upstream",
             "prompt": "private prompt"
         })),

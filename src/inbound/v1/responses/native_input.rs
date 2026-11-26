@@ -63,7 +63,7 @@ pub(super) fn budget_input_items<'a>(
                 "image payload cannot be reduced to the upstream budget"
             );
             Err(AppError::PayloadTooLarge(format!(
-                "图片请求体超过上游预算：已丢弃 {} 张历史图片，仍有 {} 字节，预算 {} 字节。请减少图片，或调整 IMAGE_BUDGET_MAX_BYTES。",
+                "image payload exceeds the upstream budget: dropped_images={}, remaining_bytes={}, budget_bytes={}",
                 report.dropped_images, report.remaining_bytes, policy.max_bytes
             )))
         }

@@ -25,7 +25,9 @@ pub(crate) async fn verify_upstream_sse_head(
         let content_type = content_type.trim().to_ascii_lowercase();
         if content_type.starts_with("text/html") || content_type.starts_with("application/xhtml") {
             return Err(AppError::UpstreamInvalidResponse {
-                message: format!("上游返回了网页而不是事件流（Content-Type: {content_type}）"),
+                message: format!(
+                    "upstream returned an HTML page instead of an event stream (content_type={content_type})"
+                ),
             });
         }
     }
@@ -38,7 +40,9 @@ pub(crate) async fn verify_upstream_sse_head(
                     empty_chunks += 1;
                     if empty_chunks > MAX_EMPTY_CHUNKS {
                         return Err(AppError::UpstreamInvalidResponse {
-                            message: "上游持续返回空数据而不是事件流".to_string(),
+                            message:
+                                "upstream kept returning empty chunks instead of an event stream"
+                                    .to_string(),
                         });
                     }
                     continue;
@@ -52,13 +56,13 @@ pub(crate) async fn verify_upstream_sse_head(
             }
             Ok(None) => {
                 return Err(AppError::UpstreamInvalidResponse {
-                    message: "上游返回了空响应".to_string(),
+                    message: "upstream returned an empty response".to_string(),
                 });
             }
             Err(error) => {
                 return Err(AppError::Upstream {
                     status: None,
-                    message: format!("上游连接失败: {error}"),
+                    message: format!("upstream connect failed: {error}"),
                 });
             }
         }
@@ -77,9 +81,11 @@ fn trim_ascii_start(bytes: &[u8]) -> &[u8] {
 fn html_body_message(chunk: &[u8]) -> String {
     let excerpt = String::from_utf8_lossy(&chunk[..chunk.len().min(DIAGNOSTIC_LIMIT)]);
     match page_title(&excerpt) {
-        Some(title) => format!("上游返回了网页而不是事件流（页面标题: {title}）"),
+        Some(title) => {
+            format!("upstream returned an HTML page instead of an event stream (title={title})")
+        }
         None => format!(
-            "上游返回了网页而不是事件流（响应片段: {:?}）",
+            "upstream returned an HTML page instead of an event stream (excerpt={:?})",
             excerpt.trim()
         ),
     }

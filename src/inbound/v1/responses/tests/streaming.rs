@@ -13,7 +13,7 @@ async fn native_streaming_returns_local_id_and_persists_exact_state() {
     let response = create_response(
         State(state.clone()),
         auth.access,
-        axum::Json(json!({
+        V1Json(json!({
             "model": "gpt-4.1",
             "input": "hello",
             "stream": true,
@@ -85,7 +85,7 @@ async fn returns_responses_sse_when_stream_is_true() {
     let response = create_response(
         State(state.clone()),
         auth.access,
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "input": "hello",
             "stream": true

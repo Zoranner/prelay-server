@@ -153,19 +153,24 @@ async fn ping(
             protocol: None,
             latency_ms,
             first_token_ms: None,
+            error_code: None,
             error: None,
         },
-        Err(error) => ProviderOperationResponse {
-            ok: false,
-            protocol: None,
-            latency_ms,
-            first_token_ms: None,
-            error: Some(if error.is_timeout() {
-                "上游连接超时".to_string()
+        Err(error) => {
+            let (error_code, message) = if error.is_timeout() {
+                ("upstream_connect_timeout", "upstream connect timed out")
             } else {
-                "上游连接失败".to_string()
-            }),
-        },
+                ("upstream_connect_failed", "upstream connect failed")
+            };
+            ProviderOperationResponse {
+                ok: false,
+                protocol: None,
+                latency_ms,
+                first_token_ms: None,
+                error_code: Some(error_code.to_string()),
+                error: Some(message.to_string()),
+            }
+        }
     }))
 }
 

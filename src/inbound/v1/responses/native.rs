@@ -7,6 +7,7 @@ use axum::{
 use chrono::Utc;
 use serde_json::Value;
 
+use crate::domain::activity::ActivityErrorCode;
 use crate::{
     codec::activity::conversation_events_from_responses_output,
     codec::providers::spec::{
@@ -132,7 +133,7 @@ pub(super) async fn create_native_response(
                     model_upstream: model_upstream.to_string(),
                     status: "failed".to_string(),
                     http_status: status.as_u16() as i64,
-                    error_code: Some("upstream_status".to_string()),
+                    error_code: Some(ActivityErrorCode::UPSTREAM_STATUS.to_string()),
                     error_message: Some(error_message.clone()),
                     is_streaming: context.is_streaming,
                     input_tokens: None,
@@ -250,7 +251,7 @@ pub(super) async fn create_native_response(
         Ok(response) => response,
         Err(_) => {
             let error = AppError::UpstreamInvalidResponse {
-                message: "上游响应格式无效".to_string(),
+                message: "invalid upstream response format".to_string(),
             };
             let (error_code, status, message) = upstream_error_details(&error);
             record_upstream_failure(

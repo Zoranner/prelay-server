@@ -6,6 +6,7 @@ use axum::{
 use futures::TryStreamExt;
 use serde_json::Value;
 
+use crate::domain::activity::ActivityErrorCode;
 use crate::{
     codec::activity::{
         conversation_events_from_image_request, conversation_events_from_image_response,
@@ -86,10 +87,14 @@ pub(super) async fn create_image_generation_with_candidate(
                     ..
                 } => (
                     Some(StatusCode::GATEWAY_TIMEOUT),
-                    "upstream_response_head_timeout",
-                    "上游响应超时",
+                    ActivityErrorCode::UPSTREAM_RESPONSE_HEAD_TIMEOUT,
+                    "upstream response head timed out",
                 ),
-                _ => (None, "upstream_connection", "上游连接失败"),
+                _ => (
+                    None,
+                    ActivityErrorCode::UPSTREAM_CONNECT,
+                    "upstream connect failed",
+                ),
             };
             record_image_activity(
                 state,
@@ -125,7 +130,7 @@ pub(super) async fn create_image_generation_with_candidate(
 
     if !upstream_status.is_success() {
         let observability = upstream_observability(upstream_response.headers(), None);
-        let safe_error_message = format!("上游请求失败: {upstream_status}");
+        let safe_error_message = format!("upstream request failed: status={upstream_status}");
         record_image_activity(
             state,
             access,
@@ -138,7 +143,7 @@ pub(super) async fn create_image_generation_with_candidate(
                 model_upstream,
                 status: "failed",
                 http_status: upstream_status.as_u16() as i64,
-                error_code: None,
+                error_code: Some(ActivityErrorCode::UPSTREAM_STATUS),
                 is_streaming,
                 latency_ms: started_at.elapsed().as_millis() as i64,
                 upstream_latency_ms: None,
@@ -208,7 +213,7 @@ pub(super) async fn create_image_generation_with_candidate(
     let response_bytes = match upstream_response.bytes().await {
         Ok(response_bytes) => response_bytes,
         Err(_) => {
-            let safe_error_message = "读取上游响应失败".to_string();
+            let safe_error_message = "failed to read the upstream response body".to_string();
             record_image_activity(
                 state,
                 access,
@@ -221,7 +226,7 @@ pub(super) async fn create_image_generation_with_candidate(
                     model_upstream,
                     status: "failed",
                     http_status: upstream_status.as_u16() as i64,
-                    error_code: Some("upstream_body"),
+                    error_code: Some(ActivityErrorCode::UPSTREAM_BODY),
                     is_streaming: false,
                     latency_ms: started_at.elapsed().as_millis() as i64,
                     upstream_latency_ms: Some(upstream_latency_ms),

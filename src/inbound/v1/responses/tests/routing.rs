@@ -19,7 +19,7 @@ async fn forwards_responses_request_to_chat_completions_upstream() {
     let response = create_response(
         State(state),
         auth.access,
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "input": "hello"
         })),
@@ -51,7 +51,7 @@ async fn forwards_responses_request_to_native_upstream() {
     let response = create_response(
         State(state),
         auth.access,
-        axum::Json(json!({
+        V1Json(json!({
             "model": "gpt-4.1",
             "input": "hello"
         })),

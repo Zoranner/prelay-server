@@ -88,6 +88,10 @@ pub enum StorageError {
     ProviderNotVisible,
     ProviderNotUsable,
     ProviderRouteUnavailable,
+    ProviderModelRetired(String),
+    ProviderTypeUnsupported(String),
+    EndpointModelDuplicate,
+    EndpointModelNotInProviderModels(String),
     EndpointNotFound,
     ActivityNotFound,
     MemoryNotFound,
@@ -112,6 +116,12 @@ impl StorageError {
             Self::ProviderNotVisible => ProtocolErrorCode::ProviderNotVisible,
             Self::ProviderNotUsable => ProtocolErrorCode::ProviderNotUsable,
             Self::ProviderRouteUnavailable => ProtocolErrorCode::ProviderRouteUnavailable,
+            Self::ProviderModelRetired(_) => ProtocolErrorCode::ProviderModelRetired,
+            Self::ProviderTypeUnsupported(_) => ProtocolErrorCode::ProviderTypeUnsupported,
+            Self::EndpointModelDuplicate => ProtocolErrorCode::EndpointModelDuplicate,
+            Self::EndpointModelNotInProviderModels(_) => {
+                ProtocolErrorCode::EndpointModelNotInProviderModels
+            }
             Self::IdentityNotFound
             | Self::ProviderNotFound
             | Self::EndpointNotFound
@@ -161,6 +171,24 @@ impl fmt::Display for StorageError {
             Self::ProviderNotUsable => formatter.write_str("provider is not usable by identity"),
             Self::ProviderRouteUnavailable => {
                 formatter.write_str("provider route is no longer available")
+            }
+            Self::ProviderModelRetired(detail) => {
+                write!(
+                    formatter,
+                    "provider models are no longer in the catalog: {detail}"
+                )
+            }
+            Self::ProviderTypeUnsupported(detail) => {
+                write!(formatter, "provider type is not usable: {detail}")
+            }
+            Self::EndpointModelDuplicate => {
+                formatter.write_str("endpoint model is already bound to the same provider")
+            }
+            Self::EndpointModelNotInProviderModels(detail) => {
+                write!(
+                    formatter,
+                    "endpoint model is not enabled by the provider: {detail}"
+                )
             }
             Self::Crypto(message) => write!(formatter, "key encryption failed: {message}"),
             Self::Recording(message) => write!(formatter, "recording is unavailable: {message}"),

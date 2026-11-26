@@ -49,7 +49,7 @@ async fn fails_over_from_server_error_to_second_image_candidate() {
     let response = create_image_generation(
         State(state.clone()),
         auth.access,
-        Json(json!({
+        V1Json(json!({
             "model": "image-upstream",
             "prompt": "private prompt"
         })),
@@ -136,7 +136,7 @@ async fn fails_over_when_failed_activity_cannot_be_written() {
     let response = create_image_generation(
         State(state),
         auth.access,
-        Json(json!({
+        V1Json(json!({
             "model": "image-upstream",
             "prompt": "private prompt"
         })),

@@ -50,7 +50,11 @@ async fn get_provider(
         .provider_catalog
         .provider_response(&provider_id)
         .map(Json)
-        .ok_or_else(|| ApiError::not_found(format!("供应商目录项不存在: {provider_id}")))
+        .ok_or_else(|| {
+            ApiError::not_found(format!(
+                "catalog provider not found: provider_id={provider_id}"
+            ))
+        })
 }
 
 async fn list_language_models(
@@ -67,7 +71,11 @@ async fn get_language_model(
         .provider_catalog
         .language_model_response(&model_id)
         .map(Json)
-        .ok_or_else(|| ApiError::not_found(format!("语言模型目录项不存在: {model_id}")))
+        .ok_or_else(|| {
+            ApiError::not_found(format!(
+                "catalog language model not found: model_id={model_id}"
+            ))
+        })
 }
 
 async fn list_image_generation_models(
@@ -84,5 +92,9 @@ async fn get_image_generation_model(
         .provider_catalog
         .image_generation_model_response(&model_id)
         .map(Json)
-        .ok_or_else(|| ApiError::not_found(format!("图像生成模型目录项不存在: {model_id}")))
+        .ok_or_else(|| {
+            ApiError::not_found(format!(
+                "catalog image generation model not found: model_id={model_id}"
+            ))
+        })
 }

@@ -14,7 +14,7 @@ pub fn decode_chat_request(value: Value) -> Result<InternalRequest, AppError> {
         .get("model")
         .and_then(Value::as_str)
         .filter(|model| !model.trim().is_empty())
-        .ok_or_else(|| AppError::BadRequest("model 不能为空".to_string()))?
+        .ok_or_else(|| AppError::BadRequest("model must not be empty".to_string()))?
         .to_string();
     let stream = value
         .get("stream")
@@ -39,7 +39,7 @@ pub fn decode_chat_request(value: Value) -> Result<InternalRequest, AppError> {
     let messages = value
         .get("messages")
         .and_then(Value::as_array)
-        .ok_or_else(|| AppError::BadRequest("messages 必须是数组".to_string()))?
+        .ok_or_else(|| AppError::BadRequest("messages must be an array".to_string()))?
         .iter()
         .map(decode_message)
         .collect::<Result<Vec<_>, _>>()?;
@@ -173,7 +173,7 @@ fn decode_tools(value: Option<&Value>) -> Result<Vec<InternalTool>, AppError> {
     };
     let tools = value
         .as_array()
-        .ok_or_else(|| AppError::BadRequest("tools 必须是数组".to_string()))?;
+        .ok_or_else(|| AppError::BadRequest("tools must be an array".to_string()))?;
     tools
         .iter()
         .map(|tool| {
@@ -182,7 +182,9 @@ fn decode_tools(value: Option<&Value>) -> Result<Vec<InternalTool>, AppError> {
                 .get("name")
                 .and_then(Value::as_str)
                 .filter(|name| !name.trim().is_empty())
-                .ok_or_else(|| AppError::BadRequest("tool.function.name 不能为空".to_string()))?
+                .ok_or_else(|| {
+                    AppError::BadRequest("tool.function.name must not be empty".to_string())
+                })?
                 .to_string();
             let description = function
                 .get("description")

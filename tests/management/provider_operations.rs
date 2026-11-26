@@ -152,11 +152,15 @@ async fn management_provider_operations_return_failure_envelopes_for_upstream_ne
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(response["ok"], false);
-    let error = response["error"].as_str().expect("operation error");
+    let error_code = response["error_code"].as_str().unwrap_or_default();
     assert!(
-        ["上游测试超时", "上游连接失败", "上游测试失败"]
-            .iter()
-            .any(|prefix| error.starts_with(prefix)),
+        [
+            "upstream_connect_timeout",
+            "upstream_connect_failed",
+            "upstream_test_failed"
+        ]
+        .contains(&error_code),
         "{response}"
     );
+    assert!(response["error"].as_str().is_some(), "{response}");
 }

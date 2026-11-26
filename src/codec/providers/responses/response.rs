@@ -20,7 +20,7 @@ pub fn decode_responses_response(value: Value) -> Result<InternalResponse, AppEr
         .get("output")
         .and_then(Value::as_array)
         .ok_or_else(|| AppError::UpstreamInvalidResponse {
-            message: "上游响应格式无效".to_string(),
+            message: "invalid upstream response format".to_string(),
         })?
         .iter()
         .filter_map(decode_output_item)

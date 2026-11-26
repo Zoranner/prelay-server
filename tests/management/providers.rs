@@ -37,6 +37,7 @@ async fn management_provider_round_trips_model_list() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error["error"]["code"], "provider_model_retired");
     assert!(
         error["error"]["message"]
             .as_str()

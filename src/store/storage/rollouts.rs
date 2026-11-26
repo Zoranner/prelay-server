@@ -6,6 +6,7 @@ use sea_orm::{
 
 use crate::{
     domain::activity::rollout::{RolloutStatus, RolloutSummary},
+    domain::activity::ActivityErrorCode,
     domain::stats::ActivityInsert,
     store::entity::{activity_rollouts, identity::activities},
 };
@@ -214,7 +215,7 @@ impl Storage {
             )
             .col_expr(
                 activities::Column::ErrorCode,
-                sea_orm::sea_query::Expr::value("activity_interrupted"),
+                sea_orm::sea_query::Expr::value(ActivityErrorCode::ACTIVITY_INTERRUPTED),
             )
             .col_expr(
                 activities::Column::ErrorMessage,

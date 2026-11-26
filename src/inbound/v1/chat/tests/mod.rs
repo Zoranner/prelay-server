@@ -15,6 +15,7 @@ use tokio::net::TcpListener;
 use tower::ServiceExt;
 
 use super::{handler::create_chat_completion, router};
+pub(crate) use crate::inbound::v1::error::V1Json;
 use crate::{
     domain::registry::ProviderCapabilityOverrides,
     inbound::v1::endpoint_resolver::{

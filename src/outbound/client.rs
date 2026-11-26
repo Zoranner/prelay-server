@@ -103,15 +103,21 @@ pub async fn send_with_timeout(
         Ok(Ok(response)) => Ok(response),
         Ok(Err(error)) if error.is_timeout() => Err(AppError::Upstream {
             status: Some(StatusCode::GATEWAY_TIMEOUT),
-            message: format!("上游在 {} 秒内未返回响应头", timeout.as_secs()),
+            message: format!(
+                "upstream did not return response headers within {}s",
+                timeout.as_secs()
+            ),
         }),
         Ok(Err(error)) => Err(AppError::Upstream {
             status: None,
-            message: format!("上游连接失败: {error}"),
+            message: format!("upstream connect failed: {error}"),
         }),
         Err(_) => Err(AppError::Upstream {
             status: Some(StatusCode::GATEWAY_TIMEOUT),
-            message: format!("上游在 {} 秒内未返回响应头", timeout.as_secs()),
+            message: format!(
+                "upstream did not return response headers within {}s",
+                timeout.as_secs()
+            ),
         }),
     }
 }
@@ -379,7 +385,7 @@ mod tests {
             AppError::Upstream {
                 status: Some(StatusCode::GATEWAY_TIMEOUT),
                 message,
-            } => assert!(message.contains("未返回响应头")),
+            } => assert!(message.contains("did not return response headers")),
             other => panic!("expected a gateway timeout, got {other:?}"),
         }
         server.abort();

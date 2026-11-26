@@ -325,7 +325,7 @@ async fn ensure_name_available(
     }
     if query.one(transaction).await?.is_some() {
         return Err(StorageError::ValidationFailed(format!(
-            "接入点名称“{name}”已被占用，请换一个名称"
+            "endpoint name is already in use: name={name}"
         )));
     }
     Ok(())

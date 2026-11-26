@@ -1,11 +1,9 @@
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
-use serde_json::json;
 
-use prelay_protocol::ProtocolErrorCode;
+use prelay_protocol::{ProtocolErrorCode, V1ErrorCode};
 
 #[derive(Debug)]
 pub enum AppError {
@@ -37,76 +35,35 @@ pub enum AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let (status, error) = match self {
-            AppError::NotFound(message) => (StatusCode::NOT_FOUND, json!(message)),
-            AppError::Unauthorized => (StatusCode::UNAUTHORIZED, json!("Invalid or missing token")),
-            AppError::BadRequest(message) => (StatusCode::BAD_REQUEST, json!(message)),
-            AppError::PayloadTooLarge(message) => (StatusCode::PAYLOAD_TOO_LARGE, json!(message)),
-            AppError::Upstream { status, message } => {
-                (status.unwrap_or(StatusCode::BAD_GATEWAY), json!(message))
-            }
-            AppError::UpstreamInvalidResponse { message } => {
-                (StatusCode::BAD_GATEWAY, json!(message))
-            }
-            AppError::Protocol { code, message } => {
-                let status = http_status_for(code);
-                let message = if code == ProtocolErrorCode::Internal {
-                    tracing::error!(
-                        error_code = code.as_str(),
-                        http_status = status.as_u16(),
-                        "Internal protocol error"
-                    );
-                    "Internal server error".to_string()
-                } else {
-                    message
-                };
-
-                (status, json!({ "code": code.as_str(), "message": message }))
-            }
-            AppError::OpenAi {
-                status,
-                error_type,
-                code,
-                param,
-                message,
-            } => (
-                status,
-                json!({
-                    "type": error_type,
-                    "code": code,
-                    "param": param,
-                    "message": message,
-                }),
-            ),
-            AppError::RecordingUnavailable(_message) => {
+        match &self {
+            AppError::Protocol {
+                code: ProtocolErrorCode::Internal,
+                ..
+            } => {
                 tracing::error!(
-                    error_code = "recording_unavailable",
-                    http_status = StatusCode::SERVICE_UNAVAILABLE.as_u16(),
-                    "Recording service is unavailable"
+                    error_code = ProtocolErrorCode::Internal.as_str(),
+                    http_status = StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                    "Internal protocol error"
                 );
-                (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    json!({
-                        "type": "server_error",
-                        "code": "recording_unavailable",
-                        "message": "Recording service unavailable",
-                    }),
-                )
             }
-            AppError::Internal(_error) => {
+            AppError::Internal(_) => {
                 tracing::error!(
                     error_code = ProtocolErrorCode::Internal.as_str(),
                     http_status = StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
                     "Internal server error"
                 );
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    json!("Internal server error"),
-                )
             }
-        };
+            AppError::RecordingUnavailable(_) => {
+                tracing::error!(
+                    error_code = V1ErrorCode::RecordingUnavailable.as_str(),
+                    http_status = StatusCode::SERVICE_UNAVAILABLE.as_u16(),
+                    "Recording service is unavailable"
+                );
+            }
+            _ => {}
+        }
 
-        (status, Json(json!({ "error": error }))).into_response()
+        crate::inbound::v1::error::V1Error::from(self).into_response()
     }
 }
 
@@ -124,6 +81,11 @@ pub(crate) fn http_status_for(code: ProtocolErrorCode) -> StatusCode {
         ProtocolErrorCode::ProviderNotVisible => StatusCode::NOT_FOUND,
         ProtocolErrorCode::ProviderNotUsable => StatusCode::UNPROCESSABLE_ENTITY,
         ProtocolErrorCode::ProviderRouteUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+        ProtocolErrorCode::ProviderUpstreamUnavailable => StatusCode::BAD_GATEWAY,
+        ProtocolErrorCode::ProviderModelRetired
+        | ProtocolErrorCode::ProviderTypeUnsupported
+        | ProtocolErrorCode::EndpointModelDuplicate
+        | ProtocolErrorCode::EndpointModelNotInProviderModels => StatusCode::BAD_REQUEST,
         ProtocolErrorCode::InvalidCredential => StatusCode::UNAUTHORIZED,
         ProtocolErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         ProtocolErrorCode::ExtensionInstallUnsupported
@@ -137,7 +99,7 @@ impl AppError {
         Self::OpenAi {
             status: StatusCode::BAD_REQUEST,
             error_type: "invalid_request_error",
-            code: "invalid_request_error",
+            code: V1ErrorCode::InvalidRequestError.as_str(),
             param: Some(param),
             message: message.into(),
         }
@@ -147,7 +109,7 @@ impl AppError {
         Self::OpenAi {
             status: StatusCode::BAD_REQUEST,
             error_type: "invalid_request_error",
-            code: "unsupported_parameter",
+            code: V1ErrorCode::UnsupportedParameter.as_str(),
             param: Some(param),
             message: message.into(),
         }
@@ -157,7 +119,7 @@ impl AppError {
         Self::OpenAi {
             status: StatusCode::BAD_REQUEST,
             error_type: "invalid_request_error",
-            code: "previous_response_not_found",
+            code: V1ErrorCode::PreviousResponseNotFound.as_str(),
             param: Some("previous_response_id"),
             message: "Previous response not found".to_string(),
         }
@@ -306,7 +268,9 @@ mod tests {
             payload,
             json!({
                 "error": {
+                    "type": "server_error",
                     "code": "internal",
+                    "param": null,
                     "message": "Internal server error"
                 }
             })
@@ -334,7 +298,9 @@ mod tests {
             payload,
             json!({
                 "error": {
+                    "type": "server_error",
                     "code": "internal",
+                    "param": null,
                     "message": "Internal server error"
                 }
             })
@@ -349,7 +315,7 @@ mod tests {
     async fn preserves_a_safe_upstream_http_status_for_clients() {
         let response = AppError::Upstream {
             status: Some(StatusCode::FORBIDDEN),
-            message: "上游请求失败: 403 Forbidden".to_string(),
+            message: "upstream request failed: status=403 Forbidden".to_string(),
         }
         .into_response();
 
@@ -359,14 +325,22 @@ mod tests {
             .expect("read error response");
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&body).expect("error response is JSON"),
-            json!({ "error": "上游请求失败: 403 Forbidden" })
+            json!({
+                "error": {
+                    "type": "api_error",
+                    "code": "upstream_status",
+                    "param": null,
+                    "message": "upstream request failed: status=403 Forbidden"
+                }
+            })
         );
     }
 
     #[tokio::test]
     async fn payload_too_large_is_a_413() {
-        let response = AppError::PayloadTooLarge("图片请求体超过上游预算，请减少图片".to_string())
-            .into_response();
+        let response =
+            AppError::PayloadTooLarge("image payload exceeds the upstream budget".to_string())
+                .into_response();
 
         assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
         let body = to_bytes(response.into_body(), 1024 * 1024)
@@ -374,8 +348,58 @@ mod tests {
             .expect("read error response");
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&body).expect("error response is JSON"),
-            json!({ "error": "图片请求体超过上游预算，请减少图片" })
+            json!({
+                "error": {
+                    "type": "invalid_request_error",
+                    "code": "payload_too_large",
+                    "param": null,
+                    "message": "image payload exceeds the upstream budget"
+                }
+            })
         );
+    }
+
+    #[tokio::test]
+    async fn every_inference_error_uses_the_openai_envelope() {
+        for (error, expected_status, expected_code) in [
+            (
+                AppError::Unauthorized,
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+            ),
+            (
+                AppError::NotFound("route does not exist".to_string()),
+                StatusCode::NOT_FOUND,
+                "not_found",
+            ),
+            (
+                AppError::BadRequest("model must not be empty".to_string()),
+                StatusCode::BAD_REQUEST,
+                "invalid_request_error",
+            ),
+            (
+                AppError::Protocol {
+                    code: ProtocolErrorCode::ProviderNotVisible,
+                    message: "provider is not visible to identity".to_string(),
+                },
+                StatusCode::NOT_FOUND,
+                "not_found",
+            ),
+        ] {
+            let response = error.into_response();
+            assert_eq!(response.status(), expected_status);
+
+            let body = to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .expect("read error response");
+            let payload: serde_json::Value =
+                serde_json::from_slice(&body).expect("error response is JSON");
+
+            assert_eq!(payload["error"]["code"], expected_code);
+            assert!(payload["error"]["type"].is_string());
+            assert!(payload["error"]["message"].is_string());
+            assert!(payload["error"].get("param").is_some());
+        }
     }
 
     #[tokio::test]

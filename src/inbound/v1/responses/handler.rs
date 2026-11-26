@@ -3,7 +3,6 @@ use std::sync::Arc;
 use axum::{
     extract::{Extension, State},
     response::Response,
-    Json,
 };
 use serde_json::Value;
 
@@ -14,6 +13,7 @@ use crate::{
         auth::CurrentProtocolAccess,
         candidates::{hold_reservation, run_endpoint_model_candidates},
         endpoint_resolver::resolve_language_model_candidates,
+        error::V1Json,
     },
     service::recording::record_provider_observation_best_effort,
     store::storage::{ProtocolAccess, ResponseState},
@@ -38,7 +38,7 @@ pub(super) struct ResponseCandidateRequest {
 pub(super) async fn create_response(
     State(state): State<AppState>,
     Extension(access): Extension<CurrentProtocolAccess>,
-    Json(payload): Json<Value>,
+    V1Json(payload): V1Json<Value>,
 ) -> Result<Response, AppError> {
     let started_at = std::time::Instant::now();
     let started_at_wall = chrono::Utc::now();
@@ -91,7 +91,9 @@ pub(super) async fn create_response(
     let (response, provider_id, reservation) = run_endpoint_model_candidates(
         candidates,
         &state.failover,
-        AppError::BadRequest(format!("接入点未配置模型 {model_requested}")),
+        AppError::BadRequest(format!(
+            "endpoint is not configured for model={model_requested}"
+        )),
         move |resolved| {
             let quota = quota.clone();
             let storage = storage.clone();

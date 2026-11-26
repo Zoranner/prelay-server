@@ -35,7 +35,7 @@ pub fn decode_chat_response(value: Value) -> Result<InternalResponse, AppError> 
             });
         }
         return Err(AppError::UpstreamInvalidResponse {
-            message: "上游响应格式无效".to_string(),
+            message: "invalid upstream response format".to_string(),
         });
     };
     let reasoning_content = message

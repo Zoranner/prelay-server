@@ -39,7 +39,7 @@ async fn fails_over_and_keeps_the_session_on_the_healthy_candidate() {
     let first = create_chat_completion(
         State(state.clone()),
         auth.access.clone(),
-        axum::Json(payload.clone()),
+        V1Json(payload.clone()),
     )
     .await
     .expect("fall back to the healthy candidate");
@@ -65,7 +65,7 @@ async fn fails_over_and_keeps_the_session_on_the_healthy_candidate() {
     assert_eq!(first_attempt_paths[0], first_attempt_paths[1]);
 
     state.failover.clear(&primary_id);
-    let second = create_chat_completion(State(state.clone()), auth.access, axum::Json(payload))
+    let second = create_chat_completion(State(state.clone()), auth.access, V1Json(payload))
         .await
         .expect("keep the session on the healthy candidate");
     assert_eq!(response_json(second).await["id"], "chatcmpl_test");
@@ -118,19 +118,15 @@ async fn new_session_starts_from_the_configured_order() {
     create_chat_completion(
         State(state.clone()),
         auth.access.clone(),
-        axum::Json(payload.clone()),
+        V1Json(payload.clone()),
     )
     .await
     .expect("first session falls back to the healthy candidate");
     state.failover.clear(&primary_id);
     auth.access.0.session_id = Some("session-b".to_string());
-    create_chat_completion(
-        State(state.clone()),
-        auth.access.clone(),
-        axum::Json(payload),
-    )
-    .await
-    .expect("new session starts from the configured order");
+    create_chat_completion(State(state.clone()), auth.access.clone(), V1Json(payload))
+        .await
+        .expect("new session starts from the configured order");
 
     let logs = state
         .storage

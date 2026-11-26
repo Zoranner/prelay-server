@@ -56,8 +56,10 @@ pub fn upstream_error_message(body: &str) -> Option<String> {
 /// 响应体与请求记录共用同一份文本，避免记录里有原因、返回给客户端却没有。
 pub fn upstream_failure_message(status: impl std::fmt::Display, body: &str) -> String {
     match upstream_error_message(body) {
-        Some(message) => format!("上游请求失败: {status}: {message}"),
-        None => format!("上游请求失败: {status}"),
+        Some(message) => {
+            format!("upstream request failed: status={status}; detail={message}")
+        }
+        None => format!("upstream request failed: status={status}"),
     }
 }
 
@@ -145,11 +147,11 @@ mod tests {
 
         assert_eq!(
             upstream_failure_message("403 Forbidden", body),
-            "上游请求失败: 403 Forbidden: upstream failed"
+            "upstream request failed: status=403 Forbidden; detail=upstream failed"
         );
         assert_eq!(
             upstream_failure_message("429 Too Many Requests", ""),
-            "上游请求失败: 429 Too Many Requests"
+            "upstream request failed: status=429 Too Many Requests"
         );
     }
 }

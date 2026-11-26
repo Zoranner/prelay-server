@@ -10,7 +10,7 @@ use crate::{
     codec::bridge::stream::SharedStreamStats,
     domain::{
         activity::rollout::SessionContext,
-        activity::{ContentDraft, RawStreamContentCapture},
+        activity::{ActivityErrorCode, ContentDraft, RawStreamContentCapture},
         stats::ActivityInsert,
     },
     service::recording::{
@@ -178,7 +178,7 @@ where
         log.status = "failed".to_string();
         log.http_status = 502;
         log.latency_ms = started_at.elapsed().as_millis() as i64;
-        log.error_code = Some("empty_stream".to_string());
+        log.error_code = Some(ActivityErrorCode::EMPTY_STREAM.to_string());
         log.error_message = Some("upstream stream finished without chunks".to_string());
         record_completed_turn(
             state,
@@ -209,7 +209,7 @@ where
         log.http_status = 502;
         log.first_token_ms = None;
         log.latency_ms = first_token_ms;
-        log.error_code = Some("stream_error".to_string());
+        log.error_code = Some(ActivityErrorCode::STREAM_ERROR.to_string());
         log.error_message = first.as_ref().err().map(ToString::to_string);
     }
 
@@ -253,10 +253,13 @@ where
         response_session,
         session_context,
         failed: !first_is_ok,
-        failure: first
-            .as_ref()
-            .err()
-            .map(|error| (502, "stream_error".to_string(), error.to_string())),
+        failure: first.as_ref().err().map(|error| {
+            (
+                502,
+                ActivityErrorCode::STREAM_ERROR.to_string(),
+                error.to_string(),
+            )
+        }),
         finished: false,
     };
     let (sender, receiver) = mpsc::channel(forward::CHANNEL_CAPACITY);

@@ -73,6 +73,6 @@ async fn cached_update(
 fn unavailable_error() -> ApiError {
     ApiError::new(
         ProtocolErrorCode::ClientUpdateUnavailable,
-        "客户端更新包暂不可用",
+        "client update package is not available",
     )
 }

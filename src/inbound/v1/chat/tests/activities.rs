@@ -20,7 +20,7 @@ async fn records_successful_chat_completion_activity() {
     let _response = create_chat_completion(
         State(state.clone()),
         auth.access,
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "messages": [
                 { "role": "user", "content": "hello" }
@@ -78,7 +78,7 @@ async fn records_chat_prompt_cache_write_tokens() {
     create_chat_completion(
         State(state.clone()),
         auth.access,
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "messages": [{ "role": "user", "content": "hello" }]
         })),
@@ -115,7 +115,7 @@ async fn records_successful_chat_completion_upstream_request_id() {
     let _response = create_chat_completion(
         State(state.clone()),
         auth.access,
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "messages": [
                 { "role": "user", "content": "hello" }
@@ -156,7 +156,7 @@ async fn records_failed_chat_completion_upstream_request_id_and_error_message() 
     let error = create_chat_completion(
         State(state.clone()),
         auth.access,
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "messages": [
                 { "role": "user", "content": "hello" }

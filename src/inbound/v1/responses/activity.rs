@@ -2,7 +2,7 @@ use axum::http::StatusCode;
 use chrono::Utc;
 
 use crate::{
-    domain::activity::ContentDraft,
+    domain::activity::{ActivityErrorCode, ContentDraft},
     domain::registry::ProviderConfig,
     domain::stats::ActivityInsert,
     error::AppError,
@@ -18,27 +18,31 @@ pub(super) fn upstream_error_details(error: &AppError) -> (&'static str, StatusC
             status: Some(StatusCode::GATEWAY_TIMEOUT),
             message,
         } => (
-            "upstream_response_head_timeout",
+            ActivityErrorCode::UPSTREAM_RESPONSE_HEAD_TIMEOUT,
             StatusCode::GATEWAY_TIMEOUT,
             message.clone(),
         ),
         AppError::Upstream {
             status: Some(status),
             message,
-        } => ("upstream_status", *status, message.clone()),
+        } => (ActivityErrorCode::UPSTREAM_STATUS, *status, message.clone()),
         AppError::Upstream {
             status: None,
             message,
-        } => ("upstream_connect", StatusCode::BAD_GATEWAY, message.clone()),
+        } => (
+            ActivityErrorCode::UPSTREAM_CONNECT,
+            StatusCode::BAD_GATEWAY,
+            message.clone(),
+        ),
         AppError::UpstreamInvalidResponse { message } => (
-            "upstream_invalid_response",
+            ActivityErrorCode::UPSTREAM_INVALID_RESPONSE,
             StatusCode::BAD_GATEWAY,
             message.clone(),
         ),
         _ => (
-            "upstream_error",
+            ActivityErrorCode::UPSTREAM_ERROR,
             StatusCode::BAD_GATEWAY,
-            "上游请求失败".to_string(),
+            "upstream request failed".to_string(),
         ),
     }
 }
@@ -116,6 +120,7 @@ mod tests {
     use axum::http::StatusCode;
 
     use super::upstream_error_details;
+    use crate::domain::activity::ActivityErrorCode;
     use crate::error::AppError;
 
     #[test]
@@ -128,7 +133,7 @@ mod tests {
         assert_eq!(
             upstream_error_details(&error),
             (
-                "upstream_response_head_timeout",
+                ActivityErrorCode::UPSTREAM_RESPONSE_HEAD_TIMEOUT,
                 StatusCode::GATEWAY_TIMEOUT,
                 "上游在 240 秒内未返回响应头".to_string(),
             )
@@ -144,7 +149,7 @@ mod tests {
         assert_eq!(
             upstream_error_details(&error),
             (
-                "upstream_invalid_response",
+                ActivityErrorCode::UPSTREAM_INVALID_RESPONSE,
                 StatusCode::BAD_GATEWAY,
                 "上游响应格式无效".to_string(),
             )

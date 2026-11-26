@@ -41,7 +41,7 @@ impl AppState {
             .client(proxy_url, outbound::client::policy())
             .map_err(|_| AppError::Upstream {
                 status: None,
-                message: format!("供应商代理地址不可用 {display_url}"),
+                message: format!("provider proxy is unavailable: {display_url}"),
             })
     }
 }

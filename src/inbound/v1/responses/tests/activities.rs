@@ -20,7 +20,7 @@ async fn reuses_one_thread_file_across_response_activities() {
     let first = create_response(
         State(state.clone()),
         auth.access.clone(),
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "input": "first user"
         })),
@@ -33,7 +33,7 @@ async fn reuses_one_thread_file_across_response_activities() {
     create_response(
         State(state.clone()),
         auth.access.clone(),
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "previous_response_id": first_id,
             "input": "second user"
@@ -129,7 +129,7 @@ async fn records_successful_response_activity() {
     let _response = create_response(
         State(state.clone()),
         auth.access.clone(),
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "input": "hello"
         })),
@@ -190,7 +190,7 @@ async fn records_failed_response_activity_when_upstream_fails() {
     let error = create_response(
         State(state.clone()),
         auth.access.clone(),
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "input": "hello"
         })),
@@ -242,7 +242,7 @@ async fn records_native_response_content_events() {
     create_response(
         State(state.clone()),
         auth.access.clone(),
-        axum::Json(json!({
+        V1Json(json!({
             "model": "gpt-4.1",
             "input": "hello"
         })),

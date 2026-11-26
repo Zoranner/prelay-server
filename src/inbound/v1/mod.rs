@@ -6,6 +6,7 @@ pub mod auth;
 mod candidates;
 mod chat;
 mod endpoint_resolver;
+pub mod error;
 mod images;
 mod models;
 mod responses;
@@ -22,6 +23,8 @@ pub fn router(state: AppState) -> Router {
             state,
             auth::require_protocol_auth,
         ))
+        .fallback(error::V1Error::route_not_found)
+        .method_not_allowed_fallback(error::V1Error::method_not_allowed)
 }
 
 pub fn initialize_image_budget_from_environment() -> Result<(), String> {

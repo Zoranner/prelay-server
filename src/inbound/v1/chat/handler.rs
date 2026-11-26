@@ -1,7 +1,6 @@
 use axum::{
     extract::{Extension, State},
     response::Response,
-    Json,
 };
 use serde_json::Value;
 
@@ -11,6 +10,7 @@ use crate::{
         auth::CurrentProtocolAccess,
         candidates::{hold_reservation, run_endpoint_model_candidates},
         endpoint_resolver::resolve_language_model_candidates,
+        error::V1Json,
     },
     service::recording::record_provider_observation_best_effort,
     store::storage::ProtocolAccess,
@@ -22,14 +22,14 @@ use super::candidate::{create_chat_completion_with_candidate, ChatCandidateReque
 pub(super) async fn create_chat_completion(
     State(state): State<AppState>,
     Extension(access): Extension<CurrentProtocolAccess>,
-    Json(payload): Json<Value>,
+    V1Json(payload): V1Json<Value>,
 ) -> Result<Response, AppError> {
     let started_at = std::time::Instant::now();
     let started_at_wall = chrono::Utc::now();
     let model = payload
         .get("model")
         .and_then(Value::as_str)
-        .ok_or_else(|| AppError::BadRequest("model 不能为空".to_string()))?
+        .ok_or_else(|| AppError::BadRequest("model must not be empty".to_string()))?
         .to_string();
     let is_streaming = payload
         .get("stream")
@@ -67,7 +67,7 @@ pub(super) async fn create_chat_completion(
     let (response, provider_id, reservation) = run_endpoint_model_candidates(
         candidates,
         &state.failover,
-        AppError::BadRequest(format!("接入点未配置模型 {model}")),
+        AppError::BadRequest(format!("endpoint is not configured for model={model}")),
         move |resolved| {
             let quota = quota.clone();
             let storage = storage.clone();

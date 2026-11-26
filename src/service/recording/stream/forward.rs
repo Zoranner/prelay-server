@@ -10,6 +10,7 @@ use futures::{Stream, StreamExt};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
+use crate::domain::activity::ActivityErrorCode;
 use crate::{
     codec::{
         activity::{
@@ -66,7 +67,11 @@ impl JournalStreamState {
             Err(error) => {
                 if !self.failed {
                     self.failed = true;
-                    self.failure = Some((502, "stream_error".to_string(), error.to_string()));
+                    self.failure = Some((
+                        502,
+                        ActivityErrorCode::STREAM_ERROR.to_string(),
+                        error.to_string(),
+                    ));
                 }
             }
         }
@@ -95,7 +100,7 @@ impl JournalStreamState {
             return self
                 .finish_failed(
                     502,
-                    "stream_error",
+                    ActivityErrorCode::STREAM_ERROR,
                     "upstream stream ended before a completion event",
                 )
                 .await;
@@ -254,7 +259,7 @@ pub(super) async fn forward_journal_stream(
     if first_failed {
         let (http_status, error_code, error_message) = state.failure.clone().unwrap_or((
             502,
-            "stream_error".to_string(),
+            ActivityErrorCode::STREAM_ERROR.to_string(),
             "upstream stream failed".to_string(),
         ));
         let _ = state
@@ -271,7 +276,7 @@ pub(super) async fn forward_journal_stream(
                     let _ = state
                         .finish_failed(
                             499,
-                            "downstream_disconnect",
+                            ActivityErrorCode::DOWNSTREAM_DISCONNECT,
                             "downstream client disconnected",
                         )
                         .await;
@@ -285,7 +290,7 @@ pub(super) async fn forward_journal_stream(
                 let _ = state
                     .finish_failed(
                         499,
-                        "downstream_disconnect",
+                        ActivityErrorCode::DOWNSTREAM_DISCONNECT,
                         "downstream client disconnected",
                     )
                     .await;
@@ -296,7 +301,7 @@ pub(super) async fn forward_journal_stream(
             } else {
                 let (http_status, error_code, error_message) = state.failure.clone().unwrap_or((
                     502,
-                    "stream_error".to_string(),
+                    ActivityErrorCode::STREAM_ERROR.to_string(),
                     "upstream stream ended before a completion event".to_string(),
                 ));
                 let _ = state
@@ -322,7 +327,7 @@ pub(super) async fn forward_journal_stream(
         if item_failed {
             let (http_status, error_code, error_message) = state.failure.clone().unwrap_or((
                 502,
-                "stream_error".to_string(),
+                ActivityErrorCode::STREAM_ERROR.to_string(),
                 "upstream stream failed".to_string(),
             ));
             let _ = state

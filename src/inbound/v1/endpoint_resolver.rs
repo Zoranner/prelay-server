@@ -53,11 +53,11 @@ pub async fn resolve_endpoint_model_candidates(
     if candidates.is_empty() {
         if not_enabled {
             return Err(AppError::BadRequest(format!(
-                "模型 {model} 不在供应商的模型清单里"
+                "model={model} is not enabled by the provider"
             )));
         }
         return Err(AppError::BadRequest(format!(
-            "接入点未配置支持 {downstream_protocol} 的模型 {model}"
+            "endpoint has no model={model} for protocol={downstream_protocol}"
         )));
     }
     Ok(candidates)

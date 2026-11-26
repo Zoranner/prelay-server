@@ -3,14 +3,14 @@ use chrono::Utc;
 use crate::{
     domain::activity::{
         rollout::{RolloutStatus, SessionContext},
-        RolloutSummary,
+        ActivityErrorCode, RolloutSummary,
     },
     store::storage::{InterruptedRollout, RecoveredRollout, StorageError},
 };
 
 use super::ActivityStore;
 
-const INTERRUPTED_CODE: &str = "activity_interrupted";
+const INTERRUPTED_CODE: &str = ActivityErrorCode::ACTIVITY_INTERRUPTED;
 const INTERRUPTED_MESSAGE: &str = "process interrupted before activity rollout completion";
 
 impl ActivityStore {
@@ -150,6 +150,7 @@ impl ActivityStore {
 #[cfg(test)]
 mod tests {
     use crate::domain::activity::rollout::{SessionContext, TurnContext};
+    use crate::domain::activity::ActivityErrorCode;
     use crate::domain::stats::ActivityInsert;
     use crate::service::activity::ActivityStore;
     use crate::store::rollout::RolloutStore;
@@ -258,7 +259,7 @@ mod tests {
         assert_eq!(recovered_activity.status, "failed");
         assert_eq!(
             recovered_activity.error_code.as_deref(),
-            Some("activity_interrupted")
+            Some(ActivityErrorCode::ACTIVITY_INTERRUPTED)
         );
     }
 

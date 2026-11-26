@@ -128,8 +128,10 @@ async fn management_rejections_use_the_error_envelope() {
 
         assert_eq!(status, expected_status, "{method} {path}");
         assert_eq!(error["error"]["code"], expected_code, "{method} {path}");
+        let message = error["error"]["message"].as_str();
+        assert!(message.is_some(), "{method} {path}: {error}");
         assert!(
-            error["error"]["message"].is_string(),
+            message.unwrap_or_default().is_ascii(),
             "{method} {path}: {error}"
         );
     }

@@ -189,7 +189,7 @@ pub(super) async fn create_chat_completion_with_candidate(
             .json::<Value>()
             .await
             .map_err(|_| AppError::UpstreamInvalidResponse {
-                message: "上游响应格式无效".to_string(),
+                message: "invalid upstream response format".to_string(),
             })?;
     let usage = crate::codec::usage::decode_usage(response.get("usage"));
     let tool_call_count = response

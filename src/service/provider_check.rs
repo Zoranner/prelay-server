@@ -18,16 +18,16 @@ pub(crate) async fn run_protocol_test(
 ) -> Result<ProviderOperationResponse, AppError> {
     let protocol = protocol_value.unwrap_or_default().trim();
     let upstream_protocol = UpstreamProtocol::from_capability_value(protocol)
-        .ok_or_else(|| AppError::BadRequest("协议不支持".to_string()))?;
+        .ok_or_else(|| AppError::BadRequest("protocol is not supported".to_string()))?;
     if upstream_protocol == UpstreamProtocol::ImageGenerations {
         return Err(AppError::BadRequest(
-            "Images Generations 协议不支持连通性测试".to_string(),
+            "protocol=images_generations does not support connectivity tests".to_string(),
         ));
     }
     let model = model_value
         .map(str::trim)
         .filter(|model| !model.is_empty())
-        .ok_or_else(|| AppError::BadRequest("测试模型不能为空".to_string()))?;
+        .ok_or_else(|| AppError::BadRequest("test model must not be empty".to_string()))?;
     let base_url = normalize_upstream_base_url(base_url);
     let started_at = std::time::Instant::now();
     let response = match send_protocol_test_request(
@@ -42,18 +42,20 @@ pub(crate) async fn run_protocol_test(
     {
         Ok(response) => response,
         Err(error) => {
+            let (error_code, message) = protocol_test_error(error);
             return Ok(ProviderOperationResponse {
                 ok: false,
                 protocol: Some(protocol.to_string()),
                 latency_ms: Some(started_at.elapsed().as_millis() as i64),
                 first_token_ms: None,
-                error: Some(sanitize_protocol_test_error(error)),
+                error_code: Some(error_code.to_string()),
+                error: Some(message),
             });
         }
     };
     let Some(response) = response else {
         return Err(AppError::BadRequest(
-            "Images Generations 协议不支持连通性测试".to_string(),
+            "protocol=images_generations does not support connectivity tests".to_string(),
         ));
     };
     let latency_ms = Some(started_at.elapsed().as_millis() as i64);
@@ -63,18 +65,24 @@ pub(crate) async fn run_protocol_test(
             protocol: Some(protocol.to_string()),
             latency_ms,
             first_token_ms: None,
-            error: Some(format!("上游测试失败: {}", response.status().as_u16())),
+            error_code: Some("upstream_status".to_string()),
+            error: Some(format!(
+                "upstream returned status={}",
+                response.status().as_u16()
+            )),
         });
     }
     let first_token_ms = match first_response_byte_ms(response, started_at).await {
         Ok(first_token_ms) => first_token_ms,
         Err(error) => {
+            let (error_code, message) = protocol_test_error(error);
             return Ok(ProviderOperationResponse {
                 ok: false,
                 protocol: Some(protocol.to_string()),
                 latency_ms: Some(started_at.elapsed().as_millis() as i64),
                 first_token_ms: None,
-                error: Some(sanitize_protocol_test_error(error)),
+                error_code: Some(error_code.to_string()),
+                error: Some(message),
             });
         }
     };
@@ -83,6 +91,7 @@ pub(crate) async fn run_protocol_test(
         protocol: Some(protocol.to_string()),
         latency_ms,
         first_token_ms,
+        error_code: None,
         error: None,
     })
 }
@@ -151,14 +160,20 @@ async fn first_response_byte_ms(
     }
 }
 
-fn sanitize_protocol_test_error(error: reqwest::Error) -> String {
+fn protocol_test_error(error: reqwest::Error) -> (&'static str, String) {
     if error.is_timeout() {
-        return "上游测试超时".to_string();
+        return (
+            "upstream_connect_timeout",
+            "upstream test timed out".to_string(),
+        );
     }
     if error.is_connect() {
-        return "上游连接失败".to_string();
+        return (
+            "upstream_connect_failed",
+            "upstream connect failed".to_string(),
+        );
     }
-    "上游测试失败".to_string()
+    ("upstream_test_failed", "upstream test failed".to_string())
 }
 
 #[cfg(test)]
@@ -181,7 +196,8 @@ mod tests {
 
         assert!(matches!(
             error,
-            AppError::BadRequest(message) if message == "Images Generations 协议不支持连通性测试"
+            AppError::BadRequest(message)
+                if message == "protocol=images_generations does not support connectivity tests"
         ));
     }
 
@@ -200,7 +216,8 @@ mod tests {
 
         assert!(matches!(
             error,
-            AppError::BadRequest(message) if message == "Images Generations 协议不支持连通性测试"
+            AppError::BadRequest(message)
+                if message == "protocol=images_generations does not support connectivity tests"
         ));
     }
 

@@ -33,7 +33,7 @@ async fn records_rate_limit_observability_without_image_content_but_keeps_rollou
     let error = create_image_generation(
         State(state.clone()),
         auth.access,
-        Json(json!({
+        V1Json(json!({
             "model": "image-upstream",
             "prompt": "private prompt"
         })),
@@ -117,7 +117,7 @@ async fn returns_success_bytes_when_activity_cannot_be_written() {
     let response = create_image_generation(
         State(state),
         auth.access,
-        Json(json!({
+        V1Json(json!({
             "model": "image-upstream",
             "prompt": "private prompt"
         })),
@@ -167,7 +167,7 @@ async fn logs_sanitized_failure_when_upstream_connection_fails() {
     let error = create_image_generation(
         State(state.clone()),
         auth.access,
-        Json(json!({
+        V1Json(json!({
             "model": "image-upstream",
             "prompt": "private prompt"
         })),
@@ -228,7 +228,7 @@ async fn logs_sanitized_failure_when_non_streaming_body_is_interrupted() {
     let error = create_image_generation(
         State(state.clone()),
         auth.access,
-        Json(json!({
+        V1Json(json!({
             "model": "image-upstream",
             "prompt": "private prompt"
         })),

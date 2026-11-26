@@ -9,6 +9,7 @@ use std::{
 };
 
 use super::{handler::create_image_generation, router};
+pub(crate) use crate::inbound::v1::error::V1Json;
 use crate::{
     inbound::v1::endpoint_resolver::{
         create_test_endpoint_auth, create_test_endpoint_auth_with_candidates, test_provider,

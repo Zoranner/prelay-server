@@ -76,11 +76,14 @@ async fn model_removed_from_provider_list_is_neither_listed_nor_routable() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error["error"]["code"], "invalid_request_error");
+    assert!(error["error"]["type"].is_string(), "{error}");
+    assert!(error["error"]["param"].is_null(), "{error}");
     assert!(
-        error["error"]
+        error["error"]["message"]
             .as_str()
             .unwrap_or_default()
-            .contains("不在供应商的模型清单里"),
+            .contains("not enabled by the provider"),
         "{error}"
     );
 }

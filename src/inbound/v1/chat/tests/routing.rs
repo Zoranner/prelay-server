@@ -22,7 +22,7 @@ async fn forwards_chat_completion_request_to_configured_upstream() {
     let response = create_chat_completion(
         State(state),
         auth.access,
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "messages": [
                 { "role": "user", "content": "hello" }
@@ -60,7 +60,7 @@ async fn forwards_the_configured_model_to_upstream() {
     let response = create_chat_completion(
         State(state),
         auth.access,
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "messages": [
                 { "role": "user", "content": "hello" }
@@ -93,7 +93,7 @@ async fn rejects_chat_when_provider_only_supports_responses_upstream_protocol() 
     let error = create_chat_completion(
         State(state),
         auth.access,
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "messages": [
                 { "role": "user", "content": "hello" }
@@ -134,7 +134,7 @@ async fn forwards_chat_completion_to_protocol_specific_base_url() {
     let response = create_chat_completion(
         State(state),
         auth.access,
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "messages": [
                 { "role": "user", "content": "hello" }
@@ -170,7 +170,7 @@ async fn forwards_configured_request_headers() {
     let response = create_chat_completion(
         State(state),
         auth.access,
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "messages": [
                 { "role": "user", "content": "hello" }

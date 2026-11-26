@@ -21,9 +21,9 @@ pub(super) fn decode_input(input: &Value) -> Result<Vec<InternalMessage>, AppErr
         }]);
     }
 
-    let items = input
-        .as_array()
-        .ok_or_else(|| AppError::BadRequest("input 必须是字符串或消息数组".to_string()))?;
+    let items = input.as_array().ok_or_else(|| {
+        AppError::BadRequest("input must be a string or an array of messages".to_string())
+    })?;
     let mut messages = Vec::new();
     for item in items {
         if let Some(message) = decode_item(item)? {

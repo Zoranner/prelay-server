@@ -9,7 +9,7 @@ pub(super) fn normalize_models(models: Vec<String>) -> Result<Vec<String>, Stora
         let model_id = model_id.trim().to_string();
         if model_id.is_empty() {
             return Err(StorageError::ValidationFailed(
-                "供应商模型不能为空".to_string(),
+                "provider model must not be empty".to_string(),
             ));
         }
         if normalized.contains(&model_id) {
@@ -37,9 +37,9 @@ pub(super) fn validate_models(
     if missing.is_empty() {
         return Ok(());
     }
-    Err(StorageError::ValidationFailed(format!(
-        "供应商 {provider_type} 的目录条目里已没有模型 {}，请先移除后再保存",
-        missing.join("、")
+    Err(StorageError::ProviderModelRetired(format!(
+        "provider_type={provider_type} models={}",
+        missing.join(",")
     )))
 }
 
@@ -62,15 +62,17 @@ pub(super) fn validate_catalog_provider(
 ) -> Result<(), StorageError> {
     let provider_type = provider_type.trim();
     let provider = catalog.provider(provider_type).ok_or_else(|| {
-        StorageError::ValidationFailed(format!("供应商类型 {provider_type} 不在当前模型目录里"))
+        StorageError::ProviderTypeUnsupported(format!(
+            "provider_type={provider_type} reason=not_in_catalog"
+        ))
     })?;
     match provider.status {
         ProviderStatus::Active => Ok(()),
-        ProviderStatus::Deprecated => Err(StorageError::ValidationFailed(format!(
-            "供应商类型 {provider_type} 已弃用，不能新建或编辑"
+        ProviderStatus::Deprecated => Err(StorageError::ProviderTypeUnsupported(format!(
+            "provider_type={provider_type} reason=deprecated"
         ))),
-        ProviderStatus::Retired => Err(StorageError::ValidationFailed(format!(
-            "供应商类型 {provider_type} 已退役"
+        ProviderStatus::Retired => Err(StorageError::ProviderTypeUnsupported(format!(
+            "provider_type={provider_type} reason=retired"
         ))),
     }
 }
@@ -100,7 +102,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            StorageError::ValidationFailed(message) if message.contains("已弃用")
+            StorageError::ProviderTypeUnsupported(detail) if detail.contains("reason=deprecated")
         ));
     }
 
@@ -113,7 +115,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            StorageError::ValidationFailed(message) if message.contains("不在当前模型目录里")
+            StorageError::ProviderTypeUnsupported(detail) if detail.contains("reason=not_in_catalog")
         ));
     }
 
@@ -126,7 +128,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            StorageError::ValidationFailed(message) if message.contains("已退役")
+            StorageError::ProviderTypeUnsupported(detail) if detail.contains("reason=retired")
         ));
     }
 

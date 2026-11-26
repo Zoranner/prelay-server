@@ -23,7 +23,7 @@ async fn native_non_streaming_returns_a_local_response_id() {
     let response = create_response(
         State(state),
         auth.access,
-        axum::Json(json!({
+        V1Json(json!({
             "model": "gpt-4.1",
             "input": "hello",
             "store": true
@@ -50,7 +50,7 @@ async fn previous_response_replays_exact_items_and_removes_upstream_state_fields
     let first = create_response(
         State(state.clone()),
         auth.access.clone(),
-        axum::Json(json!({
+        V1Json(json!({
             "model": "gpt-4.1",
             "input": "first",
             "store": true
@@ -64,7 +64,7 @@ async fn previous_response_replays_exact_items_and_removes_upstream_state_fields
     let second = create_response(
         State(state),
         auth.access,
-        axum::Json(json!({
+        V1Json(json!({
             "model": "gpt-4.1",
             "previous_response_id": parent_id,
             "instructions": "new instructions",
@@ -106,7 +106,7 @@ async fn previous_response_cannot_cross_identities() {
     let first = create_response(
         State(state.clone()),
         first_auth.access,
-        axum::Json(json!({
+        V1Json(json!({
             "model": "gpt-4.1",
             "input": "first",
             "store": true
@@ -120,7 +120,7 @@ async fn previous_response_cannot_cross_identities() {
     let error = create_response(
         State(state),
         second_auth.access,
-        axum::Json(json!({
+        V1Json(json!({
             "model": "gpt-4.1",
             "previous_response_id": parent_id,
             "input": "second",
@@ -153,7 +153,7 @@ async fn store_false_does_not_persist_a_continuable_response() {
     let first = create_response(
         State(state.clone()),
         auth.access.clone(),
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "input": "hello",
             "store": false
@@ -167,7 +167,7 @@ async fn store_false_does_not_persist_a_continuable_response() {
     let error = create_response(
         State(state),
         auth.access,
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "previous_response_id": id,
             "input": "again"
@@ -198,7 +198,7 @@ async fn prepends_previous_response_messages_to_upstream_chat_request() {
     let first = create_response(
         State(state.clone()),
         auth.access.clone(),
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "input": "first user"
         })),
@@ -212,7 +212,7 @@ async fn prepends_previous_response_messages_to_upstream_chat_request() {
     let second = create_response(
         State(state.clone()),
         auth.access.clone(),
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "previous_response_id": first_id,
             "input": "second user"
@@ -231,7 +231,7 @@ async fn prepends_previous_response_messages_to_upstream_chat_request() {
     let third = create_response(
         State(state.clone()),
         auth.access.clone(),
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "previous_response_id": second_id,
             "input": "third user"
@@ -285,7 +285,7 @@ async fn bridges_function_tool_call_roundtrip() {
     let first = create_response(
         State(state.clone()),
         auth.access.clone(),
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "input": "please read"
         })),
@@ -301,7 +301,7 @@ async fn bridges_function_tool_call_roundtrip() {
     let second = create_response(
         State(state.clone()),
         auth.access.clone(),
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "previous_response_id": first_id,
             "input": [
@@ -347,7 +347,7 @@ async fn rejects_unknown_previous_response_id() {
     let error = create_response(
         State(state),
         auth.access,
-        axum::Json(json!({
+        V1Json(json!({
             "model": "deepseek-chat",
             "previous_response_id": "resp_missing",
             "input": "second user"

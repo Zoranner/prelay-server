@@ -11,7 +11,8 @@ use crate::{
         bridge::stream::{SharedStreamStats, StreamStatsSnapshot},
     },
     domain::activity::{
-        ContentDraft, ContentEventBody, ConversationError, RawStreamContentCapture, RolloutStatus,
+        ActivityErrorCode, ContentDraft, ContentEventBody, ConversationError,
+        RawStreamContentCapture, RolloutStatus,
     },
     domain::stats::{ActivityInsert, StreamActivityUpdate},
     service::activity::ActivityStore,
@@ -65,7 +66,7 @@ impl StreamRecordState {
                 self.failed = true;
                 log.status = "failed".to_string();
                 log.http_status = 502;
-                log.error_code = Some("stream_error".to_string());
+                log.error_code = Some(ActivityErrorCode::STREAM_ERROR.to_string());
                 log.error_message = Some(error.to_string());
                 log.first_token_ms = None;
             }
@@ -101,7 +102,7 @@ impl StreamRecordState {
                     self.finalize_rollout(
                         RolloutStatus::Failed,
                         Some(502),
-                        Some("stream_error".to_string()),
+                        Some(ActivityErrorCode::STREAM_ERROR.to_string()),
                         Some(error.to_string()),
                     )
                     .await;
@@ -127,7 +128,7 @@ impl StreamRecordState {
             self.finalize_rollout(
                 RolloutStatus::Failed,
                 Some(502),
-                Some("stream_error".to_string()),
+                Some(ActivityErrorCode::STREAM_ERROR.to_string()),
                 Some("upstream stream failed".to_string()),
             )
             .await;
@@ -218,7 +219,7 @@ impl StreamRecordState {
         log.status = "failed".to_string();
         log.http_status = 502;
         log.latency_ms = self.started_at.elapsed().as_millis() as i64;
-        log.error_code = Some("empty_stream".to_string());
+        log.error_code = Some(ActivityErrorCode::EMPTY_STREAM.to_string());
         log.error_message = Some("upstream stream finished without chunks".to_string());
         let Some(mut rollout) = self.rollout.take() else {
             return match self.mode {
@@ -230,7 +231,7 @@ impl StreamRecordState {
         };
         if let Err(error) = rollout.append_content(ContentDraft::new(ContentEventBody::Error(
             ConversationError {
-                code: Some("empty_stream".to_string()),
+                code: Some(ActivityErrorCode::EMPTY_STREAM.to_string()),
                 message: "upstream stream finished without chunks".to_string(),
                 http_status: Some(502),
             },
@@ -243,7 +244,7 @@ impl StreamRecordState {
         let summary = match rollout.finish_with(
             RolloutStatus::Failed,
             Some(502),
-            Some("empty_stream".to_string()),
+            Some(ActivityErrorCode::EMPTY_STREAM.to_string()),
             Some("upstream stream finished without chunks".to_string()),
         ) {
             Ok(summary) => summary,
@@ -280,7 +281,7 @@ impl StreamRecordState {
         let update = StreamActivityUpdate {
             status: "failed".to_string(),
             http_status: 502,
-            error_code: Some("stream_error".to_string()),
+            error_code: Some(ActivityErrorCode::STREAM_ERROR.to_string()),
             error_message: Some(message.clone()),
             input_tokens: snapshot.input_tokens,
             output_tokens: snapshot.output_tokens,
@@ -301,7 +302,7 @@ impl StreamRecordState {
         self.finalize_rollout(
             RolloutStatus::Failed,
             Some(502),
-            Some("stream_error".to_string()),
+            Some(ActivityErrorCode::STREAM_ERROR.to_string()),
             Some(message),
         )
         .await;
@@ -315,7 +316,7 @@ impl StreamRecordState {
             let update = StreamActivityUpdate {
                 status: "failed".to_string(),
                 http_status: 499,
-                error_code: Some("downstream_disconnect".to_string()),
+                error_code: Some(ActivityErrorCode::DOWNSTREAM_DISCONNECT.to_string()),
                 error_message: Some("downstream client disconnected".to_string()),
                 input_tokens: snapshot.input_tokens,
                 output_tokens: snapshot.output_tokens,
@@ -337,7 +338,7 @@ impl StreamRecordState {
         self.finalize_rollout(
             RolloutStatus::Failed,
             Some(499),
-            Some("downstream_disconnect".to_string()),
+            Some(ActivityErrorCode::DOWNSTREAM_DISCONNECT.to_string()),
             Some("downstream client disconnected".to_string()),
         )
         .await;
@@ -411,7 +412,7 @@ impl StreamRecordState {
         let update = StreamActivityUpdate {
             status: "failed".to_string(),
             http_status: 502,
-            error_code: Some("activity_rollout_incomplete".to_string()),
+            error_code: Some(ActivityErrorCode::ACTIVITY_ROLLOUT_INCOMPLETE.to_string()),
             error_message: Some("activity rollout body could not be fully written".to_string()),
             input_tokens: snapshot.input_tokens,
             output_tokens: snapshot.output_tokens,

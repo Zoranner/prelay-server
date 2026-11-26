@@ -53,13 +53,14 @@ impl ApiError {
     }
 
     pub fn internal(error: impl Into<anyhow::Error>) -> Self {
-        // 与其他内部错误一致：只记录事件，不把诊断内容写进日志或响应。
-        let _error = error.into();
-        Self::internal_response()
+        // 与其他内部错误一致：只记录错误类别，不把诊断内容写进日志或响应。
+        let error = error.into();
+        let category = error_category(&error);
+        Self::internal_response(category)
     }
 
-    fn internal_response() -> Self {
-        internal_error_log(StatusCode::INTERNAL_SERVER_ERROR);
+    fn internal_response(category: &'static str) -> Self {
+        internal_error_log(StatusCode::INTERNAL_SERVER_ERROR, category);
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             code: ProtocolErrorCode::Internal,
@@ -97,7 +98,7 @@ impl From<AppError> for ApiError {
             AppError::Protocol {
                 code: ProtocolErrorCode::Internal,
                 ..
-            } => Self::internal_response(),
+            } => Self::internal_response("protocol_internal"),
             AppError::Protocol { code, message } => Self::new(code, message),
             AppError::NotFound(message) => Self::not_found(message),
             AppError::Unauthorized => Self::invalid_credential(),
@@ -105,16 +106,24 @@ impl From<AppError> for ApiError {
             AppError::PayloadTooLarge(message) => {
                 Self::validation_failed(message).with_status(Some(StatusCode::PAYLOAD_TOO_LARGE))
             }
-            AppError::OpenAi {
-                status, message, ..
-            } => Self::validation_failed(message).with_status(Some(status)),
+            AppError::OpenAi { status, code, .. } => {
+                // 管理面不承载推理协议的错误；走到这里说明调用链放错了层。
+                tracing::error!(
+                    error_code = "internal",
+                    http_status = status.as_u16(),
+                    openai_code = code,
+                    "openai error mapped onto the management surface"
+                );
+                Self::internal_response("openai_on_management_surface")
+            }
             // 管理面不承载上游故障：上游结果通过 ProviderOperationResponse 返回。
             // 这里保留上游状态和消息，避免把诊断信息替换成通用的内部错误。
             AppError::Upstream { status, message } => {
-                Self::new(ProtocolErrorCode::Internal, message).with_status(status)
+                Self::new(ProtocolErrorCode::ProviderUpstreamUnavailable, message)
+                    .with_status(status)
             }
             AppError::UpstreamInvalidResponse { message } => {
-                Self::new(ProtocolErrorCode::Internal, message)
+                Self::new(ProtocolErrorCode::ProviderUpstreamUnavailable, message)
                     .with_status(Some(StatusCode::BAD_GATEWAY))
             }
             AppError::RecordingUnavailable(_) => Self::new(
@@ -181,9 +190,24 @@ where
     }
 }
 
-fn internal_error_log(status: StatusCode) {
+fn error_category(error: &anyhow::Error) -> &'static str {
+    if error.downcast_ref::<sea_orm::DbErr>().is_some() {
+        "database"
+    } else if error.downcast_ref::<serde_json::Error>().is_some() {
+        "serialization"
+    } else if error.downcast_ref::<reqwest::Error>().is_some() {
+        "http_client"
+    } else if error.downcast_ref::<std::io::Error>().is_some() {
+        "io"
+    } else {
+        "unknown"
+    }
+}
+
+fn internal_error_log(status: StatusCode, category: &'static str) {
     tracing::error!(
         error_code = ProtocolErrorCode::Internal.as_str(),
+        error_category = category,
         http_status = status.as_u16(),
         "Internal server error"
     );
@@ -265,7 +289,7 @@ mod tests {
         .await;
 
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-        assert_eq!(payload["error"]["code"], "internal");
+        assert_eq!(payload["error"]["code"], "provider_upstream_unavailable");
         assert_eq!(payload["error"]["message"], "upstream rejected the request");
     }
 }

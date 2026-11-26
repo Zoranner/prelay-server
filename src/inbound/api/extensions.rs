@@ -92,15 +92,18 @@ fn catalog_error(error: CatalogError) -> ApiError {
     let (code, message) = match error {
         CatalogError::Unavailable => (
             ProtocolErrorCode::ExtensionCatalogUnavailable,
-            "扩展目录暂不可用",
+            "extension catalog is unavailable",
         ),
-        CatalogError::ContentInvalid => {
-            (ProtocolErrorCode::ExtensionContentInvalid, "扩展内容无效")
+        CatalogError::ContentInvalid => (
+            ProtocolErrorCode::ExtensionContentInvalid,
+            "extension content is invalid",
+        ),
+        CatalogError::ExtensionNotFound => {
+            (ProtocolErrorCode::ExtensionNotFound, "extension not found")
         }
-        CatalogError::ExtensionNotFound => (ProtocolErrorCode::ExtensionNotFound, "扩展不存在"),
         CatalogError::VersionNotFound => (
             ProtocolErrorCode::ExtensionVersionNotFound,
-            "扩展版本不存在",
+            "extension version not found",
         ),
     };
     ApiError::new(code, message)

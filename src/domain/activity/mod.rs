@@ -1,7 +1,9 @@
+mod error_code;
 pub(crate) mod redaction;
 pub mod rollout;
 mod stream;
 
+pub(crate) use error_code::ActivityErrorCode;
 pub(crate) use redaction::redact_sensitive_text;
 pub use rollout::{
     ContentDraft, ContentEvent, ContentEventBody, ContextEvent, ConversationError,
