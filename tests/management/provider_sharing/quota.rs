@@ -45,21 +45,17 @@ async fn limited_share_reports_the_shared_quota_windows() {
             "users": [{
                 "identity_id": grantee["identity_id"]
             }],
-            "quota": [{
-                "window": "day",
-                "limit": 1000,
-                "accumulate": true,
-                "reset_time": "00:00",
-                "reset_weekday": null,
-                "reset_day": null
-            }]
+            "quota": {
+                "amount": 1000,
+                "accumulate": "week"
+            }
         })),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(sharing["visibility"], "selected");
-    assert_eq!(sharing["quota"][0]["window"], "day");
-    assert_eq!(sharing["quota"][0]["limit"], 1000);
+    assert_eq!(sharing["quota"]["amount"], 1000);
+    assert_eq!(sharing["quota"]["accumulate"], "week");
 
     let (status, quotas): (StatusCode, Vec<serde_json::Value>) = request_json(
         &app,
@@ -79,6 +75,9 @@ async fn limited_share_reports_the_shared_quota_windows() {
     assert_eq!(quotas[0]["quota"]["windows"][0]["unit"], "tokens");
     assert!(quotas[0]["quota"]["windows"][0].get("label").is_none());
     assert!(quotas[0]["quota"]["windows"][0].get("amount").is_none());
+    assert_eq!(quotas[0]["quota"]["windows"][1]["kind"], "week");
+    assert_eq!(quotas[0]["quota"]["windows"][1]["limit"], 7000.0);
+    assert_eq!(quotas[0]["quota"]["windows"][1]["remaining"], 7000.0);
 
     let (status, owner_quotas): (StatusCode, Vec<serde_json::Value>) = request_json(
         &app,
@@ -139,14 +138,10 @@ async fn exhausted_shared_quota_is_rejected_before_the_upstream_call() {
             "users": [{
                 "identity_id": grantee["identity_id"]
             }],
-            "quota": [{
-                "window": "day",
-                "limit": 1,
-                "accumulate": false,
-                "reset_time": "00:00",
-                "reset_weekday": null,
-                "reset_day": null
-            }]
+            "quota": {
+                "amount": 1,
+                "accumulate": "none"
+            }
         })),
     )
     .await;
@@ -181,10 +176,8 @@ async fn exhausted_shared_quota_is_rejected_before_the_upstream_call() {
     )
     .await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-    let message = error["error"]
-        .as_str()
-        .or_else(|| error["error"]["message"].as_str())
-        .unwrap_or_default();
+    assert_eq!(error["error"]["code"], "shared_quota_exhausted");
+    let message = error["error"]["message"].as_str().unwrap_or_default();
     assert!(
         message.contains("共享额度不足"),
         "unexpected error: {error}"
@@ -250,14 +243,10 @@ async fn every_grantee_uses_the_same_shared_quota_rule() {
                     "identity_id": second["identity_id"]
                 }
             ],
-            "quota": [{
-                "window": "day",
-                "limit": 1000,
-                "accumulate": false,
-                "reset_time": "00:00",
-                "reset_weekday": null,
-                "reset_day": null
-            }]
+            "quota": {
+                "amount": 1000,
+                "accumulate": "none"
+            }
         })),
     )
     .await;

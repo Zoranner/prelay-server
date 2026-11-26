@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use prelay_protocol::ShareQuotaRule;
 use sea_orm::{
     ColumnTrait, EntityTrait, ExprTrait, FromQueryResult, QueryFilter, QuerySelect, Select,
 };
@@ -18,7 +19,7 @@ impl Storage {
         &self,
         provider_id: &str,
         grantee_identity_id: &str,
-    ) -> Result<Option<(String, String)>, StorageError> {
+    ) -> Result<Option<(ShareQuotaRule, String)>, StorageError> {
         use crate::store::entity::identity::provider_configs as identity_provider_configs;
 
         let Some(provider) = identity_provider_configs::Entity::find_by_id(provider_id)
@@ -30,12 +31,13 @@ impl Storage {
         let Some(json) = provider.share_quota_json else {
             return Ok(None);
         };
+        let rule = super::parse_share_quota(&json)?;
         let since = self
             .provider_share(provider_id, grantee_identity_id)
             .await?
             .map(|share| share.created_at)
             .unwrap_or(provider.created_at);
-        Ok(Some((json, since)))
+        Ok(Some((rule, since)))
     }
 
     pub(crate) async fn provider_share(

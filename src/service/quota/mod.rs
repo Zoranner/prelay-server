@@ -16,7 +16,6 @@ use base64::Engine;
 use chrono::Utc;
 use prelay_protocol::{
     ProviderQuota, ProviderQuotaMode, ProviderQuotaResponse, QuotaError, QuotaErrorCode,
-    ShareQuotaWindow,
 };
 use sha2::{Digest, Sha256};
 
@@ -25,7 +24,7 @@ use crate::{
     error::AppError,
     store::{
         entity::identity::provider_configs as identity_provider_configs,
-        storage::{Storage, StorageError},
+        storage::{parse_share_quota, Storage, StorageError},
     },
 };
 
@@ -105,12 +104,7 @@ impl QuotaService {
                     } else {
                         match visible.provider.share_quota_json.as_deref() {
                             Some(json) => {
-                                let rules = serde_json::from_str::<Vec<ShareQuotaWindow>>(json)
-                                    .map_err(|error| {
-                                        StorageError::InvalidProviderSharing(format!(
-                                            "stored share quota is invalid: {error}"
-                                        ))
-                                    })?;
+                                let rule = parse_share_quota(json)?;
                                 // 共享额度的起算点：指定用户用授权时间，全部用户用 Provider 创建时间。
                                 let since = visible
                                     .grant
@@ -122,7 +116,7 @@ impl QuotaService {
                                     &visible.provider.id,
                                     &identity_id,
                                     since,
-                                    &rules,
+                                    &rule,
                                     now,
                                 )
                                 .await?;

@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use chrono::Utc;
 use prelay_protocol::{
     ProviderResponse, ProviderSharingResponse, ProviderSharingUserResponse, ProviderVisibility,
-    ShareQuotaWindow, ShareQuotaWindowKind, UpdateProviderSharingRequest,
+    ShareQuotaAccumulate, ShareQuotaRule, UpdateProviderSharingRequest,
 };
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
@@ -118,13 +118,8 @@ impl Storage {
                 .provider
                 .share_quota_json
                 .as_deref()
-                .map(serde_json::from_str::<Vec<ShareQuotaWindow>>)
-                .transpose()
-                .map_err(|error| {
-                    StorageError::InvalidProviderSharing(format!(
-                        "stored sharing quota is invalid: {error}"
-                    ))
-                })?,
+                .map(parse_share_quota)
+                .transpose()?,
         })
     }
 
@@ -364,68 +359,120 @@ where
     Ok(())
 }
 
-fn validate_share_quota(quota: &[ShareQuotaWindow]) -> Result<(), StorageError> {
-    if quota.is_empty() {
+fn validate_share_quota(quota: &ShareQuotaRule) -> Result<(), StorageError> {
+    if quota.amount <= 0 {
         return Err(StorageError::InvalidProviderSharing(
-            "limited sharing requires at least one quota window".to_string(),
+            "shared quota amount must be positive".to_string(),
         ));
-    }
-    let mut windows = HashSet::new();
-    for rule in quota {
-        if !windows.insert(rule.window) {
-            return Err(StorageError::InvalidProviderSharing(
-                "quota windows must be unique".to_string(),
-            ));
-        }
-        if rule.limit <= 0 {
-            return Err(StorageError::InvalidProviderSharing(
-                "quota limit must be positive".to_string(),
-            ));
-        }
-        parse_reset_time(&rule.reset_time)?;
-        match rule.window {
-            ShareQuotaWindowKind::Day => {
-                if rule.reset_weekday.is_some() || rule.reset_day.is_some() {
-                    return Err(StorageError::InvalidProviderSharing(
-                        "day quota must not set weekday or month day".to_string(),
-                    ));
-                }
-            }
-            ShareQuotaWindowKind::Week => {
-                if !matches!(rule.reset_weekday, Some(1..=7)) || rule.reset_day.is_some() {
-                    return Err(StorageError::InvalidProviderSharing(
-                        "week quota requires a weekday from 1 to 7".to_string(),
-                    ));
-                }
-            }
-            ShareQuotaWindowKind::Month => {
-                if !matches!(rule.reset_day, Some(1..=28)) || rule.reset_weekday.is_some() {
-                    return Err(StorageError::InvalidProviderSharing(
-                        "month quota requires a day from 1 to 28".to_string(),
-                    ));
-                }
-            }
-        }
     }
     Ok(())
 }
 
-fn parse_reset_time(value: &str) -> Result<(), StorageError> {
-    let (hour, minute) = value.split_once(':').ok_or_else(|| {
-        StorageError::InvalidProviderSharing("reset time must use HH:MM".to_string())
+/// 旧版本把共享额度存成窗口数组；读取时折叠成单条规则，下次保存即写成新格式。
+pub(crate) fn parse_share_quota(raw: &str) -> Result<ShareQuotaRule, StorageError> {
+    if !raw.trim_start().starts_with('[') {
+        let rule = serde_json::from_str::<ShareQuotaRule>(raw).map_err(|error| {
+            StorageError::InvalidProviderSharing(format!(
+                "stored sharing quota is invalid: {error}"
+            ))
+        })?;
+        validate_share_quota(&rule)?;
+        return Ok(rule);
+    }
+    let windows = serde_json::from_str::<Vec<LegacyShareQuotaWindow>>(raw).map_err(|error| {
+        StorageError::InvalidProviderSharing(format!("stored sharing quota is invalid: {error}"))
     })?;
-    let hour = hour.parse::<u8>().map_err(|_| {
-        StorageError::InvalidProviderSharing("reset time must use HH:MM".to_string())
-    })?;
-    let minute = minute.parse::<u8>().map_err(|_| {
-        StorageError::InvalidProviderSharing("reset time must use HH:MM".to_string())
-    })?;
-    if hour > 23 || minute > 59 {
+    legacy_share_quota(&windows)
+}
+
+#[derive(serde::Deserialize)]
+struct LegacyShareQuotaWindow {
+    window: LegacyShareQuotaWindowKind,
+    limit: i64,
+    #[serde(default)]
+    accumulate: bool,
+}
+
+#[derive(serde::Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum LegacyShareQuotaWindowKind {
+    Day,
+    Week,
+    Month,
+}
+
+fn legacy_share_quota(windows: &[LegacyShareQuotaWindow]) -> Result<ShareQuotaRule, StorageError> {
+    let day = windows
+        .iter()
+        .find(|window| window.window == LegacyShareQuotaWindowKind::Day);
+    let week = windows
+        .iter()
+        .find(|window| window.window == LegacyShareQuotaWindowKind::Week);
+    let month = windows
+        .iter()
+        .find(|window| window.window == LegacyShareQuotaWindowKind::Month);
+    let Some(day) = day else {
+        // 没有日窗口的旧规则只剩周期上限，按周期天数折算回每天的量。
+        let mut amounts = Vec::new();
+        if let Some(week) = week {
+            amounts.push(per_day_amount(week.limit, 7));
+        }
+        if let Some(month) = month {
+            amounts.push(per_day_amount(month.limit, 30));
+        }
+        let Some(amount) = amounts.into_iter().min().filter(|amount| *amount > 0) else {
+            return Err(StorageError::InvalidProviderSharing(
+                "stored sharing quota has no usable window".to_string(),
+            ));
+        };
+        return Ok(ShareQuotaRule {
+            amount,
+            accumulate: if month.is_some() {
+                ShareQuotaAccumulate::Month
+            } else {
+                ShareQuotaAccumulate::Week
+            },
+        });
+    };
+    if day.limit <= 0 {
         return Err(StorageError::InvalidProviderSharing(
-            "reset time must use HH:MM".to_string(),
+            "stored sharing quota has no usable window".to_string(),
         ));
     }
-    Ok(())
+    // 由日额度派生的周、月总额只会等于或高于日额度乘天数，低于它说明是手工写坏的数据。
+    if let Some(week) = week {
+        if week.limit < day.limit.saturating_mul(7) {
+            return Err(StorageError::InvalidProviderSharing(
+                "stored sharing quota week limit is below its daily limit".to_string(),
+            ));
+        }
+    }
+    if let Some(month) = month {
+        if month.limit < day.limit.saturating_mul(30) {
+            return Err(StorageError::InvalidProviderSharing(
+                "stored sharing quota month limit is below its daily limit".to_string(),
+            ));
+        }
+    }
+    let accumulate = if !day.accumulate {
+        ShareQuotaAccumulate::None
+    } else if month.is_some() {
+        ShareQuotaAccumulate::Month
+    } else {
+        ShareQuotaAccumulate::Week
+    };
+    Ok(ShareQuotaRule {
+        amount: day.limit,
+        accumulate,
+    })
+}
+
+/// 只有周期窗口的旧规则没有日额度，按周期天数折算回每天的量。
+fn per_day_amount(limit: i64, days: i64) -> i64 {
+    if limit <= 0 {
+        return 0;
+    }
+    (limit.saturating_add(days - 1)) / days
 }
 
 fn parse_visibility(value: &str) -> Result<ProviderVisibility, StorageError> {
@@ -444,5 +491,81 @@ const fn visibility_value(visibility: ProviderVisibility) -> &'static str {
         ProviderVisibility::Private => "private",
         ProviderVisibility::Selected => "selected",
         ProviderVisibility::All => "all",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_the_rule_object() {
+        let rule = parse_share_quota(r#"{"amount":1000,"accumulate":"month"}"#).expect("rule");
+        assert_eq!(rule.amount, 1000);
+        assert_eq!(rule.accumulate, ShareQuotaAccumulate::Month);
+    }
+
+    #[test]
+    fn folds_legacy_day_and_week_windows_into_weekly_accumulation() {
+        let legacy = r#"[
+            {"window":"day","limit":1000,"accumulate":true,"reset_time":"00:00"},
+            {"window":"week","limit":7000,"accumulate":false,"reset_time":"00:00","reset_weekday":1}
+        ]"#;
+        let rule = parse_share_quota(legacy).expect("legacy rule");
+        assert_eq!(rule.amount, 1000);
+        assert_eq!(rule.accumulate, ShareQuotaAccumulate::Week);
+    }
+
+    #[test]
+    fn folds_legacy_day_only_rules_by_their_accumulate_flag() {
+        let plain = parse_share_quota(r#"[{"window":"day","limit":500,"accumulate":false}]"#)
+            .expect("rule");
+        assert_eq!(plain.amount, 500);
+        assert_eq!(plain.accumulate, ShareQuotaAccumulate::None);
+
+        let carried =
+            parse_share_quota(r#"[{"window":"day","limit":500,"accumulate":true}]"#).expect("rule");
+        assert_eq!(carried.amount, 500);
+        assert_eq!(carried.accumulate, ShareQuotaAccumulate::Week);
+    }
+
+    #[test]
+    fn keeps_non_accumulating_legacy_shares_that_carry_a_week_total() {
+        let legacy = r#"[
+            {"window":"day","limit":100000000,"accumulate":false,"reset_time":"00:00"},
+            {"window":"week","limit":700000000,"accumulate":false,"reset_time":"00:00","reset_weekday":1}
+        ]"#;
+        let rule = parse_share_quota(legacy).expect("legacy rule");
+        assert_eq!(rule.amount, 100_000_000);
+        assert_eq!(rule.accumulate, ShareQuotaAccumulate::None);
+    }
+
+    #[test]
+    fn rejects_legacy_totals_below_the_daily_derivation() {
+        let tight_week = r#"[
+            {"window":"day","limit":1000,"accumulate":true},
+            {"window":"week","limit":3000,"accumulate":false}
+        ]"#;
+        assert!(parse_share_quota(tight_week).is_err());
+
+        let tight_month = r#"[
+            {"window":"day","limit":1000,"accumulate":true},
+            {"window":"month","limit":10000,"accumulate":false}
+        ]"#;
+        assert!(parse_share_quota(tight_month).is_err());
+    }
+
+    #[test]
+    fn derives_the_daily_amount_from_a_period_only_rule() {
+        let month = parse_share_quota(r#"[{"window":"month","limit":3000,"accumulate":false}]"#)
+            .expect("rule");
+        assert_eq!(month.amount, 100);
+        assert_eq!(month.accumulate, ShareQuotaAccumulate::Month);
+    }
+
+    #[test]
+    fn rejects_rules_without_a_positive_amount() {
+        assert!(parse_share_quota(r#"{"amount":0,"accumulate":"none"}"#).is_err());
+        assert!(parse_share_quota(r#"[{"window":"day","limit":0,"accumulate":false}]"#).is_err());
     }
 }

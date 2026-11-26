@@ -9,7 +9,7 @@ use std::{
 
 use axum::http::StatusCode;
 use chrono::Utc;
-use prelay_protocol::{QuotaWindow, QuotaWindowKind, ShareQuotaWindow};
+use prelay_protocol::{QuotaWindow, QuotaWindowKind, V1ErrorCode};
 
 use crate::{error::AppError, store::storage::Storage};
 
@@ -130,24 +130,11 @@ impl QuotaReservations {
         if tokens <= 0 {
             return Ok(empty());
         }
-        let Some((json, since)) = storage.shared_quota_rule(provider_id, identity_id).await? else {
+        let Some((rule, since)) = storage.shared_quota_rule(provider_id, identity_id).await? else {
             return Ok(empty());
         };
-        let rules = serde_json::from_str::<Vec<ShareQuotaWindow>>(&json).map_err(|error| {
-            AppError::Internal(anyhow::anyhow!("stored share quota is invalid: {error}"))
-        })?;
-        let windows = shared::windows(
-            storage,
-            provider_id,
-            identity_id,
-            &since,
-            &rules,
-            Utc::now(),
-        )
-        .await?;
-        if windows.is_empty() {
-            return Ok(empty());
-        }
+        let windows =
+            shared::windows(storage, provider_id, identity_id, &since, &rule, Utc::now()).await?;
         self.reserve_windows(provider_id, identity_id, &windows, tokens)
     }
 
@@ -182,11 +169,13 @@ impl QuotaReservations {
                 .saturating_sub(already)
                 .saturating_sub(pending_tokens);
             if available < tokens {
-                return Err(AppError::Upstream {
-                    status: Some(StatusCode::TOO_MANY_REQUESTS),
+                return Err(AppError::OpenAi {
+                    status: StatusCode::TOO_MANY_REQUESTS,
+                    error_type: "insufficient_quota",
+                    code: V1ErrorCode::SharedQuotaExhausted.as_str(),
+                    param: None,
                     message: format!(
-                        "共享额度不足：{} 窗口可用 {} tokens，重置 {}",
-                        window_kind_name(window.kind),
+                        "共享额度不足：可用 {} tokens，重置 {}",
                         available,
                         window.resets_at.as_deref().unwrap_or("未知")
                     ),
@@ -326,16 +315,6 @@ pub(crate) fn estimate_tokens(payload: &serde_json::Value) -> i64 {
         .unwrap_or(0)
         .max(0);
     body_estimate.max(output_budget).clamp(256, 2_000_000)
-}
-
-fn window_kind_name(kind: QuotaWindowKind) -> &'static str {
-    match kind {
-        QuotaWindowKind::Custom => "custom",
-        QuotaWindowKind::Rolling => "rolling",
-        QuotaWindowKind::Day => "day",
-        QuotaWindowKind::Week => "week",
-        QuotaWindowKind::Month => "month",
-    }
 }
 
 #[cfg(test)]

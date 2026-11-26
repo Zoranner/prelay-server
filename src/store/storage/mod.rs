@@ -34,6 +34,7 @@ use crate::domain::{
 pub use crypto::MasterKey;
 pub use identities::{AuthenticatedIdentity, DeleteInactiveResult};
 pub(crate) use provider_validation::parse_models;
+pub(crate) use provider_visibility::parse_share_quota;
 pub use response_states::{ResponseState, ResponseStateInsert};
 pub use rollout_recovery::{InterruptedRollout, RecoveredRollout};
 
