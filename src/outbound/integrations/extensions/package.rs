@@ -8,6 +8,26 @@ pub const MCP_MANIFEST_PATH: &str = "server.json";
 pub const SKILLS_PREFIX: &str = "skills/";
 pub const HOOKS_PREFIX: &str = "hooks/";
 
+/// Gitea topic 推导出的策略意图，尚未与包分类结合。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TopicPolicy {
+    Normal,
+    Required,
+    Deprecated,
+    Conflict,
+}
+
+pub fn policy_from_topics(topics: &[String]) -> TopicPolicy {
+    let required = topics.iter().any(|topic| topic == "required");
+    let deprecated = topics.iter().any(|topic| topic == "deprecated");
+    match (required, deprecated) {
+        (true, true) => TopicPolicy::Conflict,
+        (true, false) => TopicPolicy::Required,
+        (false, true) => TopicPolicy::Deprecated,
+        (false, false) => TopicPolicy::Normal,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClassifiedArtifact {
     pub kind: ExtensionKind,

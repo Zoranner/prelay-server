@@ -256,6 +256,10 @@ async fn spawn_catalog_server_bytes(
             get(move || async move { Json(serde_json::json!([{ "name": repository }])) }),
         )
         .route(
+            "/api/v1/repos/agents/:repo/topics",
+            get(|| async { Json(serde_json::json!({ "topics": [] })) }),
+        )
+        .route(
             "/api/v1/repos/agents/:repo/tags",
             get(move || {
                 let commit_sha = tag_commit_sha.clone();

@@ -61,6 +61,16 @@ impl GiteaClient {
             .collect())
     }
 
+    pub(super) async fn topics(&self, repository: &str) -> Result<Vec<String>> {
+        let topics: GiteaTopics = self
+            .get_json(
+                &format!("repos/{}/{repository}/topics", self.config.organization()),
+                &[],
+            )
+            .await?;
+        Ok(topics.topics)
+    }
+
     pub(super) async fn tree_paths(
         &self,
         repository: &str,
@@ -151,6 +161,11 @@ struct GiteaTagResponse {
 struct GiteaCommit {
     sha: String,
     created: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GiteaTopics {
+    topics: Vec<String>,
 }
 
 #[derive(Deserialize)]

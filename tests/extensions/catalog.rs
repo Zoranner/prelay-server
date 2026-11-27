@@ -1,6 +1,7 @@
-use prelay_protocol::{CatalogKind, ExtensionKind};
+use prelay_protocol::{CatalogKind, ExtensionKind, ExtensionPolicy};
 use prelay_server::outbound::integrations::extensions::{
-    classify_paths, versions_from_tags, ExtensionCatalog, ExtensionCatalogConfig, GiteaTag,
+    classify_paths, policy_from_topics, versions_from_tags, CatalogError, ExtensionCatalog,
+    ExtensionCatalogConfig, GiteaTag, TopicPolicy,
 };
 
 #[test]
@@ -149,6 +150,93 @@ fn extension_catalog_configuration_uses_its_own_environment_domain() {
     assert!(ExtensionCatalogConfig::new("https://git.example.test", "agents", None, 0).is_err());
 }
 
+#[test]
+fn topic_policy_maps_reserved_topics_and_detects_conflicts() {
+    assert_eq!(policy_from_topics(&[]), TopicPolicy::Normal);
+    assert_eq!(
+        policy_from_topics(&["docs".to_string()]),
+        TopicPolicy::Normal
+    );
+    assert_eq!(
+        policy_from_topics(&["required".to_string()]),
+        TopicPolicy::Required
+    );
+    assert_eq!(
+        policy_from_topics(&["deprecated".to_string()]),
+        TopicPolicy::Deprecated
+    );
+    assert_eq!(
+        policy_from_topics(&["required".to_string(), "deprecated".to_string()]),
+        TopicPolicy::Conflict
+    );
+    assert_eq!(
+        policy_from_topics(&["Required".to_string()]),
+        TopicPolicy::Normal,
+        "topic 按小写精确匹配"
+    );
+}
+
+#[tokio::test]
+async fn lists_deprecated_packages_but_rejects_their_install_bundle() {
+    use axum::{routing::get, Json, Router};
+
+    let app = Router::new()
+        .route(
+            "/api/v1/orgs/agents/repos",
+            get(|| async { Json(serde_json::json!([{ "name": "old-plugin" }])) }),
+        )
+        .route(
+            "/api/v1/repos/agents/old-plugin/topics",
+            get(|| async { Json(serde_json::json!({ "topics": ["deprecated"] })) }),
+        )
+        .route(
+            "/api/v1/repos/agents/old-plugin/tags",
+            get(|| async {
+                Json(serde_json::json!([{
+                    "name": "v1.0.0",
+                    "id": "a".repeat(40),
+                    "commit": { "sha": "a".repeat(40), "created": "2026-11-27T00:00:00Z" }
+                }]))
+            }),
+        )
+        .route(
+            "/api/v1/repos/agents/old-plugin/git/trees/:commit_sha",
+            get(|| async {
+                Json(serde_json::json!({
+                    "tree": [{ "path": "skills/demo/SKILL.md", "type": "blob" }]
+                }))
+            }),
+        );
+    let catalog = serve_catalog(app).await;
+
+    let plugins = catalog.list(CatalogKind::Plugin).await.unwrap();
+    assert_eq!(plugins.len(), 1);
+    assert_eq!(plugins[0].policy, ExtensionPolicy::Deprecated);
+
+    let error = catalog
+        .install_bundle("old-plugin", "v1.0.0")
+        .await
+        .unwrap_err();
+    assert_eq!(error, CatalogError::ExtensionNotFound);
+}
+
+async fn serve_catalog(app: axum::Router) -> ExtensionCatalog {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind Gitea test server");
+    let address = listener.local_addr().expect("read test server address");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("serve Gitea test server");
+    });
+    ExtensionCatalog::new(
+        reqwest::Client::new(),
+        ExtensionCatalogConfig::new(format!("http://{address}"), "agents", None, 300)
+            .expect("valid Gitea test configuration"),
+    )
+}
+
 #[tokio::test]
 async fn builds_a_rule_install_bundle_from_the_published_commit() {
     use axum::{routing::get, Json, Router};
@@ -159,6 +247,10 @@ async fn builds_a_rule_install_bundle_from_the_published_commit() {
         .route(
             "/api/v1/orgs/agents/repos",
             get(|| async { Json(serde_json::json!([{ "name": "engineering-rules" }])) }),
+        )
+        .route(
+            "/api/v1/repos/agents/engineering-rules/topics",
+            get(|| async { Json(serde_json::json!({ "topics": [] })) }),
         )
         .route(
             "/api/v1/repos/agents/engineering-rules/tags",
@@ -237,6 +329,10 @@ async fn builds_an_mcp_install_bundle_from_a_valid_manifest() {
         .route(
             "/api/v1/orgs/agents/repos",
             get(|| async { Json(serde_json::json!([{ "name": "research-mcp" }])) }),
+        )
+        .route(
+            "/api/v1/repos/agents/research-mcp/topics",
+            get(|| async { Json(serde_json::json!({ "topics": [] })) }),
         )
         .route(
             "/api/v1/repos/agents/research-mcp/tags",

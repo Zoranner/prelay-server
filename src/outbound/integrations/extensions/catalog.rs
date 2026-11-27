@@ -11,7 +11,7 @@ use anyhow::Result;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use prelay_protocol::{
     CatalogKind, ExtensionArtifact, ExtensionFile, ExtensionInstallBundle, ExtensionKind,
-    ExtensionMcpManifest, ExtensionSummary, ExtensionVersion, HOOKS_MANIFEST_PATH,
+    ExtensionMcpManifest, ExtensionPolicy, ExtensionSummary, ExtensionVersion, HOOKS_MANIFEST_PATH,
 };
 use tokio::sync::{Mutex, RwLock};
 
@@ -20,8 +20,8 @@ use super::{
     gitea::{GiteaClient, GiteaFileError},
     mcp::validate_mcp_manifest,
     package::{
-        classify_paths, valid_extension_file_path, valid_repository_name, versions_from_tags,
-        ClassifiedPackage,
+        classify_paths, policy_from_topics, valid_extension_file_path, valid_repository_name,
+        versions_from_tags, ClassifiedPackage, TopicPolicy,
     },
 };
 
@@ -198,7 +198,10 @@ impl ExtensionCatalog {
         self.entries()
             .await?
             .into_iter()
-            .find(|entry| entry.summary.name == repository)
+            .find(|entry| {
+                entry.summary.name == repository
+                    && entry.summary.policy != ExtensionPolicy::Deprecated
+            })
             .ok_or(CatalogError::ExtensionNotFound)
     }
 
@@ -238,6 +241,26 @@ impl ExtensionCatalog {
     async fn refresh(&self) -> Result<Vec<CatalogEntry>, CatalogError> {
         let _guard = self.refresh_lock.lock().await;
         let entries = self.scan().await.map_err(|_| CatalogError::Unavailable)?;
+        let previous = self
+            .cache
+            .read()
+            .await
+            .as_ref()
+            .map(|cached| cached.entries.clone())
+            .unwrap_or_default();
+        for entry in &entries {
+            let before = previous
+                .iter()
+                .find(|item| item.summary.name == entry.summary.name)
+                .map(|item| item.summary.policy);
+            if before != Some(entry.summary.policy) {
+                tracing::info!(
+                    repository = %entry.summary.name,
+                    policy = ?entry.summary.policy,
+                    "extension policy updated"
+                );
+            }
+        }
         *self.cache.write().await = Some(CachedCatalog {
             loaded_at: Instant::now(),
             entries: entries.clone(),
@@ -251,10 +274,21 @@ impl ExtensionCatalog {
             if !valid_repository_name(&repository) {
                 continue;
             }
+            let topics = self.gitea.topics(&repository).await?;
+            let topic_policy = policy_from_topics(&topics);
             let Some(latest) = versions_from_tags(self.gitea.versions(&repository).await?)
                 .into_iter()
                 .next()
             else {
+                if topic_policy == TopicPolicy::Required {
+                    anyhow::bail!("required extension package {repository} has no release tag");
+                }
+                if topic_policy == TopicPolicy::Deprecated {
+                    tracing::warn!(
+                        repository = %repository,
+                        "deprecated package has no release tag"
+                    );
+                }
                 continue;
             };
             let paths = self
@@ -265,6 +299,9 @@ impl ExtensionCatalog {
                 Ok(Some(classification)) => classification,
                 Ok(None) => continue,
                 Err(error) => {
+                    if topic_policy == TopicPolicy::Required {
+                        anyhow::bail!("required extension package {repository} is invalid");
+                    }
                     tracing::warn!(
                         repository = %repository,
                         ?error,
@@ -272,6 +309,26 @@ impl ExtensionCatalog {
                     );
                     continue;
                 }
+            };
+            let policy = match (classification.catalog_kind, topic_policy) {
+                (CatalogKind::Rule, TopicPolicy::Normal) => ExtensionPolicy::Normal,
+                (CatalogKind::Rule, _) => {
+                    tracing::warn!(
+                        repository = %repository,
+                        "rule package ignores topic policy"
+                    );
+                    ExtensionPolicy::Normal
+                }
+                (CatalogKind::Plugin, TopicPolicy::Conflict) => {
+                    tracing::warn!(
+                        repository = %repository,
+                        "package has conflicting topic policy"
+                    );
+                    continue;
+                }
+                (CatalogKind::Plugin, TopicPolicy::Normal) => ExtensionPolicy::Normal,
+                (CatalogKind::Plugin, TopicPolicy::Required) => ExtensionPolicy::Required,
+                (CatalogKind::Plugin, TopicPolicy::Deprecated) => ExtensionPolicy::Deprecated,
             };
             entries.push(CatalogEntry {
                 summary: ExtensionSummary {
@@ -285,6 +342,7 @@ impl ExtensionCatalog {
                     latest,
                     catalog_kind: Some(classification.catalog_kind),
                     artifacts: classification.artifact_summaries(),
+                    policy,
                 },
             });
         }
