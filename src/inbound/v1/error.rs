@@ -8,7 +8,8 @@ use axum::{
 use prelay_protocol::{ProtocolErrorCode, V1ErrorCode};
 use serde_json::json;
 
-use crate::error::{http_status_for, AppError};
+use crate::error::AppError;
+use crate::inbound::error_status::http_status_for;
 
 /// 推理接口的错误响应。
 ///

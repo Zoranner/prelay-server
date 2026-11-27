@@ -10,7 +10,8 @@ use axum::{
 };
 use prelay_protocol::{ProtocolErrorBody, ProtocolErrorCode, ProtocolErrorResponse};
 
-use crate::error::{http_status_for, AppError};
+use crate::error::AppError;
+use crate::inbound::error_status::http_status_for;
 
 /// 管理 API 的错误响应。
 ///
