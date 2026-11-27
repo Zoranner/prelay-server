@@ -166,7 +166,7 @@ async fn records_failed_chat_completion_upstream_request_id_and_error_message() 
     .await
     .expect_err("upstream error should fail");
 
-    assert!(format!("{error:?}").contains("上游请求失败"));
+    assert!(format!("{error:?}").contains("upstream request failed"));
     let row = state
         .storage
         .list_activities(&identity_id, 10)

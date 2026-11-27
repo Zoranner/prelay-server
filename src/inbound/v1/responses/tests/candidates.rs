@@ -159,7 +159,7 @@ async fn fails_over_responses_when_primary_forbids_the_request() {
     assert_eq!(failed.error_code.as_deref(), Some("upstream_status"));
     assert_eq!(
         failed.error_message.as_deref(),
-        Some("上游请求失败: 403 Forbidden: upstream failed")
+        Some("upstream request failed: status=403 Forbidden; detail=upstream failed")
     );
 }
 
@@ -217,5 +217,7 @@ async fn rejects_response_when_model_is_not_configured() {
     .await
     .expect_err("missing endpoint model should fail");
 
-    assert!(format!("{error:?}").contains("接入点未配置支持 responses 的模型 deepseek-chat"));
+    assert!(
+        format!("{error:?}").contains("endpoint has no model=deepseek-chat for protocol=responses")
+    );
 }

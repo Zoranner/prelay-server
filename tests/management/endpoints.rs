@@ -95,7 +95,7 @@ async fn management_endpoint_rejects_duplicate_model_names_without_creating_an_i
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(error["error"]["code"], "validation_failed");
+    assert_eq!(error["error"]["code"], "endpoint_model_duplicate");
 
     let (status, endpoints): (StatusCode, Vec<serde_json::Value>) =
         request_json(&app, "GET", "/api/endpoints", Some(credential), None).await;
@@ -282,7 +282,7 @@ async fn management_endpoint_rejects_duplicate_model_names_without_updating_the_
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(error["error"]["code"], "validation_failed");
+    assert_eq!(error["error"]["code"], "endpoint_model_duplicate");
 
     let (status, endpoint): (StatusCode, serde_json::Value) = request_json(
         &app,

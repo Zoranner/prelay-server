@@ -43,7 +43,7 @@ async fn provider_and_endpoint_writes_leave_no_partial_resources_after_validatio
         )
         .await
         .expect_err("reject duplicate endpoint mapping");
-    assert!(matches!(error, StorageError::ValidationFailed(_)));
+    assert!(matches!(error, StorageError::EndpointModelDuplicate));
     assert!(storage
         .list_endpoints(&identity.identity_id)
         .await

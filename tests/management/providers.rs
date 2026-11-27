@@ -184,7 +184,7 @@ async fn management_provider_rejects_unknown_catalog_provider_type_without_updat
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(error["error"]["code"], "validation_failed");
+    assert_eq!(error["error"]["code"], "provider_type_unsupported");
 
     let (status, provider): (StatusCode, serde_json::Value) = request_json(
         &app,
@@ -224,7 +224,7 @@ async fn management_provider_rejects_unknown_catalog_provider_type_without_creat
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(error["error"]["code"], "validation_failed");
+    assert_eq!(error["error"]["code"], "provider_type_unsupported");
 
     let (status, providers): (StatusCode, Vec<serde_json::Value>) =
         request_json(&app, "GET", "/api/providers", Some(credential), None).await;

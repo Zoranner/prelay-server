@@ -103,7 +103,8 @@ async fn rejects_chat_when_provider_only_supports_responses_upstream_protocol() 
     .await
     .expect_err("unsupported provider protocol should fail before upstream");
 
-    assert!(format!("{error:?}").contains("接入点未配置支持 chat_completions 的模型 deepseek-chat"));
+    assert!(format!("{error:?}")
+        .contains("endpoint has no model=deepseek-chat for protocol=chat_completions"));
 }
 
 #[tokio::test]

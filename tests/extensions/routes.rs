@@ -45,7 +45,7 @@ async fn extension_catalog_routes_require_a_device_credential() {
         serde_json::json!({
             "error": {
                 "code": "extension_catalog_unavailable",
-                "message": "扩展目录暂不可用"
+                "message": "extension catalog is unavailable"
             }
         })
     );
@@ -69,7 +69,7 @@ async fn extension_catalog_routes_require_a_device_credential() {
         serde_json::json!({
             "error": {
                 "code": "extension_catalog_unavailable",
-                "message": "扩展目录暂不可用"
+                "message": "extension catalog is unavailable"
             }
         })
     );

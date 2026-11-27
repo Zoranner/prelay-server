@@ -198,7 +198,9 @@ async fn records_failed_response_activity_when_upstream_fails() {
     .await
     .expect_err("upstream failure should fail");
     assert!(
-        format!("{error:?}").contains("上游请求失败: 500 Internal Server Error: upstream failed"),
+        format!("{error:?}").contains(
+            "upstream request failed: status=500 Internal Server Error; detail=upstream failed"
+        ),
         "client-facing error should carry the upstream reason: {error:?}"
     );
     let logs = state
@@ -211,7 +213,7 @@ async fn records_failed_response_activity_when_upstream_fails() {
     assert_eq!(logs[0].status, "failed");
     assert_eq!(
         logs[0].error_message.as_deref(),
-        Some("上游请求失败: 500 Internal Server Error: upstream failed")
+        Some("upstream request failed: status=500 Internal Server Error; detail=upstream failed")
     );
     let rollout = state
         .storage

@@ -157,6 +157,7 @@ async fn management_provider_operations_return_failure_envelopes_for_upstream_ne
         [
             "upstream_connect_timeout",
             "upstream_connect_failed",
+            "upstream_status",
             "upstream_test_failed"
         ]
         .contains(&error_code),

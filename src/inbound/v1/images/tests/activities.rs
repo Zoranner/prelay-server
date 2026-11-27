@@ -54,7 +54,7 @@ async fn records_rate_limit_observability_without_image_content_but_keeps_rollou
     );
     assert_eq!(
         logs[0].error_message.as_deref(),
-        Some("上游请求失败: 429 Too Many Requests")
+        Some("upstream request failed: status=429 Too Many Requests")
     );
     let summary = serde_json::to_string(&logs[0]).expect("serialize activity summary");
     assert!(!summary.contains("private prompt"));
@@ -178,7 +178,7 @@ async fn logs_sanitized_failure_when_upstream_connection_fails() {
     match error {
         crate::error::AppError::Upstream { status, message } => {
             assert_eq!(status, None, "unexpected upstream response: {message}");
-            assert_eq!(message, "上游连接失败");
+            assert_eq!(message, "upstream connect failed");
         }
         other => panic!("expected upstream error, got {other:?}"),
     }
@@ -190,8 +190,11 @@ async fn logs_sanitized_failure_when_upstream_connection_fails() {
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].protocol_in.as_deref(), Some("images_generations"));
     assert_eq!(logs[0].status, "failed");
-    assert_eq!(logs[0].error_code.as_deref(), Some("upstream_connection"));
-    assert_eq!(logs[0].error_message.as_deref(), Some("上游连接失败"));
+    assert_eq!(logs[0].error_code.as_deref(), Some("upstream_connect"));
+    assert_eq!(
+        logs[0].error_message.as_deref(),
+        Some("upstream connect failed")
+    );
     let summary = serde_json::to_string(&logs[0]).expect("serialize activity summary");
     for secret in [
         upstream_url.as_str(),
@@ -239,7 +242,7 @@ async fn logs_sanitized_failure_when_non_streaming_body_is_interrupted() {
     match error {
         crate::error::AppError::Upstream { status, message } => {
             assert_eq!(status, None);
-            assert_eq!(message, "读取上游响应失败");
+            assert_eq!(message, "failed to read the upstream response body");
         }
         other => panic!("expected upstream error, got {other:?}"),
     }
@@ -252,7 +255,10 @@ async fn logs_sanitized_failure_when_non_streaming_body_is_interrupted() {
     assert_eq!(logs[0].protocol_in.as_deref(), Some("images_generations"));
     assert_eq!(logs[0].status, "failed");
     assert_eq!(logs[0].error_code.as_deref(), Some("upstream_body"));
-    assert_eq!(logs[0].error_message.as_deref(), Some("读取上游响应失败"));
+    assert_eq!(
+        logs[0].error_message.as_deref(),
+        Some("failed to read the upstream response body")
+    );
     let summary = serde_json::to_string(&logs[0]).expect("serialize activity summary");
     for secret in [
         upstream_url.as_str(),
