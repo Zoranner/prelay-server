@@ -65,7 +65,7 @@ impl GiteaClient {
         let topics: GiteaTopics = self
             .get_json(
                 &format!("repos/{}/{repository}/topics", self.config.organization()),
-                &[],
+                &[("limit", "100"), ("page", "1")],
             )
             .await?;
         Ok(topics.topics)

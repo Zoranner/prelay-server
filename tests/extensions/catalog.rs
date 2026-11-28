@@ -220,6 +220,142 @@ async fn lists_deprecated_packages_but_rejects_their_install_bundle() {
     assert_eq!(error, CatalogError::ExtensionNotFound);
 }
 
+#[tokio::test]
+async fn exposes_required_policy_for_a_valid_plugin() {
+    use axum::{routing::get, Json, Router};
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+
+    let app = Router::new()
+        .route(
+            "/api/v1/orgs/agents/repos",
+            get(|| async { Json(serde_json::json!([{ "name": "must-plugin" }])) }),
+        )
+        .route(
+            "/api/v1/repos/agents/must-plugin/topics",
+            get(|| async { Json(serde_json::json!({ "topics": ["required"] })) }),
+        )
+        .route(
+            "/api/v1/repos/agents/must-plugin/tags",
+            get(|| async {
+                Json(serde_json::json!([{
+                    "name": "v1.0.0",
+                    "id": "a".repeat(40),
+                    "commit": { "sha": "a".repeat(40), "created": "2026-11-27T00:00:00Z" }
+                }]))
+            }),
+        )
+        .route(
+            "/api/v1/repos/agents/must-plugin/git/trees/:commit_sha",
+            get(|| async {
+                Json(serde_json::json!({
+                    "tree": [{ "path": "skills/demo/SKILL.md", "type": "blob" }]
+                }))
+            }),
+        )
+        .route(
+            "/api/v1/repos/agents/must-plugin/contents/skills/demo/SKILL.md",
+            get(|| async {
+                Json(serde_json::json!({
+                    "content": BASE64.encode("# Demo\n"),
+                    "encoding": "base64"
+                }))
+            }),
+        );
+    let catalog = serve_catalog(app).await;
+
+    let plugins = catalog.list(CatalogKind::Plugin).await.unwrap();
+    assert_eq!(plugins.len(), 1);
+    assert_eq!(plugins[0].policy, ExtensionPolicy::Required);
+}
+
+#[tokio::test]
+async fn rejects_a_required_package_without_recognized_artifacts() {
+    use axum::{routing::get, Json, Router};
+
+    let app = Router::new()
+        .route(
+            "/api/v1/orgs/agents/repos",
+            get(|| async { Json(serde_json::json!([{ "name": "bad-required" }])) }),
+        )
+        .route(
+            "/api/v1/repos/agents/bad-required/topics",
+            get(|| async { Json(serde_json::json!({ "topics": ["required"] })) }),
+        )
+        .route(
+            "/api/v1/repos/agents/bad-required/tags",
+            get(|| async {
+                Json(serde_json::json!([{
+                    "name": "v1.0.0",
+                    "id": "a".repeat(40),
+                    "commit": { "sha": "a".repeat(40), "created": "2026-11-27T00:00:00Z" }
+                }]))
+            }),
+        )
+        .route(
+            "/api/v1/repos/agents/bad-required/git/trees/:commit_sha",
+            get(|| async {
+                Json(serde_json::json!({
+                    "tree": [{ "path": "README.md", "type": "blob" }]
+                }))
+            }),
+        );
+    let catalog = serve_catalog(app).await;
+
+    assert_eq!(
+        catalog.list(CatalogKind::Plugin).await.unwrap_err(),
+        CatalogError::Unavailable
+    );
+}
+
+#[tokio::test]
+async fn rejects_a_required_package_with_an_invalid_mcp_manifest() {
+    use axum::{routing::get, Json, Router};
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+
+    let app = Router::new()
+        .route(
+            "/api/v1/orgs/agents/repos",
+            get(|| async { Json(serde_json::json!([{ "name": "bad-mcp" }])) }),
+        )
+        .route(
+            "/api/v1/repos/agents/bad-mcp/topics",
+            get(|| async { Json(serde_json::json!({ "topics": ["required"] })) }),
+        )
+        .route(
+            "/api/v1/repos/agents/bad-mcp/tags",
+            get(|| async {
+                Json(serde_json::json!([{
+                    "name": "v1.0.0",
+                    "id": "a".repeat(40),
+                    "commit": { "sha": "a".repeat(40), "created": "2026-11-27T00:00:00Z" }
+                }]))
+            }),
+        )
+        .route(
+            "/api/v1/repos/agents/bad-mcp/git/trees/:commit_sha",
+            get(|| async {
+                Json(serde_json::json!({
+                    "tree": [{ "path": "server.json", "type": "blob" }]
+                }))
+            }),
+        )
+        .route(
+            "/api/v1/repos/agents/bad-mcp/contents/server.json",
+            get(|| async {
+                Json(serde_json::json!({
+                    "content": BASE64.encode("not-json"),
+                    "encoding": "base64"
+                }))
+            }),
+        );
+    let catalog = serve_catalog(app).await;
+
+    assert_eq!(
+        catalog.list(CatalogKind::Plugin).await.unwrap_err(),
+        CatalogError::Unavailable
+    );
+}
+
 async fn serve_catalog(app: axum::Router) -> ExtensionCatalog {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

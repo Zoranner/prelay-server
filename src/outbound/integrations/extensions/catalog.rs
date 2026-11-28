@@ -135,6 +135,14 @@ impl ExtensionCatalog {
     ) -> Result<ExtensionInstallBundle, CatalogError> {
         self.entry(repository).await?;
         let version = self.version(repository, tag).await?;
+        self.bundle_from_version(repository, &version).await
+    }
+
+    async fn bundle_from_version(
+        &self,
+        repository: &str,
+        version: &ExtensionVersion,
+    ) -> Result<ExtensionInstallBundle, CatalogError> {
         let paths = self
             .gitea
             .tree_paths(repository, &version.commit_sha)
@@ -186,7 +194,7 @@ impl ExtensionCatalog {
         }
         Ok(ExtensionInstallBundle {
             name: repository.to_string(),
-            version,
+            version: version.clone(),
             artifacts,
         })
     }
@@ -297,7 +305,14 @@ impl ExtensionCatalog {
                 .await?;
             let classification = match self.classify_version(&paths).await {
                 Ok(Some(classification)) => classification,
-                Ok(None) => continue,
+                Ok(None) => {
+                    if topic_policy == TopicPolicy::Required {
+                        anyhow::bail!(
+                            "required extension package {repository} has no recognized artifact"
+                        );
+                    }
+                    continue;
+                }
                 Err(error) => {
                     if topic_policy == TopicPolicy::Required {
                         anyhow::bail!("required extension package {repository} is invalid");
@@ -330,6 +345,13 @@ impl ExtensionCatalog {
                 (CatalogKind::Plugin, TopicPolicy::Required) => ExtensionPolicy::Required,
                 (CatalogKind::Plugin, TopicPolicy::Deprecated) => ExtensionPolicy::Deprecated,
             };
+            if policy == ExtensionPolicy::Required {
+                self.bundle_from_version(&repository, &latest)
+                    .await
+                    .map_err(|_| {
+                        anyhow::anyhow!("required extension package {repository} is invalid")
+                    })?;
+            }
             entries.push(CatalogEntry {
                 summary: ExtensionSummary {
                     name: repository.clone(),
