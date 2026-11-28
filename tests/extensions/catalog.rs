@@ -356,6 +356,165 @@ async fn rejects_a_required_package_with_an_invalid_mcp_manifest() {
     );
 }
 
+#[tokio::test]
+async fn ignores_a_required_topic_when_the_repository_has_no_release_tag() {
+    use axum::{routing::get, Json, Router};
+
+    let app = Router::new()
+        .route(
+            "/api/v1/orgs/agents/repos",
+            get(|| async {
+                Json(serde_json::json!([
+                    { "name": "bad-required" },
+                    { "name": "good-plugin" }
+                ]))
+            }),
+        )
+        .route(
+            "/api/v1/repos/agents/bad-required/topics",
+            get(|| async { Json(serde_json::json!({ "topics": ["required"] })) }),
+        )
+        .route(
+            "/api/v1/repos/agents/bad-required/tags",
+            get(|| async { Json(serde_json::json!([])) }),
+        )
+        .route(
+            "/api/v1/repos/agents/good-plugin/topics",
+            get(|| async { Json(serde_json::json!({ "topics": [] })) }),
+        )
+        .route(
+            "/api/v1/repos/agents/good-plugin/tags",
+            get(|| async {
+                Json(serde_json::json!([{
+                    "name": "v1.0.0",
+                    "id": "a".repeat(40),
+                    "commit": { "sha": "a".repeat(40), "created": "2026-11-27T00:00:00Z" }
+                }]))
+            }),
+        )
+        .route(
+            "/api/v1/repos/agents/good-plugin/git/trees/:commit_sha",
+            get(|| async {
+                Json(serde_json::json!({
+                    "tree": [{ "path": "skills/demo/SKILL.md", "type": "blob" }]
+                }))
+            }),
+        );
+    let catalog = serve_catalog(app).await;
+
+    let plugins = catalog.list(CatalogKind::Plugin).await.unwrap();
+    assert_eq!(plugins.len(), 1);
+    assert_eq!(plugins[0].name, "good-plugin");
+    assert_eq!(plugins[0].policy, ExtensionPolicy::Normal);
+}
+
+#[tokio::test]
+async fn paginates_topics_before_applying_policy() {
+    use axum::{extract::Query, routing::get, Json, Router};
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+    use std::collections::HashMap;
+
+    let app = Router::new()
+        .route(
+            "/api/v1/orgs/agents/repos",
+            get(|| async { Json(serde_json::json!([{ "name": "paged-required" }])) }),
+        )
+        .route(
+            "/api/v1/repos/agents/paged-required/topics",
+            get(|Query(params): Query<HashMap<String, String>>| async move {
+                if params.get("page").map(String::as_str) == Some("1") {
+                    let topics = (0..50)
+                        .map(|index| format!("filler-{index}"))
+                        .collect::<Vec<_>>();
+                    Json(serde_json::json!({ "topics": topics }))
+                } else {
+                    Json(serde_json::json!({ "topics": ["required"] }))
+                }
+            }),
+        )
+        .route(
+            "/api/v1/repos/agents/paged-required/tags",
+            get(|| async {
+                Json(serde_json::json!([{
+                    "name": "v1.0.0",
+                    "id": "a".repeat(40),
+                    "commit": { "sha": "a".repeat(40), "created": "2026-11-27T00:00:00Z" }
+                }]))
+            }),
+        )
+        .route(
+            "/api/v1/repos/agents/paged-required/git/trees/:commit_sha",
+            get(|| async {
+                Json(serde_json::json!({
+                    "tree": [{ "path": "skills/demo/SKILL.md", "type": "blob" }]
+                }))
+            }),
+        )
+        .route(
+            "/api/v1/repos/agents/paged-required/contents/skills/demo/SKILL.md",
+            get(|| async {
+                Json(serde_json::json!({
+                    "content": BASE64.encode("# Demo\n"),
+                    "encoding": "base64"
+                }))
+            }),
+        );
+    let catalog = serve_catalog(app).await;
+
+    let plugins = catalog.list(CatalogKind::Plugin).await.unwrap();
+    assert_eq!(plugins.len(), 1);
+    assert_eq!(plugins[0].policy, ExtensionPolicy::Required);
+}
+
+#[tokio::test]
+async fn rejects_a_required_package_with_an_invalid_hook_definition() {
+    use axum::{routing::get, Json, Router};
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+
+    let app = Router::new()
+        .route(
+            "/api/v1/orgs/agents/repos",
+            get(|| async { Json(serde_json::json!([{ "name": "bad-hook" }])) }),
+        )
+        .route(
+            "/api/v1/repos/agents/bad-hook/topics",
+            get(|| async { Json(serde_json::json!({ "topics": ["required"] })) }),
+        )
+        .route(
+            "/api/v1/repos/agents/bad-hook/tags",
+            get(|| async {
+                Json(serde_json::json!([{
+                    "name": "v1.0.0",
+                    "id": "a".repeat(40),
+                    "commit": { "sha": "a".repeat(40), "created": "2026-11-27T00:00:00Z" }
+                }]))
+            }),
+        )
+        .route(
+            "/api/v1/repos/agents/bad-hook/git/trees/:commit_sha",
+            get(|| async {
+                Json(serde_json::json!({
+                    "tree": [{ "path": "hooks/hooks.json", "type": "blob" }]
+                }))
+            }),
+        )
+        .route(
+            "/api/v1/repos/agents/bad-hook/contents/hooks/hooks.json",
+            get(|| async {
+                Json(serde_json::json!({
+                    "content": BASE64.encode("not-json"),
+                    "encoding": "base64"
+                }))
+            }),
+        );
+    let catalog = serve_catalog(app).await;
+
+    assert_eq!(
+        catalog.list(CatalogKind::Plugin).await.unwrap_err(),
+        CatalogError::Unavailable
+    );
+}
+
 async fn serve_catalog(app: axum::Router) -> ExtensionCatalog {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

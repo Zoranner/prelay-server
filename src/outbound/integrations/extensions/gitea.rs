@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use reqwest::{header::AUTHORIZATION, Client};
@@ -62,13 +64,25 @@ impl GiteaClient {
     }
 
     pub(super) async fn topics(&self, repository: &str) -> Result<Vec<String>> {
-        let topics: GiteaTopics = self
-            .get_json(
-                &format!("repos/{}/{repository}/topics", self.config.organization()),
-                &[("limit", "100"), ("page", "1")],
-            )
-            .await?;
-        Ok(topics.topics)
+        const PAGE_SIZE: usize = 50;
+        const MAX_PAGES: usize = 10;
+
+        let mut topics = BTreeSet::new();
+        for page in 1..=MAX_PAGES {
+            let page_text = page.to_string();
+            let response: GiteaTopics = self
+                .get_json(
+                    &format!("repos/{}/{repository}/topics", self.config.organization()),
+                    &[("limit", "50"), ("page", &page_text)],
+                )
+                .await?;
+            let count = response.topics.len();
+            topics.extend(response.topics);
+            if count < PAGE_SIZE {
+                return Ok(topics.into_iter().collect());
+            }
+        }
+        anyhow::bail!("Gitea topics pagination exceeded {MAX_PAGES} pages for {repository}");
     }
 
     pub(super) async fn tree_paths(

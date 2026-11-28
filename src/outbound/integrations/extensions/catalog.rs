@@ -199,6 +199,51 @@ impl ExtensionCatalog {
         })
     }
 
+    async fn validate_required_package(
+        &self,
+        repository: &str,
+        version: &ExtensionVersion,
+        classification: &ClassifiedPackage,
+    ) -> Result<(), CatalogError> {
+        for artifact in &classification.artifacts {
+            match artifact.kind {
+                ExtensionKind::Mcp => {
+                    let path = artifact.paths.first().ok_or(CatalogError::ContentInvalid)?;
+                    let content = self.file(repository, &version.commit_sha, path).await?;
+                    let manifest = serde_json::from_slice::<ExtensionMcpManifest>(&content)
+                        .map_err(|_| CatalogError::ContentInvalid)?;
+                    validate_mcp_manifest(&manifest)?;
+                }
+                ExtensionKind::Hook => {
+                    if !artifact
+                        .paths
+                        .iter()
+                        .any(|path| path.as_str() == HOOKS_MANIFEST_PATH)
+                    {
+                        return Err(CatalogError::ContentInvalid);
+                    }
+                    let content = self
+                        .file(repository, &version.commit_sha, HOOKS_MANIFEST_PATH)
+                        .await?;
+                    serde_json::from_slice::<serde_json::Value>(&content)
+                        .map_err(|_| CatalogError::ContentInvalid)?;
+                }
+                ExtensionKind::Skill => {
+                    for path in artifact
+                        .paths
+                        .iter()
+                        .filter(|path| path.ends_with("/SKILL.md"))
+                    {
+                        let content = self.file(repository, &version.commit_sha, path).await?;
+                        std::str::from_utf8(&content).map_err(|_| CatalogError::ContentInvalid)?;
+                    }
+                }
+                ExtensionKind::Rule | ExtensionKind::Unknown => {}
+            }
+        }
+        Ok(())
+    }
+
     async fn entry(&self, repository: &str) -> Result<CatalogEntry, CatalogError> {
         if !valid_repository_name(repository) {
             return Err(CatalogError::ExtensionNotFound);
@@ -288,13 +333,11 @@ impl ExtensionCatalog {
                 .into_iter()
                 .next()
             else {
-                if topic_policy == TopicPolicy::Required {
-                    anyhow::bail!("required extension package {repository} has no release tag");
-                }
-                if topic_policy == TopicPolicy::Deprecated {
+                if topic_policy != TopicPolicy::Normal {
                     tracing::warn!(
                         repository = %repository,
-                        "deprecated package has no release tag"
+                        ?topic_policy,
+                        "package topic ignored because it has no release tag"
                     );
                 }
                 continue;
@@ -346,7 +389,7 @@ impl ExtensionCatalog {
                 (CatalogKind::Plugin, TopicPolicy::Deprecated) => ExtensionPolicy::Deprecated,
             };
             if policy == ExtensionPolicy::Required {
-                self.bundle_from_version(&repository, &latest)
+                self.validate_required_package(&repository, &latest, &classification)
                     .await
                     .map_err(|_| {
                         anyhow::anyhow!("required extension package {repository} is invalid")
