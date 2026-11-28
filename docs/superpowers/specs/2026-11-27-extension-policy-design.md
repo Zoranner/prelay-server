@@ -63,7 +63,7 @@ deprecated
 GET /api/v1/repos/{organization}/{repository}/topics
 ```
 
-响应中的 `topics` 数组用于计算策略。请求使用现有 `EXTENSIONS_GITEA_READ_TOKEN`，权限要求与读取标签、文件树相同。每个仓库增加一次 topic 请求；当前目录扫描已经逐仓库请求标签和文件树，缓存仍按现有 TTL 生效。
+响应中的 `topics` 数组用于计算策略。请求使用现有 `EXTENSIONS_GITEA_READ_TOKEN`，权限要求与读取标签、文件树相同。每个仓库通常增加一次 topic 请求；单页 50 条、超过时逐页读取并去重，最多 10 页。当前目录扫描已经逐仓库请求标签和文件树，缓存仍按现有 TTL 生效。
 
 ## 协议
 
@@ -99,11 +99,14 @@ pub enum ExtensionPolicy {
 | 无策略 topic，内容有效 | 按现有规则加入规则或插件目录，策略为 `normal` |
 | `required`，内容有效且是插件 | 加入插件目录，策略为 `required` |
 | `deprecated`，内容有效且是插件 | 加入插件目录，策略为 `deprecated` |
-| `required`，没有有效版本或内容无效 | 整次刷新失败，保留上一份快照 |
+| `required`，没有有效版本 | 跳过并记录警告；不中断目录刷新 |
+| `required`，有有效版本但内容无效 | 整次刷新失败，保留上一份快照 |
 | `deprecated`，没有有效版本或内容无效 | 跳过并记录警告；客户端收不到弃用信号 |
 | 同时有 `required` 和 `deprecated`，且分类为插件 | 跳过并记录警告 |
 | 策略 topic 出现在规则包 | 忽略策略，仍按规则包处理 |
 | topic 请求失败 | 整次刷新失败，保留上一份快照 |
+
+必装包的目录校验只读取 `server.json`、`hooks/hooks.json` 和各 `SKILL.md`；完整安装包仍在安装时校验。topic 按 50 条分页读取并去重，最多 10 页。
 
 `ExtensionCatalog` 只保留一份目录缓存，策略随条目一起保存，不再维护第二份列表。`list` 按 `CatalogKind` 返回该分类下的全部包，包括 `deprecated`。`entry` 只接受 `normal` 和 `required`，因此弃用包的版本、README 和安装请求都返回不存在。
 
