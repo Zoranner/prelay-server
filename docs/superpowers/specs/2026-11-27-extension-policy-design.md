@@ -231,7 +231,7 @@ pub enum ExtensionPolicy {
 - 弃用包出现在 `/extensions/plugins`，`policy` 为 `deprecated`；必装包为 `required`。
 - 弃用包的版本、README 和安装请求返回 `extension_not_found`，与它是否出现在列表无关。
 - `/extensions/rules` 的条目恒为 `normal`。
-- topic 请求失败、必装包内容无效或没有有效版本时，整次刷新失败并保留旧快照。
+- topic 请求失败、必装包内容无效时，整次刷新失败并保留旧快照；必装包没有有效版本时跳过并记录警告。
 - 目录缓存只保存一份列表，刷新失败不清空旧结果。
 
 客户端：
